@@ -30948,6 +30948,12 @@ Goal 6. D103
 	[c] DONE! 
 Goal 7. T604
 	[a] explore possible big wins
+	[b] possible intoruce wrap_key constants and see
+		if CapErr can precisely reflect if it runs fall in short.
+Goal 8. M103: full dna neo
+Goal 9. M104: full_clam neo
+	[a] dry run crashes because lkup size too large
+	[b] 
 
 
 	

@@ -795,7 +795,6 @@ def stub_leaf(name, milestone):
     return run_fn
 
 
-run_leaf_dna           = stub_leaf("dna",        "M103")
 run_leaf_clamav        = stub_leaf("clam",       "M104")
 run_leaf_scale_clamav  = stub_leaf("scale_clam", "M104")
 
@@ -892,6 +891,45 @@ def run_leaf_dlp(mode, ctx):
         for dest in pack_full_dump("full_dlp", logs, ctx._ts):
             ctx.raw_data.append(dest)
     return ctx.finish(rc)
+
+
+# bora_cli full_dna constants (M103): dry = 1% DB (276 of 27,501
+# sigs) x 2% sample (the lone chr17 file byte-shrinks Rust-side to
+# ~832KB ~ 7 fold steps), light; full = legacy test_full_dna's shape
+# (whole 41.6MB sample, 1 circuit, heavy one-proof snark). Always 1
+# job / 1 process (user decision: the sample is offset-anchored and
+# cannot split). (perc_db, perc_samples, circs, jobs, light).
+DNA_LEAF_ARGS = {
+    "dry":  ("1", "2", "1", "1", "1"),
+    "full": ("100", "100", "1", "1", "0"),
+}
+
+
+def dna_argv(mode):
+    """The 9-token bora_cli argv for full_dna; numa_num/part_id are
+    hardwired 1/0 (never two-half) and ladder_only is 0."""
+    pdb, ps, nc, nj, light = DNA_LEAF_ARGS[mode]
+    return ["full_dna", pdb, ps, nc, nj, "1", "0", light, "0"]
+
+
+def run_leaf_dna(mode, ctx):
+    """M103 DNA leaf: bora_cli full_dna (neo, argv-only), always one
+    process/one job; packs the single run log as full_dna.tgz."""
+    rc = run_rust_example(ctx, "bora_cli", dna_argv(mode), neo_env())
+    logs = [ctx.log_path("run")]
+    if rc == 0:
+        missing = dlp_missing_success(logs, 1)  # generic in num_jobs
+        if missing:
+            ctx.note("success markers missing: %s" % missing)
+            rc = 6
+    if rc == 0:
+        for dest in pack_full_dump("full_dna", logs, ctx._ts):
+            ctx.raw_data.append(dest)
+    # b_fail_scan=False (D103 pattern): the NON-AGGR tuner prints its
+    # caught CapErr probe panics into the run log, so FAIL_RE would
+    # counterfeit a FAIL on every successful run. Verdict = rc + the
+    # positive markers above.
+    return ctx.finish(rc, b_fail_scan=False)
 
 
 # bora_cli scale_dlp counts (spec 8.10c), pin-INCLUSIVE units: each
@@ -2011,6 +2049,71 @@ class DlpMissingSuccessTest(unittest.TestCase):
         self.assertIsNone(dlp_missing_success([l1, l2], 2))
 
 
+class RunLeafDnaTest(unittest.TestCase):
+    def setUp(self):
+        self.ctx = mock.Mock()
+        self.ctx._ts = "20260810_000000"
+        self.ctx.raw_data = []
+        self.ctx.finish.side_effect = \
+            lambda rc, b_fail_scan=True: rc
+        self.ctx.log_path.side_effect = lambda n: "/lp/%s.log" % n
+
+    def test_dry_wiring(self):
+        """Dry leaf spawns bora_cli full_dna with the dry argv and
+        packs the single run log as full_dna.tgz."""
+        with mock.patch.object(_MOD, "neo_env",
+                                return_value={"E": "1"}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=0) as rre, \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None) as ms, \
+             mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/full_dna.tgz"]) as pk:
+            rc = run_leaf_dna("dry", self.ctx)
+        self.assertEqual(rc, 0)
+        rre.assert_called_once_with(
+            self.ctx, "bora_cli", dna_argv("dry"), {"E": "1"})
+        ms.assert_called_once_with(["/lp/run.log"], 1)
+        pk.assert_called_once_with(
+            "full_dna", ["/lp/run.log"], "20260810_000000")
+        self.assertEqual(self.ctx.raw_data, ["/d/full_dna.tgz"])
+        # D103 pattern: the non-aggr tuner's caught CapErr probe text
+        # would counterfeit a FAIL, so the leaf verdicts scan-free.
+        self.ctx.finish.assert_called_once_with(0, b_fail_scan=False)
+
+    def test_argv_shapes(self):
+        """dry/full argv are 9 tokens with numa/part pinned 1/0;
+        dry is light, full is heavy."""
+        self.assertEqual(dna_argv("dry"),
+            ["full_dna", "1", "2", "1", "1", "1", "0", "1", "0"])
+        self.assertEqual(dna_argv("full"),
+            ["full_dna", "100", "100", "1", "1", "1", "0", "0", "0"])
+
+    def test_nonzero_rc_never_packs(self):
+        """A failed spawn skips both the marker check and packing."""
+        with mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=3), \
+             mock.patch.object(_MOD, "pack_full_dump") as pk:
+            rc = run_leaf_dna("dry", self.ctx)
+        self.assertEqual(rc, 3)
+        pk.assert_not_called()
+
+    def test_missing_success_markers_fail_no_pack(self):
+        """rc=6 and no pack when the positive fold/verify markers
+        are absent from the run log."""
+        with mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_rust_example",
+                                return_value=0), \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value="no markers"), \
+             mock.patch.object(_MOD, "pack_full_dump") as pk:
+            rc = run_leaf_dna("dry", self.ctx)
+        self.assertEqual(rc, 6)
+        pk.assert_not_called()
+        self.ctx.note.assert_called_once()
+
+
 class RunExternalPythonTest(unittest.TestCase):
     def test_builds_cmd_and_returns_rc(self):
         fake = _FakeProc(pid=9, rc=2)
@@ -2765,8 +2868,7 @@ class StubLeafTest(unittest.TestCase):
         self.assertIn("M102", result.note)
 
     def test_remaining_stub_keys_registered(self):
-        expected = {"dna": "M103", "clam": "M104",
-                    "scale_clam": "M104"}
+        expected = {"clam": "M104", "scale_clam": "M104"}
         for key, milestone in expected.items():
             self.assertIn(key, JOB_SPECS)
             ctx = JobHandle(key, "dry")
@@ -3101,7 +3203,8 @@ class EndToEndWiringTest(unittest.TestCase):
         os.makedirs(os.path.join(self.tmp.name, "job_logs"))
 
         specs = dict(JOB_SPECS)
-        for key in ("lkup", "zombie", "reef", "dlp", "scale_dlp"):
+        for key in ("lkup", "zombie", "reef", "dlp", "scale_dlp",
+                     "dna"):
             specs[key] = JobSpec(key, key, stub_leaf(key, "Stage 2"))
         p = mock.patch.object(_MOD, "JOB_SPECS", specs)
         p.start()

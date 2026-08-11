@@ -3,7 +3,8 @@
 //! driver instead; direct invocation is for debugging only.
 
 use zkregplus::bora_data_driver::{collect_lookup_stats_adv,
-	collect_scale_dlp_neo, full_dlp_neo, parse_args, Cmd, USAGE};
+	collect_scale_dlp_neo, full_dlp_neo, full_dna_neo, parse_args,
+	Cmd, USAGE};
 
 fn main() {
 	let args: Vec<String> = std::env::args().skip(1).collect();
@@ -17,6 +18,11 @@ fn main() {
 		Cmd::FullDlp { perc_db, perc_samples, num_circs, num_jobs,
 			numa_num, part_id, b_light_test, b_ladder_only } => {
 			full_dlp_neo(perc_db, perc_samples, num_circs, num_jobs,
+				numa_num, part_id, b_light_test, b_ladder_only);
+		}
+		Cmd::FullDna { perc_db, perc_samples, num_circs, num_jobs,
+			numa_num, part_id, b_light_test, b_ladder_only } => {
+			full_dna_neo(perc_db, perc_samples, num_circs, num_jobs,
 				numa_num, part_id, b_light_test, b_ladder_only);
 		}
 		Cmd::ScaleDlp { corpus_idx, vec_count } =>

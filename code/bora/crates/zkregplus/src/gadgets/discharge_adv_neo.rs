@@ -1595,7 +1595,8 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 
 impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 	/// Number of (subsig, step 0..=max_steps) key groups over the
-	/// active subsigs; each group adds exactly 2 wrap rows to T_qm.
+	/// active subsigs; each group adds exactly one wrap row (and
+	/// one anch slot) to T_qm.
 	pub(crate) fn n_wrap_keys(subsigs: &Vec<F>,
 		info: &SubsigStepStore) -> usize {
 		subsigs.iter().map(|s| {

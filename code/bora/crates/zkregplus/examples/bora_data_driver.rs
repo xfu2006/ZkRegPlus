@@ -17,5 +17,8 @@ fn main() {
 		}
 		Cmd::ScaleDlp { corpus_idx, vec_count } =>
 			collect_scale_dlp_neo(corpus_idx, &vec_count),
+		// stale binary (renamed to bora_cli, git rm pending): keep it
+		// compiling without tracking new subcommands.
+		_ => panic!("bora_data_driver example is retired; use bora_cli"),
 	}
 }

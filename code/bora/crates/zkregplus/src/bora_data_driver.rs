@@ -134,6 +134,23 @@ fn filter_needs_list(src_path: &str, keep_names: &HashSet<&str>,
 		panic!("bora_data_driver: write {}: {}", dst_path, e));
 }
 
+/// True when every plain-numeric offset prefix ("NNN:...", BYTE
+/// units) among the line's subsig fields fits a range table of
+/// max_off_nibbles nibbles (bound compared against 2x the prefix).
+/// Prefix-less lines (e.g. the alphabet pin) and non-numeric
+/// prefixes always fit.
+fn sig_fits_range(line: &str, max_off_nibbles: usize) -> bool {
+	line.split(';').skip(3).all(|f| match f.split_once(':') {
+		Some((tok, _)) if !tok.is_empty()
+			&& tok.bytes().all(|b| b.is_ascii_digit()) =>
+			tok.parse::<usize>().ok()
+				.and_then(|off| off.checked_mul(2))
+				.map(|n| n < max_off_nibbles)
+				.unwrap_or(false),
+		_ => true,
+	})
+}
+
 /// Deterministically thins src_dir's config down to `count` signatures,
 /// writing a self-contained smaller config under dst_dir.
 /// src_dir must contain sig_file_name, main_dfa.dat, needs_ised.dat,
@@ -142,11 +159,29 @@ fn filter_needs_list(src_path: &str, keep_names: &HashSet<&str>,
 /// be meaningfully re-filtered). Returns the thinned sig file's path.
 pub fn create_smaller_config(src_dir: &str, sig_file_name: &str,
 	count: usize, dst_dir: &str) -> String {
+	create_smaller_config_bounded(src_dir, sig_file_name, count,
+		dst_dir, usize::MAX)
+}
+
+/// create_smaller_config with a range-table bound (M103 dry): sig
+/// lines whose offsets reach max_off_nibbles are dropped BEFORE
+/// subsetting (sig_fits_range), since the table has no overflow
+/// guard -- an out-of-range sig would produce un-lookupable rows.
+/// usize::MAX keeps every line, byte-identical to the original.
+pub fn create_smaller_config_bounded(src_dir: &str,
+	sig_file_name: &str, count: usize, dst_dir: &str,
+	max_off_nibbles: usize) -> String {
 	fs::create_dir_all(dst_dir).unwrap_or_else(|e|
 		panic!("bora_data_driver: mkdir {}: {}", dst_dir, e));
 
-	let sig_lines = read_lines_nonblank(
-		&format!("{}/{}", src_dir, sig_file_name));
+	let sig_lines: Vec<String> = read_lines_nonblank(
+		&format!("{}/{}", src_dir, sig_file_name))
+		.into_iter()
+		.filter(|l| sig_fits_range(l, max_off_nibbles))
+		.collect();
+	assert!(!sig_lines.is_empty(),
+		"bora_data_driver: no sig fits a {}-nibble range table",
+		max_off_nibbles);
 	let keep_idx = subset(sig_lines.len(), count);
 	let kept_lines: Vec<&String> = keep_idx.iter()
 		.map(|&i| &sig_lines[i]).collect();
@@ -300,10 +335,22 @@ pub struct DatasetSpec {
 	pub(crate) db_cache_dir: &'static str,
 	/// Nibbles per folding chunk (the driver's max_word).
 	pub(crate) chunk_len: usize,
+	/// Dry/light-only replacement for chunk_len (effective_spec);
+	/// None = never diverge. The step circuit is per-chunk-nibble-
+	/// driven (~55 cs/nibble), so this is the decider-size lever.
+	pub(crate) dry_chunk_len: Option<usize>,
 	/// Bit width of the range-2 lookup table.
 	pub(crate) range2_bit: usize,
+	/// Dry/light-only replacement for range2_bit (effective_spec);
+	/// None = never diverge. Shrinks the dominant range table so a
+	/// dry run fits a small box; out-of-range sigs are filtered at
+	/// thinning time (the table has no overflow guard).
+	pub(crate) dry_range2_bit: Option<usize>,
 	/// SDE repetition fan-out cap (clamav_cfg.sde_rep_fanout_cap).
 	pub(crate) fanout_cap: usize,
+	/// PM extraction min word length (clamav_cfg.min_pm_word_len).
+	/// DB-SHAPE-AFFECTING: DLP legacy sets 3; DNA/CLAM run default 4.
+	pub(crate) min_pm_word_len: usize,
 	/// Aggressive SDE arm (DLP true; DNA/CLAM false).
 	pub(crate) b_aggressive: bool,
 	/// Run the in-circuit lookup-share cover check.
@@ -314,6 +361,9 @@ pub struct DatasetSpec {
 	pub(crate) n_par_snark: usize,
 	/// CP-decider concurrency cap (inert while b_one_proof).
 	pub(crate) n_par_snark_cp: usize,
+	/// pass_all batch-claim semaphore width; every job reaches it, so
+	/// it is NOT inert (B101). DLP 1 (legacy default), DNA 8.
+	pub(crate) n_par_batch_claim: usize,
 	/// Floor on subsigs per circuit.
 	pub(crate) min_subsigs: usize,
 	/// Floor on distinct FSM basis states.
@@ -352,8 +402,12 @@ pub const DLP: DatasetSpec = DatasetSpec {
 		"data/samples/email/src/maildir/donohoe-t/sent/6."],
 	db_cache_dir: "dlp_neo", // never legacy's "dlp_corpus_aggr"
 	chunk_len: 64,
+	dry_chunk_len: None,
 	range2_bit: 25,
+	dry_range2_bit: None,
 	fanout_cap: 100,
+	// legacy full_dlp sets 3 (zkp_driver.rs:6790).
+	min_pm_word_len: 3,
 	b_aggressive: true,
 	// true is a DELIBERATE departure from legacy full_dlp(), which
 	// folded without the hab22 cover check. Neo runs must check.
@@ -364,6 +418,8 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	// b_folding_only returns, so only one job ever contends.
 	n_par_snark: 1,
 	n_par_snark_cp: 1,
+	// legacy full_dlp never sets it -> the default 1 stands (B101).
+	n_par_batch_claim: 1,
 	min_subsigs: 1,
 	min_basis_unique_states: 2,
 	min_basis_acc_states: 2,
@@ -374,6 +430,83 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	min_dfa_sigs: 0,
 	min_dfa_subsigs: 0,
 	hand_seed: None,
+};
+
+/// DNA: legacy full_dna()'s exact run configuration (zkp_driver.rs
+/// :5279-5387), with a neo-own DB cache dir. Single job always (the
+/// chr17 sample is offset-anchored and cannot split); the cover
+/// check stays OFF like legacy (user decision 2026-08-10: corpus too
+/// small to pay the check cost), so the share pins to 1 either way.
+pub const DNA: DatasetSpec = DatasetSpec {
+	name: "dna",
+	config_dir: "data/paper_data/dna/config",
+	sig_file: "main.dat",
+	// one line: data/samples/chr17_samples/NC_000017.11.reef.bin
+	master_sources: &["data/paper_data/dna/config/binexec.dat"],
+	scale_sources: &[],          // paper excludes DNA from Q4 scale
+	db_cache_dir: "dna_neo",     // never legacy's "dna_data"
+	chunk_len: 4096,             // 512*8 -> ~328 steps at 41.6MB
+	// dry decider lever (user decision 2026-08-10): the step circuit
+	// is ~55 cs per chunk-NIBBLE (4096*62 nibbles -> 34.6M-entry
+	// all_w_e, decider OOMs 125GB even light + small table). 256
+	// -> ~0.9M-cs steps, ~105 steps on the 2% sample. Full = 4096.
+	dry_chunk_len: Some(256),
+	range2_bit: 27,              // 80.09M-nibble max offset
+	// dry MUST shrink the table (user decision 2026-08-10): at 27
+	// the 134.2M-row range table alone puts cs1e at 34.6M and the
+	// light decider OOMs a 125GB box. 2^22 keeps an ~830-sig
+	// in-range pool (>= the 276-sig dry DB); full runs stay at 27.
+	dry_range2_bit: Some(22),
+	// legacy full_dna touches NO clamav_cfg field: both are the
+	// GLOBAL_CONFIG defaults (consts.rs:493/:490), NOT dlp's 100/3.
+	fanout_cap: 127,
+	min_pm_word_len: 4,
+	b_aggressive: false,
+	b_check_lkup: false,
+	vec_decrease_level: &[],     // single full-cap circuit
+	n_par_snark: 2,
+	n_par_snark_cp: 2,
+	n_par_batch_claim: 8,        // legacy sets 8; inert at 1 job
+	// floors set LOW vs clamav (zkp_driver.rs:5288-5294).
+	min_subsigs: 64,
+	min_basis_unique_states: 100,
+	min_basis_acc_states: 2,
+	min_basis_pats_in_trace: 4,
+	min_avg_pats_per_subsig: 1,
+	min_dfa_sigs: 2,
+	min_dfa_subsigs: 2,
+	// the hand caps of zkp_driver.rs:5309-5361, mapped through
+	// caps_from_params_general's field order (igc mirrors cs; only
+	// perc_pats_expansion_rate_igc differs, 4 -- igc trace is empty).
+	hand_seed: Some(CapParams {
+		cp_basis_unique_states: 6500,
+		cp_subsigs: 20,
+		cp_avg_pats: 1,
+		subsigs: 20,
+		avg_pats_per_subsig: 1,
+		avg_active_pats_per_subsig: 1,
+		basis_pats_in_trace: 4,
+		perc_pats_expansion_rate: 200,
+		prod_pats_expansion: 0,  // non-aggr: gadget reads basis*perc
+		qm_real_rows: 0,         // hand-cap era; tune warm-starts to 2
+		sigs_sed: 20,
+		perc_comp_subsigs: 20,
+		basis_unique_states: 6500,
+		basis_acc_states: 2,
+		subsigs_igc: 20,
+		avg_active_pats_per_subsig_igc: 1,
+		basis_pats_in_trace_igc: 4,
+		perc_pats_expansion_rate_igc: 4,
+		prod_pats_expansion_igc: 0,
+		qm_real_rows_igc: 0,
+		basis_acc_states_igc: 2,
+		basis_unique_states_igc: 6500, // unused non-aggr (cs shared)
+		dfa_sigs: 0,
+		dfa_subsigs: 0,
+		aggr_needs_subsigs: 0,
+		max_word_len: 4096,
+		acdfa_state_part_bits: 27,
+	}),
 };
 
 /// Config dir for a run: the real one when nothing is thinned, else the
@@ -451,6 +584,43 @@ pub(crate) fn plan_corpus(spec: &DatasetSpec, perc_samples: f64,
 	plan_corpus_from(&master, perc_samples, num_jobs)
 }
 
+/// Dry-run rule for a lone-file corpus (user decision 2026-08-10,
+/// M103): a sampled corpus of exactly ONE file at perc_samples<100
+/// folds a ceil(perc%) byte-prefix copy written into the part's
+/// sandbox. Identity otherwise (DLP's corpora are many-file).
+fn shrink_lone_sample(pd: &str, bins: Vec<Vec<String>>,
+	perc_samples: f64) -> Vec<Vec<String>> {
+	let n_files: usize = bins.iter().map(|b| b.len()).sum();
+	if n_files != 1 || perc_samples >= 100.0 {
+		return bins;
+	}
+	let rel = bins.iter().flatten().next().unwrap();
+	let abs = if rel.starts_with('/') { rel.clone() }
+		else { format!("{}/{}", utils::os::proj_root(), rel) };
+	let data = fs::read(&abs).unwrap_or_else(|e| panic!(
+		"bora_data_driver: read lone sample {}: {}", abs, e));
+	assert!(!data.is_empty(),
+		"bora_data_driver: lone sample {} is empty", abs);
+	let keep = ((data.len() as f64 * perc_samples / 100.0).ceil()
+		as usize).clamp(1, data.len());
+	let dir = format!("{}/sample", pd);
+	fs::create_dir_all(&dir).unwrap_or_else(|e| panic!(
+		"bora_data_driver: mkdir {}: {}", dir, e));
+	let base = Path::new(&abs).file_name().unwrap()
+		.to_str().unwrap().to_string();
+	let dst = format!("{}/{}", dir, base);
+	fs::write(&dst, &data[..keep]).unwrap_or_else(|e| panic!(
+		"bora_data_driver: write {}: {}", dst, e));
+	utils::logger::log(0, utils::logger::LOG1, &format!(
+		"shrink_lone_sample: {} -> {} ({} of {} bytes)",
+		rel, dst, keep, data.len()));
+	let mut out = bins;
+	for b in out.iter_mut() {
+		for p in b.iter_mut() { *p = dst.clone(); }
+	}
+	out
+}
+
 /// Snark-decider release gate. MUST match NEW_PAPER_DATA.py's FLAG
 /// (scripts/NEW_PAPER_DATA.py:201-202).
 const SNARK_WAIT_FLAG: &str = "/tmp/snark_start/flag";
@@ -476,7 +646,7 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	// SDE arm + discharge knobs.
 	g.clamav_cfg.b_aggressive_sde_for_rep = spec.b_aggressive;
 	g.clamav_cfg.sde_rep_fanout_cap = spec.fanout_cap;
-	g.clamav_cfg.min_pm_word_len = 3;
+	g.clamav_cfg.min_pm_word_len = spec.min_pm_word_len;
 	g.range2_bit = spec.range2_bit;
 	// all 7 ladder floors.
 	g.min_subsigs = spec.min_subsigs;
@@ -488,10 +658,11 @@ fn apply_spec_config(spec: &DatasetSpec, b_light_test: bool,
 	g.min_dfa_subsigs = spec.min_dfa_subsigs;
 	g.n_par_snark = spec.n_par_snark;
 	g.n_par_snark_cp = spec.n_par_snark_cp;
-	// NOT set: n_par_batch_claim. Legacy full_dlp never sets it, so it
-	// stays 1 -- and unlike the snark caps it is NOT inert: its
-	// semaphore is taken inside pass_all (driver.rs:1831), which every
-	// job reaches before the b_one_proof / b_folding_only returns.
+	// spec-owned (M103): full_dlp leaves the default 1 but full_dna
+	// sets 8 (zkp_driver.rs:5297); NOT inert in general -- its
+	// semaphore is inside pass_all (driver.rs:1831), before the
+	// b_one_proof / b_folding_only returns.
+	g.n_par_batch_claim = spec.n_par_batch_claim;
 	g.log_level = utils::logger::LOG3;
 	// legacy couples fold-only with the light decider (zkp_driver.rs
 	// :6768-6772): a non-proving part must never build heavy keys.
@@ -746,6 +917,10 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 			p0.avg_active_pats_per_subsig_igc.min(2);
 		p0.qm_real_rows = 2;
 		p0.qm_real_rows_igc = 2;
+		// the seed follows the EFFECTIVE shape (dry_range2_bit /
+		// dry_chunk_len); no-op at full shape.
+		p0.acdfa_state_part_bits = spec.range2_bit;
+		p0.max_word_len = spec.chunk_len;
 		let new = determine_config_non_aggr::<Fr, C1, CS1>(true,
 			db.clone(), &ts.words, &ts.infos, p0, mw, lkup_len,
 			ts.max_bin_word_n, &spec.vec_decrease_level.to_vec(),
@@ -781,8 +956,12 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 	let n_sigs = read_lines_nonblank(
 		&format!("{}/{}", src_dir, spec.sig_file)).len();
 	if db_count < n_sigs {
-		create_smaller_config(&src_dir, spec.sig_file, db_count,
-			&format!("{}/config", plan_dir(spec.name, part_id)));
+		// bound = table size minus one chunk of margin; inert at any
+		// full-shape bit (every sig fits), load-bearing only when
+		// effective_spec swapped in a dry_range2_bit.
+		create_smaller_config_bounded(&src_dir, spec.sig_file,
+			db_count, &format!("{}/config", plan_dir(spec.name, part_id)),
+			(1usize << spec.range2_bit) - spec.chunk_len * 62);
 	}
 	let db = build_fresh_db(spec,
 		&config_dir_for(spec, db_count, n_sigs, part_id),
@@ -963,13 +1142,22 @@ fn set_diag_env(part_id: usize) {
 	std::env::set_var("ZKR_DLP_PROBE_FILES", "1");
 }
 
-/// Dry policy (user decision 2026-08-10): a light run drops the
-/// hab22 cover check; heavy keeps the spec value. ONE derivation
-/// site so all three b_check_lkup consumers agree.
+/// Dry policy (user decisions 2026-08-10): a light run drops the
+/// hab22 cover check AND swaps in dry_range2_bit when the spec has
+/// one; heavy keeps the spec values. ONE derivation site so every
+/// consumer of both fields agrees.
 fn effective_spec(spec: &DatasetSpec, b_light_test: bool)
 	-> DatasetSpec {
 	let mut s = spec.clone();
 	s.b_check_lkup = s.b_check_lkup && !b_light_test;
+	if b_light_test {
+		if let Some(b) = s.dry_range2_bit {
+			s.range2_bit = b;
+		}
+		if let Some(c) = s.dry_chunk_len {
+			s.chunk_len = c;
+		}
+	}
 	s
 }
 
@@ -995,6 +1183,7 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 		"bora_data_driver: {} aggr db_count {} < 2 (perc_db {} too \
 		 small)", spec.name, db_count, perc_db);
 	let bins = plan_corpus(spec, perc_samples, num_jobs);
+	let bins = shrink_lone_sample(&pd, bins, perc_samples);
 	let manifests =
 		write_job_manifests(&format!("{}/jobs", pd), &bins);
 	let ladder = build_and_tune(spec, db_count, &bins, num_circs,
@@ -1015,6 +1204,16 @@ pub fn full_dlp_neo(perc_db: f64, perc_samples: f64,
 	part_id: usize, b_light_test: bool, b_ladder_only: bool)
 	-> Vec<CapParams> {
 	run_neo(&DLP, perc_db, perc_samples, num_circs, num_jobs,
+		numa_num, part_id, b_light_test, b_ladder_only)
+}
+
+/// DNA full run: run_neo over the DNA const. Callers pin
+/// num_jobs = numa_num = 1 (single offset-anchored sample).
+pub fn full_dna_neo(perc_db: f64, perc_samples: f64,
+	num_circs: usize, num_jobs: usize, numa_num: usize,
+	part_id: usize, b_light_test: bool, b_ladder_only: bool)
+	-> Vec<CapParams> {
+	run_neo(&DNA, perc_db, perc_samples, num_circs, num_jobs,
 		numa_num, part_id, b_light_test, b_ladder_only)
 }
 
@@ -1216,14 +1415,18 @@ pub const USAGE: &str = "bora_cli: backend of \
 	 full_dlp <perc_db> <perc_samples> <num_circs> <num_jobs> \
 	<numa_num> <part_id> <light 0|1> <ladder_only 0|1>\n \
 	   (light=1 also drops the hab22 cover check)\n \
+	 full_dna <same 8 args as full_dlp>\n \
 	 scale_dlp <corpus_idx> <c1,c2,...>";
 
-/// Parsed CLI command for examples/bora_cli.rs. DNA/CLAM
-/// subcommands arrive with M103/M104.
+/// Parsed CLI command for examples/bora_cli.rs. CLAM subcommands
+/// arrive with M104.
 #[derive(Debug, PartialEq)]
 pub enum Cmd {
 	Lkup { perc: usize, dest_path: String },
 	FullDlp { perc_db: f64, perc_samples: f64, num_circs: usize,
+		num_jobs: usize, numa_num: usize, part_id: usize,
+		b_light_test: bool, b_ladder_only: bool },
+	FullDna { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_light_test: bool, b_ladder_only: bool },
 	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize> },
@@ -1251,6 +1454,35 @@ fn arg_bool(args: &[String], i: usize, name: &str) -> bool {
 	}
 }
 
+/// The shared 8-arg tail of the full_* subcommands. Panics with
+/// USAGE on wrong arity, out-of-range percs, zero counts, or
+/// part_id >= numa_num.
+fn parse_full8(args: &[String], sub: &str)
+	-> (f64, f64, usize, usize, usize, usize, bool, bool) {
+	assert!(args.len() == 9,
+		"bora_data_driver: {} takes 8 args, got {}\n{}",
+		sub, args.len() - 1, USAGE);
+	let perc_db = arg_f64(args, 1, "perc_db");
+	let perc_samples = arg_f64(args, 2, "perc_samples");
+	let num_circs = arg_usize(args, 3, "num_circs");
+	let num_jobs = arg_usize(args, 4, "num_jobs");
+	let numa_num = arg_usize(args, 5, "numa_num");
+	let part_id = arg_usize(args, 6, "part_id");
+	assert!(perc_db > 0.0 && perc_db <= 100.0
+		&& perc_samples > 0.0 && perc_samples <= 100.0,
+		"bora_data_driver: {} percs must be in (0, 100] \
+		 (perc_db {} perc_samples {})", sub, perc_db, perc_samples);
+	assert!(num_circs >= 1 && num_jobs >= 1 && numa_num >= 1,
+		"bora_data_driver: {} counts must be >= 1 \
+		 (num_circs {} num_jobs {} numa_num {})",
+		sub, num_circs, num_jobs, numa_num);
+	assert!(part_id < numa_num,
+		"bora_data_driver: part_id {} >= numa_num {}",
+		part_id, numa_num);
+	(perc_db, perc_samples, num_circs, num_jobs, numa_num, part_id,
+		arg_bool(args, 7, "light"), arg_bool(args, 8, "ladder_only"))
+}
+
 /// argv[1..] -> Cmd. Panics with a usage line on unknown subcommand,
 /// wrong arity, non-integer, a zero that has no meaning (percs,
 /// circs, jobs, numa), or part_id >= numa_num.
@@ -1264,30 +1496,20 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				dest_path: args[2].clone() }
 		}
 		Some("full_dlp") => {
-			assert!(args.len() == 9,
-				"bora_data_driver: full_dlp takes 8 args, got {}\n{}",
-				args.len() - 1, USAGE);
-			let perc_db = arg_f64(args, 1, "perc_db");
-			let perc_samples = arg_f64(args, 2, "perc_samples");
-			let num_circs = arg_usize(args, 3, "num_circs");
-			let num_jobs = arg_usize(args, 4, "num_jobs");
-			let numa_num = arg_usize(args, 5, "numa_num");
-			let part_id = arg_usize(args, 6, "part_id");
-			assert!(perc_db > 0.0 && perc_db <= 100.0
-				&& perc_samples > 0.0 && perc_samples <= 100.0,
-				"bora_data_driver: full_dlp percs must be in (0, 100] \
-				 (perc_db {} perc_samples {})", perc_db, perc_samples);
-			assert!(num_circs >= 1 && num_jobs >= 1 && numa_num >= 1,
-				"bora_data_driver: full_dlp counts must be >= 1 \
-				 (num_circs {} num_jobs {} numa_num {})",
-				num_circs, num_jobs, numa_num);
-			assert!(part_id < numa_num,
-				"bora_data_driver: part_id {} >= numa_num {}",
-				part_id, numa_num);
+			let (perc_db, perc_samples, num_circs, num_jobs,
+				numa_num, part_id, b_light_test, b_ladder_only) =
+				parse_full8(args, "full_dlp");
 			Cmd::FullDlp { perc_db, perc_samples, num_circs,
-				num_jobs, numa_num, part_id,
-				b_light_test: arg_bool(args, 7, "light"),
-				b_ladder_only: arg_bool(args, 8, "ladder_only") }
+				num_jobs, numa_num, part_id, b_light_test,
+				b_ladder_only }
+		}
+		Some("full_dna") => {
+			let (perc_db, perc_samples, num_circs, num_jobs,
+				numa_num, part_id, b_light_test, b_ladder_only) =
+				parse_full8(args, "full_dna");
+			Cmd::FullDna { perc_db, perc_samples, num_circs,
+				num_jobs, numa_num, part_id, b_light_test,
+				b_ladder_only }
 		}
 		Some("scale_dlp") => {
 			assert!(args.len() == 3,
@@ -1754,6 +1976,7 @@ pub mod tests_bora_data_driver {
 			g.min_dfa_subsigs = 99;
 			g.n_par_snark = 99;
 			g.n_par_snark_cp = 99;
+			g.n_par_batch_claim = 99;
 			g.b_light_test = true;
 			g.b_read_cache = false;
 			g.b_read_snark_cache = true;
@@ -1773,7 +1996,7 @@ pub mod tests_bora_data_driver {
 		assert_eq!(c.neo_wrap_keys, 0, "0 = auto-derive");
 		assert!(c.clamav_cfg.b_aggressive_sde_for_rep);
 		assert_eq!(c.clamav_cfg.sde_rep_fanout_cap, DLP.fanout_cap);
-		assert_eq!(c.clamav_cfg.min_pm_word_len, 3);
+		assert_eq!(c.clamav_cfg.min_pm_word_len, DLP.min_pm_word_len);
 		assert_eq!(c.range2_bit, DLP.range2_bit);
 		assert_eq!(c.min_subsigs, DLP.min_subsigs);
 		assert_eq!(c.min_basis_unique_states, DLP.min_basis_unique_states);
@@ -1784,9 +2007,8 @@ pub mod tests_bora_data_driver {
 		assert_eq!(c.min_dfa_subsigs, DLP.min_dfa_subsigs);
 		assert_eq!(c.n_par_snark, DLP.n_par_snark);
 		assert_eq!(c.n_par_snark_cp, DLP.n_par_snark_cp);
-		// legacy full_dlp never sets this one; 1 is NOT inert (its
-		// semaphore is reached by every job inside pass_all).
-		assert_eq!(c.n_par_batch_claim, 1);
+		// spec-owned since M103 (was the hardcoded default-1 rule).
+		assert_eq!(c.n_par_batch_claim, DLP.n_par_batch_claim);
 		assert_eq!(c.log_level, utils::logger::LOG3);
 		assert_eq!(c.b_check_lkup, DLP.b_check_lkup, "from the spec");
 		assert!(!c.b_light_test,
@@ -1824,6 +2046,20 @@ pub mod tests_bora_data_driver {
 		assert_eq!(c.snark_wait_flag,
 			Some("/tmp/snark_start/flag".to_string()),
 			"MUST match NEW_PAPER_DATA.py's FLAG");
+		drop(c);
+
+		// DNA (M103): the non-aggr spec's distinct knobs all land;
+		// the DLP apply above is the poison for every one of them.
+		apply_spec_config(&DNA, true, &part_role(0, 1, 1));
+		let c = read_global_config();
+		assert!(!c.clamav_cfg.b_aggressive_sde_for_rep);
+		assert_eq!(c.clamav_cfg.min_pm_word_len, 4);
+		assert_eq!(c.clamav_cfg.sde_rep_fanout_cap, 127);
+		assert_eq!(c.n_par_batch_claim, 8);
+		assert!(!c.b_check_lkup, "user decision: check stays off");
+		assert_eq!(c.range2_bit, 27);
+		assert_eq!(c.min_subsigs, 64);
+		assert_eq!(c.min_dfa_sigs, 2);
 	}
 
 	#[test]
@@ -2237,5 +2473,250 @@ pub mod tests_bora_data_driver {
 		assert!(effective_spec(&DLP, false).b_check_lkup);
 		let sc = scale_spec_clone(&DLP);
 		assert!(!effective_spec(&sc, false).b_check_lkup);
+	}
+
+	/// M103: the DNA const points at real files and pins legacy
+	/// full_dna()'s configuration (zkp_driver.rs:5279-5387) field
+	/// for field, hand caps included.
+	#[test]
+	fn test_m103_dna_const_sane() {
+		let proot = utils::os::proj_root();
+		let abs = |p: &str| format!("{}/{}", proot, p);
+
+		// 1. every path the pipeline will open exists on disk.
+		assert!(Path::new(&abs(DNA.config_dir)).is_dir(),
+			"config_dir missing: {}", DNA.config_dir);
+		for f in [DNA.sig_file, "main_dfa.dat", "needs_ised.dat",
+			"needs_ised_igc.dat"] {
+			let p = abs(&format!("{}/{}", DNA.config_dir, f));
+			assert!(Path::new(&p).is_file(), "missing {}", p);
+		}
+		let corpus = read_path_list(DNA.master_sources[0]);
+		assert_eq!(corpus.len(), 1, "DNA master must be ONE sample");
+		let sample = abs(&corpus[0]);
+		assert!(fs::metadata(&sample).map(|m| m.len() > 1_000_000)
+			.unwrap_or(false), "chr17 sample missing: {}", sample);
+		// the sole main_dfa entry is a FULL SIG LINE (== line 0);
+		// clam_db matches dfa entries by NAME (clam_db.rs:2135), so
+		// it is INERT -- DNA runs 0 dfa sigs even in legacy.
+		let sigs = read_lines_nonblank(
+			&abs(&format!("{}/{}", DNA.config_dir, DNA.sig_file)));
+		let dfa = read_lines_nonblank(
+			&abs(&format!("{}/main_dfa.dat", DNA.config_dir)));
+		assert_eq!(dfa.len(), 1);
+		assert_eq!(dfa[0], sigs[0], "dfa entry must be pinned line 0");
+		assert!(sigs[0].starts_with("Win.Alphabet"));
+
+		// 2. shape.
+		assert_eq!(DNA.name, "dna");
+		assert!(DNA.scale_sources.is_empty(), "no Q4 scale for DNA");
+		assert!(DNA.vec_decrease_level.is_empty());
+		assert!(!DNA.b_aggressive);
+		assert!(!DNA.b_check_lkup, "user decision: check stays off");
+
+		// 3. neo-own cache.
+		assert_eq!(DNA.db_cache_dir, "dna_neo");
+		assert_eq!(plan_dir(DNA.name, 0), "/tmp/bora/dna_neo_p0");
+
+		// 4. legacy full_dna() parity, field by field.
+		assert_eq!(DNA.chunk_len, 4096);
+		assert_eq!(DNA.range2_bit, 27);
+		assert_eq!(DNA.fanout_cap, 127);      // untouched default
+		assert_eq!(DNA.min_pm_word_len, 4);   // untouched default
+		assert_eq!(DNA.n_par_snark, 2);
+		assert_eq!(DNA.n_par_snark_cp, 2);
+		assert_eq!(DNA.n_par_batch_claim, 8);
+		assert_eq!(DNA.min_subsigs, 64);
+		assert_eq!(DNA.min_basis_unique_states, 100);
+		assert_eq!(DNA.min_basis_acc_states, 2);
+		assert_eq!(DNA.min_basis_pats_in_trace, 4);
+		assert_eq!(DNA.min_avg_pats_per_subsig, 1);
+		assert_eq!(DNA.min_dfa_sigs, 2);
+		assert_eq!(DNA.min_dfa_subsigs, 2);
+
+		// 5. hand caps (zkp_driver.rs:5309-5361), the non-aggr seed.
+		let h = DNA.hand_seed.as_ref().expect("DNA needs hand_seed");
+		assert_eq!((h.max_word_len, h.acdfa_state_part_bits),
+			(4096, 27));
+		assert_eq!((h.cp_basis_unique_states, h.cp_subsigs,
+			h.cp_avg_pats), (6500, 20, 1));
+		assert_eq!((h.subsigs, h.avg_pats_per_subsig,
+			h.avg_active_pats_per_subsig), (20, 1, 1));
+		assert_eq!((h.basis_pats_in_trace,
+			h.perc_pats_expansion_rate), (4, 200));
+		assert_eq!((h.sigs_sed, h.perc_comp_subsigs), (20, 20));
+		assert_eq!((h.basis_unique_states, h.basis_acc_states),
+			(6500, 2));
+		assert_eq!((h.subsigs_igc,
+			h.avg_active_pats_per_subsig_igc), (20, 1));
+		assert_eq!((h.basis_pats_in_trace_igc,
+			h.perc_pats_expansion_rate_igc), (4, 4));
+		assert_eq!((h.basis_acc_states_igc,
+			h.basis_unique_states_igc), (2, 6500));
+		assert_eq!((h.dfa_sigs, h.dfa_subsigs), (0, 0));
+		assert_eq!((h.prod_pats_expansion, h.qm_real_rows,
+			h.aggr_needs_subsigs), (0, 0, 0));
+		assert_eq!((h.prod_pats_expansion_igc, h.qm_real_rows_igc),
+			(0, 0));
+	}
+
+	/// M103: lone-file corpora shrink to a ceil(perc%) byte prefix
+	/// under <pd>/sample/; multi-file and perc>=100 pass through.
+	#[test]
+	fn test_m103_shrink_lone_sample() {
+		let td = fresh_tmp_dir("shrink");
+		let pd = td.to_str().unwrap();
+		let f1 = td.join("s1.bin");
+		fs::write(&f1, vec![7u8; 1000]).unwrap();
+		let one = vec![vec![f1.to_str().unwrap().to_string()]];
+		let f2 = td.join("s2.bin");
+		fs::write(&f2, b"xy").unwrap();
+		let two = vec![one[0].clone(),
+			vec![f2.to_str().unwrap().to_string()]];
+		// identity: 2 files, and 1 file at perc >= 100.
+		assert_eq!(shrink_lone_sample(pd, two.clone(), 2.0), two);
+		assert_eq!(shrink_lone_sample(pd, one.clone(), 100.0), one);
+		// shrink: 2% of 1000 -> 20 bytes, a prefix, under pd/sample/.
+		let out = shrink_lone_sample(pd, one.clone(), 2.0);
+		let p = &out[0][0];
+		assert!(p.starts_with(pd) && p.contains("/sample/")
+			&& p.ends_with("s1.bin"), "bad shrunk path {}", p);
+		assert_eq!(fs::read(p).unwrap(), vec![7u8; 20]);
+		// floor of 1 byte, and ceil (0.15% of 1000 = 1.5 -> 2).
+		let o2 = shrink_lone_sample(pd, one.clone(), 0.001);
+		assert_eq!(fs::read(&o2[0][0]).unwrap().len(), 1);
+		let o3 = shrink_lone_sample(pd, one, 0.15);
+		assert_eq!(fs::read(&o3[0][0]).unwrap().len(), 2);
+	}
+
+	/// M103: full_dna parses through the shared parse_full8, and the
+	/// refactored full_dlp arm did not drift.
+	#[test]
+	fn test_m103_parse_full_dna() {
+		let a = |v: &[&str]| v.iter().map(|s| s.to_string())
+			.collect::<Vec<String>>();
+		assert_eq!(parse_args(&a(&["full_dna", "1", "2", "1", "1",
+			"1", "0", "1", "0"])),
+			Cmd::FullDna { perc_db: 1.0, perc_samples: 2.0,
+				num_circs: 1, num_jobs: 1, numa_num: 1, part_id: 0,
+				b_light_test: true, b_ladder_only: false });
+		assert_eq!(parse_args(&a(&["full_dlp", "0.25", "0.0198",
+			"2", "2", "1", "0", "1", "0"])),
+			Cmd::FullDlp { perc_db: 0.25, perc_samples: 0.0198,
+				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
+				b_light_test: true, b_ladder_only: false });
+	}
+
+	/// M103: full_dna arity reject goes through the shared helper.
+	#[test]
+	#[should_panic(expected = "full_dna takes 8 args")]
+	fn test_m103_parse_full_dna_arity() {
+		let v: Vec<String> = ["full_dna", "1", "2"].iter()
+			.map(|s| s.to_string()).collect();
+		parse_args(&v);
+	}
+
+	/// M103 kernel: FIRST real execution of tune's non-aggr arm --
+	/// thinned real DNA DB + a shrink_lone_sample'd chr17 prefix.
+	/// Structure asserts only; rung values belong to the tuner.
+	#[test]
+	fn test_m103_build_and_tune_tiny_dna() {
+		let _g = cfg_lock();
+		let proot = utils::os::proj_root();
+		// redirected clone: never touch the live dna_neo dirs.
+		let mut spec = DNA.clone();
+		spec.name = "dna_test";          // /tmp/bora/dna_test_neo_p0
+		spec.db_cache_dir = "dna_test_neo";
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
+		let _t2 = TmpConfigDir(PathBuf::from(format!(
+			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
+		apply_spec_config(&spec, true, &part_role(0, 1, 1));
+		// lone-sample corpus at 0.05% -> ~21KB -> a single chunk.
+		let pd = plan_dir(spec.name, 0);
+		fs::create_dir_all(&pd).unwrap();
+		let bins = shrink_lone_sample(&pd,
+			plan_corpus(&spec, 100.0, 1), 0.05);
+		assert!(bins[0][0].contains("/sample/"), "shrink must fire");
+		// build_and_tune thins the 27,501-sig config to 64 itself.
+		let caps = build_and_tune(&spec, 64, &bins, 1, 0);
+		assert_eq!(caps.len(), 1, "non-aggr = single rung");
+		let p = &caps[0];
+		assert_eq!(p.max_word_len, spec.chunk_len);
+		assert_eq!(p.acdfa_state_part_bits, spec.range2_bit);
+		assert!(p.qm_real_rows >= 2,
+			"converged qm, not the dense-fallback 0 (T604)");
+		let c = read_global_config();
+		// tune wrote the non-aggr ladder floors from the converged
+		// caps, and pinned the check-off share at 1.
+		assert_eq!(c.min_subsigs, p.subsigs);
+		assert_eq!(c.min_subsigs_igc, p.subsigs_igc);
+		assert!(c.min_cp_subsigs >= 1);
+		assert_eq!(c.perc_lkup_share, 1);
+		assert!(c.b_pin_lkup_share, "tune must pin its share");
+	}
+
+	/// M103: numeric byte-offset prefixes are compared in nibbles
+	/// (2x) against the bound; prefix-less lines always fit.
+	#[test]
+	fn test_m103_sig_fits_range() {
+		let pin = "Win.Alphabet;Engine:51-255,Target:1;0|1;09af;0123";
+		assert!(sig_fits_range(pin, 100));       // no prefix
+		let s = "N.x;Engine:81-255,Target:0;0;50:abcd";
+		assert!(sig_fits_range(s, 101));         // 2*50 < 101
+		assert!(!sig_fits_range(s, 100));        // 2*50 !< 100
+		let two = "N.y;E;0&1;10:aa;60:bb";       // worst subsig rules
+		assert!(sig_fits_range(two, 121));
+		assert!(!sig_fits_range(two, 120));
+		// hex-looking pattern WITHOUT ':' is not an offset.
+		assert!(sig_fits_range("N.z;E;0;1234", 1));
+		// non-numeric prefix (EOF-40:) is kept.
+		assert!(sig_fits_range("N.w;E;0;EOF-40:aa", 1));
+	}
+
+	/// M103: light swaps in dry_range2_bit (DNA 27->22) AND
+	/// dry_chunk_len (4096->256); heavy and specs without the
+	/// fields keep the REAL shape.
+	#[test]
+	fn test_m103_effective_spec_dry_shape() {
+		assert_eq!(DNA.dry_range2_bit, Some(22));
+		assert_eq!(DNA.dry_chunk_len, Some(256));
+		assert_eq!(DLP.dry_range2_bit, None);
+		assert_eq!(DLP.dry_chunk_len, None);
+		let d = effective_spec(&DNA, true);
+		assert_eq!((d.range2_bit, d.chunk_len), (22, 256));
+		let h = effective_spec(&DNA, false);
+		assert_eq!((h.range2_bit, h.chunk_len), (27, 4096),
+			"full run must keep the REAL shape");
+		let dl = effective_spec(&DLP, true);
+		assert_eq!((dl.range2_bit, dl.chunk_len), (25, 64));
+		let dh = effective_spec(&DLP, false);
+		assert_eq!((dh.range2_bit, dh.chunk_len), (25, 64));
+	}
+
+	/// M103: bounded thinning of the REAL DNA config keeps only
+	/// in-range sigs (pool ~830 at 2^22) with the pin at line 0.
+	#[test]
+	fn test_m103_smaller_config_offset_filter() {
+		let proot = utils::os::proj_root();
+		let src = format!("{}/{}", proot, DNA.config_dir);
+		let td = fresh_tmp_dir("offfilter");
+		let bound = (1usize << 22) - DNA.chunk_len * 62;
+		let out = create_smaller_config_bounded(&src, DNA.sig_file,
+			usize::MAX, td.to_str().unwrap(), bound);
+		let kept = read_lines_nonblank(&out);
+		assert!(kept[0].starts_with("Win.Alphabet"), "pin survives");
+		assert!(kept.len() >= 276 && kept.len() < 2000,
+			"in-range pool {} outside expected band", kept.len());
+		for l in &kept {
+			assert!(sig_fits_range(l, bound));
+		}
+		// the dfa file's sole entry is a FULL SIG LINE; clam_db
+		// matches dfa entries by NAME (clam_db.rs:2135), so it is
+		// inert even in legacy full_dna (hand caps: dfa_sigs=0) and
+		// the name-keyed needs filter drops it -- 0 entries thinned,
+		// behaviorally identical to legacy.
+		let dfa = read_lines_nonblank(&format!("{}/main_dfa.dat",
+			td.to_str().unwrap()));
+		assert_eq!(dfa.len(), 0);
 	}
 }
