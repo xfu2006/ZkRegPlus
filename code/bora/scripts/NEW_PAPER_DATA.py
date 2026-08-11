@@ -1166,7 +1166,7 @@ TOP_CHOICES = [
 
 LEAF_CHOICES = [
     ("dlp", "DLP"),
-    ("dna", "Dna"),
+    ("dna", "Dna [dry ~7min, ~22GB]"),
     ("clam", "Clamav"),
     ("zombie", "Zombie [dry ~1-2min, ~23GB]"),
     ("reef", "Reef"),
