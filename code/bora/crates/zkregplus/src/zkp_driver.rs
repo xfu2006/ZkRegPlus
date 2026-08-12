@@ -218,6 +218,17 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 }
 
 
+/// The per-job word length that drives lkup COVERAGE: the SMALLEST
+/// non-empty job. Pass 1 accumulates per job (driver.rs:2014) but
+/// asserts against the whole table, so the fewest-step job binds.
+pub(crate) fn cover_word_n(job_word_lens: &[usize])->usize{
+	//job_word_lens: each job's summed packed word length, one entry per
+	//job, in load order. Empty jobs are EXCLUDED: they dispatch no step,
+	//so a 0 here would drive chunks to 1 and the share to ~lkup_len,
+	//blowing up RAM for a job that covers nothing anyway.
+	job_word_lens.iter().copied().filter(|n| *n > 0).min().unwrap_or(0)
+}
+
 /// NewP3.6 T1: the lkup share percent required by the distributed-lookup
 /// guard (zkp_driver.rs:274, foldpot driver.rs:1556). A back-solve of the
 /// existing check, not a probe -- no circuit or statement is built.
@@ -258,12 +269,12 @@ pub(crate) fn perc_lkup_share_for(lkup_len: usize, chunk_len: usize,
 #[allow(dead_code)]
 pub(crate) fn build_circs_adv<F,C,CS>(
 	poseidon_config: &PoseidonConfig<F>,
-	total_word_n: usize, //sum of word length, each word is packed,
-						//e.g., every 62 nibbles count as 1 in length (packed)
-						//e.g., two words each 124 bytes means total_word_n
-						// is 8 because each word has 248 nibbles, and
-						// they are packed into 4 Fr each (containing 62 
-						// nibbles)
+	cover_word_n: usize, //ONE JOB's summed packed word length -- the
+						//SMALLEST job's, since it alone must tile the
+						//lkup table (see cover_word_n()). Used here for
+						//nothing but the lkup-share guard below.
+						//Packed: every 62 nibbles count as 1, so two
+						//words of 124 bytes give 8.
 	chunk_len: usize, //it's also counted in packed length (62 nibbles per
 					  //1 char in word).
 					  //e.g., given LEGS = 62 for bn254, it means 
@@ -298,9 +309,12 @@ where C: CurveGroup<ScalarField=F>,
 	//the lkup size. if b_check_lkup is true, we make sure that it's large
 	//enough (and later in circuit, it WILL perform the check in circ,
 	//if malicious prover fake here, it will fail the circ eventually).
-	let max_nibble_len = chunk_len * LEGS; //31 nibbles per 
-	let total_nibbles = total_word_n * LEGS;
-	let chunks = total_nibbles/max_nibble_len;
+	let max_nibble_len = chunk_len * LEGS; //31 nibbles per
+	let total_nibbles = cover_word_n * LEGS;
+	//.max(1) mirrors perc_lkup_share_for: a job shorter than one chunk
+	//still dispatches a step, and chunks=0 would panic below on a config
+	//that is actually satisfiable.
+	let chunks = (total_nibbles/max_nibble_len).max(1);
 	let lk_share = read_global_config().perc_lkup_share* max_nibble_len/100;
 	let lk_share = if lk_share == 0 {1} else {lk_share};
 	if b_check_lkup && lk_share*chunks < lkup_len{
@@ -405,7 +419,9 @@ where C: CurveGroup<ScalarField=F>,
 /// no decreased_copy. There is no DFA gadget in aggressive mode.
 pub(crate) fn build_circs_adv_aggr<F,C,CS>(
 	poseidon_config: &PoseidonConfig<F>,
-	total_word_n: usize,
+	cover_word_n: usize, //ONE JOB's summed packed word length -- the
+						//SMALLEST job's; it alone must tile the lkup
+						//table. Used for nothing but the guard below.
 	chunk_len: usize,
 	lkup_len: usize,
 	db: Arc<ClamavDB<F>>,
@@ -418,8 +434,8 @@ where C: CurveGroup<ScalarField=F>,
 {
 	//1. lkup share (identical to build_circs_adv)
 	let max_nibble_len = chunk_len * LEGS;
-	let total_nibbles = total_word_n * LEGS;
-	let chunks = total_nibbles/max_nibble_len;
+	let total_nibbles = cover_word_n * LEGS;
+	let chunks = (total_nibbles/max_nibble_len).max(1);
 	let lk_share = read_global_config().perc_lkup_share* max_nibble_len/100;
 	let lk_share = if lk_share == 0 {1} else {lk_share};
 	if b_check_lkup && lk_share*chunks < lkup_len{
@@ -1645,6 +1661,10 @@ where
 	
 	//2. load the files as vec of words
 	let mut max_total_word_len = 0;
+	//one entry per job: that job's summed packed word length. MAX sizes
+	//capacity (it must fit the biggest job), MIN sizes the lkup share
+	//(coverage is achieved by the fewest-step job). See cover_word_n.
+	let mut job_word_lens: Vec<usize> = vec![];
 	let mut jobs = vec![];
 	for list_file_to_scan in list_files_to_scan{
 		let (vec_words, vec_word_info, vec_word_fnames, _vdata) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
@@ -1652,6 +1672,7 @@ where
 		if total_word_len > max_total_word_len{
 			max_total_word_len = total_word_len;
 		}
+		job_word_lens.push(total_word_len);
 		jobs.push(FoldPotJob{
 			vec_words,
 			vec_word_info,
@@ -1668,9 +1689,13 @@ where
 	// NewP3.6 T1: derive the share from the guard instead of the caller's
 	// literal. Non-aggr never hits the aggr-neo dummy self-cover, so this
 	// term is the whole requirement on this arm.
+	// Sized off the SMALLEST job, not the largest: Pass 1 accumulates the
+	// share per job and asserts against the whole table, so the fewest-
+	// step job binds. Sizing off max let every smaller job come up short.
+	let cover_n = cover_word_n(&job_word_lens);
 	if !read_global_config().b_pin_lkup_share {
 		let perc = perc_lkup_share_for(lkup_len, chunk_len,
-			max_total_word_len, b_check_lkup);
+			cover_n, b_check_lkup);
 		let old = read_global_config().perc_lkup_share;
 		log(0, log_level, &format!("T1 lkup share: perc {} -> {}",
 			old, perc));
@@ -1825,7 +1850,7 @@ where
 
 	let vec_circs = build_circs_adv::<CF1<C1>,C1,CS1>(
 		&poseidon_config,
-		max_total_word_len,
+		cover_n, //lkup-coverage word len (min job), NOT the capacity max
 		chunk_len,
 		lkup_len,
 		rc_db,
@@ -2030,6 +2055,10 @@ where
 
 	//2. load the files as vec of words
 	let mut max_total_word_len = 0;
+	//one entry per job: that job's summed packed word length. MAX sizes
+	//capacity (it must fit the biggest job), MIN sizes the lkup share
+	//(coverage is achieved by the fewest-step job). See cover_word_n.
+	let mut job_word_lens: Vec<usize> = vec![];
 	let mut jobs = vec![];
 	let mut all_vdata: Vec<FailDischargeRecord> = vec![];
 	for list_file_to_scan in list_files_to_scan{
@@ -2038,6 +2067,7 @@ where
 		if total_word_len > max_total_word_len{
 			max_total_word_len = total_word_len;
 		}
+		job_word_lens.push(total_word_len);
 		all_vdata.extend(vdata);
 		jobs.push(FoldPotJob{
 			vec_words,
@@ -2054,9 +2084,13 @@ where
 	// NewP3.6 T1: derive the share from the guard instead of the caller's
 	// literal. aggr-neo's dummy self-cover is not predictable here; it
 	// reports itself as a CapErr and the retry loop bumps it exactly once.
+	// Sized off the SMALLEST job, not the largest: Pass 1 accumulates the
+	// share per job and asserts against the whole table, so the fewest-
+	// step job binds. Sizing off max let every smaller job come up short.
+	let cover_n = cover_word_n(&job_word_lens);
 	if !read_global_config().b_pin_lkup_share {
 		let perc = perc_lkup_share_for(lkup_len, chunk_len,
-			max_total_word_len, b_check_lkup);
+			cover_n, b_check_lkup);
 		let old = read_global_config().perc_lkup_share;
 		log(0, log_level, &format!("T1 lkup share: perc {} -> {}",
 			old, perc));
@@ -2144,7 +2178,7 @@ where
 		None => {
 			let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
 				&poseidon_config,
-				max_total_word_len,
+				cover_n, //lkup-coverage word len (min job), NOT cap max
 				chunk_len,
 				lkup_len,
 				rc_db,

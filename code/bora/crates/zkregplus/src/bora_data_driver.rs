@@ -2549,6 +2549,58 @@ pub mod tests_bora_data_driver {
 		}
 	}
 
+	/// cover_word_n picks the SMALLEST non-empty job: coverage is
+	/// achieved per job, so the fewest-step job binds the share.
+	#[test]
+	fn test_cover_word_n_picks_min_nonempty() {
+		use crate::zkp_driver::cover_word_n;
+		// single job: min == max, so single-job sizing is unchanged.
+		assert_eq!(cover_word_n(&[309]), 309, "single job is identity");
+		// uneven split: the small job binds, not the big one.
+		assert_eq!(cover_word_n(&[309, 60, 120, 240]), 60);
+		assert_eq!(cover_word_n(&[60, 309]), cover_word_n(&[309, 60]),
+			"order must not matter");
+		// an EMPTY job dispatches no step; counting its 0 would drive
+		// chunks to 1 and the share to ~lkup_len (a RAM blowup).
+		assert_eq!(cover_word_n(&[0, 309, 60]), 60, "skip empty jobs");
+		assert_eq!(cover_word_n(&[0, 0]), 0, "all empty -> 0");
+		assert_eq!(cover_word_n(&[]), 0, "no jobs -> 0");
+	}
+
+	/// small_data_par's MEASURED numbers: sizing off the max job (309)
+	/// under-covers the min job (28); sizing off the min covers it.
+	#[test]
+	fn test_lkup_share_min_covers_small_data_par() {
+		for k in ["ZKR_LKSHARE", "ZKR_CLAM_LKUP_SHARE"] {
+			assert!(std::env::var(k).is_err(),
+				"unset {} before running this test", k);
+		}
+		use crate::zkp_driver::perc_lkup_share_for;
+		let (lkup_len, chunk_len, mnl) = (271_354usize, 1usize, 62usize);
+		// 28 = the SMALLEST job's packed word length, read from a real
+		// run (T1 log line "perc 1 -> 15633"). NOT derivable from the
+		// assert's "total:" number, which is whichever of the 4 parallel
+		// jobs panics first and is therefore non-deterministic.
+		let cover_n = 28usize;
+		// OLD: sized off the LARGEST job (309).
+		let perc_max = perc_lkup_share_for(lkup_len, chunk_len, 309, true);
+		assert_eq!(perc_max, 1418, "the shipped-but-wrong share");
+		let share_max = perc_max * mnl / 100;
+		assert_eq!(share_max, 879);
+		assert!(share_max * cover_n < lkup_len,
+			"max-sizing must UNDER-cover: {} < {}",
+			share_max * cover_n, lkup_len);
+		// NEW: sized off the SMALLEST job.
+		let perc_min = perc_lkup_share_for(lkup_len, chunk_len,
+			cover_n, true);
+		assert_eq!(perc_min, 15633);
+		let share_min = perc_min * mnl / 100;
+		assert_eq!(share_min, 9692);
+		assert!(share_min * cover_n >= lkup_len,
+			"min-sizing must cover: {} >= {}",
+			share_min * cover_n, lkup_len);
+	}
+
 	// C102: every argument assert fires BEFORE any process-wide
 	// write, so none of these five need cfg_lock.
 

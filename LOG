@@ -30990,8 +30990,33 @@ Wed 08/12/2026
 Goal 1. continue to fix soundness err
 	[a] S101 solved
 	[b] fix determine lkup sahre
-	[c]
+	[c] P4 completed
+	[d] rebuild list.
 Goal 2. continue to improve full-run script
+	[a] fixed all B1-B5
+	[b] check out the remaining issues.
+	[c] create remaining issues.
+Goal 3. writing
+	[a] open sicence doc
+	[b] ethics
+	[c] ai disclosure
+	[d] update task list.
+	[e] registration done.
+Goal 4. next soundness issue S119: verify z_i[1] constraints 
+	stisfiable
+	[a] design
+	[b] test
+	[c] done.
+---
+Goal 5. Fix download issue for CentOS: T910
+	[a] develop a plan
+	[b] execute the plan
+	[c]
+Goal 6. T9901  
+	[a] problem: make sure lower ring has
+		low configs
+	[b] 
+Goal 7. 
 
 
 

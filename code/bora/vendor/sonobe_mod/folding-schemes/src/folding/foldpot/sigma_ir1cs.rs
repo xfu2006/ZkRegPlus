@@ -4177,10 +4177,15 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 
-		//6. Check the validity of word_id and subseg_id
-		// NOTE: the first and the last zi_part2 will be checked
-		// in the decider_circuit. Here's we are just checking
-		// the connection points between words
+		//6. Check the validity of word_id and subseg_id.
+		// The FIRST and LAST zi_part2 are pinned in the decider: S105b
+		// pins z_0[1] to the canonical initial state, and the S106
+		// terminality pin enforces word_id == total_words, subseg_id ==
+		// total_word_segs and word_id != 0 on the last one. NEITHER
+		// binds total_words to a verifier-known count -- that still
+		// needs it as a real public input (decider:918-921).
+		// Here we constrain both step-to-step cases: the word BOUNDARY
+		// (b_last_full) and, per S106b, the mid-word CONTINUATION.
 		let b_last_full = zi_part2.accumulated_word_len.is_eq(
 			&zi_part2.total_word_len)?; //last subseg is full
 		assert_imply(&b_last_full, &si.word_id.is_eq(
@@ -4942,6 +4947,15 @@ pub mod tests_sigma_ir1cs{
 			let ctr= prev_stmt.as_ref().map_or(zero, |stmt| {
 				stmt.oup_buf[0] 
 			});
+			//NOTE: to_add keys off the REAL subtable of n, but
+			//CounterIOGadget reads the subtable_id slot for
+			//word_subseg -- and StatementConfig sizes that block as
+			//inp+oup+data only, so word_subseg HAS no slot and the
+			//gadget always sees 0. The two disagree for n = 64, the
+			//one word of the five living in subtable 2, so folding
+			//>= 2 steps trips assert_msg3. Callers that fold (rather
+			//than drive steps directly) must zero the counter first;
+			//see s119_fold in decider_eth_circuit_super.rs.
 			let to_add = if croot_val>0 && tbl_id==zero {zero} else {one};
 			let new_ctr = to_add + ctr;
 			let pc_i = zero; //current circ

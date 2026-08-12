@@ -2373,5 +2373,246 @@ pub mod tests_decider_eth_circuit_super {
         assert!(cs.is_satisfied().unwrap());
     }
 
+	// ---------------------------------------------------------------
+	// S119: the two shipped decider-side pins CONSTRAIN, not merely
+	// EXECUTE. Both sit ABOVE the `if !b_light_test` gate in gen_cs,
+	// so light mode (the default) covers them while NIFS.V stays gated
+	// out -- no proving, no Phase 2, no CyclePairCircuit.
+	//
+	// Emission order inside generate_constraints_adv:
+	//   step 5   u_i.x[0] == H(.., z_0, z_i, ..)  <- reads z_0 AND z_i
+	//   step 6   zi_p2 == z_i[1]                  <- the digest carry
+	//            S106 terminality pin
+	//            S105b z_0 pin
+	// Every arm below edits WITNESS VALUES only, so all four systems
+	// are shape-identical and the first-unsatisfied INDEX names the
+	// same constraint across them. That index is what LOCALISES a
+	// rejection: an arm that merely goes UNSAT proves nothing, because
+	// a naive edit breaks step 5 or the digest carry first, upstream
+	// of the pin it means to test.
+	// ---------------------------------------------------------------
+	use crate::commitment::{kzg::KZG, pedersen::Pedersen};
+	use crate::transcript::poseidon::poseidon_canonical_config;
+	use crate::FoldingScheme; //preprocess() / prove_step() live here
+	use crate::folding::foldpot::{
+		mod_super::PreprocessorParamFoldPotSuper,
+		sigma_ir1cs::{
+			LookupTableTwoCol_Inst,
+			tests_sigma_ir1cs::{gen_six_root, SixRootMapper},
+		},
+	};
+	use ark_bn254::{Bn254, G2Projective as ProjectiveG2,
+		constraints::{GVar, PairingVar as Bn254PairingVar}};
+	use ark_grumpkin::{constraints::GVar as GVar2,
+		Projective as Projective2};
+
+	type S119Lk = LookupTableTwoCol_Inst<Fr>;
+	type S119Cm = KZG<'static, Bn254>;
+	type S119Cm2 = Pedersen<Projective2>;
+	type S119Gm = SixRootMapper<Fr, S119Lk>;
+	type S119Fc = SigmaIR1CS_Inst<Fr, Projective, S119Cm, S119Lk,
+		S119Gm, false>;
+	type S119Nova = FoldPotSuper<Bn254, Bn254PairingVar, ProjectiveG2,
+		Projective, GVar, Projective2, GVar2, S119Fc, S119Cm, S119Cm2,
+		S119Cm, S119Lk, S119Gm, false>;
+	type S119Circ = Phase1Circuit<Bn254, Bn254PairingVar, ProjectiveG2,
+		Projective, GVar, Projective2, GVar2, S119Cm, S119Cm2,
+		S119Cm, S119Lk, S119Gm, false>;
+
+	/// Fold the six_root toy n_steps and return the Phase 1 decider
+	/// circuit built from it, mirroring driver.rs foldpot_main step 5.
+	fn s119_fold(n_steps: usize) -> S119Circ{
+		let mut rng = ark_std::test_rng();
+		let cfg = poseidon_canonical_config::<Fr>();
+		let b_full = false;
+		let (lk, f_circ, mut vec_stmt) =
+			gen_six_root::<Fr, Projective, S119Cm, S119Lk, false>(
+				n_steps);
+		//the toy's counter is inconsistent with what CounterIOGadget
+		//can read (see build_statement's NOTE): for n = 64 the
+		//statement claims oup = inp + 1 while the gadget adds 0, so
+		//assert_msg3 kills any fold of >= 2 steps. Zero the counter
+		//to make the two agree. This is local to S119 -- the shared
+		//fixture is untouched, so the S106 tests keep their exact
+		//statements -- and it costs nothing here: S119 exercises the
+		//DECIDER pins, not the toy's I/O increment. The carry itself
+		//(inp == previous oup) is still exercised, at 0.
+		for st in vec_stmt.iter_mut(){
+			st.inp_buf[0] = Fr::zero();
+			st.oup_buf[0] = Fr::zero();
+		}
+		let prep = PreprocessorParamFoldPotSuper::<Projective,
+			Projective2, S119Fc, S119Cm, S119Cm2, S119Lk, S119Gm,
+			false>::new(cfg.clone(), vec![f_circ.clone()], lk,
+				vec![f_circ.get_size_f()], b_full);
+		let params = S119Nova::preprocess(&mut rng, &prep, 0)
+			.expect("preprocess err");
+		let fq_bits = <<Projective as CurveGroup>::BaseField
+			as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
+
+		//PASS 1: the cmF hash chain. n_words MUST be the value also
+		//passed to init_adv -- init_adv rebuilds z_0 canonically and
+		//asserts the two agree (mod_super.rs init_adv step 1).
+		//n_words = n_steps is the faithful seed here: total_words is a
+		//PURE CARRY from z_0 (sigma_ir1cs.rs "S106: total_words is now
+		//a PURE CARRY") and the toy's statements run word_id
+		//1..n_steps, so any smaller seed leaves the last step
+		//non-terminal.
+		let zero = Fr::zero();
+		let z0_p2 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, b_full,
+			fq_bits, n_steps);
+		let z_0 = vec![zero, z0_p2.hash(&cfg)];
+		let nova0 = S119Nova::init_adv(&params, vec![f_circ.clone()],
+			z_0, 1, 0, b_full, zero, zero, n_steps, None, 0)
+			.expect("init_adv pass1 err");
+		let mut hash_cmf = zero;
+		for i in 0..n_steps{
+			(hash_cmf, _) = nova0.compute_step_hc_cmF(hash_cmf,
+				&vec_stmt[i]).expect("hc_cmF err");
+		}
+		drop(nova0);
+
+		//PASS 2: the real IVC, seeded with ch = hash_cmf.
+		let z0_p2 = ZiPartTwoInst::<Fr>::new(hash_cmf, zero, &cfg,
+			b_full, fq_bits, n_steps);
+		let z_0 = vec![hash_cmf, z0_p2.hash(&cfg)];
+		let mut nova = S119Nova::init_adv(&params,
+			vec![f_circ.clone()], z_0, 1, 0, b_full, hash_cmf, zero,
+			n_steps, None, 0).expect("init_adv pass2 err");
+		for j in 0..n_steps{
+			nova.prove_step(&mut rng, vec_stmt[j].to_vec(), None)
+				.expect("prove_step err");
+		}
+		assert_eq!(Fr::from(n_steps as u32), nova.i);
+
+		//driver.rs step 5: com_all_w / r_all_w over the folded witness.
+		let (u_i1, w_i1, _r, _cmt) = nova.gen_next_folded()
+			.expect("gen_next_folded err");
+		let (com_all_w, _qa, r_all_w, _kzg, _ch) = w_i1
+			.gen_com_all_w_and_qa_nizk_prf::<Bn254, S119Cm, false>(
+				params.0.qa_pp.as_ref().expect("qa_pp null"),
+				&params.0.cs1e_pp,
+				params.1.qa_vp.as_ref().expect("qa_vp null"),
+				&u_i1, &cfg);
+		S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
+			.expect("from_nova err")
+	}
+
+	/// Synthesize one arm on a fresh CS. Returns (num_constraints,
+	/// index of the FIRST unsatisfied constraint, None when SAT).
+	fn s119_synth(circ: &S119Circ) -> (usize, Option<usize>){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		circ.generate_constraints_adv(0, cs.clone(), Fr::zero())
+			.expect("gen_cs err");
+		//no ConstraintLayer is installed here, so which_is_unsatisfied
+		//hands back the bare constraint index as a string (see the
+		//map_or_else default in ark-relations constraint_system.rs).
+		let idx = cs.which_is_unsatisfied().expect("unsat query err")
+			.map(|s| s.parse::<usize>().expect("want a bare index"));
+		(cs.num_constraints(), idx)
+	}
+
+	/// Repoint u_i.x[0] at the circuit's CURRENT z_0/z_i so a state
+	/// edit does not die at step 5's hash before reaching the pins.
+	/// u_i is a decider witness, so a prover can make this same move.
+	fn s119_rehash_u_i(circ: &mut S119Circ){
+		let sponge = PoseidonSponge::<Fr>::new(&circ.poseidon_config);
+		let x0 = circ.U_i.as_ref().expect("U_i null").hash(
+			&sponge,
+			circ.pp_hash.expect("pp_hash null"),
+			circ.i.expect("i null"),
+			circ.pc_i,
+			circ.z_0.clone().expect("z_0 null"),
+			circ.z_i.clone().expect("z_i null"));
+		let mut u_i = circ.u_i.clone().expect("u_i null");
+		u_i.x[0] = x0;
+		circ.u_i = Some(u_i);
+	}
+
+	/// S119: the honest Phase 1 statement is SAT, and each shipped pin
+	/// rejects its own witness-consistent corruption at its own index.
+	#[test]
+	fn test_s119_decider_pins_constrain(){
+		let n_steps = 5;
+		let mut circ = s119_fold(n_steps);
+		let cfg = circ.poseidon_config.clone();
+		let zi_ok = circ.zi_part2_inst.clone().expect("zi null");
+		let z_i_ok = circ.z_i.clone().expect("z_i null");
+		let z_0_ok = circ.z_0.clone().expect("z_0 null");
+		let u_i_ok = circ.u_i.clone().expect("u_i null");
+
+		//ARM 0 -- the honest fold. If this is not SAT then every UNSAT
+		//below is uninterpretable, so it is asserted first.
+		//ARM 0 -- the honest fold. Everything up to and including
+		//both pins (gen_cs steps 1-6) must be clean. The toy's folded
+		//relation still has ONE unsatisfied row of its own, surfacing
+		//in step 7's RelaxedR1CS check: circuits_super.rs step 9's
+		//base-case `x` public input. That defect predates this test
+		//and is independent of the pins -- arming or disarming b_last
+		//does not move it. So the control is stated as "the honest
+		//failure lies DOWNSTREAM of every pin rejection below", and
+		//is checked in the bracket at the end. No magic index.
+		assert!(zi_ok.word_id == zi_ok.total_words,
+			"toy did not end terminal: word_id {} total_words {}",
+			zi_ok.word_id, zi_ok.total_words);
+		let (n0, i0) = s119_synth(&circ);
+		let i_honest = i0.expect("honest arm is now fully SAT -- the \
+			pre-existing step-7 defect is gone, so tighten this \
+			control back to asserting None");
+
+		//ARM 1 -- control for the false positive this test exists to
+		//rule out: word_id edited alone, z_i[1] left stale. This MUST
+		//die at the digest carry, upstream of the terminality pin.
+		let mut zi_bad = zi_ok.clone();
+		zi_bad.word_id = zi_ok.word_id - Fr::one();
+		circ.zi_part2_inst = Some(zi_bad.clone());
+		let (n1, i1) = s119_synth(&circ);
+		let i_digest = i1.expect("a stale z_i[1] was ACCEPTED");
+
+		//ARM 2 -- the same non-terminal final state, now carried
+		//consistently: z_i[1] rehashed and u_i.x[0] repointed. All
+		//three are decider witnesses (gen_cs step 2), so this is what
+		//a prover can actually present. Only the S106 pin is left to
+		//reject it.
+		let mut z_i_bad = z_i_ok.clone();
+		z_i_bad[1] = zi_bad.hash(&cfg);
+		circ.z_i = Some(z_i_bad);
+		s119_rehash_u_i(&mut circ);
+		let (n2, i2) = s119_synth(&circ);
+		let i_term = i2.expect(
+			"NON-TERMINAL final state ACCEPTED -- S106 pin is inert");
+
+		//ARM 3 -- honest state restored, z_0[1] moved off the
+		//canonical initial state, u_i.x[0] repointed to match. Only
+		//the S105b pin reads z_0[1] past step 5.
+		circ.zi_part2_inst = Some(zi_ok);
+		circ.z_i = Some(z_i_ok);
+		circ.u_i = Some(u_i_ok);
+		let mut z_0_bad = z_0_ok.clone();
+		z_0_bad[1] += Fr::one();
+		circ.z_0 = Some(z_0_bad);
+		s119_rehash_u_i(&mut circ);
+		let (n3, i3) = s119_synth(&circ);
+		let i_z0 = i3.expect(
+			"MIS-SEEDED z_0 ACCEPTED -- S105b pin is inert");
+
+		//shape identity: the arms differ in witness VALUES only, so
+		//the indices above name constraints of one and the same
+		//system and are comparable.
+		assert!(n0==n1 && n1==n2 && n2==n3,
+			"arms are not shape-identical: {} {} {} {}",
+			n0, n1, n2, n3);
+		//the bracket. Between the digest carry and the z_0 pin the
+		//only constraints gen_cs emits are the three terminality
+		//equalities, so i_term lands on one of those and nowhere
+		//else. i_z0 < i_honest is the ARM 0 control: every pin
+		//rejection above fires strictly upstream of the toy's own
+		//pre-existing failure, so the pin block is clean when honest.
+		assert!(i_digest < i_term && i_term < i_z0
+			&& i_z0 < i_honest,
+			"rejection not localised: digest {} term {} z0 {} \
+			 honest {}", i_digest, i_term, i_z0, i_honest);
+	}
+
 }
 
