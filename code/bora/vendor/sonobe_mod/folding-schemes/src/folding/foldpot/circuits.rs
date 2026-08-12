@@ -222,6 +222,17 @@ where
 		}
 		self.u.enforce_equal(&other.u)?;
 		self.x.enforce_equal(&other.x)?;
+		//S126: the three commitments must be ENFORCED, not asserted.
+		//The asserts above are native and B_DEBUG is false
+		//(utils.rs:45), so without these rows the ~7.2M-constraint
+		//point fold that decider step 8 just computed is DISCARDED and
+		//any U_i1 commitment passes. Sole caller is
+		//decider_eth_circuit_super.rs:1103, so this tightens step 8
+		//only. Depends on nonnative_group.rs add() 2.6/2.7 actually
+		//constraining x3/y3 -- see the S126 note there.
+		self.cmE.enforce_equal(&other.cmE)?;
+		self.cmW.enforce_equal(&other.cmW)?;
+		self.cmF.enforce_equal(&other.cmF)?;
 		Ok( () )
 	}
 

@@ -509,16 +509,31 @@ where CF2<C>: PrimeField,
 		let sum1 = x3_var.add_no_align(&x1_var).add_no_align(&x2_var)
 			.mul_no_align(&lambda_inv_var)?;
 		let b1 = sum1.is_congruent::<CF3<C>>(&lambda_var)?;
-		let _b2 = b1.or(&b_same_var)?; //if b same var skip the test
-		if B_DEBUG {if _b2.value().is_ok(){assert!(b2.value().unwrap());}}
+		//S126: this row was computed into `_b2` and then DROPPED, so
+		//x3/y3 were free witnesses in every point add and the step-8
+		//fold constrained nothing. No b_same waiver is needed: all
+		//three honest zero cases satisfy this row (every term is 0 for
+		//0+0, and the x1+x2 sum cancels for the two one-sided cases),
+		//and 2.5's waiver is bounded by the guard below.
+		b1.enforce_equal(&Boolean::<CF1<C>>::TRUE)?;
+		if B_DEBUG {if b1.value().is_ok(){assert!(b1.value().unwrap());}}
 
 		//2.7 enforce y3 = lambda * (x1- x3) - y1
 		// as (y3 + y1) * 1/lbamda + x3 = x1
 		let sum2 = y3_var.add_no_align(&y1_var).mul_no_align(&lambda_inv_var)?
 			.add_no_align(&x3_var);
 		let b1 = sum2.is_congruent::<CF3<C>>(&x1_var)?;
-		let _b2 = b1.or(&b_same_var)?; //if b same var skip the test
-		if B_DEBUG { if _b2.value().is_ok(){assert!(b2.value().unwrap());}}
+		//S126: same drop as 2.6 above. Enforced, no waiver.
+		b1.enforce_equal(&Boolean::<CF1<C>>::TRUE)?;
+		if B_DEBUG { if b1.value().is_ok(){assert!(b1.value().unwrap());}}
+
+		//2.8 S126: mirror the native assert at :452 as a CONSTRAINT.
+		//2.5 waives lambda whenever b_same, so a prover who declares
+		//the two operands equal on NON-zero points frees lambda, and
+		//hence x3/y3 through 2.6/2.7, all over again. Honest 0+0 keeps
+		//the waiver because b_self_zero is then TRUE.
+		b_same_var.and(&b_self_zero_var.not())?
+			.enforce_equal(&Boolean::<CF1<C>>::FALSE)?;
 
 		let reg_var= Self{x: x3_var, y: y3_var};
 		let mut res = b_self_zero_var.select(other, &reg_var)?;

@@ -2896,5 +2896,81 @@ pub mod tests_decider_eth_circuit_super {
 			 re-derive S126 before trusting it", new_d.len());
 	}
 
+	/// S126: the step-8 commitment fold now CONSTRAINS -- an ACTIVE-slot
+	/// cmW swap is rejected in full mode, and accepted in light mode.
+	#[test]
+	fn test_s126_active_slot_bound(){
+		//b_light_test is a PROCESS-WIDE RwLock and step 8 lives under
+		//`if !b_light_test`, so this test owns the flag for its whole
+		//body (hence --test-threads=1) and restores it even on a panic
+		//-- otherwise every later test in this binary silently runs in
+		//full mode.
+		struct LightGuard(bool);
+		impl Drop for LightGuard{
+			fn drop(&mut self){
+				utils::consts::get_global_config().b_light_test = self.0;
+			}
+		}
+		let _guard = LightGuard(
+			utils::consts::read_global_config().b_light_test);
+
+		let n_steps = 5;
+		let sched = vec![1usize, 0, 1, 0, 1];
+		let circ0 = s103_fold(n_steps, 2, &sched);
+		let pci = field_to_usize(&circ0.pc_i);
+		assert!(pci < 2, "pc_i {} out of range", pci);
+
+		//the SAME one-field corruption as the S103 test's arm D: cmW on
+		//the ACTIVE slot. Step 8 is the only block that reads it.
+		let mut circ_d = circ0.clone();
+		{
+			let mut u = circ_d.U_i1.clone().expect("U_i1 null");
+			u.vec_inst[pci].cmW = u.vec_inst[pci].cmW
+				+ Projective::generator();
+			circ_d.U_i1 = Some(u);
+		}
+
+		//LIGHT arms -- the control that makes the full-mode delta
+		//attributable to the gated block rather than to step 7.
+		utils::consts::get_global_config().b_light_test = true;
+		let (n_la, bad_la) = s103_unsat_rows(&circ0);
+		let (n_ld, bad_ld) = s103_unsat_rows(&circ_d);
+		assert_eq!(n_la, n_ld, "light arms not shape-identical");
+		let new_ld = bad_ld.iter().filter(|r| !bad_la.contains(r))
+			.count();
+		assert_eq!(new_ld, 0,
+			"light mode REJECTED the ACTIVE-slot swap -- step 8 is then \
+			 not the only reader of cmW and the full-mode arm below is \
+			 not attributable");
+
+		//FULL arms -- step 8 is built, and the S126 rows in
+		//circuits.rs enforce_equal bind the folded commitments.
+		utils::consts::get_global_config().b_light_test = false;
+		let (n_fa, bad_fa) = s103_unsat_rows(&circ0);
+		let (n_fd, bad_fd) = s103_unsat_rows(&circ_d);
+		emit_stdout(format!("S126 light: {} rows / {} unsat; full: {} \
+			rows / {} unsat", n_la, bad_la.len(), n_fa, bad_fa.len()));
+		assert_eq!(n_fa, n_fd, "full arms not shape-identical");
+		assert!(n_fa > n_la,
+			"full mode built no extra rows -- the gate did not flip");
+
+		//HONEST SATISFIABILITY. The fix adds rows to EVERY point add,
+		//and the zero-point cases (u_i.cmE is pinned to zero at :820)
+		//are exactly where it could have broken honest proofs. Full
+		//mode must not gain unsatisfied rows over the light baseline.
+		assert!(bad_fa.len() <= bad_la.len(),
+			"HONEST full-mode synthesis has {} unsatisfied rows vs {} \
+			 in light -- the S126 enforcements are NOT honestly \
+			 satisfiable", bad_fa.len(), bad_la.len());
+
+		let new_fd = bad_fd.iter().filter(|r| !bad_fa.contains(r))
+			.collect::<Vec<_>>();
+		emit_stdout(format!("S126 full-mode active-slot swap: {} NEW \
+			unsat rows {:?}", new_fd.len(), new_fd));
+		assert!(new_fd.len() > 0,
+			"ACTIVE-slot cmW swap ACCEPTED in full mode -- S126 is NOT \
+			 closed");
+	}
+
 }
 
