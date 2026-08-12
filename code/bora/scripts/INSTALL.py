@@ -5,9 +5,11 @@
 # Downloads + extracts data into data/.  The email dataset (Enron) is
 # fetched from the CMU source and placed under data/samples/email/src/
 # maildir; samples.7z is a byte-identical fallback used only when the
-# CMU host is unreachable.  The binexec merge pipeline and chr17
-# (sig_c21) variants deploy from samples.7z / sig_c21.7z.  All scratch
-# lives under /tmp/bora_install and is removed on completion.
+# CMU host is unreachable.  The binexec corpus comes from its Zenodo
+# deposit (DOI 10.5281/zenodo.21909549), which also carries the licence
+# texts and the per-file manifest; chr17 (sig_c21) variants deploy from
+# sig_c21.7z.  All scratch lives under /tmp/bora_install and is removed
+# on completion.
 #
 # Run from anywhere:
 #   python3 INSTALL.py             menu: pick ALL / email / dna / binexec
@@ -18,10 +20,13 @@
 # ---------------------------------------------------------------------
 
 import argparse
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
+import urllib.request
 
 # ---- paths (anchored on this file so cwd never matters) -------------
 # this file lives in scripts/, so the repo root is one level up.
@@ -268,6 +273,148 @@ def move_children(src_dir, dst_dir):
 
 
 # =====================================================================
+# binexec corpus source  (Zenodo)
+#
+# The CentOS corpus is archived at Zenodo with a DOI and a per-file
+# manifest.  Two DOIs exist and they are not interchangeable:
+#
+#   concept  https://doi.org/10.5281/zenodo.21909549   latest version
+#   version  https://doi.org/10.5281/zenodo.21909550   THESE bytes
+#
+# The paper cites the CONCEPT doi; the VERSION record is pinned here so
+# a future v2 can never silently hand the installer different bytes than
+# BINEXEC_SHA256 describes.  A doi.org URL resolves to an HTML landing
+# page rather than to the file, so the direct file URL is what gets
+# fetched; the digest is the integrity guarantee either way.
+#
+# The archive expands to centos_pack/{samples,licenses,manifest,
+# README.md}.  ONLY samples/ goes into binexec/ -- gen_data.py merges
+# every file it finds in that directory, so a stray README or licence
+# text would become a scanned document and change the merge plan.
+# =====================================================================
+
+BINEXEC_DIR    = os.path.join(SAMPLES_DIR, "binexec")
+BINEXEC_DOI    = "https://doi.org/10.5281/zenodo.21909549"
+BINEXEC_URL    = ("https://zenodo.org/records/21909550/files/"
+                  "centos_pack.tgz?download=1")
+BINEXEC_SHA256 = ("7d7cd1ca57895d3649dfa7320d7b91605772ea771a"
+                  "86954e43ecda4dd2591d4d")
+LICENSES_DIR   = os.path.join(DATA_DIR, "licenses")
+MANIFEST_DIR   = os.path.join(DATA_DIR, "manifest")
+BINEXEC_DOC    = os.path.join(DATA_DIR, "DATASET_BINEXEC.md")
+
+# Set by main() from --verify; the DATASETS registry calls install
+# functions with no arguments, so the flag travels as module state.
+_VERIFY_ALL = False
+
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+# Stream a URL to dest, reporting progress on a single line.  Uses
+# urllib so this path needs no curl/wget/gdown.
+def http_download(url, dest):
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    tmp = dest + ".part"
+    with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
+        total = int(r.headers.get("Content-Length") or 0)
+        done = 0
+        while True:
+            chunk = r.read(1 << 20)
+            if not chunk:
+                break
+            f.write(chunk)
+            done += len(chunk)
+            if total:
+                print("\r    %5.1f%%  %d/%d MB"
+                      % (100.0 * done / total, done >> 20, total >> 20),
+                      end="", flush=True)
+        print()
+    os.replace(tmp, dest)
+
+
+# Check every file named in manifest.list against its recorded digest.
+def verify_manifest(sample_dir, manifest_list):
+    bad, n = [], 0
+    with open(manifest_list) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            digest, name = line.split(None, 1)
+            p = os.path.join(sample_dir, name)
+            n += 1
+            if not os.path.isfile(p) or sha256_file(p) != digest:
+                bad.append(name)
+    if bad:
+        raise RuntimeError("%d/%d files failed verification (%s...)"
+                           % (len(bad), n, ", ".join(bad[:3])))
+    print("    verified %d files against manifest.list" % n)
+
+
+# Download the Zenodo archive, verify it, and deploy it.  The live tree
+# is not touched until the staged copy passes its digest check, so a
+# failed or truncated download leaves the existing corpus intact.
+def install_binexec_from_zenodo(verify_all=False):
+    tgz = os.path.join(TMP_DIR, "centos_pack.tgz")
+    print("  download centos_pack.tgz (327 MB) <- %s" % BINEXEC_DOI)
+    http_download(BINEXEC_URL, tgz)
+    got = sha256_file(tgz)
+    if got != BINEXEC_SHA256:
+        raise RuntimeError("archive digest mismatch:\n  expected %s\n"
+                           "  got      %s" % (BINEXEC_SHA256, got))
+    print("    archive sha256 OK")
+
+    stage = os.path.join(TMP_DIR, "pack")
+    shutil.rmtree(stage, ignore_errors=True)
+    os.makedirs(stage)
+    print("  extract")
+    with tarfile.open(tgz, "r:gz") as tf:
+        try:
+            tf.extractall(stage, filter="data")   # py>=3.12
+        except TypeError:
+            tf.extractall(stage)
+    root = os.path.join(stage, "centos_pack")
+
+    if verify_all:
+        print("  verify all files against manifest.list")
+        verify_manifest(os.path.join(root, "samples"),
+                        os.path.join(root, "manifest", "manifest.list"))
+
+    print("  deploy")
+    # data/samples/ is gitignored, so samples/gen_data.py is absent from a
+    # fresh checkout.  deploy_samples() used to plant the corrected master
+    # there, but the Zenodo path no longer goes through samples.7z -- so
+    # plant it here or install_binexec() runs a file that does not exist.
+    shutil.copy2(os.path.join(DATA_DIR, "gen_data.py"),
+                 os.path.join(SAMPLES_DIR, "gen_data.py"))
+    empty_dir(BINEXEC_DIR)
+    move_children(os.path.join(root, "samples"), BINEXEC_DIR)
+    for src, dst in ((os.path.join(root, "licenses"), LICENSES_DIR),
+                     (os.path.join(root, "manifest"), MANIFEST_DIR)):
+        empty_dir(dst)
+        move_children(src, dst)
+    shutil.move(os.path.join(root, "README.md"), BINEXEC_DOC)
+    print("    binexec  -> %s" % BINEXEC_DIR)
+    print("    licences -> %s" % LICENSES_DIR)
+    print("    manifest -> %s" % MANIFEST_DIR)
+
+
+# Superseded source: the corpus used to ship inside the Google Drive
+# samples.7z.  Kept as a documented fallback -- Drive has no DOI,
+# throttles large files and reports downloads to the file owner -- but
+# no longer called.  samples.7z itself is STILL used by the email
+# fallback (ensure_samples_deployed) and must not be removed.
+# def install_binexec_from_gdrive():
+#     ensure_samples_deployed()
+
+
+# =====================================================================
 # binexec merge  (delegated to the canonical samples/gen_data.py)
 # =====================================================================
 
@@ -285,6 +432,52 @@ def install_binexec():
         print("binexec merge done -> %s" % BINEXEC_TGT)
     finally:
         os.chdir(prev)
+    verify_split_size()
+
+
+# gen_data.py splits corpus files over 32 MiB.  The size of each chunk
+# fingerprints WHICH gen_data.py actually ran: the stale copy shipped
+# inside samples.7z leaves only 16 bytes of headroom under 32 MiB, which
+# overflows the range2_bit=26 loc field in full_data4.  That corruption is
+# SILENT (no crash, just wrong locations inside the proof), so fail loudly
+# here instead.  Ported from the retired data/DOWNLOAD.py, which checked
+# only the FIRST chunk -- a file splitting into three leaves two full
+# chunks, so that missed the offset being dropped on any later one.
+SPLIT_SIZE = 32 * 1024 * 1024 - 100 * 1024
+BORDER     = 32 * 1024 * 1024
+
+
+def verify_split_size():
+    d = os.path.join(SAMPLES_DIR, BINEXEC_TGT)
+    fams = {}
+    for n in os.listdir(d):
+        stem, sep, idx = n.rpartition("__")
+        if sep and idx.isdigit():
+            fams.setdefault(stem, []).append((int(idx), n))
+    if not fams:
+        raise RuntimeError("no split chunks under %s: gen_data.py did not "
+                           "run, or no corpus file exceeds %d bytes"
+                           % (d, SPLIT_SIZE))
+    for stem, items in sorted(fams.items()):
+        items.sort()
+        for pos, (_idx, n) in enumerate(items):
+            sz = os.path.getsize(os.path.join(d, n))
+            if sz >= BORDER:
+                raise RuntimeError("%s is %d bytes, at or over the 32 MiB "
+                                   "border" % (n, sz))
+            # every chunk but the trailing remainder must be exactly full
+            if pos != len(items) - 1 and sz != SPLIT_SIZE:
+                raise RuntimeError(
+                    "%s is %d bytes, expected %d (32MiB - 100KiB); "
+                    "samples/gen_data.py is the wrong version"
+                    % (n, sz, SPLIT_SIZE))
+        total = sum(os.path.getsize(os.path.join(d, n)) for _i, n in items)
+        src = os.path.join(BINEXEC_DIR, stem)
+        if os.path.isfile(src) and total != os.path.getsize(src):
+            raise RuntimeError("%s chunks total %d bytes, source is %d"
+                               % (stem, total, os.path.getsize(src)))
+        print("    split OK: %s -> %d chunks, %d full at %d B"
+              % (stem, len(items), len(items) - 1, SPLIT_SIZE))
 
 
 # =====================================================================
@@ -384,9 +577,10 @@ def clean_binexec():
     empty_dir(os.path.join(SAMPLES_DIR, "merge_records"))
 
 
-# Deploy samples + run the binexec merge.
+# Fetch the corpus from Zenodo, then run the binexec merge.
 def install_dataset_binexec():
-    ensure_samples_deployed()
+    install_binexec_from_zenodo(verify_all=_VERIFY_ALL)
+    # install_binexec_from_gdrive()        # superseded by Zenodo
     install_binexec()
 
 
@@ -554,7 +748,14 @@ def main():
     ap.add_argument("--toolchain", action="store_true",
                     help="install Rust 1.76 + system build deps, then "
                          "exit (unless --data is also given)")
+    ap.add_argument("--verify", action="store_true",
+                    help="binexec: check all 2702 files against "
+                         "manifest.list after download (the archive's "
+                         "own sha256 is always checked)")
     args = ap.parse_args()
+
+    global _VERIFY_ALL
+    _VERIFY_ALL = args.verify
 
     if args.toolchain:
         install_toolchain()

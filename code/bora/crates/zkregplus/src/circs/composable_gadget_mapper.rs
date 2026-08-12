@@ -1168,8 +1168,10 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		// hab22 balance is never enforced, so the self-cover is
 		// skipped and the dummy stays zero-share. Verified 08-07:
 		// the dummy stmt is shape-only (never folded, never
-		// value-checked), and the final-step check accepts
-		// right == 0 via the escape at sigma_ir1cs.rs:3847. Runs
+		// value-checked). S109 removed the right == 0 escape
+		// this used to also lean on, so shape-only is now the
+		// WHOLE reason a zero-share dummy is safe -- measured
+		// 08-12: the dummy reaches the check on no run. Runs
 		// that DO enforce the balance keep the self-cover; their
 		// share is sized by the real lookup table, which dwarfs the
 		// dummy's ~850 keys, so covering it there costs nothing.

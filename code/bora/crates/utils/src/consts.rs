@@ -88,6 +88,15 @@ pub fn reset_sat() {
     if let Ok(mut v) = STEP_TIMES.lock() { v.clear(); }
     if let Ok(mut v) = CIRC_SIZES.lock() { v.clear(); }
 }
+/// Reset ONLY the neo Q_m/Q_c gauges. reset_sat() also clears
+/// VERIFY_FAILS, STEP_TIMES and CIRC_SIZES; a per-unit meter runs
+/// INSIDE one tuning pass and must not disturb those.
+pub fn reset_qm_gauges() {
+    for g in QM_SAT.iter().chain(QC_SAT.iter())
+        .chain(QM_WRAP_SAT.iter()).chain(QM_REAL_SAT.iter())
+        .chain(QM_SUB_SAT.iter()) { g.reset(); }
+}
+
 /// PEAK fill, independent of cap. Unchanged contract: the tuner seeds
 /// its capacity back-solve from the largest emission, not a ratio.
 pub fn get_fwd(b_igc: bool) -> usize {

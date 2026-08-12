@@ -3979,50 +3979,11 @@ mod tests_clamav{
 		String::from_utf8_lossy(&out.stdout).contains("ok")
 	}
 
-	/// M6 Phase 3 correctness: independent-Perl-oracle check that the ZK
-	/// discharge of small_email is SOUND. The green proof discharges every
-	/// scanned DLP subsig (claims non-match) on merged_000020; an entirely
-	/// separate engine (Perl) must agree -- no DLP regex truly matches the
-	/// scan file, else the discharge would be unsound.
-	#[test]
-	fn test_m6_dlp_discharge_oracle() {
-		let root = proj_root();
-		let main_dat = format!(
-			"{}/data/debug/small_email/config/main.dat", root);
-		let scan = format!(
-			"{}/data/samples/email_merged128k/merged_000020", root);
-		assert!(std::path::Path::new(&scan).exists(),
-			"scan file missing: {}", scan);
-		let content = std::fs::read_to_string(&main_dat)
-			.expect("read main.dat");
-		//parse the DLProx sig bodies: name;Engine..;0;/BODY/flags
-		let mut sigs: Vec<(String,String)> = vec![];
-		for line in content.lines() {
-			if !line.contains("DLProx") { continue; }
-			let parts: Vec<&str> = line.split(';').collect();
-			let raw = parts.last().unwrap();
-			let first = raw.find('/').expect("no opening /");
-			let last = raw.rfind('/').expect("no closing /");
-			assert!(last>first, "bad regex field: {}", raw);
-			sigs.push((parts[0].to_string(),
-				raw[first+1..last].to_string()));
-		}
-		assert_eq!(sigs.len(), 10,
-			"expected 10 DLProx sigs, got {}", sigs.len());
-		//independent perl substring oracle on the scan file.
-		let mut n_match = 0;
-		for (name, body) in &sigs {
-			let m = perl_file_match(body, &scan);
-			println!("DLP ORACLE: {} -> {}", name,
-				if m {"MATCH"} else {"no-match"});
-			if m { n_match += 1; }
-		}
-		let _ = std::fs::remove_file(
-			format!("{}/data/cache/m6_oracle.pl", root));
-		assert_eq!(n_match, 0,
-			"SOUNDNESS: {} DLP sig(s) actually MATCH merged_000020 but \
-			 the ZK pipeline discharged them (proved non-match)", n_match);
-	}
+	// test_m6_dlp_discharge_oracle was removed: it was the only consumer
+	// of data/samples/email_merged128k, which no longer has a builder now
+	// that data/DOWNLOAD.py (the sole caller of gen_merged128k_email.py)
+	// has been retired to attic/scripts.  The perl_file_match oracle below
+	// is kept for future use and is marked #[allow(dead_code)].
 
 
 	/// C8e: aggressive fan-out restructure replaces the orphaned base

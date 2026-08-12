@@ -6174,14 +6174,14 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		let b_check_lkup = true;
 		let _b_light_test = false;
 		let _b_setup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		//small_data::<Fr>(b_check_lkup); //small data
 		//small_email::<Fr>(b_check_lkup); //M6: aggressive multi-chunk run
 		//small_dna::<Fr>(); //small data dna set
 		//full_dna::<Fr>(b_check_lkup);
 		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
-		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
+		small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);

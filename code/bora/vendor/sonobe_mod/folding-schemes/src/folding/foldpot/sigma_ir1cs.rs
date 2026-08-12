@@ -3367,6 +3367,12 @@ where 	C: CurveGroup<ScalarField=F>,
 					assert!(sum_vec_v_i == si.batch_v);
 				}
 			}
+			// DEBUG USE 61102.2: S102/S110 F1 falsifier, native mirror.
+			println!("DEBUG USE 61102.2: last_seg={} eq={} act0={} \
+				word_id={} subseg_id={} tsegs={}",
+				b_last_seg, sum_vec_v_i == si.batch_v,
+				si.act_word_subseg_size.is_zero(),
+				si.word_id, si.subseg_id, si.total_word_segs);
 
 			//6.4 update the sum_kzg_eval_others
 			sum_kzg_eval_others = if b_first_seg {
@@ -4149,7 +4155,16 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
-		let b_hab_res = not_final_step.or(&b_hab_res1)?.or(&sum_hab22_right.is_zero()?)?; //when sum_hab22_right is zero, we regard it as dummy
+		//S109: the third arm used to be `.or(sum_hab22_right.is_zero())`,
+		//which keyed the waiver on a WITNESS value -- m_share is free
+		//(:4136), so zeroing it waived the equality vacuously. Removed:
+		//a step with no queries has left==right==0 and passes is_eq,
+		//and the dummy statement never reaches here with values.
+		// DEBUG USE 61103.1: S109 A/B -- waiver arm temporarily RESTORED
+		// to test whether small_data_par's hab22 failure is S109's.
+		// Revert to `not_final_step.or(&b_hab_res1)?` after the run.
+		let b_hab_res = not_final_step.or(&b_hab_res1)?
+			.or(&sum_hab22_right.is_zero()?)?;
 
 		if b_has_lookup && self.b_check_lkup{ 
 			//NOTE self.b_check_lkup is ONLY for testing purpose
@@ -4347,6 +4362,20 @@ where 	C: CurveGroup<ScalarField=F>,
 			if B_DEBUG {
 				if b_last_seg.value()? {assert!(sum_vec_v_i.value()?
 					== si.batch_v.value()?);}
+			}
+			// DEBUG USE 61102.1: S102/S110 F1 falsifier, circuit site.
+			// Setup mode has no witness, so probe only when assigned.
+			if let (Ok(f_last), Ok(f_sum), Ok(f_bv), Ok(f_act),
+				Ok(f_wid), Ok(f_sid), Ok(f_seg)) = (
+				b_last_seg.value(), sum_vec_v_i.value(),
+				si.batch_v.value(), si.act_word_subseg_size.value(),
+				si.word_id.value(), si.subseg_id.value(),
+				si.total_word_segs.value(),
+			) {
+				println!("DEBUG USE 61102.1: last_seg={} eq={} \
+					act0={} word_id={} subseg_id={} tsegs={}",
+					f_last, f_sum == f_bv, f_act.is_zero(),
+					f_wid, f_sid, f_seg);
 			}
 
 			//6.4 update the sum_kzg_eval_others
@@ -5617,17 +5646,18 @@ pub mod tests_sigma_ir1cs{
 		//:1655 counts it at (0,0)), so the check has something to catch.
 		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
 			S106Cm,S106Lk,false>(n_steps, true);
-		//every multiplicity in this toy is 0, which would waive the
-		//check through the sum_hab22_right.is_zero() hatch (:4043, L2)
-		//before terminality is even reached. m_share is a free witness
-		//(S101), so raise one to disarm that hatch.
+		//every multiplicity in this toy is 0. Raise one so this test
+		//exercises a NONZERO right sum; the all-zero shape is what
+		//test_s109_hab22_zero_waiver covers. Before S109 removed it,
+		//the sum_hab22_right.is_zero() waiver made this step mandatory.
 		let mut s0 = stmts[0].clone();
 		s0.m_share[0] = Fr::one();
 		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
 			&cfg, false, fq_bits, n_steps);
 		let z1 = s106_step_native(&mut inst, &z0, &s0);
 		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
-		assert!(!z2.sum_hab22_right.is_zero(), "hatch still armed");
+		assert!(!z2.sum_hab22_right.is_zero(),
+			"right sum is zero: that is the S109 shape, not S106's");
 		assert!(z2.sum_hab22_left!=z2.sum_hab22_right,
 			"lookup sums balance: nothing for the check to catch");
 
@@ -5650,6 +5680,42 @@ pub mod tests_sigma_ir1cs{
 		//on a 1-subsegment word. See test_s106b_first_seg_io_hatch for
 		//the mid-word case where the exploit really was reachable.
 		assert!(sat2==Ok(false), "arm2 (S106 exploit) is SAT: {:?}", sat2);
+	}
+
+	/// S109: at a final step with every m_share zero the Hab'22 equality
+	/// is ENFORCED. The removed zero-waiver used to pass it vacuously.
+	/// Negative arm only -- this toy cannot reach a BALANCED final step
+	/// (S118 imbalance), so the honest control is small_data with
+	/// b_check_lkup=true (zkp_driver.rs test_zkreg_main).
+	#[test]
+	pub fn test_s109_hab22_zero_waiver(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let n_steps = 3usize;
+		//lookup check ON and every statement UNTOUCHED: all multiplicities
+		//in this toy are 0, so sum_hab22_right stays 0 while left does
+		//not -- exactly the shape the removed waiver used to pass.
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, true);
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, n_steps);
+		let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
+		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+
+		//THE EXPLOIT: final step, right==0, left!=0. Pre-S109 the waiver
+		//passed this; a non-final step is still waived by not_final_step,
+		//which small_data exercises with the check live.
+		let z3 = s106_step_native(&mut inst, &z2, &stmts[2]);
+		assert!(z3.sum_hab22_right.is_zero(),
+			"exploit precondition gone: right sum is not zero");
+		//NOTE native sum_hab22_left stays 0 (fill_lkup is not called on
+		//this path, :3272); the in-circuit left is what the check reads.
+		let r2 = s106_synth(&inst, &z2);
+		match &r2{
+			Ok(b) => assert!(!b, "S109 exploit is SAT"),
+			Err(m) => assert!(m.contains("hab22"),
+				"rejected by the wrong check: {}", m),
+		}
 	}
 
 	#[test]

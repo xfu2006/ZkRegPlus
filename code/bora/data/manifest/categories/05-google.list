@@ -1,0 +1,27 @@
+# Google-distributed -- 25 files, 175302336 bytes
+# name	size	sha256	license	origin
+_cffi_backend.cpython-39-x86_64-linux-gnu.so	245808	cfc596cd205551056ce227c0051b1e535b4e854f4c1f92ff398da18c5690eef7	MIT	cffi
+_crc32c.cpython-39-x86_64-linux-gnu.so	17208	cc913f4ff027cdc2238064ad767c1e89422ce35780a5099e649e9e365916dffd	Apache-2.0	google-crc32c (Python binding)
+_crcfunext.cpython-39-x86_64-linux-gnu.so	17656	8e88ccabf33025cd61b2736507c535049db91285db365118f8e7868b23a62cf8	MIT	crcmod
+_openssl.abi3.so	4448792	0d956f586a0f807ce63ee113aac4ca68d051341364d4c7b84298f159554dd10d	Apache-2.0 OR BSD-3-Clause; bundled OpenSSL under OpenSSL licence	pyca/cryptography (statically links OpenSSL)
+_padding.abi3.so	17056	01dd84c8008b8c717608b5fb909c88d069851d7ddf75b54c2fd7a27ebd1d3093	Apache-2.0 OR BSD-3-Clause	pyca/cryptography
+_rust.abi3.so	385752	6fe1f6766565346f626aad8645487a2b0b0815255c60338f5ea2510f210116f0	Apache-2.0 OR BSD-3-Clause	pyca/cryptography
+_testcapi.cpython-39-x86_64-linux-gnu.so	173104	e70140e2a8b314eff0f7a58b2174551c8bbd7ec837fa02d5a40c1b469993ea06	Python-2.0	CPython 3.9 (bundled in Cloud CLI)
+anthoscli	73927912	4a19797493da1974c77c1d18d0b0acbb49a92459f10d39b8f9633d48eb3a8794	Apache-2.0	Google Cloud CLI (anthoscli component)
+cygrpc.cpython-39-x86_64-linux-gnu.so	9422096	72ef0fd42d6391ae4fbdfad268c5e0d5009245a7fa9867fa56151f143fd72581	Apache-2.0	grpcio
+gcloud-crc32c	1514712	08358e3113282e75ac75caa99d1a7c72e4e281b0bd9b18375da5449f554c2218	Apache-2.0	Google Cloud CLI (gcloud-crc32c component)
+google_authorized_keys	121576	105b3181213392c27dba3950750a47fd2928d43ec794cef8fb74c01431992a29	Apache-2.0	GCE guest-oslogin
+google_authorized_keys_sk	123888	c8ae7747fda8bba176229485c1471bc649f0dc6abdc75ba1123816347ca814bf	Apache-2.0	GCE guest-oslogin
+google_guest_agent	11780184	b54fa019445df438aa2fc2f16710a0415faab8027451b7cad8411159c6ea1199	Apache-2.0	GCE guest-agent
+google_metadata_script_runner	12416760	011f6218415831d368ef4a5caf14067f5169d3ebf786732289786790bbe44dfe	Apache-2.0	GCE guest-agent
+google_osconfig_agent	14969560	af3608d9d227bdb9cda04b0091f69968219a10bf1bb982cee63e3cb6bed9dcf0	Apache-2.0	GCE osconfig agent
+google_oslogin_nss_cache	127816	be60e96bbceb69d3cd4ec530249d3244f2614a7f5485432fe1a8c562b4501791	Apache-2.0	GCE guest-oslogin
+libcrc32c-672e1704.so	25576	dcd26a60de9f78a8c6d31223b4f03fa0d84586ebb25f0f04fef4de8e3daa23f1	BSD-3-Clause	google/crc32c (vendored by auditwheel)
+libffi-c643fa1a.so.6.0.4	46240	471ddc04c41616d4d264963965a858db0c1605c7a1325607618bb8000959654c	MIT	libffi (vendored by auditwheel)
+libpython3.9.so	22720144	7221fb92096a75395dcbb39e3708cde307358081ac2b0e50694959610e401551	Python-2.0	CPython 3.9 (bundled in Cloud CLI)
+libpython3.9.so.1.0	22720144	7221fb92096a75395dcbb39e3708cde307358081ac2b0e50694959610e401551	Python-2.0	CPython 3.9 (bundled in Cloud CLI)
+libpython3.so	19776	31ea0c2647f4f6a55a5bead64599820a953bb4e14cf939a3c4dee22bfa98f638	Python-2.0	CPython 3.9 (bundled in Cloud CLI)
+python.o	1208	fadeb69e676c2fd2a4368b71046cffa6968fb6dd29ee9c6c7416266967d0ee46	Python-2.0	CPython 3.9 (bundled in Cloud CLI)
+python3	20456	02fbe222929db716bf5846cc5bd76b67f700865a4515276966fca2be7efe20f9	Python-2.0	CPython 3.9 (bundled in Cloud CLI)
+python3.9	20456	02fbe222929db716bf5846cc5bd76b67f700865a4515276966fca2be7efe20f9	Python-2.0	CPython 3.9 (bundled in Cloud CLI)
+xxlimited.cpython-39-x86_64-linux-gnu.so	18456	5ac613a6cb48e827a9ef25120a1de6a4861143d0c61690959661480ff13340e2	Python-2.0	CPython 3.9 (bundled in Cloud CLI)

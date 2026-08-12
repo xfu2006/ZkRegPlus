@@ -1,0 +1,1097 @@
+# CentOS 7.9.2009 updates -- 1095 files, 150772224 bytes
+# name	size	sha256	license	origin
+ANSI_X3.110.so	25104	076c8741fc00a8fd9c53aa11978912b7df7a85fb341e9b6d2aa53c0706be8077	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ARMSCII-8.so	12592	6dc17a365a2c735cb34c0a98b603bfd95af93bbf10aaac8f0ca4449045220e6a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ASMO_449.so	12608	fbb83ab776537b33d1c57ba101aa35040ca29c0d762b7d72ac1d65baa3b45931	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+B.so	69912	1dbd2744c395548fcbd344ed87a28ef90e794dc3fad65274c13b8a12ea6efe07	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+BIG5.so	90952	096ea5871f08262c92f38ff688ab9ba41568d81594c9310cf51fd7830c798bc3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+BIG5HKSCS.so	237904	800b95a3cad961435f9da8185a939f8242a76720b836223eee56d1f7374b59ca	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+BRF.so	12600	ff812737f2f87d79c39e928ccc3e99587623a20d8d51e3bf2e891b78c5487f67	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Base64.so	15400	82284810f0049ffd5cedc8550c0b441d47cd1ad191895dce1bbc72ea53666bc8	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+CP10007.so	12608	b30d42ba7db2df6915e99af6e3e6249c98a789e5be50599410487069df7dd5b1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1125.so	12600	60856aff69c94ebed4e77c23e8beb0d361d55622fc2ac7635339f3b47c94f971	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1250.so	12600	511b39c3f91184af6f07585fd31d885a7bd43021d9fb942dfd0e9b52be83b282	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1251.so	12600	923972505bb8ff084e2e7079c73a83ae91f624560ebff9b8822d6cbf0302b2b6	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1252.so	12600	f0d44b82015082739d736f94b696bdcf4bb7cff2a1a0af4775675b7c1c0403ef	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1253.so	12600	af0321a2ec8fc059ac59fb77c887e5a5e460e91f56838d07239cd204a876c3ef	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1254.so	12600	8473b4fbddc9ef301dbca136dc0bb7d3589267c1aa585b2ae21e9adf89347e3d	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1255.so	16800	609164ed03871f86d7716d92edd3c73f096f0d9ccac08dc087a70d3e24ece184	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1256.so	12600	6d620b1f21a4944b774a30a5b902998282e8fc40a6da763283306542f4a6371b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1257.so	12600	c0a077eb9c0242d2d1baa97832dd5b4f7b944c15978c153f3516d70b4bdebbf4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP1258.so	16816	59285d779ec9615754d9ce73e639b09e7e6150b0daf9eadacfe72733a4de4a0e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP737.so	12864	84fae700ea247db1ec0af75dca97a4ef2bf5d3224e450b6fe1403e7db70dca52	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP770.so	12600	17306c543ecf1f500761c7dfe826efdfd5f6bf1a7ae0bc38b59ee2279c7f12c0	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP771.so	12600	f671a557c1ab785006cc588f92374cae88d002dfdaf318c1b6ceef2f594ce845	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP772.so	12600	c27c1f7a44638691c8490dabe1484c87bb3e8571161b5485571f073706025218	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP773.so	12600	46faebe85bdcdff355d8cc03a5880b6b03664b4c714aef0606c6823fbcd86baf	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP774.so	12600	fc7324c45b063c33fbf386e448b9f98d7a35c582b574ee7de9475a4d590ca1a6	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP775.so	12888	0948186a731a131bf2cbfd70f2f2da5ef4e93e849e7f9dd85a9b0c761673b66f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CP932.so	98928	56a662cd899c51d883edd4d5dacd51d1ddd0cd3b3d44f8f6f77bab5dc2eb1363	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CSN_369103.so	12608	8ceb2175cd920de07f86109efa16326adab67f846ac6dd3b32c79f77ddb5bf19	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+CWI.so	12600	99abe20b2ab990e05b537c9bdbb81112aa836848abd24d059f259a8c3845912f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Collate.so	1254384	81c162e7fa3c252a59c84b9fb5081e008c34ba4c736b953d13519702221775b0	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+DEC-MCS.so	12608	f33480d94fd74c85616c8a871203920690c886e82a7e9d5d11f767b290c488cb	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-AT-DE-A.so	12584	263955d7b77879dec09368209ae5564455dd62e640e5de2581f70f8faf7f1de8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-AT-DE.so	12584	172d323c7eee1d69d6f8ed3b645b17877ed0699e38da899adfffd56f0cb9dcd1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-CA-FR.so	12584	b74ae9b9e61a833fa2ee3a6eb7b9700052237e7c120e8abf655e0e66281a3e98	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-DK-NO-A.so	12584	2a2da8e9efc2cca3df7ab92d5347e70950ae2279331e64f82bf103d9108a0b20	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-DK-NO.so	12584	7a22be561b6d873845e03c1f0e0e569b0f599c7debfaa6fcaf5fd644268c1476	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-ES-A.so	12616	d705d3d635c9453d86de60e40a4872c19873488559dc153a3d1a50a72825cdf1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-ES-S.so	12584	1fff3bb851e0a4fe802a3dc3c1c5ce0d6cace384a38fdc47ed1602ca3c6d4e68	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-ES.so	12608	351be9a782bdd3dd429abb0b987c78b3737fa2e3dffe4932b1f6a52fd1e4d3f5	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-FI-SE-A.so	12584	290039df8d9dccedf9fbe6be742039c664bc69198a73ab84013d3824cf7b5b2a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-FI-SE.so	12584	d53b8fc3461aea5b2a72e750962356606fabf2fbc66d28e5388acf6a321487d2	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-FR.so	12576	3fe16852f474f46a7fb79c68d748f2dbf121955b12d53d9c7e1cefff17c0369d	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-IS-FRISS.so	12624	0ebb71f9f0aa2b064b0080805602f04193d9935188a438f50f66a4d85e5931f3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-IT.so	12576	4690b178c4184a28b059589a2966e5385fe94afd562c374ebc2b26335e257996	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-PT.so	12576	0c780b7d05431881d99498915967d22ea2f0adfd2bbabf173ab9d6cfce90dae9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-UK.so	12608	781a51cb49bcfb94841201438f7ba974bd73917ed9531ab4d1de30903ca35e11	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EBCDIC-US.so	12576	eb48b30ca1f2f877b7573cbdd28c7c9d13511a065d565d4ed5f4c58a1df92642	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ECMA-CYRILLIC.so	12616	7fbfc0e7f9f5d55a57a864a0974b9c5edd79cf3428aed32483f4f3651b7807cc	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EUC-CN.so	21168	c727fb1d5b8e3284c915f69431ec8b1e9866da74ce0fe7be62dce2bdf5c0ca6f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EUC-JISX0213.so	16904	7df8d869d639e75371efa28617e673e8b9c216806fa8f5cef4b66feb88313964	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EUC-JP-MS.so	86680	e30cbd5996b4a405766d1179447a28bbf5775be35fd91d65f2f7b2e21dd57a14	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EUC-JP.so	17064	6e42fd94355ae0516d6491a252d17e4d9be2d7571e2e7be8fef5557fccd38b6c	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EUC-KR.so	16840	3251ac890782f1ffbc7e8383e81d3b045ddf611d8a3a199b41c61df532a71db1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+EUC-TW.so	26072	9195683bc64a5f5089e1ea9f936a4843567a96245f5de2cddad7caf59930aa8a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+FastCalc.so	15472	0e0e49242d169c567bc8197ef5505ab2c3e69a007ddc7a365a09562d15444e12	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+Fcntl.so	19512	79c3bd39e67bbf82ae1787c6b4e5376ae7e0b6faffd9d74d3e6fb777bd51b24a	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+FieldHash.so	20088	ff51fa36c0c72b139d3f4be4b41b3c51e1030e3d7a1c6df9f5bcde7ef528dfde	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+GB18030.so	180624	9e6916a91b58f38f10fb6ee93417b69a73df412b72217e68bcc4661a6a7e4ba0	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GBBIG5.so	57616	4d4a5100822a1a086f5e8eb1e193be5c22bb1b82578eed076c80c056be46bd5b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GBGBK.so	12464	2d58ccc9f3d61b62433101d19a462ce200341fd6614b7b6fb0e1a3404075d92c	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GBK.so	115440	fa9191103516c55d5ea881042a696e667e4a73f5c2ee76bc16abe04b2b3b86f9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GDBM_File.so	23984	450b8dc6c3898e8b99fea76641a495dab69c2dc14ef2ae76ff567833e6aee899	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+GEORGIAN-ACADEMY.so	12624	f19ce877a0af0a43598bef3aad14a4207d1bb21b736db19cd90799b522b86329	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GEORGIAN-PS.so	12616	3569855342f324bb369a43d0f72d93c70bcf7461accc8838eff8bb10121d21af	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GOST_19768-74.so	12616	fc9cf1ed40a95c836078ae2c83258bdb57c6537552eb87ac4405a1e9ff257f74	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GREEK-CCITT.so	12616	d148c66bf28948312d5c66cb6c242f76d91c6924e74ee95cdf2bd32b0b413921	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GREEK7-OLD.so	12608	dcdf3b3a4394645f19dd74dc91137eacb3c4d9f4c7d34cbfc6ae252a7df4bd67	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+GREEK7.so	12600	72a89d25d4cd92b1c18d89b27003977739e469c9d25f52dd5a1c2e9e275e70ee	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Glob.so	28328	070207fa60eef181ad79db871b23cec7ac1bac746eb37b3f6a273639e2fe457b	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+HP-GREEK8.so	12608	b4112b0a1df398831a6e79eea5cb472ab02d6d292809cce5634d29327f253ae9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+HP-ROMAN8.so	12608	4e06b00a5a7fec30be5268ec8627db77ee6136b0fce9756e48d7b783f8b212f4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+HP-ROMAN9.so	12608	4292f600b004943536768454a92aa94d81d5b9a2333eb7e02e956b58dab32c6f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+HP-THAI8.so	12608	0ad70205e6d43a2a4793d6532e6ab8f7eeff6dc75c390eabe9b472f80dd73bf3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+HP-TURKISH8.so	12616	47bdef04d98901b0fed478e07f4ad0ac596d000a0d0b59fddebc705ea2256f1a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Hostname.so	7032	9aed306cb3404b5e2fcb364a0a314f0df120b3deeabeb98f03351b117bba13f3	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+IBM037.so	12568	a6fca4f7fcfa289033c2e3136d71141a82c635d02894b4b8723f33f642238bb4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM038.so	12568	efd6c191bb9c0d6d579b5c822f6ebf30c74459997a8f895cbc4b9762bb88bcd2	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1004.so	12608	4dba6efa4a99a8f425c9eedc0dddc32a65da1d9accb1ad31b4045e60d0f2b140	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1008.so	12608	ca42f4512411d9edcce1d54c533fa1aa453adf1a44b1fdbbe65c6280f5d27159	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1008_420.so	8480	642a5aed4a7288154c700069df85c2edbdc6a1c59048e4450629ca5d3cbb7fb3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1025.so	12608	e6e1c2b9b0e4a3be898f93bb4d932523b207bf4b8aabb058135fc7e5f5179805	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1026.so	12608	305c5e6d0612b2b07d317822aa5e79db1ffe75e5698db4edee8a610a68519623	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1046.so	12608	d0215fa529da973069ba77b54ffd6caec925706c6b2a5c1716e13d0bc555cb96	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1047.so	12576	c7a889e3b76da90993e546d577e3a4f80fd262af4d40d3160cf02dd95f976021	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1097.so	12608	5405a10e691350167a62dd2ef63254a3c8c30732df054a5acd7b126ebb35e9b7	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1112.so	12608	0ffc9c179fe44b5c5135b86b50e78b31c311bcbb789de7a8233d553759e7044f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1122.so	12608	84d91f2fa9826cd40ca966d8b67151d4242d89023e8190d6c705bea13bf310a3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1123.so	12608	4f39649059e4988f14b434e6325a8adbbdf9ca419cc4cb518743d2209e13922c	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1124.so	12608	87bd18c876e170cf4b3250711bd0124b28e5b79ef86c052adf74ebca0593b59d	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1129.so	12608	f93d95d0cb048b676a80b60fee29815410be1aea110b653993d749435bfce8bc	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1130.so	12608	361459c0ae821b333510a5e1786e772272addbdc3630a5ecaa40d3bd2cd9d70c	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1132.so	12608	deb63f106988d4d6a56e99d8b6880e11c8523eee858bdebde7ef7c3a2017f8de	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1133.so	12608	0080044fe347ce35bb41db2c760096ac6f956f49ea6a5111feab10c957cbfff3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1137.so	12608	c203a132f8bfbf03f9e873de9e9366102fde0e77624e346cd78eb799ba3fd364	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1140.so	12608	4ea1a53f0bc1e423bace48d4770fa5fa069aa4b42fe41e0bbcca208be5d8d6b0	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1141.so	12608	ef9584f30b7dea9542deceb9313d65beb317316e5fe7c6db88e5a40a3891093f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1142.so	12608	3a839391f3538d3ad0c6013079608666ee5f55f085cd1e1490f91d1cd4649e5a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1143.so	12608	3a347f15ef1c8f0a9e403dd3c41ff48a1a4536caed2e646b88a42ed02df6b3e5	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1144.so	12608	ac181fd23d3b34426ecfe7e8b1c1be319f6ecce4df67ee51920e470b8a9835f4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1145.so	12608	c10908df4833ef258cf905b4b2eabca6a32f88fb5ebdb14e783c21e3c1a05a2e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1146.so	12608	3faeb618b68950f45c5cd14a68b1da93182c59682513ee1a8ee0f52307382f50	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1147.so	12608	0bb0e33e3d41c486c350725490f387c55f5a4a1e96d9b1e3415c35ba07121042	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1148.so	12608	0021c86135e5abdd483c853c67dcb48e1880014523da047b8d6693b3a09df3fc	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1149.so	12608	6885cfc81e4d3faf8bbe305316799749d9d4cd3102d791cea68b0cb409431979	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1153.so	12608	fbe2ebae5a0ad6d0201aeff97e20149719d5b91cc083072fe06213159cdf748a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1154.so	12608	c8d3b9488d9b6453f7f835d9508b3d89e8c1cd94bdce7f4d2ade1ccd1991c547	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1155.so	12608	662ad14375e7d4735daec9fbea11cec851720a5f0962ae93f7f9d9129fc74e8d	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1156.so	12608	7f22e0ea12c0945c6ca994b8fbcbb1c145e17fbad39efe74277e4724ac572ac9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1157.so	12608	ae225366ea0a077356b17932357b82931027268d7606e1e9ad372a63f35bd392	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1158.so	12608	e85366d1c58c5e3f881a2fb26ccccb854b1e9f82291b8c9ed8d6f19074f55121	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1160.so	12608	e432abce5ad90b8f8183f9b5933830506e967307e6c81012ad609509a68aad05	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1161.so	12608	d4325854a09f37ab11a0c72d096ea0c5296e449952dc7e7ec1504ccb441f8ac3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1162.so	12608	9239b5aa62f9582e55a5e3630207284a65913e85126d2cb73b07dce3546aafa4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1163.so	12608	af692c0e7ce683da284ad9d6c22d199de60e58aa60496552dd1d775d0bb9cf21	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1164.so	12608	e4cce93b5eeaa95f3da147e7c612e083740fafa76ec8f903329ce59566b04d43	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1166.so	12608	cdd311b9e481412ccef954f5fede934ef53f6232ae87a0e13c4fc572133a3ea0	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1167.so	12608	055957b7aa6bb87cd709047d8c86cf195f2cfcf060b674f340e5e67c73dd6428	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM12712.so	12608	eb8c2eae11a908108a5682d5e3d1a577d9a86ff88e3dfe7fc8f9752fdd81d853	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1364.so	152056	720bbc0c33c5ee29f4a4e6d9faa1c8ab58b7a337c48d492ad174106ec36cfad3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1371.so	127480	9b3eb87e904d1621701ba20931c2bdbc89ed3352376e34a73f16a56d9dcb69d9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1388.so	176632	0fed09f0895b07451d07ac81e466ff669fe3ecb6e3225f5b6856264714cff6cd	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1390.so	229984	6d540d41362deda1684265097a2d901408eb2b96d150f963750b5dd64805c8b9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM1399.so	229984	82ac1bdca76ba114c954488a815c2039984369e961c65ca4153f48e46b908e24	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM16804.so	12608	41671b96fbe6ad6b1f863d35833ba0b165ec0f665c762baa74072a8c021adfc8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM256.so	12600	e3b102259b5ddf23012df9888f608a0e92c2d812d66c3fefc17a4106a35d69de	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM273.so	12600	3a5115dc759971ace3ea9d67297b9442d543b3ac07a5317860f751b0e96516c6	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM274.so	12568	cea983023b644bcbd084b275c548eec841843c03c0024c7481a30701fb75a960	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM275.so	12568	13aba6998e625f2cab634279898cbeeedc44f3fd1bdcfb5b700f86e725fcec2f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM277.so	12600	fb171203b1bfb9a77467fc51adc14b529523eef68cf706d1d6a6a36ad7b90b14	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM278.so	12600	19afd778180ab79d7c9980da6f3b08f79b2d257f1721bbb8c2715a3e60eb7f2a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM280.so	12600	54f54ed8ac45917803590f75cd43517ab7ec66b6b22507cc948817c83ae76efc	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM281.so	12600	3a79732f8cbf775c60ca47e48434c9a71a50ed854970ffb3e59f8bab8bbed631	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM284.so	12600	affaeb6cbb398d7d4a018cfea0bd63186c531f8776ff0e6b89a63eb68039d4b8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM285.so	12600	770927ea0ec039def52d4748cc6e923ec503a5d5e2522c9e52734e7a8fb69c24	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM290.so	12600	ef9d6f96cee98f57faccedfb898734a990457acab789babeb92ed2965b10fdd9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM297.so	12600	07f353e20e4db2b4416e9f47112da8da191a715169502f6fdc014e41d74cc81b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM420.so	12600	8e3615a87ff2d7a08c186fefe92c5ef913f8242780c666b923f3777bf1b9fbcd	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM423.so	12568	1af308f8b50d5fd596eb9b179219a9818a11d406fda6daf60f99ddcd160a3219	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM424.so	12600	7d12527f172e0226a793d4852798d9db0a86418db0135c9c7563761e235ce4a8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM437.so	12600	beae2eb4f0e2a4a0d142c178a1d098e5d56aef352d27d15d53225b1e0529063a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM4517.so	12608	accc3cbe07321ed622632acc58459d645958e04effd5f5e7e9565371ce3388d1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM4899.so	12608	f057a91093fb437e1d7da230c67a0a004e1dbcafea4915bed788dcbb2f411166	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM4909.so	12608	d2262289d5a54095b48cacfe1336d17fdadaa4a837fc0fc245b93dbacfcb838a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM4971.so	12608	37f1191b7ae8c81e2bcebb73604b36120561db1debfc2ed5913b972e6e5c07a7	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM500.so	12568	4f98ec9064e7d3b01bd9b1148943eb53a33521e1903cda9b6956163bb416d353	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM5347.so	12608	352ae1ded574b31dd0abcdc46fd000ebb2f3e55740f22db91f35699bbbd8de57	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM803.so	12600	7a35ce5f5d1b7e356dba643d3b08c97a523c2256fb93bb25f3085ab596e09796	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM850.so	12600	77bb4f7ac94e318c714ebea6709091681769296426dcd36e5f669f8b47e5b0cf	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM851.so	12600	c7b2586e3772edfee6c37563e4cc0a0bef2d7187f1e8cda91c435bfcbdfb09b7	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM852.so	12600	548de5a3fc5237cbc65d8e8c4d13f4ae188941b7fe441fb618c3ad84c022fa0d	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM855.so	12600	629568db4f9e7ea963eb137dd1d019a434459e13c73705b930c3fa94af62ecfc	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM856.so	12600	668b73afc328d720bfe084ecb1a9cf1fb50820006f74c024196e425fa974ea32	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM857.so	12600	78ae63d23bf7b6588496873538d361c9931ca8234288eb29e4f6a7f04e875665	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM858.so	12600	efa19e412e2c37350124c86d34198bb273b518df3825603765baf810192309f0	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM860.so	12600	9f93185a6053a2d1d09f69b8b2f6c2af8ce01d2f8ffcd4ba5ea05e5343d6785b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM861.so	12600	345a46383883386742809a2eee8cee7d64eaed522a12a4be2e3aae802106939e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM862.so	12600	e5f8bcf43df37f06337fb68f526bfc01be8c17279643eb0b45540186bb429d95	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM863.so	12600	ae7183ade452bfef6def0c3955f7c703c7ade6e44ec1ac6ab731ac4431fce293	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM864.so	12600	9c162d55590f7ecb22a0139bdb2c0525b927582a1588b128b50259e80e2d0872	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM865.so	12600	a81c69492a7218d40e364d1cb14d52c59d45a1f5a54e435811c8c547d8e36448	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM866.so	12600	1ec831c59d8fee4d6162ac3010e2a6ae4d49bace5bb09d9d6da77c1e5d784707	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM866NAV.so	12608	eed03ddaf0919afdbbe3d48155b57d084e523f90b0ee5099ca7ce612d0055f27	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM868.so	12600	f784af9fba5e337493690ce47887d43d46a3af1515eb2905b293046ebddd16cf	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM869.so	12600	3bb2f3c6adab93ed76bfe3447b9faad262f8faf3ac535a774bca661d0630bdfc	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM870.so	12568	6233e9c0f8f306d4055a5ec7b4686229a01a6253696c17e84235fd5d293ff5fd	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM871.so	12568	969aecf9eaf5a8ef00a3f048c9d9ac37694f4bcef60f2c31126741b46c674a80	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM874.so	12600	25a5028530a0196dfe6c96b01dd56b3343589de3924d0bf954f40a4a0dbbc377	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM875.so	12600	5948ceed36395c08bf1b5c58e03c83eb0b35391506580f7f3fcc018827f38af4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM880.so	12600	b9cbe8b578a722ef9f16a1f964dfaacebe7b79a15cf17f143c4512b34300a903	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM891.so	12568	a53ad1c2225a5648a0e9a0e080617275abee47da8487da503f9d5e9ae5510d8b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM901.so	12600	0361035759f7196d70a3e429238ead75816409f6002095f095e71b2617bf236b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM902.so	12600	f13a7723ca012de0422c2003c6c4c151e234cf866afa3e239e3166950b433c0b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM903.so	12568	40153703e51591ebd0613f1cb2fafb93bb06661034f50ce21ce7b91026adf8f8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM9030.so	12608	8b21149e3e499f9866af80a6dd354ac5161e5e28e75a82b0673a00790375f658	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM904.so	12568	b7d69571198bdc7c4a22a17765e9273a7526fc8ff7b2ce9986627fa910f5c0c1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM905.so	12568	5e6a894e4c982264113266c29da11f71c5a686d1820a87f13446cfbffe94a146	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM9066.so	12608	532cd58a151f8e8f4f108679e2083a11a31ec7d88a099ec0c552b998db3ed4d8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM918.so	12600	1cfaa120f200b1021c438310214d364b3cced4984213617dd94ace16be09839e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM921.so	12600	af9dfdd2651e0cb60dbb87186204147a71783972b32f860fb11252fdc65d823a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM922.so	12600	b8b1628d68ce322e5c2005ab5c430b147a03b95b6279990a663b9d2af55cc16d	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM930.so	106992	fe0aac42c77e4f67f583c855e13a3f114fffdaa9b3faf5bb1f510e42c8a2ff15	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM932.so	70112	b9f420b4f442ecdef30bbf4eaaf3439ee679f8e2a87a539aa385fe4d558a3bf9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM933.so	127472	a1b168e8ee8557904a5fe87bac061e485ccb7733efb9b559bda96653096aa162	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM935.so	90608	4be17809b19f9d2805845684a0a8e146370c9892840938e09ee9e174e225ef13	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM937.so	115184	26b386a37bb3bf1486f2c7da5dd2daa9070da824c8abee84495c57576b127e38	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM939.so	106992	a814a7b86929f933baf028fde9982f025bed949fc71c4b3a6b6055f5d49b0dc0	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM943.so	74208	0b357dddc14e3ee32d6387cececdfedaa669fe7bdba0ca2670b37aa01a4765c5	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IBM9448.so	12608	7b3227cf13737ba2b7552a646849da2c83317f5d3929cbe894e5c2708f1959aa	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IEC_P27-1.so	12608	bd678277efcf3ad94575b293b4eba78de5fd905ba9e78813c7889425ca18076e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+INIS-8.so	12600	baa00c744123610231111b2827901f7b5c5ebb86fbaec219f3ffe6951c6dee2e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+INIS-CYRILLIC.so	12616	fd7e292f9a34b38eaa84d59818ef3a70c5a875d2e3f8f2787707ebeaa0d0bf04	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+INIS.so	12600	d6fe722dac2bde48913190ee0607e401029e1e6e85c37cf854c1dd6b1990cf01	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+IO.so	19824	7461b3dca9e7526214ee659083c7088fcf4a3b3c94b6032e61a65f71604018e5	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+ISIRI-3342.so	12608	dc78b21cc44edba379cc1d1f2f6ebbd580e7d7009b1749011d34e0ddad2eccc9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO-2022-CN-EXT.so	47144	2202f9e06d8012550468db9287d7da25673cbaff6c99e74623fa9ae2bfe6766f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO-2022-CN.so	34312	ff00d533127229ae143ba7f4b1bc1897af7405d50438951b2ec5708757f871fd	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO-2022-JP-3.so	25344	d296dc5aeec643ea6f704a4b3e366d0682138be158f2fe775945cce76522f0a7	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO-2022-JP.so	42720	bd626094bf79a84bfe46600ccab585a854e2c9c4c634343a8ac98f789221021e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO-2022-KR.so	16816	6cffe9a9aacd6d5928754e3812793c1729464d459bd0ae5d65dca752c587f398	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO-IR-197.so	12608	db8793a6f674c724a0ec542d04dbc6cd0ea0a930af84300cc4944bcabfff906a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO-IR-209.so	12608	69f33c2e6f9ad1ca1260805f9e73d99f2cb8cfe56f454953c8d5c892fba7a312	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO646.so	24976	0fd1a35f77ee890888d30da989fc9aa0fc52c07839d2c1b7873812234ae1c5fe	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-1.so	12512	22f654f214da80d06564f5fc06448a6fc8238a4806835e83155dce183ad7640f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-10.so	12608	d923924ab25fa2c2c0172a63daee13217010f08c52a5555d3073050640ef20b9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-11.so	12608	214bc92cc9a61d2b264ad29f5cf820343316d536d02b6b04820572495d82b644	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-13.so	12608	c8ee5f7fb2c8647b1f9320b8b907da02bd6fb11b83b77a7846c53162329878a2	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-14.so	12608	428580191e473a4696a8ee6b41909966ef2a27421c50bf5cd0a241b4916519e3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-15.so	12608	0a81b5016eae4470c46e1ab9b006ed92abced6b25a40e5906d11ecbdae8e1b46	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-16.so	12608	717806ed35a9c9fd69d871922c17306db4f75675e5849e67ab9377e5e43ce852	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-2.so	12576	b7e76687fb14ad491e958d359e9c470dd55eb72a430c48c54ac90601068372c9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-3.so	12576	76c6ea6245bcc469317f173df546cef0b8f972a66c4bd67f0af8375ede41c734	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-4.so	12576	7f7953f62f333b89d1e9597f6b8dd49f03a2b2e6f29c3213872a34b916c82590	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-5.so	12608	46189e0415b987b7b0182f0e59688ad086da14d9121df0923cffdd1218181d60	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-6.so	12576	b7ec9e3286cf15f2f51e88be94f233d079179e0ae28fd11a56fd4e5be7d7cb9c	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-7.so	12608	34c918453ca9a37bcb04a18af0eebad9bcd59cf1e3be18813c5596dd077fc473	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-8.so	12608	9c47e18a59fd8b7ba3eb0f7f5430e1085437ad342c0050e13b2f6c229e4b14bb	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-9.so	12576	d07c0f3566f4c047daff9b816ddfee9b326d3f65cc7d04aff32eed2baa46728c	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO8859-9E.so	12608	60f624df217648d07f1b15690390f31c5ec674c727b108551da79ab218bad11f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_10367-BOX.so	12616	b61c0553f615ba8ce65ee7594bc1edd4f9c13e74a295c4f90eea4b57280572b0	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_11548-1.so	12520	50f1c0d069f4ba2d48b2c5209017f51ea8a20c4c4b11a1c3dc6459cccdf18be2	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_2033.so	12608	8e33c93369df65c057e4d218e7949c3e6b574e6fd0a964fb785fc6453b71c7c9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_5427-EXT.so	12616	30b97a008f489e699df095cc36510f3c73686d140b5d39f8593e09e7ea83fbb5	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_5427.so	12608	d56019c7da206ae5a2a47e91f41b6e56083daa1a11487bcd772b3f1a4646c00a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_5428.so	12608	bc004b91f6fd28d661c702cea03876aba2928f95af9657257a4e96a698cfc472	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_6937-2.so	20872	e1b7179fa463a4fb3d1a271e0f0868f161603c004762a4abc9aeef33f1e071d3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ISO_6937.so	20872	b65c588cd4bc0a0dc0aa15b4b2797c1b428294e82fc76459aa8c2e770110e7b1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+JOHAB.so	21240	909e455add762384e3796eb872c94eafb2156d905933681cf330be5430bbdf59	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+KOI-8.so	12568	38d09b7acc75337b3635616217dc91ea68c40b84d7efbf2e1e48f62b9485e0ec	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+KOI8-R.so	12600	76d32c36b4385ba2cc212a154a35fbaea2e5069c1406e71ee576e4368fd7c76a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+KOI8-RU.so	12608	37c42437f6f87a1804ebea1b7a2e47df8763a0b2a87eaea64458139d0771cf08	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+KOI8-T.so	12600	acc7c314f5c3453491b61bc727de4dc66529877f9987379b0375e56e721951a3	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+KOI8-U.so	12600	681fe252fd1773f6ac28509a501e43158515e2a5725b56a7a72c31a6bf7a90dc	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+LATIN-GREEK-1.so	12616	d913b1412222cd5d2bf81ed255b7e6d5f38489e4897c74ce03303016ae9f0634	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+LATIN-GREEK.so	12616	39d69f9315c7cde07f0b383f65ab9df6168515429abf74122d53cbbc1ea9b893	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Langinfo.so	15344	cda5d54e084e7793d7358df56113ac8c34d7ba300219eae15e75be903cbb35fc	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+MAC-CENTRALEUROPE.so	12624	7595356ea80c21fd3f3c4eba74f18959a095c5f5beb005570fdfa48f206828ce	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+MAC-IS.so	12600	ba88a787034f1e671e76972d8185d9406e687f56bab1f129a347a9c41bb7b3ee	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+MAC-SAMI.so	12608	9859729f19e084421d221f53f5be16bb6472e8f15e3be91868278cdc307214fa	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+MAC-UK.so	12600	3b7a6bf0de65f9ab1cff00544e6ec416452911f01e32ebc5d25d07e230c7c62f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+MACINTOSH.so	12608	44d58f965ed986485055f88ac92696f785eda88ea0f5bdfbf9956305c0d538a2	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+MIK.so	12600	6eb7f2b4b52bea7a0e4b47db5e995eadf865a2bbd81133657356f92c632f00ab	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Mcrt1.o	616	2bb044a6cd3fed2ac1656f6c7c247fdbd41de7ad53d0a239923fd209683ba7f2	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-devel-2.17-322.el7_9.x86_64
+NATS-DANO.so	12608	61186a0140a8553452a2adbda9fc3dd313b5b9561139598c149cc8c1126ab713	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+NATS-SEFI.so	12608	a34a95e71c633102cbbd882cae74f1e2b85b30c58409da6fe29fe135903a19da	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+NDBM_File.so	19720	b9f356ed974b6485f537ad9bafa9fb775df7945a7867ef38183d9aa65abf11e1	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+NamedCapture.so	11304	ec341e2b1dd272cb1765c161f3dfdd23cd001735714222ea221a46b9a6f0abf3	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+NetworkManager	2966000	5cb3386484beb4613757aeabc0f6e5862c3a993d0d5c91abbd0782573e357617	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+Normalize.so	554848	466f6154fb7065f0a7c8f247044191dfb1a7e3b35cdcac161e247c5c924c2651	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+ODBM_File.so	19816	4c0524e90d45ffebb5c8b5646a316b74fcad7b056fc4295fa049f4eff8a21c1c	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+Opcode.so	24048	ae338bb7c4ac5dd36bb7d13a64e73bf7fa58e4eebcee60643846e433c3cb49dc	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+POSIX.so	86904	9e15ad8c41c53dc6b01c84ba6279fdb246ffa713d5de51eda50e4ab42c148e57	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+POSIX_V6_LP64_OFF64	22544	db2fb8e24f2bcaa649057653f50aa9aac2e740b8f97b117dab4b4371d693be79	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+POSIX_V7_LP64_OFF64	22544	db2fb8e24f2bcaa649057653f50aa9aac2e740b8f97b117dab4b4371d693be79	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+PPPort.so	124544	18f1507e9142229bb8baf9ba91e73f169aa0828537080b7402bcdfecdd744878	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+PT154.so	12600	06bd7b5c339ebd21e3df613b059dbf1bd2e90a6f3ede8b383dd9819eaa6d4835	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Peek.so	15528	ea354c4d591662b4b76028f60a1cf075ee4507d1de43ded3fe84cfa6f62754e8	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+RK1048.so	12600	0e555cc58012a9d200a75bb586dd0298af93596b1c34a8b32a6f1e280de90cfb	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+SAMI-WS2.so	12608	26a333b43063aebdfab88869f6a21264e1106d4e122c769a209138ed70852c66	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+SDBM_File.so	28312	8c91e826f60ffd4592009c27b7ae923a9a3af6b10a9b1dcb803c6a9f8733d6a0	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+SHIFT_JISX0213.so	16912	2aaf42119047e3608686355f718ff8f306a489bb6e2e58ab77e09f62e8e91ad5	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+SJIS.so	94720	3ba571fa51fd89cc5e66cb503614456ea58d71030a999421be1614acd4c6c662	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Scrt1.o	1920	79a5c020d93da5169b1422b85cff6d23877290496c5fad9d3f1d597e7b222605	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-devel-2.17-322.el7_9.x86_64
+SysV.so	27864	2408fdee4fce99cbbaf8bbb347faa72d660b03895aa56f6659177aed873f5080	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+T.61.so	20864	6de4c97fad2640ae96064e70fcbdf278608fb97417825e9af9ae7696260d3017	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+TCVN5712-1.so	16880	c95d6733c7a2ff3e13b49f06fe75d653d5085560f6ae007718235721bbbb2a68	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+TIS-620.so	12608	d1f2d5f8c1a802e084b930feaffb913e2b7054a0a91dbccdbd52c1546f9de696	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+TSCII.so	20904	62b850eef843393f89ead3adcc6a898257f3e4bbb013ebf6cfee1c95a16c4b9b	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+UHC.so	74264	acc02acf4ea8c585d85e21c01caf68e51503536d5b968621fb855c762d463847	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+UNICODE.so	12608	5ef5ddb27d2c8299299e239004dee92c583c53c9189e7784eb8d1d7323df533a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+UTF-16.so	16752	94aba387af0ade8845db68ae1ba9b32e0da2db197f8119cc0119ce808dda89e9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+UTF-32.so	12656	ee662c8c7617557a484dd54d2651299f84afa1743c33c1445ba657c95793ca0a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+UTF-7.so	20840	c6d4e26dea70c1c136189d30e03868e4baa8b5cf3b6a5190d05e5174db2a59eb	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+Util.so	11224	65732ab49e0505a7b013b40dfca92f192d15f36c8a9804ccd37c974d6fefe6b0	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+VISCII.so	12600	591d22c5a0f3a2da7072fb979329450aeec1e3a26e6062b09e63bc55d7f54b16	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+XBS5_LP64_OFF64	22544	db2fb8e24f2bcaa649057653f50aa9aac2e740b8f97b117dab4b4371d693be79	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+_bisectmodule.so	13440	f2cb752fb21bb5b183150ca89edfcbd53f77b0162562b5d670b683620138cbdc	Python	python-libs-2.7.5-92.el7_9.x86_64
+_bsddb.so	176936	893b73b6081dfb3b3e56c6300c761a35e7002c0572680c0811aa31fa5bb35b10	Python	python-libs-2.7.5-92.el7_9.x86_64
+_codecs_cn.so	150672	e6d9aa796cfee164be1516a36acd9162b9a5c7afbcd5c9a320b4005406b471bc	Python	python-libs-2.7.5-92.el7_9.x86_64
+_codecs_hk.so	158824	d90bd5d20af480f6d1c897496bcc28de8de3c3e60a8382252a8a8cca15fa3169	Python	python-libs-2.7.5-92.el7_9.x86_64
+_codecs_iso2022.so	23952	9ed6e150c0d8de1bab58f3272c35337959ccbf2918a107c0172e18a76f128800	Python	python-libs-2.7.5-92.el7_9.x86_64
+_codecs_jp.so	265392	9d1a1fb41ea0f97415077422e4abd4b7afad7e4d9a1947c158862632c689cf6e	Python	python-libs-2.7.5-92.el7_9.x86_64
+_codecs_kr.so	134240	7272b15b590d4d166914f7589d715a9a28989e0303eb4cac51c5398dc783a94b	Python	python-libs-2.7.5-92.el7_9.x86_64
+_codecs_tw.so	109640	416c649931c36da42e141c7bf5b5665dc10f6a1cf67be4cacd707c2405c231ac	Python	python-libs-2.7.5-92.el7_9.x86_64
+_collectionsmodule.so	33048	7616c04bc828396a865206b29c0286b63bde061fae83e4b54f82391f794b9743	Python	python-libs-2.7.5-92.el7_9.x86_64
+_cryptmodule.so	7496	e7e6653555934a9683f5dbb2811304c1abf680cc9d28eed5bfca46066089f255	Python	python-libs-2.7.5-92.el7_9.x86_64
+_csv.so	35608	b226ff2b3b68dd2161de3ccf0d978e00cc3b90e2e108cd366e3affb133da26db	Python	python-libs-2.7.5-92.el7_9.x86_64
+_ctypes.so	126944	b57d2d85c2858ae3b963fd4aa1b3a57de3209d575f49629802558a2295a5bdd6	Python	python-libs-2.7.5-92.el7_9.x86_64
+_curses.so	84760	fab3c19a467ac5eca5d9e0995102fb45282237777d55444cacd1e62162f3fea9	Python	python-libs-2.7.5-92.el7_9.x86_64
+_curses_panel.so	16696	826a76afe8080b4e04bc3525cf3173de2a12d424225f1c5ed413c5909188ffe6	Python	python-libs-2.7.5-92.el7_9.x86_64
+_elementtree.so	47816	fe30ce27df2524c3ff3ece130b7ca3b52a2b510546d9981122eceb152f0f67ad	Python	python-libs-2.7.5-92.el7_9.x86_64
+_functoolsmodule.so	17008	1ff1fcfb3597a20cf1a9c1e2adfce91f5364e06476d4451de2e40afda8feed15	Python	python-libs-2.7.5-92.el7_9.x86_64
+_hashlib.so	22824	4a862af91d57e0678ffb14724ce94dda65807876af0ed8296ab0f60a3ae32673	Python	python-libs-2.7.5-92.el7_9.x86_64
+_heapq.so	22872	4cb215eda076190d217d7f509038facdf6add1df3817ad08b6b08daf13964fd2	Python	python-libs-2.7.5-92.el7_9.x86_64
+_hotshot.so	32200	a37e474b5d7cf8a5230f1a6cf5ecffa812e609f2bb291f33ddfd11805b110567	Python	python-libs-2.7.5-92.el7_9.x86_64
+_io.so	156864	9333b0152a04ccee1352c6c3c9001467cdac7103184d59d2541069a420429f92	Python	python-libs-2.7.5-92.el7_9.x86_64
+_json.so	39048	389f22f48eb2fadaa1efd083b010d569532d569ae66082b82e878878e1a6f66a	Python	python-libs-2.7.5-92.el7_9.x86_64
+_localemodule.so	21256	79f4ec355c2c73b1ba5497fc85ca59e93c6726ce109611348ea800fbcf2ed904	Python	python-libs-2.7.5-92.el7_9.x86_64
+_lsprof.so	22400	cc6ee0755d240d169fe8a2cef2349f134ef1b76e715da6ed5f42d8d0b618523b	Python	python-libs-2.7.5-92.el7_9.x86_64
+_multibytecodecmodule.so	36448	cf63c1d73b0f6a73fab11bbd9f871e6dec400680a371c7a4c5458b61ca563480	Python	python-libs-2.7.5-92.el7_9.x86_64
+_multiprocessing.so	30584	886a51e9954a95ceeba5d6c25d0fda1d60c8799cc07508263febd0aff968abbd	Python	python-libs-2.7.5-92.el7_9.x86_64
+_randommodule.so	16344	41680978fd82b8398c03a16da4dc64fdd503eff798829bc2bbf5e00962c5ffb5	Python	python-libs-2.7.5-92.el7_9.x86_64
+_rpm.so	108664	be325353eeb62a7ce1a78e02038e3deb60da09c6da77db9834aa19fed1b3c26e	GPLv2+	rpm-python-4.11.3-48.el7_9.x86_64
+_rpmb.so	17032	8ab14f82d006c2c362998ea6ee8b2013b8562737484b0fb6c46ec5f3e2e0c0cd	GPLv2+	rpm-python-4.11.3-48.el7_9.x86_64
+_rpms.so	7176	469afc999ebe9161744757d43cb5384eb9f5331290098657186c78d2c6867a10	GPLv2+	rpm-python-4.11.3-48.el7_9.x86_64
+_socketmodule.so	83880	e9c0233b86b866f9438f22db624bc927d82b2a99d8f163f68fe52d91d0257ac9	Python	python-libs-2.7.5-92.el7_9.x86_64
+_sqlite3.so	85208	f5a046182854cf5b3ca3870f444d27fdc174b4836354c38e94b366f20a22896a	Python	python-libs-2.7.5-92.el7_9.x86_64
+_ssl.so	95072	0a108d06bcd9d47517500180299dc9f858aaa1fab487f1e358d0061c4528ae6e	Python	python-libs-2.7.5-92.el7_9.x86_64
+_struct.so	38944	4e56a0fea0042bc1a3ee0ae1780c8b2e58770bda92acaf6f0907cddd071a0d71	Python	python-libs-2.7.5-92.el7_9.x86_64
+a2p	107848	f2bac7dd33ac5abed62f08d7d048f96c66ec8de8e7c941ec6c4bdf06193c415f	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+accelerometer	62280	a69f35bc2af49772316cd25a95a88af4fca213e33c623e138a7777e40cb26ecd	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+addpart	20160	53f7b1504af5d02c5b86f17523332a05ca179f2e99ef7560ecd887b04ce76162	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+addr2line	29104	9e9064489037ac84c6fbcf45e2293b87dfe4077c7a136b7e405129aba8983ab7	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+agetty	49640	fd440b7d84c45fee07dd255c4d4602d76174dc8fdbc053cebaf20fda826148e4	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+anacron	36368	95d4d6dfffe3d288156b2b7f57b54d93364cd99316cdec3232420f68a1982903	MIT and BSD and ISC and GPLv2+	cronie-anacron-1.4.11-24.el7_9.x86_64
+ar	62688	62ad8cd9e724c442dfdcc75568cdf2a36449b79d52a7c0c64b424a00abed8a37	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+arch	33080	00692310723766163e93fba2973b73fcb605cb562ff30d07eefb1c426131808a	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+arraymodule.so	48152	88e45e679d8c86100fd202a3d7703e038634477fb5b2e37bf661b4cd04120ace	Python	python-libs-2.7.5-92.el7_9.x86_64
+arybase.so	19848	0cb4841f55c372bf9ec9a5a19b614564f87b7912045641e4fb5fda0a3986300e	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+as	386416	8de00babe1ce89ce0bdb758bae0367ac34f6244e5d14b80bf0086818afb8b92d	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+asn1_compiler	22872	b90f914cd8c13e1e485b8a9d60d0098977dda9111de044546f3b849fde059189	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+at	52968	de01a03d4f29a07ffde297487788cb89bb68321212c2f0f0f38f8a2cfcba6dfb	GPLv3+ and GPLv2+ and ISC and MIT and Public Domain	at-3.1.13-25.el7_9.x86_64
+ata_id	49216	41ecee38fac301b2ac2e94ffa4412ff731b45a59ddd2af4a9da0e858b5d2d402	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+atd	27824	9e1fb9f0afdf16706a47765738658b1d71ccb06e68b1498c3ca65ff821e73054	GPLv3+ and GPLv2+ and ISC and MIT and Public Domain	at-3.1.13-25.el7_9.x86_64
+atob	11432	3aead50880d879bf70d7dcd0c679430160866a8e10254f4c1d7f65692294b36b	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+attributes.so	11256	d054fba7d24034c4a6de39e280d199845102f625edbe0115a71f62dc7fb44245	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+audioop.so	28880	5146b86748a503f3ba157d82427ea498d8fad3a9528d2e5a80e005be2a3766f5	Python	python-libs-2.7.5-92.el7_9.x86_64
+base64	37360	b7e07820fed0819d69342d1ecdd00d85bc75517e0fd42b47ddc584e5dad1ac60	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+basename	29032	db67845329e0b9fade296a360f3ca8062f01c7b3e0a7b5d48e608a6d985d87c5	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+bash	964536	00f8cbc5b3a6640af5ac18d01bc5a666f6f583b1379b9491e0bcc28ba78c92e9	GPLv3+	bash-4.2.46-35.el7_9.x86_64
+bin2c	6232	f79fc1e58e0e6448fe0371ce56cee8cab3704a0453f45c96249915af235b631a	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+binascii.so	25712	3f62422f4d9ef5e1e047c6a72b6c51a4d7defce907522c2d32d5e96586f6a89e	Python	python-libs-2.7.5-92.el7_9.x86_64
+biosdecode	24728	7131ec3638d5c9a8f7eae193bc8d7a4d6abcdf0e82bba8b3323c0ab7c0c071b5	GPLv2+	dmidecode-3.2-5.el7_9.1.x86_64
+blkdiscard	24416	9d659ba40c7978e5132532c673c94726714d1beea291971a94c64d6cd3555af0	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+blkid	79792	f767147e3bb261c6313f64db1db406973ed2e5df5bd9c0c12117230edfa6e82a	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+blkmapd	44864	78411382b75383d882aecc1c0feda156aac6522acc6bbe58201f1daf713f938c	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+blockdev	32968	60bc88738591fcab3814e01de3aaaa63f5e5065dbed3ca022a656e602c4910d7	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+bltest	416536	7a6577b56b1791c3876100c7ff645314add594af868449a69cf4f9085d481b09	MPLv2.0	nss-softokn-3.67.0-3.el7_9.x86_64
+boot.image	2084	5950bcc8e666efc687bbeed81262a4365688b210b84c80842c26ed610c34e6f9	GPLv3+	grub2-i386-modules-2.02-0.87.el7.centos.noarch
+boot_hybrid.image	2084	9b1007d37f3ba174e89f49cdff21cf73cba5af735fe05e3f9235101e9a2ff0af	GPLv3+	grub2-i386-modules-2.02-0.87.el7.centos.noarch
+bootctl	70648	9f26d2daeab0de5d0698c5f6911b401744158ca91beec8798a7f1a877cb80f95	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+brandbot	15424	baedcf19baaf57626fea53c686fbdf7cdf4a49fefcf2d1777bf2dbc77379d182	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+btoa	11464	2d305157d230210649f80b7aa032db3d7ac1435bfdacadb63d2bd8efc636e786	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+busctl	412880	8d76bfed2825630c8dd63d659ff1bb00434263bdb1bf86386843c712099f5c50	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+bz2.so	39848	5ece8baa21cac17237be33bebcb41932b77a23279c20a4369a8913595c84cb02	Python	python-libs-2.7.5-92.el7_9.x86_64
+c++filt	28592	5ec0cf63aff455897ab349459444d4f6356217243e3fce8cc6476f456fe78b03	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+cPickle.so	85144	b5e4a710a68468ab3db73b755ff219f574604be79b1a0cda3b6c2fb25d1d8905	Python	python-libs-2.7.5-92.el7_9.x86_64
+cStringIO.so	23912	6874dd5237bd626b40a55f236d525e0e33abea17ca262b4a578f34ac5e6d7b27	Python	python-libs-2.7.5-92.el7_9.x86_64
+cal	37688	300538c25facde563f49b6dee0804f09d8d5fd702852ca0510632f95b2289a61	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+cat	54080	1c1e782cf70163c0ccedad7dd9317fe5d36b28a7a9b64da55cfb88c87f993e83	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+cdboot.image	2820	44646982380084c7328a05bc017c29f4b8a6466b23c3504851d77a2681359292	GPLv3+	grub2-i386-modules-2.02-0.87.el7.centos.noarch
+cdrom_id	57432	c8b8aacb7868a33567c3ad4187242a8848f44d4ba1502dcbc6d7fafbf9df436d	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+centrino-decode	6280	501baefeab14cd979a76a09b0ae93ccfd97fa221bfbaed6d1e85c2464b356f59	GPLv2	kernel-tools-3.10.0-1160.102.1.el7.x86_64
+certutil	184056	72e301e2c7c075ea9f47ae2d2828ecf4ae9258af1112acc516697550ccdedb9b	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+cfdisk	73080	00778c571debfb58ff224a2853e5fbffaf7034cc062e9f8ccbeef578f5e7c014	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+chcon	62936	d8def2d719bc55e507e566fa34e69b71f88595ff02d8211f7f1034a3d397ff94	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+chcpu	24272	e1c2164c1662fe4fc65238637c400002b02b503aa916f9fe354a5deaf3f7ef84	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+chgrp	62792	7fe75c531cf0d5c3929043b5b97bbeb1aef7b59f6a4b304d1128582bda40c08c	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+chmem	41400	8b8012478de12cfbf1527bad6d4db160ac2bab96c0459ec2e682028252463e3f	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+chmod	58584	48e74a488159b15f4d0f6e8af379608f509dad9fe4497d1b7b4497908d0a187f	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+chown	62832	22b7d023b65762948a23fabe1bdd800ee119e1a90c42544668098ac12561bfed	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+chroot	33256	ba0d5fa1a5fc37c4b17f3fe9c3b4623230f2076fc4d2a2751b9b2ef7a7197f7e	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+chrt	32944	359168fceeb226975f505ab3480f65228287ea0a3a96cff0a6e71d0eebfa0462	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+chvt	11408	35b1a988b1d6f5dab38b91ee086d6109821b418294f5da1b68ca28d2fe2c1764	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+cksum	33152	e645b560f3f50c429d80f9a0fc97174233611a2a16bbe73de3ac76da1da24949	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+cmathmodule.so	38768	c415eecbc7da7eedfeb3f9c2895829445a5096fb3198a37994247e7db7f76bba	Python	python-libs-2.7.5-92.el7_9.x86_64
+cmsutil	113232	dbeefbc6c5477554daacd0836be0eabf196d6207a9ba683af2e49764d4cacd21	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+col	24456	1fd4509ce0dd8c9629997d571de3767309bd2a7d45a479895cae9bf4c39f2c03	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+colcrt	11560	545e738dad5b88c51693ce67d6c2a2b50b9a577eb7f00457d30832f087719812	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+collect	32296	3fd1a245c2a7ea425bf1503e493148a394478603fa4aed57eb2800c96ec51f77	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+colrm	24344	06a59430096c4f9adfe2cab1c3eae464dd589e1d7945eb7b542b5a8849f38532	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+column	28664	60fb230a0d71774370080791420a4e9fac3b2cad1ebb614aa8ae3ea935b58384	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+comm	37424	2fb54d04e688215937f8d07d2fb25e6bbccc96e68fa2879f9ca57abafef36d92	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+conf	98208	a4f0d31b3b78da126aa2938487afc5ff89d8e8baee649576e352b4d6befb2e64	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+conmakehash	10408	6ec2fa22d18637a3ca994848afeb4dc8f1217728c12557215c290a20bc802b05	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+consoletype	7112	1abc93e42234f6d6422d9b477b0294f8ef280e1faefb30e336ed4b6b913605c2	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+coredumpctl	158224	7ecabd383b64989d7c38b51c7d68f2f1e2f00615f55cd44c95950b37065b903d	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+cp	155184	a6713c3615859e5a3b067ddf0b3306a94733c64eb72e9995fc83faf1d5f3f5a1	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+cpupower	67928	7c3f8079461dab335da5c45b384bbb42f50cd718b43b6fe4a47c02e0e2dfb28c	GPLv2	kernel-tools-3.10.0-1160.76.1.el7.x86_64
+crlutil	130048	e4d6b699d49fb1056b7be02365655d82e8c4e5147085feb00bbb4a2e7034ebc7	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+crond	70128	7caea94896efb829044127483469607c6a36bdcdfab162f57b4ed650b9e3449e	MIT and BSD and ISC and GPLv2+	cronie-1.4.11-24.el7_9.x86_64
+crontab	57576	b9546f2c48512b931a17df1f0103e3f6059bce58b94283a8e8cc1d3e485e1b2c	MIT and BSD and ISC and GPLv2+	cronie-1.4.11-24.el7_9.x86_64
+crt1.o	1872	2234a0be74dbc60cd526a474c8c0a403b8bf8ed6a01b4b4d13b9c6270e1f08ce	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-devel-2.17-322.el7_9.x86_64
+crti.o	1248	8df7ccf20fb71941bd9825151ea11d8ad00feb36134f8357edfd180e9b71ba5e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-devel-2.17-322.el7_9.x86_64
+crtn.o	648	121f2a5f12b13471dd8c7dabe3ff334df08540c270564d1a2b3c47ecbd8d3101	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-devel-2.17-322.el7_9.x86_64
+csplit	49992	3229b14b4192235d08137dbf8262c171856311bb5e520c69abc9791c889a19cb	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+csslint-0.6	20024	1f8a79df7191abe07f39e63064ef2416f67d5f0742cb33b44f54955fa88fe64c	LGPLv2	libcroco-0.6.12-6.el7_9.x86_64
+ctr-cavstest	83136	0b2005ed60f3068e49a407299ec1ec25e7afc80b983408acf8c392fe91f634ac	BSD	openssh-7.4p1-22.el7_9.x86_64
+ctrlaltdel	11472	d49d89fce47c59c0caec75c712f79b9a4c0a6a6d392c77f1a8b1a2248c680c5b	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+curl	156664	bf5a41d753283e01ef2f7bbb79f45e04efa6c601afe32b493a8f30460c46fb14	MIT	curl-7.29.0-59.el7_9.1.x86_64
+cut	41584	46f99aeb012d97daa9648eae883b174d63fa29ae807aab837660778c52ba47c5	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+cvtsudoers	247504	440d8c1fb5173de72cd6df158b76755e85d4357e5145ef18b4e368d2539a6ef6	ISC	sudo-1.8.23-10.el7_9.2.x86_64
+date	62200	d02867b2322616107a0ef5f2ccb25b66acd95b3c9bded4d6d713e0c1d065c82d	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+datetime.so	86944	21c2900bb5b6cce93f989189b2fca598cab0c74b42adf2a54af2ef18c1edd451	Python	python-libs-2.7.5-92.el7_9.x86_64
+dbm.so	16336	334a93189c52c41010b04804d8f1162730d1256960e086b59b4e7b09e318fdde	Python	python-libs-2.7.5-92.el7_9.x86_64
+dd	74896	0c023cf91d52ecfb60beb4c0142b722c8a6784b0c86620d6ac09a52772a0e9c7	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+deallocvt	11424	ec59ee03ded74501c6d7ee5f3bf03c5cc761e2ed24fe1f17130124d522344e12	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+debugedit	33800	b444818aa6ce37ad11a7f6fca567cac5e0d844e7f2c45ad7179dce273ede5750	GPLv2+	rpm-build-4.11.3-48.el7_9.x86_64
+delpart	20160	e2eaea27e5c8a09e65fb765e6f2b2435411cbd168f009c57a4ff6df5c4ec0ccb	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+derdump	92216	f12ae41194913cb2ecba0fe320cb7783ccf4644f96863ba57f41d0ed862cb90f	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+df	105016	96cef24256bf1b8c857ec14a672d7199c376d9b130310fa9f95f497d2582fda0	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+dhclient	424280	9e51b1d3a5c53e2ec8f415278bcb221fe80dbb5a25af634cca1b3bcaae7d407a	ISC	dhclient-4.2.5-83.el7.centos.1.x86_64
+dir	117608	37ab8a067382b2b5497b463e3c6b9f9d8fca9c6332333e3d12b1b57a14de0989	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+dircolors	41408	ea4819a8183487ff8d84f2878539bf9f159b5b1254022d2baa7576494405c381	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+dirname	28992	4bf2c99414e3784007563e925d70f0064fa6eba6ad57edb3bfcc44c99a12af4b	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+diskboot.image	1636	c91c4a181f7bf2c8d9f72caf2a707a39705e9495a22b444144e054df368a9756	GPLv3+	grub2-i386-modules-2.02-0.87.el7.centos.noarch
+dlmodule.so	11928	38ed0e85ead8dd47c010008580c6dd9ca837c414fb2a752a68b41a270933aecf	Python	python-libs-2.7.5-92.el7_9.x86_64
+dmesg	49680	2e035f10df4924774ceee396be2ee51198bc026b77e218fad54e0e763804ef62	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+dmfilemapd	19624	57ddd8a77f6acc870e12da9182837fb67c0f87584620163327961381e9483ff3	GPLv2	device-mapper-1.02.170-6.el7_9.5.x86_64
+dmidecode	123080	d55663a46fde344fbd2e332ce52f47d023627477997d24b2a25bffa7336b8eaa	GPLv2+	dmidecode-3.2-5.el7_9.1.x86_64
+dmsetup	152784	855f53b0635e2294e4edcc796e599b8ab9fd81048c552b20ecee1f7616e6465a	GPLv2	device-mapper-1.02.170-6.el7_9.5.x86_64
+du	112984	8df3fb5d46b92ffcc983b3feb537c21b8265c0d8738504c0e61d99fe8a929ce3	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+dumpkeys	79368	71e401405e2210872811514c47cc51da936042499d6152970e4301aa8b898ee3	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+dwp	3177936	7f546274a4ecc228bfccbfeee48635e00ad595358db9431ab3db038ff390b849	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+eapol_test	1856664	32f01a4fdb80159cb247db9fd5e6fd25c1c86a46f23490980b2d85ab695a54d9	BSD	wpa_supplicant-2.6-12.el7_9.2.x86_64
+echo	33088	9339fe8c217ceb5bbd8ee744128778a089b8c7707e0cd8f78859f03f53eb8cca	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+eject	49984	f6101fef517baa3975031bab7e81a92b657921ef4c55872bf8574b20d36b52ab	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+elfdeps	15680	5727eff0087d3f5a88463c061466f81a14082d89aa436dac7602460952e83cda	GPLv2+	rpm-build-4.11.3-48.el7_9.x86_64
+elfedit	32952	b4569463f04f3b10dd2f7a0025dcda28c18277653a457b6b9f95dc8b85950081	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+encoding.so	28376	842854be5509c90065cbd076d345384dbdd9f2e3672d8b6e0adfeb8978313f53	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+env	29008	a3b73f69698d7ace3d4f51a0248ccea0b288da9ef84e3ce1b37786bfeaf39f81	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+expand	33256	b1d12a21e10eea03a971126368d90d79c0888e0c995942ac7788634516795f8d	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+exportfs	78760	d39d4e22b1075cfc17dcbd1a18d08e4a34c183b9a23fbe1ee2000200542fe90c	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+expr	37408	dbf7d5305225bbcc5cafad83db9a348e0fab926f9500bde17cd4ad542f4fba1b	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+factor	95528	50cc56a3c4504f57f5c841522c5962e4cd5d1118d8fa504faf31b89835bb3f09	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+fallocate	28512	733a2419df9690578273131868d832b1147334a32def3363069389e3516c67cf	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+false	28928	bdb668eb7f0c33696fe10b483cd940897fb8ecc095d3550192a4e9dd9051f4c4	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+fcntlmodule.so	19224	24ed911e0e4b7648e1c5147167a3591fd6efb7af14038bc42e3eb0cccc167b0b	Python	python-libs-2.7.5-92.el7_9.x86_64
+fdformat	11536	d4e30198b185c7a614e4a53171b8a0019f3c752580522d7d46d8592e791a731c	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fdisk	200496	f901a060680167c0cddf49075cc7559b9446c8aa91a4da82e1d10c5a513ab9c3	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fgconsole	11432	8ee817a135f491c2455b4ba9736a50fcfe639887ca0ce9f85cb28b4482bdd675	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+filterdiff	46280	01d2ee46e5d4e339bbaa1b7634b4cbe163382861ba61f18ba3482a9d35d9609f	GPLv2+	patchutils-0.3.3-5.el7_9.x86_64
+findfs	11464	3df26e539ad997c47a8795fe0bff95957335d9fb706a5ab702b1771079ca2ee0	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+findmnt	59776	94b4d505935485cf511704e1030ffe75cae32be7b19f1192458546bad005b613	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fipstest	435616	e3719e9775f8ce6d38554cd770601b2c82878457cb1a26bc129a5a9b2c069b5d	MPLv2.0	nss-softokn-3.67.0-3.el7_9.x86_64
+fixdep	10456	7e48ca73870917178d910a4db2c2693689510d5d5701d262aa6480024795ab13	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+flock	24448	1a7b0d3a78a3effeda7d824321d213aa15982484128a305823530075af70eff6	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fmt	37352	61d72d7e3823422851bb98725f4c2e28c63d48b4b2ece39e16c1ef115676b23a	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+fold	37336	938c4d2af45d6b262be3244c0241bc8b47db2a53b067de98b7640c4c5e1c86f4	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+fsck	32888	5da6639b0551f73864eb2413fbe7267746c3efc50b12d9d5e2a0aa106d199531	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fsck.cramfs	20040	4c2d2f666ce79cbf97a9472080079024769e7c14879cf54886a07217fd209a86	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fsck.minix	75080	8d75bbed76c8759797346a889b799d25a9964e75bdb1bfbfee492926bd79a116	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fsfreeze	11496	014b1584e5d0b0bae1553babe4f019b7c051d3ed4c15f32afb4116d8da12f67d	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+fstrim	41568	5ea5f7f58a0cf6389154c6cda6678e84b6bf751f55a25dc439799e5a0d6e22e9	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+funzip	32136	7b54d568753e2613e7fe4e9f4e10a2edb631257ecbdbfed74baf0c75aa91684b	BSD	unzip-6.0-24.el7_9.x86_64
+future_builtins.so	8584	b5d157c4f20f0b75fb01fd5772623bf266da496d8eb778ce8c1b4ba38e60f2f4	Python	python-libs-2.7.5-92.el7_9.x86_64
+gapplication	19944	e0f28a718bed4b3ee1e1c0abcbff0f73c43d6a6a415f032b07a66a588d8d2ea6	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+gcrt1.o	2440	ba868bcc6a7b73c3019e5c85adf8f03a0265ded9e73812f7c024b0725f6532ac	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-devel-2.17-322.el7_9.x86_64
+gdbmmodule.so	19872	dae615ca7dd39c1c0e4229929e3bd4cf4223bff6841a3d54fcfe47cd06580fd5	Python	python-libs-2.7.5-92.el7_9.x86_64
+gdbus	41136	4110fb5434dbbb9051df5b446283b48d0dde047ac094daada76d2df2a938a197	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+gencat	22640	250300fa0ecce2ba5f10f0b6fe82ba58a077586b0392adff1358201c4542641a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+genheaders	25368	8b78fa8ddf2db1ea48550b6604a4c5555a19899eb2d40271ef434c99bacd13c6	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+genhostid	7104	cd351d8d3913b2bd5f842304ad72a0ccc38911a2b504469b495bd02e614dac8b	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+genksyms	47456	4a5aeb6ec761848ed867f43ae95626d570174a98fe6c8877205d3ce779e1c607	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+getconf	22544	db2fb8e24f2bcaa649057653f50aa9aac2e740b8f97b117dab4b4371d693be79	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+getent	27024	f425d01d3ca2f5e24201cfaef8e266bf544ac06eaa8101454fa5f012177ffb3a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+getkeycodes	11424	b97658c3b2e4f487093c7e0ee055e041d45d594035195f44acdd570d8630694d	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+getopt	15752	1dd12dbd4c8a5a54ce5ca3043eabac786f2488a4258ad849f19d8852bc2c1023	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+gio	75176	7e710306b912e673bd7a300194afd474c0d928ac992349c894c0cc6460e88938	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+gio-querymodules-64	11584	f97c47753667ed422d3a2d3a0811d52f519611d4cffa4dd9521edd97159bbbc2	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+glib-compile-schemas	45440	309bef66d628d871e6d4aee110cd0c59e223c81871ad8288c1331edf15d9b147	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+gprof	100776	41b3074bf79ff85ae69e2dddb8c670468196781843f469e4b6c5ec56dd5584b2	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+groups	33192	00178a33b0d6998aaba76e9cfb24f702f0601e6812004e24fe1e84ef5c0ccbe4	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+grpmodule.so	12352	76b71ae92e158e9047b90441a11bb331e6290a01c8302dfc9c7e4346fb9f9e1b	Python	python-libs-2.7.5-92.el7_9.x86_64
+grub2-bios-setup	1078480	1add809d76958e5f77b7883a8fb9e03b6bdd826415017a93c258765ab5ebbcd7	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-editenv	405584	1e3236c22560fb7c5484d2c992587ba5ba377a31633336b035df9506ff8cafbf	GPLv3+	grub2-tools-minimal-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-file	850288	6ab68a15178d132560599387b589cb0c9a005f4fa3f5df2c97fd07537ae3942a	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-fstest	1075016	1402d25b2a185b13ccebc224248301d828f4031e49576da05bde104a130389c6	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-glue-efi	265072	380a0e3cf6b819447d3bb09530edc3a83f911eced59b3d666db9ba5e7bea1ed2	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-install	1346920	992b1bc5d5b50b10990f3c5bb2761bcdf0663789f857e523ff53407c1d5f93b2	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-macbless	1061488	737b1fe1a872e5e4e1fbbb69c568fbe8f23042ae0c91112a7274e369fca164fe	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-menulst2cfg	247624	438c53357397cb36b01bd350c27a847a3bcf385a5f80e0d77a90579077c12f02	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mkfont	294480	45b1cfdf60a434467d0183ed7f03823785a215d62a449a0b3ef994b2e9e24b2b	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mkimage	388336	12cbc6aa1f3baa52bfb4fd570354887c02ad3831a1b8ca7d41d6d7e9be5e9874	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mklayout	271256	79350fe43974d69b97c52046268dd6a30d0c305b786c123f5639e1865df5019f	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mknetdir	440112	a1adda346f119bef39b0ab9f167f1164bc506aac14499a657dbc7acf1ca65ff9	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mkpasswd-pbkdf2	277808	4315a43704b3726a39bba1d055153b76c7a0f49f8f679da23b7f3a2f4890d871	GPLv3+	grub2-tools-minimal-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mkrelpath	264680	8056f14b30da66ee19e7b3f1b4d2d97cf76a571690e387f0fc4befe10fdf1626	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mkrescue	1038216	85da2802d63bc30c061af2365622ac9a85c6456438cb99d49e085fa9d24fc0f4	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-mkstandalone	547096	102810c3b3d170b3de2008a836892d4d83fbe0f9fe0d94bbc1325f56fa25dbdd	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-ofpathname	230952	575288628f109121280ed1772d732ffb36dafa465065ce25f9fe226bb5c503dc	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-probe	1078568	e6279fe9ffa486ecc161b8b8421c9f00a6612c051176f062eca8714002a21814	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-render-label	855176	f92097eb3e2b54ffbacbe87018e8ec9cf62cdc62ef8df2e1f687e8a241d52f23	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-rpm-sort	264728	f61e070fd0534a598e938fe0019f9f2c39e3a47495bc94684bddc274557a8b10	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-script-check	302472	c5e4d3e647f570f356cf4e71672493782b3d3da892980f7a2793d89324563964	GPLv3+	grub2-tools-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-sparc64-setup	1082800	2d50a6271933dc65f48db678a931930682bad46be07efffc69977e5081344991	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+grub2-syslinux2cfg	782032	b7ec57a3892fb9a252e7ce26ef9693bc9c97ce05dbb184edaeac2f9d358161c6	GPLv3+	grub2-tools-extra-2.02-0.87.0.1.el7.centos.9.x86_64
+gsettings	24376	a53ff3d9e6e1a383552abed5182bfe2f179bbc19dfdc574e602480ce34abf628	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+gssproxy	133776	cc05b7378b743b79ea310c35984e027c47b402a270603dc0bcc28f4bea5083f5	MIT	gssproxy-0.7.0-30.el7_9.x86_64
+gzip	100792	e123d33672f5a8c991f88cad8716fcba097a844316591f7e2a42c441b6ca22d2	GPLv3+ and GFDL	gzip-1.5-11.el7_9.x86_64
+head	41480	dc61de02c16fa044a5c0f22bba5b847ae671b260dcec8ce251b1573d00d7691f	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+hexdump	32784	42d55cbc7dbda4a9b19bf5bac77df8604c78f8c41ba4b79e40f9e383444f9a99	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+hostid	29000	f312c8697d0e4af8b776ec40a23d2769fe613ad23e7fa3de07862427e9ac205e	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+hostnamectl	325704	9a238205fc380b3488e4a31b6312fe3e9247636c2c59f9d067f4a6bd11b3b428	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+hwclock	49600	39b8086651e15cf540d4effaca1b1fb61c9606f9c447561fae37f1adada8a439	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+ib_acme	40680	b0f7d4c4d0908b57f0cca23581fef5eb16a1ec44bc5cb5e2e881c7827cb94f54	GPLv2 or BSD	ibacm-22.4-6.el7_9.x86_64
+ibacm	62688	42b889b98ddc931ae3602c200b993c45658b3182548fbf456396c248e53db0b0	GPLv2 or BSD	ibacm-22.4-6.el7_9.x86_64
+iconv	59536	408e46240da5775541426257e73740d8a8e27635f2c54327cd9c1469233bb183	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+iconvconfig	22680	61b7775eccfc35f5f6bf6bb5b6495425679200291910afbaa4a0dcb0ef2b3f00	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+iconvconfig.x86_64	22680	61b7775eccfc35f5f6bf6bb5b6495425679200291910afbaa4a0dcb0ef2b3f00	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+id	37400	13bc7004501e157520edd166a30c270e7b1c9b93fa55c7860d434435d3ffdd84	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+imageop.so	20168	b887f1add946970d185b81fea0c9bc3ceafeb02c49ec2309a7d2d4523add14bc	Python	python-libs-2.7.5-92.el7_9.x86_64
+imdiag.so	20944	273908228d3a999b639b9b1918caf71d6738849b72fe6f6545c070108844c7fb	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+imfile.so	50256	775312f06d20431512137fe92e8d871517ba97fe4a9a2fed35db3ee2ad89c5bd	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+imjournal.so	25024	630e7e326ee9f1c9c179a2739715f61d10fd453230b151222dc807287c7f7df3	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+imklog.so	20704	8147bb50792ca618feba5a27ae31d68e25b0b86b7e32e5eee82da1028ebf2d64	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+immark.so	11912	2142b4ee9fdc93a158bb1a55b0e1b5d3012bea3f0eb6044f2657dc65512f07fa	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+impstats.so	20672	716736b5007545d83ba57b21705c720b8edac262ad68833d038a35ecef177e16	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+imptcp.so	41904	f9fd1d277362fa15a256714bff63115f7033dcdfb00d23848131b62d7dc5cad0	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+imtcp.so	21192	f58cb02322a102b980ec0127839911184a08dc2c07572a104faa61a4a37743de	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+imudp.so	29384	eb8dd91ad07df4d61c4bddbb606f37263dfe78026774a081ba771962ef8d1399	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+imuxsock.so	38048	d89f0f130729684ddc5efd5d4d2f0e11df9675fb378287b9329273ed80079753	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+install	142944	335957ea9ddfd001213e9c1bfcea30db15266196f09d2293a6e60f1c2517be1e	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+interdiff	49864	2b3fc5a87c58069299169abcbbb76da7424c410fbced3bd843f85019339939f9	GPLv2+	patchutils-0.3.3-5.el7_9.x86_64
+ionice	24432	390454232b8e69e107e74209bc53ff59aaf31c8218f6cb2b8317263848cf4191	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+ipcalc	15416	1f66137948f822af6e8b585e31e3ff791c88bbc1dac447261953764e858d141f	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+ipcmk	24576	fe7adc9dee830811f1116a28f95a76cd0f25dfe1c8246871c7da127a68627959	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+ipcrm	28520	5107dd1102bb25261fca5a9729d13da832c7c5e13b87fd583c1096bfefba6e06	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+ipcs	49528	d6994cbaf15bf571b83347a17d3fa35c3b4f8356df6d19bb74250a93fea5bbee	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+iprconfig	403832	cb7ad006bda76a433af49ea28c9db7692aa337b73dd9046ecd98d3ce872b1b0c	CPL	iprutils-2.4.17.1-3.el7_7.x86_64
+iprdump	126640	fa3abf0e52eed3d20e28e22fcab09d611c6ce54e288c7e2e72ebfbd2330bdf30	CPL	iprutils-2.4.17.1-3.el7_7.x86_64
+iprinit	126608	43fd90bf84f5a16c9f87bb5159be0e4dbde1946291ff4d9ff092e5832de80fd8	CPL	iprutils-2.4.17.1-3.el7_7.x86_64
+iprupdate	126608	e63530013dad1ce1d296c5c6c791b1a0b1e98cb603f5921e0c23f29d5894e258	CPL	iprutils-2.4.17.1-3.el7_7.x86_64
+isosize	24400	7309df50fa6a70d0582e53b7c19f439718adfcea34ec4bf47af9e211f85d2f8c	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+itertoolsmodule.so	62016	c58115c2ba1381bd5f800099aad8496bd6dc8738eb979bce8bfcb93c7543f948	Python	python-libs-2.7.5-92.el7_9.x86_64
+join	49920	b17dd0b81a1c93e26e1be2536bcbaf8b4a0c8a674e1c83f284d0638795edb0d5	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+journalctl	550792	1dfca4dbc5c56d1d75587af8fb4a5d19d67f35a12042f226bb8a7381c9d82a5d	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+k5tls.so	20216	a6e28579500546351a9ee780c9264f2ef9917f59b25228c7144aaf22237b0c88	MIT	krb5-libs-1.15.1-54.el7_9.x86_64
+kallsyms	14776	9a60a520210675c48a439056db668282b848ee6fe1d04442ff77c0f06d210cbc	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+kbd_mode	11424	989a069981f3f0c721047bae91a031451bdcb42cc7cb2e9dd45d64b4e8f9d277	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+kbdinfo	11456	1763deecd14ca9d889aba508c3db6a105f749dc0bc62859ac2df7f60d836ff83	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+kbdrate	11488	831538c3124b248b8b46e82cc50d849469fcedb02c5b7dc4cd9c02fbf4f4d500	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+kernel.exec	402336	15001bac9f559228f24b4d1ddf32be86eeb971d3ca26ba331ad1142a103746ac	GPLv3+	grub2-pc-modules-2.02-0.87.0.1.el7.centos.9.noarch
+kill	33608	201e8a83cad91f870fc659fd4c65a60834d715714011df4d74d41257326eaf21	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+kpartx	40416	457e07e08997b4c541ad12e4ce09c4095e5e6e6513f9eca4023296df657298ec	GPL+	kpartx-0.4.9-135.el7_9.x86_64
+ld-2.17.so	163312	5dd05366a881b2c3c525beb5f6811f3584ff8b1de3c08ea79ae9bb54ffacf835	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+ld.bfd	1006192	64cdf7c331ca3810f5ba539cedd0517cc683ad4876b672aad50851b4f8ed3eba	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+ld.gold	5354104	5a38e9a655938aa6096fb424e7c6bf200322b098431d543bfb7f4f03d7ff3b3b	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+ldattach	28600	b5b0d2c8bd96e6b8356a94bcd6ed5712b88b1b5bbfebecf2cd712fa2be2b479b	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+ldconfig	974928	f61ec19da8c0d0cd2e88ef5d40eae08de57ec118dcbdb6ab9a4870e88e389a67	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-325.el7_9.x86_64
+lib4758cca.so	20584	581e3b4dead2744889fcf7a81a2279be0c8a9d65308477c109a0f996a601c63d	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libBrokenLocale-2.17.so	8400	3093af16a1b4190e223a062f8b47e3a85be9da1ac8798c41e1a67cdbc3f469fb	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libCNS.so	472264	f788de3a12e433c0fc73f9e03ea2ddbfafa1c6ad9f889a101bacc97c4d3da6f4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libGB.so	70008	9cc3762cad8824205386a1d4429cf3cee288c8090d685024cfad92055ee3d0cb	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libISOIR165.so	61488	903d8b512f908df7a920e3f737840d7f038fa9c8a7a99ff5ad9d476355ffe368	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libJIS.so	102832	768bec4d9eb6adf749ccccb88e87e14ad704d91e7f004cb4a6a698056c6735b8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libJISX0213.so	123048	bf688dd03c93ee03bcadd3b8221126152e2058e2af065f8fb711d9c85056e380	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libKSC.so	49296	c6d81d2ca085bf7bebd432e628786b92f3224130eeebebfe5fff258eb91be00f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libSegFault.so	21904	8290aa31043d6fb57101446d4054c4205a408f129a8a80090d4a5c5ff77154db	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libX11-xcb.so.1.0.0	6872	69166bdf6a5a6f83a4b7dab469e6ee21fa9da7adec65e1197d5f8d7ddbf53005	MIT	libX11-1.6.7-4.el7_9.x86_64
+libX11.so.6.3.0	1318824	550e7a67185d4b174c72200fd1d77b07f476e1aaf48d72aef627030549651395	MIT	libX11-1.6.7-4.el7_9.x86_64
+libaep.so	20768	354a1a373efa5dd1c143ca075de26e27d4b5d386a37ba705109303938db7df62	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libanl-2.17.so	19744	41be5ebd0e8d17c02a0e77a7a2da3fc8621a952e1cda5edd433b35b1aa69c057	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libanonymous.so.3.0.0	19976	43621a09d482ee935c662b6df64e9b73bd39e7c0ee41c0105deb6da4429c5e45	BSD with advertising	cyrus-sasl-lib-2.1.26-24.el7_9.x86_64
+libatalla.so	16448	50d4d545cf854c99824216f36eff75556f8eb26fe7c33c6c4bbf1ffcb676357b	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libbfd-2.27-44.base.el7_9.1.so	1340160	943c6aac9041deb48a0c4f46116010ae927dc23fa678774f8d3fc2ee9689e610	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+libblkid.so.1.1.0	265576	fccc232f13d61286d4e187e922292118380eecceada2358f3324bdc72c9c91ba	LGPLv2+	libblkid-2.23.2-65.el7_9.1.x86_64
+libbnxt_re-rdmav22.so	28288	f705f78b558e93ec3230249bf14e1df2dfe251614b115307ad31d4cea2af5de9	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libc-2.17.so	2156592	6824ca5921d376b3b8cfcef187deed223e95b1c4eb68f108e205831f467adc0f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-326.el7_9.x86_64
+libcapi.so	6944	53fcacc82228398568d731ecbe76ee6355a31024eb1ce3c7226492fd276a57a4	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libchil.so	25288	da4ad7338df6e54604eefda1af7cda2871e9db7a69cfe42ca2d45bc3d12b8050	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libcidn-2.17.so	200992	87fd0ccd2149e8188208de7e307866a78f6ec04377da4405d7890de70956caa6	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libcpupower.so.0.0.0	18640	5a199208e8342843abc971576540ff25941159e2463798cacbbc15de89006c8f	GPLv2	kernel-tools-libs-3.10.0-1160.76.1.el7.x86_64
+libcroco-0.6.so.3.0.1	247472	9a800bf7fc53e07bd6d893080bdf409840d1d7c71fc2158a815e8c24badb33ca	LGPLv2	libcroco-0.6.12-6.el7_9.x86_64
+libcrypt-2.17.so	40600	f284b2f65fbf2d2fe3310dcd24904efc7aab33ec2258846dae614b90009b97de	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libcrypto.so.1.0.2k	2520920	19957f5b3df6ccb907bf4a4712b09f010a41eda4b682db876c4ff748e8ca3e94	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libcswift.so	24896	2c28319ab3c483e920733463d46de0c8e3fb6575127565aa40d5cc765db0f2a5	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libcurl.so.4.3.0	439280	602541fbec93d5c9c46a61db978acf2ecbd9257bbfd3761b4c0527707ed4342a	MIT	libcurl-7.29.0-59.el7_9.1.x86_64
+libcxgb3-rdmav22.so	28160	d02d614135478f38d2a5f2aba6c7c32a7cecfaa12e98530c712a04f4491aa9e3	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libcxgb4-rdmav22.so	44912	64756d160defcf1fb83766d5de6aa1f9ad9f1f3203a46db8ab785ace83e799f5	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libdevmapper.so.1.02	360256	d5007406cb14bc63b20bf710a011ec440a8582a26ecac52c4e729bae98b5b904	LGPLv2	device-mapper-libs-1.02.170-6.el7_9.5.x86_64
+libdhcpctl.so.0.0.0	23848	da433b1c3a0e01fc1c559b94ae5f2f0ae9ef8e630b1ecfef5a70fa3c6ac35bd6	ISC	dhcp-libs-4.2.5-83.el7.centos.1.x86_64
+libdl-2.17.so	19248	bc46c72626d57207bbeac8cdf27e9a7707fb72db57ebe1948aefd788f0fdda1c	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libdns-export.so.1102.1.2	2308216	fd2ef02d5e03678e8a8be82e57c41d6b7c81f5ea4b90e3ba2b2c032a8430833a	MPLv2.0	bind-export-libs-9.11.4-26.P2.el7_9.9.x86_64
+libexpat.so.1.6.0	173320	2073afa6cb0bb626a97fc7250597a4f8538602ee88ec46712321c50a839d225d	MIT	expat-2.1.0-14.el7_9.x86_64
+libfreebl3.so	11392	cee72d6af9e9439a41f240f23042149bd7e781995aa5d3e000b53b7ecbb3a9ac	MPLv2.0	nss-softokn-freebl-3.67.0-3.el7_9.x86_64
+libfreeblpriv3.so	773872	cc5f22082143b25bf8562b78cfa49befa6fce8ded3c7e2c1de3f5acab5237255	MPLv2.0	nss-softokn-freebl-3.67.0-3.el7_9.x86_64
+libfreetype.so.6.14.0	795560	c0e61f0c27a9b664b4fbc5d48e400bec563e6d51675ce085e272c8ee94698c37	(FTL or GPLv2+) and BSD and MIT and Public Domain and zlib with acknowledgement	freetype-2.8-14.el7_9.1.x86_64
+libgio-2.0.so.0.5600.1	1727032	8dd0156db45e4fc5c2e09ee56c9511fe40616023c98033cae020f531bf93e1cb	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+libglib-2.0.so.0.5600.1	1156608	8ae5ade981674c8ee48b1395d945b32b54469d6e53d51a7cc3449463a4594c2b	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+libgmodule-2.0.so.0.5600.1	15640	ef3ece8718dd83aaadcd7a08c07e8a11e20d9021739126248deb8732f658f7e9	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+libgmp.so	6936	752f7fa98736963289a52657fe8e6ab3c8dd8f97c370d322df62587f700dbb95	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libgobject-2.0.so.0.5600.1	339088	a7215831b479c12e540315fd11ae62f5cd891965466945d7a28404e145217fdd	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+libgssapi_krb5.so.2.2	320720	497db0c6049bd447c873af5e262950d544adf23b1812c85457d836225f147582	MIT	krb5-libs-1.15.1-50.el7.x86_64
+libgssrpc.so.4.2	134368	a1dbf7c0aef62201d5d3dbccdbbd146efc64cf20d33733fc54dfb26eb5eb0b23	MIT	krb5-libs-1.15.1-54.el7_9.x86_64
+libgthread-2.0.so.0.5600.1	6952	a5994a2ac2e635c7f2f4b4f2f699fc70b92753381228f314833d66a631e0fccb	LGPLv2+	glib2-2.56.1-9.el7_9.x86_64
+libhfi1verbs-rdmav22.so	19936	59b897d4838565c6da70aeb570512be7241eacd0fb0db1bf19794784012a63c3	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libhns-rdmav22.so	36552	98b99166273057792d9b82a894523fd360d4d69470bb5d28102dc58dc1367ce0	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libhogweed.so.2.5	160768	bdabb71c505cfad254bb49e24f451ce8a04611f4ff4cef9069a556d2ae28703f	LGPLv2+	nettle-2.7.1-9.el7_9.x86_64
+libi40iw-rdmav22.so	32584	96d012eea258da0694ef3a33bb79baa6c3f6f2bb368225833416379844d9f70f	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libibacmp.so	54032	d0f823e5bb4cf79c6d2db9be01fad4e8c4a6d5573d0a42b2c03fe73fdb9458a1	GPLv2 or BSD	ibacm-22.4-6.el7_9.x86_64
+libibumad.so.3.0.22.4	36512	f8d6077c515ab5d4b98400382f5f7fa6824d97ac69b977f2157696b0a17df5ba	GPLv2 or BSD	libibumad-22.4-6.el7_9.x86_64
+libibverbs.so.1.5.22.4	105704	be5f5b85f8627ee0394a720000147f353cf1ebac6d39b7b03bc16e1214ecc9ad	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libipathverbs-rdmav22.so	19928	56c7d44e9993d00785a4ccd2c1c3df18e1af3884846d9774565f1bfca113ef5d	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libirs-export.so.160.0.5	45248	1814f63464f39985e23df365bd4201d039e48159f91051ed76c1617b9bd5c87e	MPLv2.0	bind-export-libs-9.11.4-26.P2.el7_9.9.x86_64
+libisc-export.so.169.0.3	446112	8bc0077b89a3e83d2fbcfa7de7d9937a1ff9846bee7ac2d847e1e4d2e5027abc	MPLv2.0	bind-export-libs-9.11.4-26.P2.el7_9.9.x86_64
+libisccfg-export.so.160.2.1	182576	b1aa578742cf359404d0f13d6af03396e5b6376619c1464483b277d4b66848d9	MPLv2.0	bind-export-libs-9.11.4-26.P2.el7_9.9.x86_64
+libk5crypto.so.3.1	210784	b1f99d5c69d39204a197d12b6e647068b38373982ee39f77be19aec82ee65787	MIT	krb5-libs-1.15.1-50.el7.x86_64
+libkdb5.so.8.0	79200	5d9a4894ebad3a43b6fcceac82c9ebbf8acd9be610aa7fef6b89923cc0134cbf	MIT	krb5-libs-1.15.1-54.el7_9.x86_64
+libkrad.so.0.0	44776	80465a6ba73edfae6a70356b7b6c656f86ed79905d34d3c404cb6cc9a2c5d3c4	MIT	krb5-libs-1.15.1-54.el7_9.x86_64
+libkrb5.so.3.3	967768	6824148d442050881b4c7d749e29effe2de7c724a180f7162fda0a58c163ca5d	MIT	krb5-libs-1.15.1-54.el7_9.x86_64
+libkrb5support.so.0.1	67104	f4e34ad2b61e49617d9a4426b4d6eb29be226bbef8f87300f785ba14f100a289	MIT	krb5-libs-1.15.1-54.el7_9.x86_64
+liblber-2.4.so.2.10.7	61880	7eefa7611858a4e7130e66b277476892ca8a50d089c6eb0f88fc76d27b6a7b40	OpenLDAP	openldap-2.4.44-25.el7_9.x86_64
+libldap-2.4.so.2.10.7	352496	b8523ca2a859f113d7a8de33605c6676dfb11746d39384c5c57af0bccbd7efc4	OpenLDAP	openldap-2.4.44-25.el7_9.x86_64
+libldap_r-2.4.so.2.10.7	381312	f51b92e0dc56689a28bb1921e8d69e01bc87c317eba296e2d11bda5e05a51d60	OpenLDAP	openldap-2.4.44-25.el7_9.x86_64
+liblzma.so.5.2.2	157440	004595caeadc46cef395bcd75452e6208926f91622ab6537bc5aa14cee9dd890	LGPLv2+	xz-libs-5.2.2-2.el7_9.x86_64
+libm-2.17.so	1136944	2ff6a53615516bf6c6e9ae1df288221ecb73bbc5a61e4cbb38a777da3afb0b59	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-324.el7_9.x86_64
+libmemusage.so	23224	1724de596c1c3e44f7738f14a0c8531994efcb2f948248a26b40fdfe594077f9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libmlx4.so.1.0.22.4	49672	f54ca91bc289f19007ac48d23a9c82f0ae0f051cb7503c790e6c1ec6dc9e6fa9	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libmlx5.so.1.8.22.4	165952	0929790fd0b0285fef4e170667137d76b1f73c48b73daa5945b3d95b22c474ed	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libmount.so.1.1.0	277808	2c8ae47c3189daec9a27b6f290391cead38e5c5e14447a370cb49cdc6c228f0b	LGPLv2+	libmount-2.23.2-65.el7_9.1.x86_64
+libmthca-rdmav22.so	36592	8fc12717e1b82499a177def397746a81630146601964d95e31a317572cdf83c7	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libnes-rdmav22.so	28128	97e943e738b2459a80dfaa9041f706872acd762bf9380ee33623c6762b1e9d37	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libnettle.so.4.7	201328	a301c127e411cc52933f184929d6f661b7aab0e99064bf5adb2f59a26c953258	LGPLv2+	nettle-2.7.1-9.el7_9.x86_64
+libnm-device-plugin-team.so	41352	8e801579405698c8ff51946232aa2320b45651bb7d78344d48b31055e8d9c423	GPLv2+	NetworkManager-team-1.18.8-2.el7_9.x86_64
+libnm-settings-plugin-ibft.so	24328	582962b047eb7b5fa731a9831ebbf95a31d43a7adf7487317c3f31e9bc452f28	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+libnm-settings-plugin-ifcfg-rh.so	252320	aed0bc38f5821d7ba12d8575a88a90be8017f7104545c514b1a7b7d094fb5245	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+libnm.so.0.1.0	1314760	68c8d04eeee5ba1cc7edd765ed7a55930d439eda49fe42c323bb37bd698cefe6	GPLv2+	NetworkManager-libnm-1.18.8-2.el7_9.x86_64
+libnsl-2.17.so	115816	d0c69a0605575d8d9e6bedfe5b874be6409cefd6f77c501fd4b47d4306750b90	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnspr4.so	251784	11a13994d9046d5a909924d941bdb178ebb7e37f1644517911cc58a9efe9f99b	MPLv2.0	nspr-4.32.0-1.el7_9.x86_64
+libnss3.so	1299920	c86675ade3f09f2fe78dd22a30fe060cf923058be76d54185c8ac27761ab60fd	MPLv2.0	nss-3.67.0-4.el7_9.x86_64
+libnss_compat-2.17.so	46376	1f30f6a1002237f8f6e5fa94ca7867cb7688789061a935e75c270a7731b93061	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnss_db-2.17.so	38032	11670df8b5d6af7fc5870198859925761d0f0ed8039621afe6826496b8af8f36	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnss_dns-2.17.so	31344	bcdb311ad819de943ae8ee6893fea862e5e410bb5d69bd2c3c3a0b454a7fdd91	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnss_files-2.17.so	61560	e8c176c587ae20945cb037e753956b8e12661c8713130ed9a58f7f6731c86d2d	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnss_hesiod-2.17.so	23608	fbb379703324d4dc59d47075056e075a9de9649777ca1aa3b4e9ea5f02769afb	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnss_myhostname.so.2	86464	9c6ac141d9c24aeeaf643bfb9e2b82fd1d2e38ac8a08d1e219b1176a9a8e04a1	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libnss_mymachines.so.2	305016	a5802431096a21738d25361c757aac3d2daa67aba94c529c2ecc150c7473e361	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libnss_nis-2.17.so	56600	dffbe5ab3ab38a3191193eb3e304279ebc9a67e887cb7f004773a197f8797f8e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnss_nisplus-2.17.so	69616	2ed3ab8b91f379507270ac0cd65b061c36383204f1d8f539f116ab4a480b5cb1	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libnssckbi.so	534656	16ef692c449df71f7a180d4a2ab8fee0bb07fd65f438beecaa5b68b104031470	MPLv2.0	nss-3.67.0-4.el7_9.x86_64
+libnssdbm3.so	138432	37c5f3445c0e9bb49387c3bfde1d05029379e034cfba2314187e0c48af8c8495	MPLv2.0	nss-softokn-3.67.0-3.el7_9.x86_64
+libnsssysinit.so	11400	7bb7b1ae6d33a17b3c04d0cb54e706c1076163b1b6d63e660f4c707a2b5d6e6e	MPLv2.0	nss-sysinit-3.67.0-4.el7_9.x86_64
+libnssutil3.so	198992	63b734548717402f9c801193a947bf99839877ca4de3e4620b6d60c69035ef57	MPLv2.0	nss-util-3.67.0-1.el7_9.x86_64
+libnuron.so	16344	d02f787c6dab59455a17e6b88f77b3ad23979d713043cc0131333cfe65d9125e	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libocrdma-rdmav22.so	28272	06315f50c32512dca6ac846063278da09c3122c81a494eecb6eb8692be582aab	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libomapi.so.0.0.0	125296	e9fd1278c43f750f9a20a518aa5738215f52148fadb2eb4d11eac4662d3b56eb	ISC	dhcp-libs-4.2.5-83.el7.centos.1.x86_64
+libopcodes-2.27-44.base.el7_9.1.so	1686656	8a84fab3e9512ec3077242eacc6b5352f539dc4e88bd641374a75822ac10ccc7	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+libpadlock.so	15728	6086d5135bba54efa3ed0bb45b8cbc0f9a995067beaed0e02929c191b1e7ee00	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libpcprofile.so	8736	61056ec049267dc31e7f123e7cc838152490bf0d75d215dc0d75b23d6ac4ee50	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libperf-jvmti.so	22840	32ed9a6ec2129d734d728cd06c68a78a20ecd4328992df1f050a24fb65b3504b	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+libperl.so	1647320	e67bb3585b5368f6d7d724c5a76ff6b2ca72d0f92d28db81dec686b503bc70da	GPL+ or Artistic	perl-libs-5.16.3-299.el7_9.x86_64
+libplc4.so	20040	1bfa08d91b1b2c8d70634f2abe5948b304b0de2b4c949672140619693bf40c65	MPLv2.0	nspr-4.32.0-1.el7_9.x86_64
+libplds4.so	15752	9d1f41134f1ada7298a95819d7cb8598dbd6deb71e122d517ac2fa1bb5760356	MPLv2.0	nspr-4.32.0-1.el7_9.x86_64
+libpolkit-agent-1.so.0.0.0	44176	e97c60aa01f66f98813fd29356b96659de4f2444ac6547d73bdf0bd04737b855	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+libpolkit-gobject-1.so.0.0.0	118704	d64830443bdd07b71456dcbec80dfe9d208aca635dedd5d8b472a01808f39d7e	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+libpthread-2.17.so	142144	878b0b9d65c7154837e674de16b913959a72824dbfeebb047407c7880a07d3c4	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libpython2.7.so.1.0	1847768	e5e60a7f7fa92b46e5721b8f2a64a97cda51f49835259a641a65550862685ebd	Python	python-libs-2.7.5-92.el7_9.x86_64
+libqedr-rdmav22.so	40648	b8cb4388453ae016c057062b3326a944c673a55b1db2e8464956480e0478932d	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+librdmacm.so.1.1.22.4	92016	8030c0f382481bf357dfbd601518bae32a531c23e84d20fb098012a0e47d92fc	GPLv2 or BSD	librdmacm-22.4-6.el7_9.x86_64
+libresolv-2.17.so	109976	76eb02f4b51c251e4dacc146152da545ffaa799b1e34cfcb730fde505b5a745f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-326.el7_9.3.x86_64
+librpm.so.3.2.2	436536	61c7936be7c3371a1fae17d131ba90554a9223de848966ff316401ef4227f93b	GPLv2+ and LGPLv2+ with exceptions	rpm-libs-4.11.3-48.el7_9.x86_64
+librpmbuild.so.3.2.2	146784	4ec3d6d83b2cdd14e1352caf2b3e6ba974ce71af95ba950db3f6ed0e3d60e1da	GPLv2+ and LGPLv2+ with exceptions	rpm-build-libs-4.11.3-48.el7_9.x86_64
+librpmio.so.3.2.2	178928	4a63bccee0407341f36145ebab1f703017dba062aefc969d66afdd6e022db684	GPLv2+ and LGPLv2+ with exceptions	rpm-libs-4.11.3-48.el7_9.x86_64
+librpmsign.so.1.2.2	19872	88ed29eb170e5ca01b34e2877bb7987f303650eb430c685aa82aecee4fbb2a9b	GPLv2+ and LGPLv2+ with exceptions	rpm-build-libs-4.11.3-48.el7_9.x86_64
+librspreload.so	28408	59821df946371a870d844890263fb9a2522ca3c68c087640ab1cd7b4e6b18e81	GPLv2 or BSD	librdmacm-22.4-6.el7_9.x86_64
+librt-2.17.so	43712	5a76b3619ccd14f300d4df3cf45574106ba4f049e74cdf8f97dae1ea6a38e9e8	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+librtkaio-2.17.so	53200	81ee00d56b051a10e1534887b383515a5cf22e7b91ce6691fa77c6acdcb6307a	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+librxe-rdmav22.so	19864	3c105b6915f2d6add35ab8dc933420afed5ce58596ce818a6087e2c302cb91d5	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libsasl2.so.3.0.0	121312	84219a89b635c809c66b297f2970df52f1f38dd429426c213d0340dea5e7ec9d	BSD with advertising	cyrus-sasl-lib-2.1.26-24.el7_9.x86_64
+libsasldb.so.3.0.0	28224	c58a9cea41a4c814a908a6eeb54ae546e2502336787ecf3941645d7d31898f31	BSD with advertising	cyrus-sasl-lib-2.1.26-24.el7_9.x86_64
+libslapi-2.4.so.2.10.7	131832	d8782341894856f6cda002bfcd348d92a26389b58268782698de845e8a13dc48	OpenLDAP	openldap-2.4.44-25.el7_9.x86_64
+libsmartcols.so.1.1.0	168368	dd09c9d56983ddb1da84d390031a2a7286943b9f771a7368d33ecb96a198a5b5	LGPLv2+	libsmartcols-2.23.2-65.el7_9.1.x86_64
+libsmime3.so	168096	79ab3266f8393520a408d2a404f104fe65e52922ff8ed17da58ffda39be3ed83	MPLv2.0	nss-3.67.0-4.el7_9.x86_64
+libsoftokn3.so	335176	e5f5e31a9c4f0ecc48de52c838c647cf2b1d80ff8eacde4d789567b6b93160f6	MPLv2.0	nss-softokn-3.67.0-3.el7_9.x86_64
+libssl.so.1.0.2k	470328	2a9eae6f73345e3c657778605d0753113baf3f3424acbdb488bd324c39f90c48	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libssl3.so	412984	2c7a906b4000ad1e0be1c0f43134f79f9e8a51e21be9191e4a3cae192c398be6	MPLv2.0	nss-3.67.0-4.el7_9.x86_64
+libstdbuf.so	7016	6eb96edef6d2b6227a5cd7c12ab84dc3fc69b5750504c0daf88c56c561b595be	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+libsureware.so	25184	e84aeabb8d99a75decb013fa376998c37339dee3c765ac2b3ced9d91dd0ffd6f	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libsystemd-daemon.so.0.0.12	28056	1bc40abc7c510e9e46b8150d6b88875f0cf7deeab035460af29ddaeb5ab4f801	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libsystemd-id128.so.0.0.28	23952	52704287d5c033b1f4ca5b4250d273ad6dba80a7b4ec0eaf06aee3c7ad86003d	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libsystemd-journal.so.0.11.5	153488	08cafa83cc3e566f776b3462ff284f78db1d6626cd949a6a2421ce480a63c7bd	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libsystemd-login.so.0.9.3	61624	3b8eb0868e19c7ef63a8ad1f87d45f2fe58f493ad62c4c28c8e872d0699fb32e	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libsystemd.so.0.6.0	203688	9be61d21b951d399b8779087844704fef800e3ccd32e9c9620829d3da4bfc1cb	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libthread_db-1.0.so	38168	faa1dffdbdeabdd61f16d4d7e6d72777cd4f6499909f1ea055bf184c5876e4f9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libubsec.so	20712	a2a1d5036d53b9c2a68a117fe284e37477d34fd935b37bdfa7823ed66dbb5a32	OpenSSL	openssl-libs-1.0.2k-25.el7_9.x86_64
+libudev.so.1.6.2	91024	8edd22730f69d2d2dcd51b892e34b5af60da4fbe2d16662713b4ab5dc25fed7e	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+libutil-2.17.so	14424	85de5b1e64d56eab48a5537ade8ddcf77adbca544a28489baad9e848c8c816f6	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+libuuid.so.1.3.0	20064	f64cda11e1ee1edff303fb180a894f30de1944991a60d7234f88ae6918c062eb	BSD	libuuid-2.23.2-65.el7_9.1.x86_64
+libvmw_pvrdma-rdmav22.so	24096	6f235a23277dda37c3bb8efc40c241eeeebe84fb8cddee5a08b5550e1d161deb	GPLv2 or BSD	libibverbs-22.4-6.el7_9.x86_64
+libxml2.so.2.9.1	1509520	3998bec4f844bab78f102637a3fcfc123662ff5bf307f628c8cbfa37a749b953	MIT	libxml2-2.9.1-6.el7_9.6.x86_64
+libz.so.1.2.7	90160	574c8a6ab0e8f1817d2fc329c35420a60135ad30150a6ff008e348e2d8c7da30	zlib and Boost	zlib-1.2.7-20.el7_9.x86_64
+link	28984	e519f172063f008af5394bd7f8a5bd0573cdd24cf7f649e523b37eb45ca3aed4	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+linuxaudiodev.so	16592	ac670470be0db6d62b38e222a19cc64e6af3da4864cfccd8acb5bb7bf5513e38	Python	python-libs-2.7.5-92.el7_9.x86_64
+listsuites	88048	3e5838da0b3262a48b838e6dc9fd9afad59a48242ace5fc46804b8c87a7c6ffc	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+lmnet.so	24432	66c394d9b22c20004fb49ac8ee17019120ec400d5ad1e100d70ff717df4a00bc	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+lmnetstrms.so	22072	e0b991116145bf70628b14f50bf6d76a48713d7f6a972e3977f551481c41f40b	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+lmnsd_ptcp.so	26192	7e2b066efcc4207345e3863ec9524ab4e186ca76293648943be509defa782b8d	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+lmregexp.so	7088	06943b80cbae208221ddc7b09d6a0681c2172f38cc8d578269f1ed98f2b94104	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+lmstrmsrv.so	22424	70df2203da8bf5c3c39bee78426c3b9cc99db40d7576f9f41cf42b456105505f	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+lmtcpclt.so	11344	46370a7b5a62b1341eb1ad8821855e0ab79b0628ef067f37bd9692de71230d30	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+lmtcpsrv.so	35360	31b8bad8a9d3bcff0e1337edd3e7bfac1885496b8aeaa0a36529eb98d163c744	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+lmzlibw.so	11224	3abb9314d27317e62b4bc82396cadd259022734ed7ba6b20de51a026f07a3572	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+ln	58592	86ba0b66a74ea3717667bc73069219b0921f773faf84aac9102115af63570159	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+lnxboot.image	2536	e0686d3305c4b46b526c35d94b5094a124b64f957c07abe714d862b5001b8886	GPLv3+	grub2-i386-modules-2.02-0.87.el7.centos.noarch
+loadkeys	113136	bf0a2edede8d68b2e04267b5d9b8b625b3d6e768120622ffd50a0dea9beabc72	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+loadunimap	24456	1757de2f632c30ca2350c56b1547894c0588b3026775290c4e4d6cad6db746b6	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+locale	38000	1152e64c600df9353adcb6c8b1491fa3218b9e06c093deeb7b4aa0f74db9b536	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+localectl	333992	7087c55e9123bcd34ae157e91345749db5b0c548416221aedef406363d287475	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+localedef	325952	a59736da71a3da0d804911daf94340d1b3a5642beeb1f9899f53675376bd25cf	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+logger	29304	30469cace4bfce6565f7ecc6cb8ad18a46675cd33f183bd650e24397681f243a	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+login	37248	7195284ec907478b739f3a5ccc979048d71552fc2fdf33e86610ee9b44232b81	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+loginctl	501368	73491f21b3cab16696a4074c4f43ed60c10342944845bac6b74ec24255d006e8	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+logname	28992	b3fae3416edd6e6057e85440ee4b754c8b53efa563127e2190d15fac733d307d	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+look	11544	20efb3e70febce5f1c034e14e260aa28eebf3e827a3447a9f64f7af247c8d312	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+losetup	84424	49ff4593fe43ab747b459987a51cf02fad2b8f77710a137ba04bcd18be03c9f6	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+ls	117608	e6cf253613d641a9c57dbbe820af11336269da4af8c5aa576495f181a72c4c57	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+lsblk	81072	997649a5d3647e4762b88acfbcfe815024ac4a950a69717f1668b2eaa7d1466b	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+lscpu	62208	7e52676fc138d1ce5791b5a1cb7a171fc24ccd4530781324d2f3be6c0b5cee99	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+lsipc	62408	123a1ec7860533b4c079c96dec89ef5879f7f8d4fd9a80fe4c77a8650903f652	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+lslocks	41992	09fa00e10a79cac6ab1c9ab435bdf435d7dd10f8d96b123fa35a904347e53961	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+lslogins	54152	73768904c7bd6bd08f7d17376a338fc3e7e06d034d7f834b57b7ebff6ed441bd	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+lsmem	41760	e5939673e6b8722019982b0d6a2fa4b35114b8164d7814fc5a333470164a4c17	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+lsns	37304	32c79a71229200f7c8d88b92584914474addc9e90a664ada82e0b01451351aa1	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+lzma_decompress.image	4772	a39cb30586062826a7c891b5b483676b670d631baddeb2e05ae2f2eea9d8f56b	GPLv3+	grub2-i386-modules-2.02-0.87.el7.centos.noarch
+machinectl	546768	2f500f02a46dbd62d728b2d4bc954ec784e7b17fa24ebd1775e23ea13f99f530	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+makedb	18544	2f440c64d5f9c5975012ebaa871aa6bfe81cdb65a78f8870dffbc2889bc4c544	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+mapscrn	20256	d0202e295439cfde503f66a4f914eb8cfffef128bd664f0637e5a81891642121	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+math.so	37368	1e18ac5b15c82c0913a21094dbf21f31ca34af024343b7a06a04f0ddd72d7aad	Python	python-libs-2.7.5-92.el7_9.x86_64
+mcookie	15808	c308cbf08485dfec3f941a4e61cf3c83ff0aa8d5eeec87fc74773873efd5c9af	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+md5sum	41504	3af7068542bb7beb25ba93064586d0fd441eb50418cbbb7b88bd80ca82c0b961	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+mdp	25104	d566c3c0ab09190b7777d70bc634069adde6cb70365e7c5ecfe3a3329a186dec	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+mk_elfconfig	6256	fe1633cb5dd25650f06f4b32abbb63b8d6e6b77641df175ec6440a277b766726	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+mkdir	79768	2d1fc3abadcdf7f4744263713693a2cec4392fc09f4e6800f5da95cb5d941245	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+mkfifo	63064	9ef15fe6c364cf6b6767ccc9d5c547764c19f554b305369ace879716d9161377	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+mkfs	11520	a63c03a1fcc675472930e438742b3c5cbfd132d65466ee9d291b235d94471e36	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+mkfs.cramfs	37024	e747ba2e332b90e7a503b0db54415573a5ab79e2737ad239e64c0536b604e324	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+mkfs.minix	37136	93590a31a91330dc40a2b2525759d2d9505f09d0053d23fd6b87ebe23a90119d	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+mknod	67184	7bc95ca3398883c20a04d71d3e8f40cc3a12390b4c30dc27fd8c6d12c04246b9	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+mkswap	71312	048457dbbe733bed72251ffa4defa3f1fe5acfb914e39ab518492ea501f17fcb	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+mktemp	41632	2ae9888027258fa27ae475192e9c96674cb2685d161c275497e3a98b3f490f34	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+mmanon.so	15592	399e7ed5c36bfeca25838a6adf34a288bd69c9ef572b8d221b985645624a1170	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+mmap.so	15760	9ac29a0437a43cc2e1fbe064aebfa7c46cf664d72572084dc8a6fd354bba8e80	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+mmapmodule.so	26344	74fd57c8b99478556449892ad93294a5f67c8fb6013d8cb6d6e886a34c47dd11	Python	python-libs-2.7.5-92.el7_9.x86_64
+mmcount.so	15616	7af121ab0cb5d6387ba0a366e38ab920ea76de687cfbb2b3fd6b9f7c330cf58a	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+mmexternal.so	19696	222a977d1cd8fcb8807bced63f1dff2732adcb58aab7545782ba58834a1ebdf4	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+mmutf8fix.so	11472	746fdc4c3cae46663a97135744adfddb2ebe9ee5802c5b2ac882872178d04ffb	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+modpost	61688	3944beb8b3c04566a6807f692d3f6717e0d567a282bf5a3a49b41c3407ea7715	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+modutil	169792	0740232fae25d2d47ea4467bdc5de03f6097db6c9c018a9aef46fdf13932dc8e	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+more	41112	fb8ac816b71ad803ae754bc513421478e33061b616302be9d2a6df4f8488048e	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+mount	44264	45606aa7bc79a1ba39af6fb19a9f1da7d9616d4bf97abbef2284ca15c997a60b	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+mount.nfs	117432	b11e9ca03236388229d3b7410669b4612d5bbac0f1a3f19634b458c6db7ba95e	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.1.x86_64
+mountpoint	15688	5a6b46d9e13b5c62e9e92420cfa8879354f95632e1c94b4f391e36102a6a423f	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+mro.so	19784	ec3f49a98c76a0051d9b5aebce50f39965af8e023179347a3cf0f05c169a108d	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+mtd_probe	11160	8326a075a77c4aa3489c0da6213c2845f9b300367ead603dfbcc5d7d6691b0e8	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+mv	130360	a17816c4d50ba2ca76cf609f090c5997b3a4e4873afa670170910abfb7b33356	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+namei	28616	dc2a020015f9073d3552745d268cdec48af7eb01eb9b77204c40f9a4711a0d8d	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+netreport	11224	03c43e6da0532fb86d539609278ef29f1b3ffcb8bc1ece9a781c4c38e0cd3f7d	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+nettle-hash	11600	ec4f06d913d997744612d4941a935397b27615f4112a86e1c497871706f52681	LGPLv2+	nettle-2.7.1-9.el7_9.x86_64
+nettle-lfib-stream	7216	71ea5fe397a6b19c76560fc96d7bcbf067f9ff782d845faf43631091f79fb9f0	LGPLv2+	nettle-2.7.1-9.el7_9.x86_64
+nfs-server-generator	57752	865ea476126172b4b36b7f7109f84081f39164d718888494971cd207793b88b1	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+nfsdcltrack	41072	9f416b63a08ab76916261d8f4939e7646b60bc0cb07b7fa436ea1462b0e5eeb4	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+nfsidmap	19784	b4844150652e9ffcc06a71a02425764fffaad8bdb97ae3194f42d98f719f3688	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+nfsstat	30552	4048c418d2300fc00cacb9b1fed95991558b72316ba3b506e478a529e61bd325	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+nice	33096	e158a2b74410cafdc2dc183ad5571c83eeb64df54d10bf7f7d0eef59a3ee81c2	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+nismodule.so	16584	15e590060089126174ecbae5ae2211f49221aa07a201ecd3d4fd51b1a6aff041	Python	python-libs-2.7.5-92.el7_9.x86_64
+nl	41576	6b58f49edf745c0b693b8b829324e75e89c73333af9cb20ea44057f40293b092	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+nm	46520	341fdb09c614cede622c9fb42534de76b120ec7af411478f14366bf20db2971d	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+nm-dhcp-helper	15480	1a56f92d3420bd47b3cc4702029143758aa0896a7960182def787b363a34bc8b	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+nm-dispatcher	48840	0bccb8a2a86c707ebd3b7ed478a1368272767ea30e7f8c09cb23f22737b96a8e	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+nm-iface-helper	859504	c37c08f93280ba253cf5de6a1927771861f3d9bf023e71b4135e77a10fe8990d	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+nm-online	15528	32436c92187303015821cac12d9718fe0b414917055b5c67caa7a0a168e112f2	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+nmcli	828584	8acb187a19618c0c6c0db5d9f21a9afac5a76045d2b3596c95fb103c438c8f08	GPLv2+	NetworkManager-1.18.8-2.el7_9.x86_64
+nmtui	662288	c3027f8c80dd53a14ea369042e1269a23961b97175252f16dad4b0cb4bee0626	GPLv2+	NetworkManager-tui-1.18.8-2.el7_9.x86_64
+nohup	33200	932a3c2e54ecd82c29355e78b022ad386e639f00bfe8e88fb17b29d3ffb0f286	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+nologin	7176	d9e9b81a3a6ad66ff869d753d38690fea936caf394596b68186fdd34c54c28e7	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+nproc	33144	cdfe4c31a178462f39aa6e2bc1d4a8b99273cfe4f174ff078020b93451acbec7	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+nsenter	28896	d534366bc3ba23eead6e75f1838189df199ad1554da77a9889fbc036417e6c43	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+nss-policy-check	11456	7caf7a68079a7cfe24d88dff60f257312f8558f47103848358e1ea7ba65e2649	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+numfmt	66264	9ff9fc80c38a3079d27c252edca7b8767eb6a4264ffedfc4874be26185864b82	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+objcopy	232792	10861574956154e51121ae0b04250e2d97b22b3091157045bb3c9871c96ffe16	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+objdump	366328	4c6e505859cf8afa4839d2604900cbde870f0c09d2825c4b0268cf41f765fbf1	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+objtool	76672	b886aa6634528a5cab20786c1eba5275d5190ea43f54392ed2a8e2f856635221	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+ocspclnt	104768	83206d764ca9d5abfacca53b65a2d5fb40eeee76f89cee59ef0231d8e40d6f83	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+od	66368	0d7d924686cc6c5f28b3a35afeb9b7fc524cedec6ae8f033a82ec52fc927800e	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+omjournal.so	15536	ed1b905bc5fd2ba95174e6cde8fda93aa70e3a185a6978e5bd57f3e4d8424e40	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+ommail.so	20464	407c16b0d5b57dd06d0606539406905e39b396771b7aff4e1524aff10061497c	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+omprog.so	23928	d9536b5ac2b100c5c80a6b51a0be3965594b8294c83be8520b6719d20b4f0d64	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+omruleset.so	11512	a420a8ae39fac17589590905695f831c6f370247f54f93cc88574ee7c722eaa1	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+omstdout.so	11328	a3d989f930d61b73fb805331f5688ff0a7f5a013d1fcf5ff0363d029556bb453	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+omtesting.so	15424	221e816fda91202946524c6e32746cc5554f684a4de462b62567bdd74650e229	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+omuxsock.so	16120	a8a707ba1ba3e6334ae6b6ce271f6cb07e2e70f369aabc5b229af174b0a43322	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+openvt	19944	2c702e87b217b3966e6203e0ecadb94738d8704289a090c0114aec5dc3862f17	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+operator.so	47624	e10fc40b6c80388fdee63f3a107ee8ad7b1465821525ee83a71bae513bb4ae38	Python	python-libs-2.7.5-92.el7_9.x86_64
+ossaudiodev.so	30048	adc1b2ebc7aee7f9db08883a5f4b1aef9680be9818866ac913f23f07d35dec72	Python	python-libs-2.7.5-92.el7_9.x86_64
+ownership	15400	886413237a3a07ca553ec45cf57b29c2a20851c53bca1a0b25b8e211ac5c836b	GPLv2+	dmidecode-3.2-5.el7_9.1.x86_64
+page_owner_sort	10440	b2dfda668d0a63323dd6237e76c44644812078ab8ad5c0e2e41598292111f3fa	GPLv2	kernel-tools-3.10.0-1160.102.1.el7.x86_64
+pam_systemd.so	309248	d583ac0dae8c00782b9627f45abeb9a35d3736bf9037f605deb53c3933c4f24d	LGPLv2+ and MIT	systemd-libs-219-78.el7_9.7.x86_64
+parsermodule.so	50808	860d2734fd4602b29ad0cc8492f0b1cc597da8f3790cb8e51ff1f5291117895d	Python	python-libs-2.7.5-92.el7_9.x86_64
+partx	88624	26f04d710b87dd07f98b6b45d10531bcbf3a706394f8db70492a215b43ce5382	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+paste	33120	691cceb8028cff9cabde131c542b6309fc31b4c2601a8c46520f7f07d37f3db5	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+pathchk	33088	aed017625c305082b8d28aaa6aa855b8d6b04f72b32aac956002d1155b6a2db5	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+perf	6045544	e02e84a56b4d020c0701c559604349420404e74ca983e9c90532cbc81bc99e38	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+perf.so	343968	e059e67333417ddce4cde5e1ce2343d68fbfac8d55d9bafe2f7e24874d03c083	GPLv2	python-perf-3.10.0-1160.76.1.el7.x86_64
+perl	11408	ae798d0d3e1d0564d2c3fc40b1859a3a7d52395e95b6192ecf681645bc18ab2e	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+perl5.16.3	11408	ae798d0d3e1d0564d2c3fc40b1859a3a7d52395e95b6192ecf681645bc18ab2e	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+pinky	37448	9e7dddf207d909f4b4bd17ca74feecabfd033a935c0d3a0584d50a56181da1fc	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+pivot_root	11456	21d1d71b890db20e9e5a4d4a6441f1b17035615c1e447dc108eb70c4324fee6f	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+pk12util	105688	47ac55ed57ebe3f5267b5ab48c4ca3924d00ac87b1897c25e45c30a1cfe1cebe	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+pkaction	15360	fd028c17d0cd8a267185117eeeb23e6149e2f7b3806fe7c6475e1af93ecb6621	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+pkcheck	23584	ba89da359431629fc37d817590eccc7a4d82085568045623362d24d102e2dc4f	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+pkcs1-conv	15896	d9fa90d3ecc1bb2ae8f1d43501c2db4297c4790326253dee365dd74d45b936b4	LGPLv2+	nettle-2.7.1-9.el7_9.x86_64
+pkexec	27672	3ea149aaa35a366de81292387835c0274b1947d72a0d649efb8ba7805c092450	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+pkttyagent	19440	4f90f4122a97c1c1cc0758266cb41aaef415b7c93c7e0f52b49d7dd07dc138b1	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+pldd	14448	d5923ecc1c49b54ec07ea20f1b2445c121b26af3e2866349ae796e079f08dc60	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+plugin_cfg80211.so	5272	14922a7cc9671be1523a95b27bca231fa8f878e494c30c2345a6d6e5039c9dc3	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_function.so	10184	3eb05564b95f36990f1cf17507cbf6a7f4ae2280e8e086195ed4edbcfecbc935	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_hrtimer.so	5288	2e5a7df20e863c893172415d53ceb70cb038d6687183108fa02ca55d57c4c3dd	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_jbd2.so	5272	2be2c3d9030d453a1d0d0784220e72b74e78e73a332f49d35d26f3053d054a01	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_kmem.so	5304	3d16b76d4ce2f09d7360016e0f2073f240c92e54b53fa8429283bc006c6151db	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_kvm.so	15928	5c5f71f3fa3fb754131d68a3debb3ddaa38eeb33ee637c4dc81f9584501c7173	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_mac80211.so	5472	7e6362fbed49022c188fdee126c835ffd09d9a52f414db297bebcc3c440d13a6	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_sched_switch.so	5328	097e5198317a62a4b7ad5a5a8cc695a335e4ee28b75addc3c8980df287b7fb7b	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_scsi.so	9528	f17a6a61e83c7d4c706cc544acccab578f4aa36c95ba3cd720c4305077e52115	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+plugin_xen.so	5944	4a63f45ac495b48b05cfecd09b62aad531a6373fcbc69447728163a8f29f1928	GPLv2	perf-3.10.0-1160.76.1.el7.x86_64
+pmaixforwardedfrom.so	12000	c888725599234bd1ed5ffe4ab229589b96acff0a8d1eaf62eb9fd74557ef2405	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+pmcisconames.so	11992	27a955609eedbfe6272d4b1b3a5a94a400e1cc0e108c89e73d9fe802abadab19	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+pmlastmsg.so	11992	c320c6efcf71d78517465dafb0c3099cceeacf846512eb42c3b1e32509af3db1	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+pmrfc3164sd.so	12000	fd0c53b8308f37d30ba80eef1aa31e409713f9d201495fcc2ca4e001294e5ce3	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+pmsnare.so	11992	bbeca1ddbf562fdc9b043673f5f5a09c3edbd659cf46f6cf7c3a10e755c3e4f1	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+pnmtologo	14528	66caa664408a2fcfa1916ee1d329bd0a87844ad535abc9e343352d5dbcf8eb47	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+polkit-agent-helper-1	15432	fb6aafb1157fe6e0b4e66602cee65be418ef334007740ce1bb5853974d907551	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+polkitd	120432	37bced43633c9d1fcb7ce3dc73e47f95f05f82449f5e2cffc1ffc79af608e5ba	LGPLv2+	polkit-0.112-26.el7_9.1.x86_64
+powernow-k8-decode	6296	7ad86dc5d8559aada6081354ed60523b8c69a5203a82d674cfe1a5df70b1e6fb	GPLv2	kernel-tools-3.10.0-1160.102.1.el7.x86_64
+ppp-watch	23752	5253856cc63af0ed5618732073ef4968afad1bc98d4335fa90c875d66a13372c	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+pr	66672	a77533157cc1232ea046e6e99e10154b28557639d7d41dc680c58c4eed594732	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+printenv	28960	eeb8a222a1e6cfef30ba48bb0bd6d2227ddc54d81c1747ab424470fca6b6a7e7	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+printf	49776	47e510b965062b4231c2d1b11bfadd42892cdfd721745b38effd6ad007c644df	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+prlimit	42184	eb0dc61a505487fe0c5b8279be3e70bc74b9f44060d86c0e89bbe313bbbed1b3	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+proxymech.so	119256	7113f13e9958763fe0acdea665918ba96393b0797b70f82d7d7f794cf6061dc3	MIT	gssproxy-0.7.0-30.el7_9.x86_64
+psfxtable	19952	66a2aee57c378f8157875a8f2ebe4653dae2c5dfdde8d2c65b545ddc699cc683	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+ptx	66640	baa97b96ebd6ba24661b067ed2b68a433870c95ba920b6ebba4507566cf5ad5b	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+pwd	33232	6d75e30d62d4eda45c87463e7ad2a6de3ee3f0349071c1fbaa6284f895ae1513	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+pxeboot.image	1504	b2df0cfee7638fbc8d1e7734897785073a1ed97760cc7039454b2d07d8280029	GPLv3+	grub2-i386-modules-2.02-0.87.el7.centos.noarch
+pyexpat.so	54560	673ca434e554e50a2cda29385dec6ea61825712915c87ef8460fff80083e128b	Python	python-libs-2.7.5-92.el7_9.x86_64
+python2.7	7144	7581175bac26f2b6367a9783417a276f2199e7cc03c10b88359efe4200b899e1	Python	python-2.7.5-92.el7_9.x86_64
+ranlib	62688	ac1677489a583336d1f75168fbbeb046336a9ccd2334091564a661a8f85e2a1c	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+raw	15640	450eb08468572e498474533b254d881d01d6670634a8c58c8be105bd220705ae	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+rdma-ndd	15728	a9b82bef66498d295e7f55875317d219e52fb3642c9a70df9d1041b9c67f3576	GPLv2 or BSD	rdma-core-22.4-6.el7_9.x86_64
+re.so	328760	94461c1b07ea7aa7f502d8ab44934e6a6cae35c42a75c387f855b132f10c8e7e	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+readelf	522064	1c994ba321e44064b0e1703cbd238441ad286d80b41f0ed7954d3a0aa41b7ab7	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+readline.so	28392	1b229a62d7d54e4cddbccb24e91d7b78b4b55a6aa4f43568a025d2cd1746d42d	Python	python-libs-2.7.5-92.el7_9.x86_64
+readlink	41800	3a16324722133898f54934b72efe40d6faa62bcab42791a559686d53b91de259	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+readprofile	15832	b732013d86dce970e854e529b9ab6f5cc68b012a844b1e2a19a0c91b89b2f19e	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+realpath	62704	af804b93d8af0fa0f22d88a322e363dfadd080a84721a8643e84a72a227a267a	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+recordmcount	18720	a4df74595480acec3451a062b433938e811120ae0b5d3c1bfe865b5d93c05c19	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+rediff	36904	636dae939f50d7fb58a29681b27c2c46743d06425ff824cabdb072c171061896	GPLv2+	patchutils-0.3.3-5.el7_9.x86_64
+rename	11528	ba0143f7884d13a925dd4126c369dbdd7d8a4c03f356855dd70aa96ca6505b2d	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+rename_device	15400	84548fcc894b39d508f873895a1bc0d92143a46b8ad1ce5c9ead16e2cb3fbb09	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+renice	11480	55e3cf4d0ed2d478e28c9ad5abde11cb7635155595fbeb6794c423572a740a56	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+resizecons	20096	86615a9fc49ce1e22a54edf4d93e0f6fb3c254afdf2a28efb72c8f0a7cef435d	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+resizepart	33136	e1797c54242fa98927c1be5200b1a5fa3e21ac4394cfe5dd55d9a74fe31f99c7	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+resource.so	12104	7b6bfce976b97060606d85f52c1a3367e021b2aef0f879352fd38b9eff1a923a	Python	python-libs-2.7.5-92.el7_9.x86_64
+rev	11528	ff4340c99eb49fb06f07b40675a5d0fdbb6f3f5d29b61a10a99fd56ec51758f7	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+rightbrack	41488	2948b1bcc5fce49b0f9f546d41ec16be282d3981a2aebb7c8cee04a120b793e4	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+rm	62872	117811e18e9602e83dd7ec871f235261e0d2e769ff6e65bf17d0fb04cfc70641	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+rmdir	45528	e2b63e4f2b36d95298f5869afeb9959412a7147e845be34e7b4e7c17ed876eb9	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+rpc-pipefs-generator	28144	1b6abec74a4542ec6d817ebe579c1e0f6149c87b5341061570cb865b23662501	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+rpc.gssd	90864	6953f818c91d1a322b3f14c1f47fb1571ba11139cf79632f6c1ffb4b7f163f71	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+rpc.idmapd	49280	bd4a17caca8e93dfb915ca2f1c008ad7df93abfc4bdcb7d67de7e43031b9d557	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+rpc.mountd	132000	513503463ce234d6003363694e848431d3e66903607e25e55084ff9305445e9b	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+rpc.nfsd	41168	5b237d09b72b13d5c1373a3818d9d9aa895a9a7acfd9db09bab694a29314c2fb	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+rpc.statd	99936	df4551537ca7083563cbe196cf1bd9c3a29da6e65857aeac32d0c9c67244562e	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+rpcdebug	18480	628f360ad6388ad10b2bd67b1dd7c6da9ca4e514ba3f5a5c426d2bc1f3c93eb3	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.1.x86_64
+rpcgen	92624	f875774c6ef167561e15e5e84dae11b58e259158acc4a3e649cf78ad11946c65	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+rpm	16128	764435ab9069a528c9d9e2ed189495a0976fb70c21048d3465fc4bb1b9db56cc	GPLv2+	rpm-4.11.3-48.el7_9.x86_64
+rpm2cpio	11424	6830d91162a1c5cd2145b0a2126f2b4d746f514ecb2da0a4a5df84939d00d838	GPLv2+	rpm-4.11.3-48.el7_9.x86_64
+rpmbuild	26184	fa52a922126b87fa24273ada0f91f1799a12191c26b2c8d920b5def44dc8b039	GPLv2+	rpm-build-4.11.3-48.el7_9.x86_64
+rpmdb	12016	9f982e904e45caea4d92794a597effee054b2f033cde9f7ff52363ed64b4ee88	GPLv2+	rpm-4.11.3-48.el7_9.x86_64
+rpmdeps	11792	176372efec13fc280864f9255f5400a92da321e8281ef86f3abcbd7e22600b53	GPLv2+	rpm-build-4.11.3-48.el7_9.x86_64
+rpmkeys	12016	42779f79f29b2b4a9236986e4a6a481f3e46079a0b6840e2ef1167a94096da7c	GPLv2+	rpm-4.11.3-48.el7_9.x86_64
+rpmsign	16184	074ed45a6f6dbbab1d1dbe8dc35f2536edc86f31839d17d27d4a101aadf64a1f	GPLv2+	rpm-sign-4.11.3-48.el7_9.x86_64
+rpmspec	16376	a34f35a8ee161a23ae63959fbce36e92985f07fb156dad72f9d9f4b7e908d08c	GPLv2+	rpm-build-4.11.3-48.el7_9.x86_64
+rsync	500096	d7125277fef028265555a9d8ed02c3b93de7016b725d20f84effbcb28b6c17fe	GPLv3+	rsync-3.1.2-11.el7_9.x86_64
+rsyslogd	664008	b400ab759a2460cb83b28cf0674d656b07916a332b5025af85d459074375e7cc	(GPLv3+ and ASL 2.0)	rsyslog-8.24.0-57.el7_9.3.x86_64
+rtcwake	32728	b07822d5f1d54fbfafd6c4eb5c8e30fde9475dd24c2d2ede343bfcbe3977dc0d	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+runcon	33248	7f538b54caa01a3ee007626afbd2079dce99b9b4b3c6d0fccf25503336a33b5e	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+runuser	32984	ee86e193e72617e11ec28f6ea11e9665816db8a17959c650df8a496e0323722f	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+sasldblistusers2	19720	1fef3ef3e769f139d2efbaa9edc2f634469c39cdab7cc99156f6192c9f07da9a	BSD with advertising	cyrus-sasl-lib-2.1.26-24.el7_9.x86_64
+saslpasswd2	15448	4378c22d8ccc4c32dea7984cb1cf1a970d3a26b9afd0fcf3377a3e29cefc19bc	BSD with advertising	cyrus-sasl-lib-2.1.26-24.el7_9.x86_64
+scalar.so	15888	8f7538d72f19c32735327c947f569173c4bf93af2ec09811835a08af7eec22ee	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+scp	91376	3cb4ce75cda007ccaef14ef272f8d1ba74869d12afe3566a35a432bed9c43fa7	BSD	openssh-clients-7.4p1-22.el7_9.x86_64
+screen	475240	ad437d3ac71915219f925485a9816adf8820aec1d45a37094f77c35d68e8870c	GPLv2+	screen-4.1.0-0.27.20120314git3c2946.el7_9.x86_64
+script	20080	d704855225eca24ac46e344ac552033c72c1d22515c8150ad45deea3d20e68e2	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+scriptreplay	15656	bf551e7f1433e7d598c88dd392e8a14ed2997701c63bf88c39d18ea218542de2	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+scsi_id	58224	16e6384b01089c0259603fed731e9b8e29b358f205c8d7ebf6a802d37b853524	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+selectmodule.so	29184	92d5e51463c1d13826782c565ad8df627d89a89bf6b908b031c81ffbbb07bae9	Python	python-libs-2.7.5-92.el7_9.x86_64
+selfserv	134584	ccfa7a6f578b095d8ddb25a41356399efb8f122599ea7ece252d831388d71097	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+sepdebugcrcfix	15608	46e645e99dd0279ba06ce62ccce5d8d167be3740392afc6597aeba77b69484a6	GPLv2+	rpm-build-4.11.3-48.el7_9.x86_64
+seq	49640	33ac144a5cf21ade2a51c6b99041ae2b90306cdfc1631dd80c368179daefb23e	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sesh	15368	8765432039022d0cad4e2fedafd38136d444e6b7d6665c657288de37a7b0550c	ISC	sudo-1.8.23-10.el7_9.2.x86_64
+setarch	15640	469565cc33ed133d1aa3601d3040a39624aab9521c2a5f592c9e1e84e940d68d	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+setfont	41352	de8e9f11cba916820dd4beb4e6cce576920dfa99cca064832b3fe70d6e3dc718	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+setkeycodes	11432	fed36a5c22ff468314dfa71080dc02f129dca25755e5df986294aaf5ceef52f1	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+setleds	11432	ef283baf6032381b08d7010c2234d62a9fb7e31614f0d959542540ea589b1fae	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+setmetamode	11480	2cef9b96f8d5dcd95a5be81f5ab625fdbdae77db6ae911164e6f15536642b1a8	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+setpriv	36928	1419d19c1267076a39686c3eb369b351dad3cd0443e89a2b594c99aa42142f5b	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+setsid	11496	eb2d3c68433d45ab17cc9702bc7098775247d76ffa7cae969f48f8cefefee7b3	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+setterm	28144	276145c1528b69c6f0fd0cfc620757a1020014d200f743d360d89c8547f9b1cf	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+setvtrgb	11608	d9e5241b7bb69e0a79a82dbecd5d16f4cbdbd7cd7c43be152c7b67cf39e75f0e	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+sexp-conv	24192	eb221b3dd7ef7e2481a8a5b4fc880f92f501a54b9495e9d94965ebd01f3aacdb	LGPLv2+	nettle-2.7.1-9.el7_9.x86_64
+sfdisk	85248	1336d3ee8288a19dfd02bba56019a4909180d4489df05ea7911be2f2fcc75474	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+sftp	145416	7671c4315a6b1eaa3a7cd81f7930ba605fcb96a79f9d852860875f5d77bfdfcb	BSD	openssh-clients-7.4p1-22.el7_9.x86_64
+sftp-server	100776	5022b4353830e1885da1d911bd97005b0dac8e428f4c4dcc25016dfce5fa168f	BSD	openssh-server-7.4p1-22.el7_9.x86_64
+sha1sum	37448	9edd1440036bc4b2e6f2e779d51a8abfeda5e65a3bb8c8abb836ab2276b9d0e8	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sha224sum	41608	d71e9754ef4ef5ef83a05d1949a8645461de82b2d459e7e7c4ae61c14cc1b75a	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sha256sum	41608	d840afda00e53a9512fd2a533fc8355dd896fb0c8fbd60d4b79fbf70fd455cbd	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sha384sum	41624	ec4d017a94ea18efb2888906743a258c514a53d0cbf59259a3b9cfdcc6e0d71d	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sha512sum	41624	376008d7d0bd7c38f6edbc8a254e1f7f0d697abcc257073319eee371ba1e991f	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+shlibsign	28152	a0f51bf39f7d338260399e6a55524c68e1cb898f8e36ce48e4e79e8fd57d1df2	MPLv2.0	nss-softokn-3.67.0-3.el7_9.x86_64
+showconsolefont	15840	83147e31a73e73659790e5c58459263051f0f5443b8f9bdb3e55d10383682b70	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+showkey	15600	ce374db902ef4c11cd896738d72074fffe08283b7e086f4db17e9dd09586ef89	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+showmount	20032	047ca57e66573ccfa2863a794489a0f63d785cd0e23376277fdc4f15aa0220b4	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+shred	54208	0a18a8f0c0c139499b3f201993b5b9df45b5198a458f12e0380a93cf6737fa42	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+shuf	50312	f1d4402d2def19e6cae82b2112408a6df850357776453a82d3187fdefb495022	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+signtool	180336	8ed8e0cd10964dde42cf5f143c913e6c81f5dd0a9089d95cae732d830fb8c28b	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+signver	105048	f07395c3a723b163befc00cb2b375dcd9aaff21207b32d7e359a131dd5f9d031	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+size	33128	a3149a8a6720f9632c9e7a7a54da79fa5bd510b7feaed3e1802f799d7ea351dd	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+slabinfo	35800	5708a87e5eda04c6d0f58a576d7a4c05d5be27f0ff6807cb3855f2029a2e19f0	GPLv2	kernel-tools-3.10.0-1160.102.1.el7.x86_64
+sleep	33128	c4ec0441a8ff5f0b649c241c843d0993d16a671ca9ee66e4ffa1ee9483ae35ee	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sln	761632	3b0dde92346006928acfeb6422984f22d672972162235e9b0120163492b51a94	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-325.el7_9.x86_64
+sm-notify	70072	1d7742391dd9c13f24012c3972f45a3587edce5415730bb39710735163609829	MIT and GPLv2 and GPLv2+ and BSD	nfs-utils-1.3.0-0.68.el7.2.x86_64
+sort	117696	5f0e1c7aa4d9280a86af8132e3f4aac751bece1d45b817324aaa7f8f437e8f3b	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sortextable	14528	f944cfbfb63d4b6b10113852734d9ece5764da5581fe29be2b1c6b5d35714ae4	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+sotruss-lib.so	13632	22b4986c8c410f8816dda08e3ca42c302c48eddfb0ecadef5a59fa1966bbd56e	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-2.17-322.el7_9.x86_64
+split	71136	4dd47666a298d84098a354481df8abb2d384ca0236ffc8ac5dc5f849d2d5e276	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+sprof	22632	015ed8d7d0c47e0e68fcb76c2d46d87c0bc56a17a02b838e7131fb50454ca0f9	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+spwdmodule.so	12840	d34fa612cd85024a0b1ffad03909352c384ec2a98666f1b1143f9914c0216b2e	Python	python-libs-2.7.5-92.el7_9.x86_64
+ssh	774544	fa13da75ac5c9a7483d3913848f9426d40443d863c589fa27b589bcd8e0e907c	BSD	openssh-clients-7.4p1-22.el7_9.x86_64
+ssh-add	360936	b3d4660f04e80c64a85beb3ae8618e5d5b9527d00f4098e5cad694cac42e63be	BSD	openssh-clients-7.4p1-22.el7_9.x86_64
+ssh-keygen	419208	fa6b1c538d98617333a8849978de42d3825249e2c67a5daf94b34f33ba2fbb67	BSD	openssh-7.4p1-22.el7_9.x86_64
+ssh-keyscan	441032	8e547336048a1725188744024ca18d978653a118b4fe2faf50116efdc54092f5	BSD	openssh-clients-7.4p1-22.el7_9.x86_64
+ssh-pkcs11-helper	369608	3619f939c11fe4129a0740276076be683cdc8afabc6f99b86a70c94d3aefb8f8	BSD	openssh-clients-7.4p1-22.el7_9.x86_64
+sshd	852888	e8209c80518ad2d9b6ee2bd02c3b856b75d650e48fc89cfb6aa634cb033b41e8	BSD	openssh-server-7.4p1-22.el7_9.x86_64
+ssltap	121264	dd38f9dc25bdb500b4506532b2457b6facc529f067e56f535e7742029628265c	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+stat	79040	ec9d593415abb14e265663576164290f2093ef4369eb3986f94f52d13c615503	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+stdbuf	66440	bff9c5c2e5791649f4a21cb4eaf0c8fa4139a951366feaa7f8407e4fb7a3bdd2	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+strings	33328	beda0c5037909c0b6dd5362c86d99783803d9275b0b018a29e6975ba6a7e8f81	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+strip	232800	8069ef747f3f5356228e476411819122671f32a3bde22a82dbab6dfa30272082	GPLv3+	binutils-2.27-44.base.el7_9.1.x86_64
+stropmodule.so	28696	7eb70630c86e63202afa5b5df2eeaac23dd872f62cb3821c31f2479c8e418de3	Python	python-libs-2.7.5-92.el7_9.x86_64
+strsclnt	109608	9b6d4184102e77c3b01bdc38719077ec71b69d15f695b950dd1709904c8ef1c6	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+stty	70256	d803ae0ab9da79191a589289ed83daab7b138fcf578b3c9530cedf3b6affcf80	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+su	32128	770d03361d3de15ed7cc08d6c3e305dabd3f899ceb25e5e6648644b1b708e182	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+sulogin	41504	a8d63df49f187873f7baf3b8449ca86315a790a729e48c9b78dcfa3b1a8826b0	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+sum	37432	54df6ab4b4e212a87ee802275dd10aed2136ef3dc9ffeb29fd37e7b0082f7eb6	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+swaplabel	15680	12bfff6ba461fb5d6f62644d0eef6279683108f9cca9f778bbf040dce5438bb8	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+swapoff	15904	03fac814e0b614e881db4b906c74a7ec2df6bf7f6361283905e2f348c40829c1	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+swapon	54568	583965b48bce66025e9bba238ba956cfc7808885a01084acd9d95a9739b0c787	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+switch_root	15720	b5468d5c63f1c83688b310edb4794327a7ff9aa4c3e60e85e945284986d7065a	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+symkeyutil	105696	04f6de1f1f22f4eea6e81871ec7958fbcae0641205da852f0020eb07a2f003db	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+sync	29008	92d0b1e6029a6d634c5e88023866c2b9ffb046f9b08ba50ab6c76785da5bc47b	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+syslog.so	11616	eb9fa6aeb0fd48010b9bbe37db1170c59e21702d7428bcda0eb4f8ab4ff30f22	Python	python-libs-2.7.5-92.el7_9.x86_64
+systemctl	721712	c9b65da4123a72f8c9fcde77d9b1f3f21784af99dfa1619f53692364dc885fa1	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd	1632960	d4baec6c5f7aeaec5d95d20fc59a6fae0f16026718ac27a55c0a9c1f529d9635	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-ac-power	23968	848c94ba488e3348971407bf8471123e9e11dc1db1be538fdadb6275d3e98d09	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-activate	70168	11b2dd6118718e9c4750d1b822c7fb1bb1a2b371850fc0ce95bd1aeb1c565d9c	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-analyze	1562288	71bf2197c10123e9fbf8fd7fd5e106c3b72f1cb921bf0afa13e5b6bdf38ccad3	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-ask-password	61824	29dc34fe1504fb1aca869d48b4c0af9691227d040546c816d9f8208977da9300	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-backlight	74776	96b38088f1df36f0af2f4e8a2b3e16595ed5a14fbe0d3dc2a04cdb7172b3490e	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-binfmt	62192	9ddcb730bc5f84ba7dc0dd4e88518660451fed3435a695f091ef623777dca862	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-bootchart	128056	07a13997e82e5b656980f2991670b3c033f5a40bd7ba23c0ce5f93765c1ff9a6	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-cat	40944	39aea73c5aa17be03264bfcee4e2bdaff915038a4a3dad7b988fd8a454036c0c	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-cgls	334120	8fcdb24e5843426ac4be12aca2df30871556f243e3c3e069ce9cc586778d8a9b	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-cgroups-agent	36768	8b0780d87132f509e9841230c8fbb46ced07080e9d90a9c1a85f1d675126c2bd	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-cgtop	87128	0ca7844f61c4a173e8c92da0b32ef05c24cba7ab4903d37851d7fe2e87503dde	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-coredump	132976	d137703f17154a0b8f46dd5b84f9ad8183b05250be570b9e3842dd986036c1a6	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-cryptsetup	103712	4a77496b1f6261c499b993197728872fa797e0dcd9a3d8e5abbdc210f5834fb0	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-cryptsetup-generator	91432	1de474523837e4c1734276d4f031ea88227818d6cb4d42a55d8628bde9ab67a5	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-debug-generator	49432	b96dcd89034ace167af09d920e3283c7c1345ea9d0924683907e7f1b2af77b40	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-delta	78680	2a5afc5264de4ae3b19bad689a43808c1cc265c62d8869693b2ad3954c94aef0	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-detect-virt	40928	ba096c384c14c1fa6723d12cfd79afb99fb746fe90e51428a8f43b5a28a55fa1	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-efi-boot-generator	66048	951fd5b872763ac4fbafc1994162c768e374289e4b5007ef82f70faddbdd6ebe	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-escape	49352	dcc01cd06cca0b7dd7d098d13829f6d49ad6a5ece04099c6e432f1f80c229542	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-firstboot	103952	cbc5c141398f37a56ad47afb01bff553e27fb4b5346b9e474b3ad4e69834892a	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-fsck	339176	0eb871cab7b475e753c5cb3e23208164bb2848bfb8761aab94e09a395f09180f	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-fstab-generator	95320	7ae7f05bef3d52bec549d1d6a1a67494af48b87b54a3476cf1ff1fd253ba91cc	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-getty-generator	49424	25033c1a406e082faa6f72589cfed404ae2c9d6e2362879fca1bf4bd6a9edf0b	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-hibernate-resume	40912	226c4c00e2216e9017f6fc08dab80ce88353e19d64f7d288bbee27986d059126	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-hibernate-resume-generator	49496	20a1a5a29cd9599bba440897186b22e942424459eeebd2e4f138a5d44ccb389f	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-hostnamed	375968	e52724c90cd9e9ecbd8c9410aa0460cad0e6c3e4ea7eef12443dc4a9b9ecd3f1	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-hwdb	87360	5874a2e541f87a6b827b7c676b623e9ffd5361f4e9af828ad1442943ed490111	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-importd	376576	6bc8f11734711d824dd99b3a0b26a4f6952b2260e9b8541f6c3167ff85e59828	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-inhibit	317264	3843642c681cf889e83c3271e8dece56e5d350c894fbe20cdc3ba8b53e44a3a5	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-initctl	317272	e2d8bda1943c8027b39e97d8193e6abbe5ae95e01a7c2c61474b2e61ca3d809e	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-journald	346168	a69578d5d1a58368a7b623a8d16810d45ccff4d9a6a7bee06a4b2d59a00e5936	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-localed	384224	c4ce72f219f48d05de5a44e83bddfea38067ba435c54c05f7d88fc29344521d8	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-logind	639832	608b4280aae7d4d7d4ff9b7f4f763696e711130a0e1f864bc07a57e87fe7a1f7	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-machine-id-commit	53440	3b6a31b1c8de315b1991dae26c79bfce0375021dbacbeb2772c6698a7b0cd4f1	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-machine-id-setup	53488	41239201d8ffa1af785ef5b224f16a182649542c3926a0e98fff28715b8217c4	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-machined	493576	d6cdafedd06b086b76a52955c23bb89cdce1ae00112d943e2a6069352d070da0	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-modules-load	66360	25ed40afae65f215863608295309b174d63aef62df122a35fcab4a50a6de006c	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-notify	49288	3814a329c842a64f7f69ad9a0470d72ddfc86c56b931fe167bec3a702796361e	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-nspawn	558976	4e20df0b3c141ec4f2f230faa3b8bc5a8564e239d3a8190ebe16a6051706a307	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-path	53408	3ce1976f7067604f9ae567d7d023c73329abffa49884ef7734fde47105ce6cec	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-pull	187536	78570e3f06eb1ce4b6367556ea32b940b0def22c5a0c2cc56bccae8559e8bc6f	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-quotacheck	45016	f9eadcb7daf65c6cec321643319ff0537902ae0c1b19e47eb55710b3a0133227	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-random-seed	49280	5b2be2eba9a390bc7f874c71503b47fa7e73e866ad1e8f773c1278f105cc9d59	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-rc-local-generator	45176	a00a40b26bf04ad4fa2f2e72d93905b7d3ed6d8789581534a3487c8d57cca250	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-readahead	99848	9bc6a711b96895fb23e32c8028fba95baedddef2ef1fbbd53c0c31ebf8e0b47f	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-remount-fs	57872	91a0e1c99af9750c7e7ff184f456c29ee79e57723cb446e229a63e7d99294b8e	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-reply-password	36792	e541c44cde2ef49a23de8bf01ef51b8872d12398cece45f52a7d8ac09096ac9d	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-rfkill	62200	31f6b76cdf59e7512c8d19e55fda973a2a5807ae6ba1f79be0a0c1db95621474	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-run	396344	5ab372da26fbf252d5d772c7523781549c281528e71d562b8bd3a78062447062	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-shutdown	150280	32be6b0e1e779bd7884a5405165c34448de45ee598294cde6b58a95e5bcd223a	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-shutdownd	66072	bcedc2a03c55452657fe38b8d54b19a3309f212eeae9cc435f390b53896b94a9	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-sleep	91296	6c5b3b86894d56d8e2bd570c4416a594bd0a48af70f05b649d473ab166626e40	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-socket-proxyd	108048	8f919a3972380606612a8e47aac7476c420bed2e356d74d9ed3942a7cfc3d70a	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-stdio-bridge	313112	1c5e6f762cbe5bfb31040935d8460129ec3e6126b683c186696dcdab5d220be8	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-sysctl	66384	f93f81427f37c99d11f7d68e880b54cf1a6d40b8b937f71cc56a231d992b0c8a	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-system-update-generator	36808	8bab2ebdaef9522d658f6c5b2b4a600674189a297e5a3471813251cbd8a086f1	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-sysv-generator	129032	12033a5b05a76c16385d4d0f353473e976525f27d616fe81f8a821e7e4046f8c	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-timedated	384928	7c197d6f47c45a593060f320ddfe34cf7a215e3740d54a7241fc66e2a47578be	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-tmpfiles	149640	1c91ae518d47c8135d63f1607cea3815301f3ab6e0b13863155b0952cf3ffa94	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-tty-ask-password-agent	86784	a5f4ec330feb56b43c5c4c166fc130545645dfdde2663b011dd5791b24390840	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-udevd	416200	a68b18092a7424f811678091e113f2d66ce08d0e4199d17ba9ef854a91def9b3	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-update-done	45128	7d7ed498691c96e2c5360302cdf003d11e5ab918c8528c9a75e4040b15d942dc	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-update-utmp	317304	11df849cb51ba75e09903fe8a5dd4ad5886cde94f3a13ee07a9dda5a263c51a9	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-user-sessions	45216	e5025dd3ece7490381eb9bba0a74d34687996a8be1371716508ea3d9f5cb8ae9	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+systemd-vconsole-setup	53448	5f19ee364e1f3f001d296a07260bc3bcd04f0277820866035649f4d7ab6a76d1	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+tac	33264	d2109e9fdff5ee040b17e890cd975227e500aa8c23b70052f1dc8d35eeabe497	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+tail	66816	1d11b5cb7b95b6f39a947db9431ff1902a93ae689d3a2d5605a721218442510a	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+tailf	24456	288c85835fb0746bc78db69dc98808e465b50f2871024ade3e99dcf6fb8936f8	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+taskset	32992	cacdfcb543f20f1a080f954ffc246c2a3a642b56919cfd0b2eda48e5542163f3	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+tee	33160	d94910625991befc6d1c2d98af96c2855c162f17978e149f56fa9445f694dbdc	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+termios.so	25664	39c5fc143a72d3eddb5038a151dd9d0959c85bdca0be480b8f49fea2a0b819dc	Python	python-libs-2.7.5-92.el7_9.x86_64
+test	37336	bfe0329a46d13b7937edfb98d3d0c989d95ed5e5bb92cf61d351d0227113412d	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+timedatectl	338144	e859b2e7200fa8dc6701301b8cd0f124a7205f64d11191d9409b1b42fe45f4ae	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+timemodule.so	25008	056fb47c3a641161ba6060cc3f210c1b8f0b795cdfcff57f154a0516cce74eb9	Python	python-libs-2.7.5-92.el7_9.x86_64
+timeout	54592	af44756c824135581517eb5a96a01e426da7a0acabfc41a610ef0cc1fbdace4b	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+timingmodule.so	7304	370813eccd70596925d363cc60e821473e3fecc477be7ecedab49124029c8517	Python	python-libs-2.7.5-92.el7_9.x86_64
+tmon	31856	cea5465d40bbce5dd6ca7a1ded9ec33465da7d71e86a7c5002cf1b5fa91b80ba	GPLv2	kernel-tools-3.10.0-1160.102.1.el7.x86_64
+touch	62488	321fa182bd547947e068e438dc37c1efb5b9028a9c0c4598501757ddfd198afd	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+tr	45680	c02c928b9c1f6074f0bc1acc8c95f1161efbb5e0fec16d003da281943e501fb6	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+true	28936	99504c040f09ddf7b88d314d77dcc11597f7980c36b801fcacc9b8efd7e5d73a	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+truncate	53944	5cc3ffb4387c09b2aa5fc6ba5998296fe0de0281e02f8e114e43febcb653608f	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+tsort	37344	e7c0affa8fb089475518f89d8fc3c60871b16a99468aaeb1e675ad0872693e03	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+tstclnt	121880	601ac50c9c3e0f751c1e50a2d1f4576e38f2c1d5532931c31d14e8099b74e149	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+tty	28968	52850dd1596330065b0b79331c01fd35a42ad5a86b33f03aac82b6660a18c25c	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+turbostat	115864	0b427c38afc870293c541908845f00f4e8e85fc0e53d49b9831f8b35c53db98f	GPLv2	kernel-tools-3.10.0-1160.102.1.el7.x86_64
+udev-kvm-check	15480	4d7e852e7e55f243c15e1596ccebe60d3a4328e036a1c61dfbd9ca513a7f1c9b	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+udevadm	424216	c654d68ce7a79630f516335d8844f45f7e2c230587991a6cc09d34e2846a42a8	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+ul	19936	eb8f2323251b27a62acacb971e37cfd7af46e21a1187f3284c9f413751563c42	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+umount	31984	2de4b6e173c602d9b215b6c00d78fa79c3c7fff429ac44f06b17e68ea98b3449	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+uname	33072	4d014e70c83a957b0d6104c7d770c38619cef82d8f896447eb896cd6c34715ae	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+unexpand	33232	a06ae1951f88565a1630b25c5703d7df8b0b29f4030584119a7678a819877bba	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+unicodedata.so	694144	751570f9430879828d92027f2e415c10161a380d3fa486a9906b68f4552d3e5b	Python	python-libs-2.7.5-92.el7_9.x86_64
+unifdef	26968	7a0e639d1af14dacfc7fd8e4ed26e94a1089c2cc53f60a7ecaa523bed8458303	GPLv2	kernel-devel-3.10.0-1160.76.1.el7.x86_64
+uniq	45784	6bd5369947c0cd46e1ffc6a2db14a51c48d8277da4efd4f28af0d7ac4d230f22	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+unlink	28984	205d97940064ac5c63a96e6106aa086795a57ac9744af0a82bc998c229f7c5d8	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+unshare	15824	949e6de4c89ca1cf96e95944b5593ead6845763f600ba92c59f094006543c5e6	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+unzip	189600	4ccce6af67a2c42e8dee636764b3e5eb7b995ebe38581ddc1a08687c1e045210	BSD	unzip-6.0-24.el7_9.x86_64
+unzipsfx	90792	3cbfc3cb53a8eae442316c89cb9d1519b8fc2f149d7661c902fd3aa322870b53	BSD	unzip-6.0-24.el7_9.x86_64
+usernetctl	11296	b46486423b9cfafb76a96b2e29eb913fe8f234cce163bf500a99ceb9e2d269e5	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+users	33200	6562b9f6682aab9d2e690b4922b8d9e7d1b0a650d8ac97301ccdf358d6470f7e	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+usleep	11208	8dfa1130fd99e7b1408132efdaf3a008b39f0d25e43fe15fc85be62724cd4626	GPLv2 and GPLv2+	initscripts-9.49.53-1.el7_9.1.x86_64
+utmpdump	15816	cef31cf02b791b710d48de392e26dc88db7998d4fd6436a2de94f4f3c49ec9f6	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+uuidgen	11480	9ba10f71d08c45480cc284dc2f66ba73973f2073b15d2477f712703b06a73a17	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+v4l_id	23864	f3177a76352976bb1e50dd348c830fced9cc6e241940b8a9440d2117f7dbf823	LGPLv2+ and MIT and GPLv2+	systemd-219-78.el7_9.7.x86_64
+vdir	117608	d330f66b103cc460d28eccc53c8a2a81c6f3a9cd613c98fd7d8476b68fe1fc78	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+vdso.so	4912	42520d334ec902b98488fabc646bcef7ef0f00080ae66ea22f260a2c9b0580f2	GPLv2	kernel-3.10.0-1160.76.1.el7.x86_64
+vdso32-int80.so	1776	1c343833ce724f14a4df928ebf244d3d10b56149f70e06f77e2cab0a3c23f2ad	GPLv2	kernel-3.10.0-1160.76.1.el7.x86_64
+vdso32-syscall.so	1788	64158c4d1741742560e5c376b9a3941032067556e8ad597379b73faef2492674	GPLv2	kernel-3.10.0-1160.76.1.el7.x86_64
+vdso32-sysenter.so	1752	c845454b4139847d99c1b1940a5efe16c24094b81cd1d6822bdd0263afaa031b	GPLv2	kernel-3.10.0-1160.76.1.el7.x86_64
+vfychain	100640	0242f99742e7dbc88264dd90006f1d934f152b9d51420d0fe64e4f42d9fddd81	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+vfyserv	105408	3e219990277e085fe810371164a555d74caa9b074f23c22097dc3983ba4eea2a	MPLv2.0	nss-tools-3.67.0-4.el7_9.x86_64
+vi	928200	b36de38a6238ae4d632fa30bbd9d4a78451f04373e18a77022a6815c853228d9	Vim	vim-minimal-7.4.629-8.el7_9.x86_64
+via.so	24368	45557052e26c2cebc26d2654b66381e88edc092cd848f8e3892436029ee11a12	(GPL+ or Artistic) and (GPLv2+ or Artistic) and Copyright Only and MIT and Public Domain and UCD	perl-5.16.3-299.el7_9.x86_64
+vim	2337208	b4761da6f0e290a2ef873568c6b52bb7d03a9cb702d41cb0624748f0ca58a5f5	Vim	vim-enhanced-7.4.629-8.el7_9.x86_64
+virt-what-cpuid-helper	7192	b7f9852fee3c125e221e79e9d44498d28a788c4efba82e1c00e07f9a178d53f3	GPLv2+	virt-what-1.18-4.el7_9.1.x86_64
+visudo	205712	89d782d384c04735992dd5ce94b079907929b2033e99305a4210a9dec2abf61b	ISC	sudo-1.8.23-10.el7_9.2.x86_64
+vlock	16104	209cf5de3e4c1faf9c183ff6cfb3f95ecf9170bebf7b0f73e49a626e18d81042	GPLv2+	kbd-1.15.5-16.el7_9.x86_64
+vmlinuz-3.10.0-1160.76.1.el7.x86_64	6781544	1add8af1cc2e19ce53d91c992814b6301027790d409c25ecacca56b3e2e18fd5	GPLv2	kernel-3.10.0-1160.76.1.el7.x86_64
+vpddecode	15696	471afe2c8029fdcd0987229e2a6f44bf7d7a967f4e9dad3d3a7e948075144368	GPLv2+	dmidecode-3.2-5.el7_9.1.x86_64
+wc	41648	e97e39e7edd03a46d1b316a7a77c64d5c50795e7f7faf904e81dc62f0248bd64	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+wdctl	41672	6baf50e6fbceb4321179ec416ee001f5ff3010c7642b006adcb2e1409458efa7	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+whereis	20680	b5fca7338db9ce6c6d82c072942afdfe371333a093432167ca68c1898701c053	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+who	49872	fb06554a694c9dff16962e1de3872bc632b641de6387c7b423a373b51443af4b	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+whoami	28984	933c767431d93c6489c7a17e4e08325e6983622e2228ba8e13486bb6f21caf27	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+wipefs	28728	301c6cb2884d128a566e740f7d89bf788ba88ca6a60e7d770c89b7dbf1adcdea	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+wpa_cli	131136	a9949833999b076e5b32b45d8210598f873999ea4366ddfe5b1f83711f05f55d	BSD	wpa_supplicant-2.6-12.el7_9.2.x86_64
+wpa_passphrase	58152	1cde358b80369963f9accbcd47c4a2e1917945955d228726240696ddfeffbb82	BSD	wpa_supplicant-2.6-12.el7_9.2.x86_64
+wpa_supplicant	2027632	2f6a04575b1553f1dadfb5bd745cff9c9dde021119f4a15baf2d28dd3762b18a	BSD	wpa_supplicant-2.6-12.el7_9.2.x86_64
+write	19544	df42e0ac94588c8423083cca6823c24b6565782abf409d469aa52ee806267d14	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64
+x86_energy_perf_policy	10480	9f27d07a6dd561535584c46e65d3fe491f6f98f51b4b6f9ccbd0427f0c4bea93	GPLv2	kernel-tools-3.10.0-1160.102.1.el7.x86_64
+xmlcatalog	15672	090b906de4c25be3f96033d1f95907c7b28aa8a2ea624ffc2d0343ced468bed9	MIT	libxml2-2.9.1-6.el7_9.6.x86_64
+xmllint	63424	e045eab94e38bd4fbd66e1366cc10a1f524fea309b00938e9d1e8886f7c89964	MIT	libxml2-2.9.1-6.el7_9.6.x86_64
+xmlwf	24576	bde715849ae4d1b91ebe9a13ef2e58ce5f410202293422b66e864963870befbf	MIT	expat-2.1.0-14.el7_9.x86_64
+xxsubtype.so	12952	5e34da4079ca4841213ee3ac181e56b0f9edf5e5ed4dc5f892ddaaaf6cf645bb	Python	python-libs-2.7.5-92.el7_9.x86_64
+xz	75288	ec63724db216c8f573c7cfee402a0c917543d72928a067b4ab12d9658904ddc8	LGPLv2+	xz-5.2.2-2.el7_9.x86_64
+xzdec	11480	7eeadabe9752e8f5f9ecdc2b9878c18a5bc58d20b68e59f8a3d4d04cfc1cf73f	LGPLv2+	xz-5.2.2-2.el7_9.x86_64
+yes	28984	f0a594b8d84878405a8defa1af710eae84dc1e9344d2cc3d751b23d4160abb28	GPLv3+	coreutils-8.22-24.el7_9.2.x86_64
+zdump	14352	7b2778eb4a1089ef6013f70481f10353f55cd27d227eac17a959268c258860f5	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+zic	51216	3163a3c103d54919ac50446e7d8c5e658cc69f6388106fcf5aecd1544f7c945f	LGPLv2+ and LGPLv2+ with exceptions and GPLv2+	glibc-common-2.17-322.el7_9.x86_64
+zipinfo	189600	4ccce6af67a2c42e8dee636764b3e5eb7b995ebe38581ddc1a08687c1e045210	BSD	unzip-6.0-24.el7_9.x86_64
+zlibmodule.so	24120	21a52a89c56d177d074d5248afa793f2086166f63636c721f7e2f9ff069be37f	Python	python-libs-2.7.5-92.el7_9.x86_64
+zramctl	84200	b6e7d9c6af9affeca2e3950c80e7dc912acafaf6141cee95a020145498fc59cd	GPLv2 and GPLv2+ and LGPLv2+ and BSD with advertising and Public Domain	util-linux-2.23.2-65.el7_9.1.x86_64

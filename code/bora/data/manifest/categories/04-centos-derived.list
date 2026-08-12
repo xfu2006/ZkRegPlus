@@ -1,0 +1,3 @@
+# CentOS-derived (copy of a packaged file) -- 1 files, 6781544 bytes
+# name	size	sha256	license	origin
+vmlinuz-0-rescue-b1527a5456aab241a74a8a3dc31395c0	6781544	1add8af1cc2e19ce53d91c992814b6301027790d409c25ecacca56b3e2e18fd5	GPLv2	kernel-3.10.0-1160.76.1.el7.x86_64

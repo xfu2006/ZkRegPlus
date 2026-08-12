@@ -18,18 +18,25 @@ use data_processor::clamav::{default_clamav_cfg,
 	quick_discharge_file_by_crit_bag_pm};
 use data_processor::discharge_proof::FailDischargeRecord;
 use folding_schemes::commitment::{kzg::KZG, pedersen::Pedersen};
-use folding_schemes::folding::foldpot::sigma_ir1cs::WordInfo;
+use folding_schemes::folding::foldpot::capacity_planner
+	::CapacityPlanner;
+use folding_schemes::folding::foldpot::sigma_ir1cs::{
+	LookupTableTwoCol_Inst, SigmaIR1CS_Inst, WordInfo};
+use folding_schemes::transcript::poseidon
+	::poseidon_canonical_config;
 use utils::consts::{get_global_config, read_global_config,
 	ClamavApproxConfig};
 
+use crate::circs::composable_gadget_mapper::CompositeGadgetMapper;
 use crate::determine_config::{apply_caperr_bumps,
 	caps_from_params_aggr, caps_from_params_general, probe_catching,
 	save_ladder, CapParams};
 use crate::gadgets::word_extract::LEGS;
 use crate::stats_helper::{estimate_config_aggr,
 	estimated_to_capparams_aggr};
-use crate::zkp_driver::{determine_config_aggr,
-	determine_config_non_aggr, fmt_cross_rollup, fmt_dfa_cross,
+use crate::zkp_driver::{build_circs_adv, build_circs_adv_aggr,
+	determine_config_aggr, determine_config_non_aggr,
+	fmt_cross_rollup, fmt_dfa_cross, select_binding_candidates,
 	zkp_driver_adv, zkp_driver_adv_aggr, DcMode};
 
 // Driver instantiation, matching zkp_driver.rs:2396-2406 (those
@@ -763,7 +770,8 @@ fn plan_corpus_from(master: &[String], perc_samples: f64,
 		fs::metadata(format!("{}/{}", proot, p))
 			.map(|m| m.len()).unwrap_or(0)).sum();
 	assert!(total > 0,
-		"bora_data_driver: corpus has zero total size (run DOWNLOAD.py?)");
+		"bora_data_driver: corpus has zero total size \
+		 (run scripts/INSTALL.py?)");
 	split_paths_balanced(files, num_jobs)
 }
 
@@ -1162,7 +1170,183 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 	// legacy holds the flag true through determine_config.
 	let _est = EstimateCapsGuard::on();
 	let ts = discharge_for_tuning(spec, &db, bins);
-	tune(spec, &db, &ts, num_circs)
+	let lad = tune(spec, &db, &ts, num_circs);
+	// Measurement only, and only under its env gate. It lives here
+	// because the DB and the tuning set are still alive at this point
+	// and are dropped the moment this function returns.
+	if b_meter_t9901() {
+		meter_unit_demand(spec, &db, &ts, &lad, part_id);
+	}
+	lad
+}
+
+// Probe-side aliases for the meter, mirroring zkp_driver.rs:71-73.
+// Those are private to that module, so this redeclares them from the
+// same underlying types rather than widening their visibility.
+type LK<F> = LookupTableTwoCol_Inst<F>;
+type GM<F> = CompositeGadgetMapper<F, LK<F>>;
+type FC<F, C, CS> = SigmaIR1CS_Inst<F, C, CS, LK<F>, GM<F>, false>;
+
+/// T9901 meter gate: unset = wholly inert. Read once, like
+/// consts::b_probe_p36.
+fn b_meter_t9901() -> bool {
+	static B: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+	*B.get_or_init(|| std::env::var("ZKR_METER_T9901").is_ok())
+}
+
+/// One routing unit's measured Q_m demand, read from the gauges the
+/// gadget already records (discharge_adv_neo.rs:2003-2005). Each value
+/// is the PEAK over the unit's segments; exact for a one-segment unit.
+#[derive(Debug, Clone, serde::Serialize)]
+pub(crate) struct UnitDemand {
+	/// Index of this unit in the tuning set's word list.
+	pub unit: usize,
+	/// Packed word length; segments = ceil(word_len / chunk_len).
+	pub word_len: usize,
+	/// TOTAL T_qm rows emitted vs the pooled budget that actually
+	/// gates (discharge_adv_neo.rs:1983-1987, guard at :2057). This
+	/// is the binding pair: qm_real_rows is only one TERM of the cap,
+	/// so real-side demand can exceed its own share without a CapErr
+	/// whenever the wrap side has slack. Case-sensitive arm.
+	pub qm_tot_cs: usize,
+	/// Same, ignore-case arm.
+	pub qm_tot_igc: usize,
+	/// Pooled budget = qm_real_cap + wrap_budget + 1, cs arm.
+	pub qm_tot_cap_cs: usize,
+	/// Same, ignore-case arm.
+	pub qm_tot_cap_igc: usize,
+	/// Non-wrap T_qm rows emitted, case-sensitive arm. THE T9901
+	/// number: what qm_real_rows would have to be for this unit alone.
+	pub qm_real_cs: usize,
+	/// Same, ignore-case arm.
+	pub qm_real_igc: usize,
+	/// Cap those rows were CHECKED against, case-sensitive arm. Not
+	/// the shipped qm_real_rows: qm_real_cap() falls through to the
+	/// dense vec_size(ResLarge) bound whenever the field arrives 0,
+	/// and telling those two apart is the whole non-aggr question.
+	pub qm_real_cap_cs: usize,
+	/// Same, ignore-case arm.
+	pub qm_real_cap_igc: usize,
+	/// (subsig,step) wrap key groups emitted, case-sensitive arm.
+	pub wrap_cs: usize,
+	/// Same, ignore-case arm.
+	pub wrap_igc: usize,
+	/// Wrap budget the keys were checked against, case-sensitive arm.
+	pub wrap_cap_cs: usize,
+	/// Same, ignore-case arm.
+	pub wrap_cap_igc: usize,
+	/// Active (non-zero) subsigs in a segment, case-sensitive arm.
+	pub sub_cs: usize,
+	/// Same, ignore-case arm.
+	pub sub_igc: usize,
+	/// capacity.subsigs the actives were checked against, cs arm.
+	pub sub_cap_cs: usize,
+	/// Same, ignore-case arm.
+	pub sub_cap_igc: usize,
+	/// false if this unit CapErr'd even at the ladder top, which makes
+	/// every value above a LOWER BOUND rather than the true demand.
+	pub ok: bool,
+}
+
+/// T9901 measurement: probe each routing unit against a ONE-RUNG
+/// ladder at the ladder top and record the Q_m demand it emits.
+/// Writes {plan_dir}/meter.json; changes no capacity and no behaviour.
+fn meter_unit_demand(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
+	ts: &TuningSet, lad: &[CapParams], part_id: usize) {
+	use folding_schemes::folding::foldpot::sigma_ir1cs
+		::LookupTableTwoCol as _;
+	use utils::consts::{reset_qm_gauges, QM_REAL_SAT, QM_SAT,
+		QM_SUB_SAT, QM_WRAP_SAT};
+	use utils::logger::{log, LOG1, LOG2};
+	// The WIDEST rung, so nothing CapErrs and every unit records its
+	// true demand. It is the LAST: aggr ladders are cheapest-first
+	// (zkp_driver.rs:481, and pad_ladder_to raises clones of rung 0
+	// upward), and non-aggr ships a single converged P_max.
+	let p = lad.last().expect("bora_data_driver: empty ladder");
+	let mw = spec.chunk_len;
+	let lkup_len = db.lkup.get_size();
+	let poseidon = poseidon_canonical_config::<Fr>();
+	// ONE rung, so every unit is measured against the SAME cap and the
+	// reading is a demand rather than a routing outcome.
+	let layered = if spec.b_aggressive {
+		let caps = vec![caps_from_params_aggr(p)];
+		build_circs_adv_aggr::<Fr, C1, CS1>(&poseidon,
+			ts.total_word_n, mw, lkup_len, db.clone(), &caps, false)
+	} else {
+		let (cp, sed, dfa, cp_igc, sed_igc) =
+			caps_from_params_general(p);
+		build_circs_adv::<Fr, C1, CS1>(&poseidon, ts.total_word_n, mw,
+			lkup_len, db.clone(), &cp, &sed, &dfa, &cp_igc, &sed_igc,
+			&vec![], 1, false)
+	};
+	let planner = CapacityPlanner::<C1, FC<Fr, C1, CS1>, LK<Fr>,
+		GM<Fr>, false>::new(layered);
+	// aggr meters legacy's binding-candidate set -- the only files its
+	// tuner ever synthesises, so this is not a new cost. ZKR_METER_N
+	// widens K to test whether the candidate set misses a peak (there
+	// is no Q_m proxy among the seven). non-aggr meters every word,
+	// which is already what its tuner probes on EVERY round.
+	let units: Vec<usize> = if spec.b_aggressive {
+		let k = std::env::var("ZKR_METER_N").ok()
+			.and_then(|s| s.parse::<usize>().ok()).unwrap_or(8);
+		select_binding_candidates(&ts.vdata, k)
+	} else { (0..ts.words.len()).collect() };
+	let mut rows: Vec<UnitDemand> = vec![];
+	for &i in units.iter() {
+		let padded =
+			utils::data::pad_word_to_multiple::<Fr>(&ts.words[i], mw);
+		reset_qm_gauges();
+		let ok = planner.plan_nd_advice(0, LOG2, false, &padded,
+			&ts.infos[i], "meter").is_ok();
+		let (qt_cs, qtc_cs) = QM_SAT[0].get();
+		let (qt_ig, qtc_ig) = QM_SAT[1].get();
+		let (qr_cs, qc_cs) = QM_REAL_SAT[0].get();
+		let (qr_ig, qc_ig) = QM_REAL_SAT[1].get();
+		let (wr_cs, wc_cs) = QM_WRAP_SAT[0].get();
+		let (wr_ig, wc_ig) = QM_WRAP_SAT[1].get();
+		let (sr_cs, sc_cs) = QM_SUB_SAT[0].get();
+		let (sr_ig, sc_ig) = QM_SUB_SAT[1].get();
+		rows.push(UnitDemand {
+			unit: i, word_len: ts.words[i].len(),
+			qm_tot_cs: qt_cs, qm_tot_igc: qt_ig,
+			qm_tot_cap_cs: qtc_cs, qm_tot_cap_igc: qtc_ig,
+			qm_real_cs: qr_cs, qm_real_igc: qr_ig,
+			qm_real_cap_cs: qc_cs, qm_real_cap_igc: qc_ig,
+			wrap_cs: wr_cs, wrap_igc: wr_ig,
+			wrap_cap_cs: wc_cs, wrap_cap_igc: wc_ig,
+			sub_cs: sr_cs, sub_igc: sr_ig,
+			sub_cap_cs: sc_cs, sub_cap_igc: sc_ig,
+			ok });
+	}
+	let mx = |f: fn(&UnitDemand) -> usize| -> usize {
+		rows.iter().map(f).max().unwrap_or(0)
+	};
+	let (d_cs, d_igc) = (mx(|r| r.qm_real_cs), mx(|r| r.qm_real_igc));
+	let n_bad = rows.iter().filter(|r| !r.ok).count();
+	// The headline comparison: measured peak demand vs the value the
+	// tuner shipped. demand << shipped is exactly the T9901 slack.
+	// cap_seen != shipped means the built circuit ignored the ladder
+	// field and fell through to the dense bound -- report both.
+	log(0, LOG1, &format!("METER[{}]: {} units, qm_TOT max cs={}/{} \
+		igc={}/{} (the gating pair), qm_real max cs={}/{} \
+		igc={}/{} (demand/cap_seen) vs shipped qm_real_rows={}/{}, \
+		wrap max cs={}/{} igc={}/{}, sub max cs={}/{} igc={}/{}, \
+		caperr_units={}", spec.name, rows.len(),
+		mx(|r| r.qm_tot_cs), mx(|r| r.qm_tot_cap_cs),
+		mx(|r| r.qm_tot_igc), mx(|r| r.qm_tot_cap_igc),
+		d_cs, mx(|r| r.qm_real_cap_cs),
+		d_igc, mx(|r| r.qm_real_cap_igc),
+		p.qm_real_rows, p.qm_real_rows_igc,
+		mx(|r| r.wrap_cs), mx(|r| r.wrap_cap_cs),
+		mx(|r| r.wrap_igc), mx(|r| r.wrap_cap_igc),
+		mx(|r| r.sub_cs), mx(|r| r.sub_cap_cs),
+		mx(|r| r.sub_igc), mx(|r| r.sub_cap_igc), n_bad));
+	let path = format!("{}/meter.json", plan_dir(spec.name, part_id));
+	match serde_json::to_string_pretty(&rows) {
+		Ok(s) => { let _ = fs::write(&path, s); },
+		Err(e) => log(0, LOG1,
+			&format!("METER[{}]: encode: {}", spec.name, e)),
+	}
 }
 
 /// Holds b_scale_catch_caperr for a scope so foldpot skips its
@@ -1477,7 +1661,7 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 	assert!(fs::metadata(&abs_src).map(|m| m.len() > 0)
 		.unwrap_or(false),
 		"bora_data_driver: scale corpus {} missing or empty (run \
-		 DOWNLOAD.py?)", abs_src);
+		 scripts/INSTALL.py?)", abs_src);
 	let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
 		spec.config_dir, spec.sig_file)).len();
 	assert!(*vec_count.last().unwrap() <= n_sigs,

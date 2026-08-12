@@ -31009,17 +31009,40 @@ Goal 4. next soundness issue S119: verify z_i[1] constraints
 	[c] done.
 Goal 5. S102 + S103
 	[a] problem: S103 -> S126. rename and rescope
+Goal 6. S126.
+	[a] enable a check of u and x in circuit
+Goal 7. T109
+	[a] problem: hab'22 check enhancements (boolean condition)
+	[b] implement and test
 ---
-Goal 5. Fix download issue for CentOS: T910
+Goal 8. Fix download issue for CentOS: T910
 	[a] develop a plan
 	[b] execute the plan
 	[c] found some files are not genuin centos image
 	[d] define a manifest of excluded files
 	[e] decide how to exclude or union exclusion files.
-Goal 6. T9901  
+	[f] decides to have download part and mergeed shipping parts.
+	[g] investigate the approach of downloading a single zip file
+	[h] pack a zkp file
+	[i] upload to zonobe
+	[j] update install.py
+	[k] retire download.py to attic
+	[l] resolve issues one by one
+		-> bindat track
+		-> remove hard coded home path
+		-> gen_data.py comment
+		-> doc updates
+		-> license add to git 
+Goal 9. T9901  
 	[a] problem: make sure lower ring has
 		low configs
 	[b] multiple rounds of design to try to simualte legacy 
+	[c] brief test of measure class first and collect data
+	[d]
+Goal 10. S102 + S110
+	[a] verify individual proof vector commitment verification
+	[b] new bug: A/B test
+	[c]
 
 
 
