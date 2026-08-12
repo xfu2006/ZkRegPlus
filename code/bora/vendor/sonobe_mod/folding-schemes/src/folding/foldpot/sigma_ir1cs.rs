@@ -3247,8 +3247,18 @@ where 	C: CurveGroup<ScalarField=F>,
 		let mut sum_vec_v_i= zi_part2.sum_vec_v_i;
 		if !self.b_full_mode{//only do it for the first stage
 			//6.1 compute rands and assisting vars
-			let b_last = si.word_id==si.total_words &&
+			//S106: mirrors the circuit's carried-total_words operand
+			//(:3703). If these two diverge, the prover's own KZG
+			//accumulator stops matching the one the circuit proves.
+			let b_last = si.word_id==zi_part2.total_words &&
 				si.subseg_id==si.total_word_segs;
+			{//DEBUG USE 62106.5
+				use std::sync::atomic::{AtomicBool, Ordering};
+				static P: AtomicBool = AtomicBool::new(false);
+				if !P.swap(true, Ordering::Relaxed) {
+					println!("DEBUG USE 62106.5: native b_last <- carried");
+				}
+			}
 			let b_first_seg = si.subseg_id.is_one();
 			let b_last_seg = si.subseg_id==si.total_word_segs;
 			let ch = zi_part2.ch;
@@ -3391,7 +3401,10 @@ where 	C: CurveGroup<ScalarField=F>,
 			word_id: si.word_id,
 			subseg_id: si.subseg_id,
 			total_word_segs: si.total_word_segs,
-			total_words: si.total_words,
+			//S106: pure carry, mirroring the circuit at :4294. Taking
+			//si.total_words here would diverge from what the circuit
+			//hashes into z_{i+1}[1] and break the chain mid-run.
+			total_words: zi_part2.total_words,
 			f_result: si.f_result,
 			
 			cyclepair_input: cp,
@@ -3696,12 +3709,12 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (zero_var, one_var) =  (
 			FpVar::<F>::new_constant(cs.clone(), zero)?, 
 			FpVar::<F>::new_constant(cs.clone(), one)?);
-		let b_first = si.word_id.is_eq(&one_var)?
-			.and(&si.subseg_id.is_eq(&one_var)?)?;
+		//S106: b_first is gone with the total_words select below --
+		//declaring a late step "first" was the escape hatch that let a
+		//prover satisfy the decider pin while b_last read a different
+		//wire. b_last now lives after zi_part2 (see below).
 		let b_first_seg = si.subseg_id.is_eq(&one_var)?;
 		let b_last_seg = si.subseg_id.is_eq(&si.total_word_segs)?;
-		let b_last = si.word_id.is_eq(&si.total_words)?
-			.and(&si.subseg_id.is_eq(&si.total_word_segs)?)?;
 		//NOTE: later needs to set sub-table id for unused_input_size
 		let cfg_input_size = FpVar::<F>::new_constant(cs.clone(),
 			F::from(self.stmt_config.input_size as u32))?;
@@ -3720,7 +3733,20 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
-		let zi_part2 = ZiPartTwoInstVar::from_vec(&wtns_var.zi_part2, fq_bits); 
+		let zi_part2 = ZiPartTwoInstVar::from_vec(&wtns_var.zi_part2, fq_bits);
+		//S106: b_last compares word_id against the CARRIED total_words,
+		//not the free per-step si.total_words. Combined with the
+		//decider's terminality pin on the final state, pin => final_step
+		//becomes a syntactic identity at the last step.
+		let b_last = si.word_id.is_eq(&zi_part2.total_words)?
+			.and(&si.subseg_id.is_eq(&si.total_word_segs)?)?;
+		{//DEBUG USE 62106.1: prove this fix site executed (once/process)
+			use std::sync::atomic::{AtomicBool, Ordering};
+			static P: AtomicBool = AtomicBool::new(false);
+			if !P.swap(true, Ordering::Relaxed) {
+				println!("DEBUG USE 62106.1: b_last <- carried total_words");
+			}
+		}
 		let ch = zi_part2.ch.clone();
 		let rc = zi_part2.rc.clone();
 		let mut sum_inp = b_first_seg.select(&zero_var, 
@@ -3772,7 +3798,19 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 
 		let eq_inp_oup = sum_inp.is_eq(&sum_oup)?;
-		let final_step = b_last.and(&si.word_id.is_eq(&zero_var)?.not())?;
+		//S106: final_step == b_last. The word_id != 0 conjunct moved to
+		//the decider's terminality pin, which is the only place it can
+		//be enforced against a state the verifier sees. Unifying the two
+		//predicates also stops the KZG closure (gated on b_last) from
+		//firing on a step where the three real checks do not.
+		let final_step = b_last.clone();
+		{//DEBUG USE 62106.2
+			use std::sync::atomic::{AtomicBool, Ordering};
+			static P: AtomicBool = AtomicBool::new(false);
+			if !P.swap(true, Ordering::Relaxed) {
+				println!("DEBUG USE 62106.2: final_step == b_last");
+			}
+		}
 		let not_final_step = final_step.not();
 		let io_res = not_final_step.or(&eq_inp_oup)?;
 		if B_DEBUG {
@@ -4107,9 +4145,18 @@ where 	C: CurveGroup<ScalarField=F>,
 			//6.1 compute rands and assisting vars
 			let ch = zi_part2.ch.clone();
 			let rc = zi_part2.rc.clone();
-			let _b_first = si.word_id.is_one()?.and(&si.subseg_id.is_one()?);
-			let b_last = si.word_id.is_eq(&si.total_words)?.and(& 
+			//S106: same carried-total_words operand as the outer b_last
+			//(:3703), so the KZG closure and the three real checks fire
+			//on exactly the same predicate.
+			let b_last = si.word_id.is_eq(&zi_part2.total_words)?.and(&
 				si.subseg_id.is_eq(&si.total_word_segs)?)?;
+			{//DEBUG USE 62106.3
+				use std::sync::atomic::{AtomicBool, Ordering};
+				static P: AtomicBool = AtomicBool::new(false);
+				if !P.swap(true, Ordering::Relaxed) {
+					println!("DEBUG USE 62106.3: kzg b_last <- carried");
+				}
+			}
 			let b_first_seg = si.subseg_id.is_one()?;
 			let b_last_seg = si.subseg_id.is_eq(&si.total_word_segs)?;
 			let mut rcs = vec![one_var.clone()];
@@ -4288,10 +4335,20 @@ where 	C: CurveGroup<ScalarField=F>,
 		} else {None};
 
 
-		//total_words: treat it like almost a constant along the way
-		// if very first, take it from non-determnistic advice and then
-		//stick to it (copy from past zi_part2) -
-		let total_words=b_first.select(&si.total_words,&zi_part2.total_words)?;
+		//S106: total_words is now a PURE CARRY from z_0. The old
+		//b_first.select(si.total_words, ...) let any step the prover
+		//declared "first" overwrite it, which re-opened the terminality
+		//hole even with the operand swap above: the pin bound
+		//si.total_words while b_last read the carried copy. The seed is
+		//pinned in the decider (z_0[1]); si.total_words is now unread.
+		let total_words = zi_part2.total_words.clone();
+		{//DEBUG USE 62106.4
+			use std::sync::atomic::{AtomicBool, Ordering};
+			static P: AtomicBool = AtomicBool::new(false);
+			if !P.swap(true, Ordering::Relaxed) {
+				println!("DEBUG USE 62106.4: total_words pure carry");
+			}
+		}
 		//acc_word_len: update from previous or for a new word
 		let accumulated_word_len = b_last_full.select(&si.act_word_subseg_size,
 			&(&zi_part2.accumulated_word_len + &si.act_word_subseg_size))?;
@@ -5144,6 +5201,85 @@ pub mod tests_sigma_ir1cs{
 		}
 	}
 
+	/// The decider's S106 terminality pin, evaluated natively on a final
+	/// state. Mirrors decider_eth_circuit_super.rs "S106 TERMINALITY PIN".
+	fn s106_pin_holds(z: &ZiPartTwoInst<Fr>) -> bool{
+		z.word_id == z.total_words
+			&& z.subseg_id == z.total_word_segs
+			&& !z.word_id.is_zero()
+	}
+
+	/// S106 residual A: declaring si.total_words != word_id on the last
+	/// step no longer waives the checks, because b_last ignores it.
+	#[test]
+	pub fn test_s106_residual_a_total_words(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let n_steps = 3usize;
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, n_steps);
+		let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
+		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+
+		//violating data + the residual-A declaration: word_id stays
+		//honest at 3, but si.total_words is bumped to 4 so that the OLD
+		//b_last went false and waived every check.
+		let mut s_bad = stmts[2].clone();
+		s_bad.failed_sigs[0] = Fr::from(7u32);
+		s_bad.total_words = Fr::from(4u32);
+		let z3 = s106_step_native(&mut inst, &z2, &s_bad);
+		let r = s106_synth(&inst, &z2);
+		match &r{
+			Ok(b) => assert!(!b, "residual A still waives the checks"),
+			Err(m) => assert!(m.contains("b_correct"),
+				"rejected by the wrong check: {}", m),
+		}
+		//and the carried state is untouched by the bogus declaration,
+		//so the decider pin still sees a terminal final state.
+		assert!(z3.total_words==Fr::from(n_steps as u32),
+			"si.total_words leaked into the carried state: {}",
+			z3.total_words);
+		assert!(s106_pin_holds(&z3), "pin should hold on honest counters");
+	}
+
+	/// S106 b_first hatch: relabelling the last step as the first no
+	/// longer overwrites the carried total_words, so the decider pin
+	/// rejects it.
+	#[test]
+	pub fn test_s106_b_first_hatch(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let n_steps = 3usize;
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, n_steps);
+		let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
+		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+		assert!(z2.total_words==Fr::from(n_steps as u32));
+
+		//the hatch: declare the LAST step to be the first one, with a
+		//self-consistent 1-word job, so the pin would have passed on
+		//si.total_words while b_last read the carried 3.
+		let one = Fr::one();
+		let mut s_exp = stmts[2].clone();
+		s_exp.failed_sigs[0] = Fr::from(7u32);
+		s_exp.word_id = one;
+		s_exp.subseg_id = one;
+		s_exp.total_words = one;
+		s_exp.total_word_segs = one;
+		let z3 = s106_step_native(&mut inst, &z2, &s_exp);
+		//total_words is a pure carry now: the relabel cannot touch it.
+		assert!(z3.total_words==Fr::from(n_steps as u32),
+			"b_first hatch still overwrites total_words: {}",
+			z3.total_words);
+		//so the final state is NOT terminal and the decider rejects it.
+		assert!(!s106_pin_holds(&z3),
+			"b_first hatch still satisfies the terminality pin");
+	}
+
 	/// S106: a failed sig absent from discharged_sigs is REJECTED at an
 	/// honest last step and ACCEPTED with word_id=total_words=0.
 	#[test]
@@ -5161,9 +5297,11 @@ pub mod tests_sigma_ir1cs{
 		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
 
 		//arm 0 -- honest data, honest terminality (word_id=total_words=3)
-		let _z3 = s106_step_native(&mut inst, &z2, &stmts[2]);
+		let z3_honest = s106_step_native(&mut inst, &z2, &stmts[2]);
 		let sat0 = s106_synth(&inst, &z2);
 		assert!(sat0==Ok(true), "arm0 (honest) not satisfied: {:?}", sat0);
+		assert!(s106_pin_holds(&z3_honest),
+			"honest run fails the decider terminality pin");
 
 		//arm 1 -- a fired sig absent from discharged_sigs, same
 		//terminality. b_correct is false -> rejected.
@@ -5183,21 +5321,26 @@ pub mod tests_sigma_ir1cs{
 		s_exp.total_words = Fr::zero();
 		let z3_exp = s106_step_native(&mut inst, &z2, &s_exp);
 		let sat2 = s106_synth(&inst, &z2);
+		//NOTE: the STEP circuit still accepts arm 2 -- b_last is false
+		//because word_id=0 != the carried total_words=3, so the checks
+		//are vacuous at this level. The decider pin is what rejects it,
+		//and that is exactly what the assertion below models. Without
+		//this assertion these tests are NOT acceptance criteria.
 		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
+		assert!(!s106_pin_holds(&z3_exp),
+			"S106 exploit still satisfies the terminality pin");
 
-		//b_last is still TRUE in arm 2, so the b_last-gated KZG closure
-		//fires and the verifier's anchor is bit-identical to arm 1's.
-		assert!(z3_bad.sum_kzg_eval_word==z3_exp.sum_kzg_eval_word,
-			"kzg word accumulator moved: exploit is detectable");
-		assert!(z3_bad.sum_kzg_eval_others==z3_exp.sum_kzg_eval_others,
-			"kzg others accumulator moved: exploit is detectable");
-		//control: a NON-terminal declaration does move it, so the two
-		//equalities above are not vacuous.
-		let mut s_mid = s_bad.clone();
-		s_mid.word_id = Fr::one();
-		let z3_mid = s106_step_native(&mut inst, &z2, &s_mid);
-		assert!(z3_mid.sum_kzg_eval_word!=z3_exp.sum_kzg_eval_word,
-			"b_last never moved the accumulator: control is vacuous");
+		//POST-FIX INVERSION -- these two assertions used to demand
+		//EQUALITY, and that equality WAS the vulnerability: b_last
+		//stayed TRUE under word_id = total_words = 0, so the KZG
+		//closure fired identically and the exploit was invisible to the
+		//verifier's anchor. b_last now compares word_id against the
+		//CARRIED total_words, so the exploit suppresses the closure and
+		//the accumulator moves. Detectable at this level too.
+		assert!(z3_bad.sum_kzg_eval_word!=z3_exp.sum_kzg_eval_word,
+			"kzg word accumulator still identical: exploit invisible");
+		assert!(z3_bad.sum_kzg_eval_others!=z3_exp.sum_kzg_eval_others,
+			"kzg others accumulator still identical: exploit invisible");
 	}
 
 	/// S106: a broken cross-chunk carry is REJECTED at an honest last
@@ -5246,8 +5389,11 @@ pub mod tests_sigma_ir1cs{
 		let z2_exp = s106_step_native(&mut inst, &z1, &s_exp);
 		let sat2 = s106_synth(&inst, &z1);
 		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
-		assert!(z2_exp.sum_kzg_eval_others==z2_bad.sum_kzg_eval_others,
-			"kzg others accumulator moved: exploit is detectable");
+		//post-fix inversion, same reasoning as the sigs test
+		assert!(z2_exp.sum_kzg_eval_others!=z2_bad.sum_kzg_eval_others,
+			"kzg others accumulator still identical: exploit invisible");
+		assert!(!s106_pin_holds(&z2_exp),
+			"S106 exploit still satisfies the terminality pin");
 	}
 
 	/// S106: the Hab'22 lookup equality is REJECTED at an honest last

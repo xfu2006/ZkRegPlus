@@ -558,6 +558,17 @@ def place_raw_data(src, dest_name, server_specific=True):
     return dest
 
 
+def stale_artifact(path, t0):
+    """Reason when path is missing or older than t0 -- a leftover from
+    an EARLIER run that this child never rewrote, which would otherwise
+    be harvested as fresh data.  None when the file is this run's."""
+    if not os.path.isfile(path):
+        return "missing artifact %s" % path
+    if os.path.getmtime(path) < t0:
+        return "stale artifact %s (not rewritten by this run)" % path
+    return None
+
+
 # =====================================================================
 # per-leaf job context (D5): JobHandle + CURRENT_JOB symlinks
 # =====================================================================
@@ -1120,11 +1131,48 @@ ZOMBIE_LOG_NAME = "run_zombie_regex_zombie_international.log"
 ZOMBIE_DRY_PERC = 4
 
 
+# The child's per-ruleset summary (run_zombie.py:1085) and its
+# do-nothing exit (:1118): an absent ruleset dir is only a print, after
+# which main() returns 0 having measured nothing.
+ZOMBIE_OK_RE = re.compile(r"\[run_zombie\] \S+ : (\d+) results, (\d+) ok")
+ZOMBIE_SKIP_RE = re.compile(r"\[run_zombie\] ruleset (\S+) absent")
+
+
+def zombie_missing_success(run_log, docs_log, t0):
+    """Verdict for a zombie run: every ruleset ran, measured >0 policies
+    with >=1 ok, and rewrote the docs log.  Returns (reason, note);
+    reason None when satisfied, note set when some policies were not ok
+    -- recorded, not fatal (run_zombie.py:617 is failure-tolerant)."""
+    text = open(run_log, errors="replace").read()
+    skip = ZOMBIE_SKIP_RE.search(text)
+    if skip:
+        return ("ruleset %s never ran" % skip.group(1), None)
+    rows = ZOMBIE_OK_RE.findall(text)
+    if not rows:
+        return ("no [run_zombie] summary line in %s"
+                % os.path.basename(run_log), None)
+    n_res = sum(int(a) for a, _ in rows)
+    n_ok = sum(int(b) for _, b in rows)
+    if n_res == 0:
+        return ("0 results measured", None)
+    if n_ok == 0:
+        return ("0 of %d results ok" % n_res, None)
+    stale = stale_artifact(docs_log, t0)
+    if stale:
+        return (stale, None)
+    note = None
+    if n_ok < n_res:
+        note = "%d of %d policy runs not ok" % (n_res - n_ok, n_res)
+    return (None, note)
+
+
 def run_leaf_zombie(mode, ctx):
     """Spartan-NIZK proximity-non-membership circuits over
     regex_zombie_international/ policies. dry delegates to
     dry_run_zombie.py (evenly-spaced ZOMBIE_DRY_PERC% of policies, small
-    proximity-safe VEC_SIZE); full runs run_zombie.py untouched."""
+    proximity-safe VEC_SIZE); full runs run_zombie.py untouched.
+    Verdict = rc + a fresh docs log with >=1 ok measurement (the child
+    exits 0 after a total failure)."""
     env = dict(os.environ)
     if mode == "dry":
         script = os.path.join(MS_DLP_SCRIPTS_DIR, "dry_run_zombie.py")
@@ -1133,8 +1181,16 @@ def run_leaf_zombie(mode, ctx):
         script = os.path.join(MS_DLP_SCRIPTS_DIR, "run_zombie.py")
         args = []
     rc = run_external_python(ctx, script, args, env)
+    src = os.path.join(MS_DLP_DIR, "docs", ZOMBIE_LOG_NAME)
     if rc == 0:
-        src = os.path.join(MS_DLP_DIR, "docs", ZOMBIE_LOG_NAME)
+        reason, note = zombie_missing_success(
+            ctx.log_path("run"), src, ctx._t0)
+        if note:
+            ctx.note(note)
+        if reason:
+            ctx.note("success markers missing: %s" % reason)
+            rc = 6
+    if rc == 0:
         dest = place_raw_data(src, ZOMBIE_LOG_NAME)
         ctx.raw_data.append(dest)
     return ctx.finish(rc)
@@ -1146,11 +1202,48 @@ REEF_LOG_NAME = "reef_sample_run.log"
 REEF_DRY_PERC = 10
 
 
+# The sweep's three hard-STOP exits (eval_reef.py:496/510/533), its soft
+# pool-exhaustion warning (:544), the terminal write (:724), and the
+# executed-sample count in the docs log (:652).  EVERY stop still writes
+# the log and exits 0.
+REEF_STOP_RE = re.compile(r"^\s*STOP: (.+)$", re.M)
+REEF_EXHAUST_RE = re.compile(r"^\s*WARN: (\S+) pool exhausted", re.M)
+REEF_WROTE_RE = re.compile(r"^wrote \S+ and \S+", re.M)
+REEF_SAMPLES_RE = re.compile(r"^timed_out: \d+ of (\d+) samples", re.M)
+
+
+def reef_missing_success(run_log, docs_log, t0):
+    """Verdict for a reef run: no hard STOP, the sweep reached its final
+    write, >0 samples executed, and the docs log is this run's.  Returns
+    (reason, note); note set when a category's pool ran out (fewer
+    samples than targeted, but the data is still usable)."""
+    text = open(run_log, errors="replace").read()
+    stop = REEF_STOP_RE.search(text)
+    if stop:
+        return ("sweep STOPped: %s" % stop.group(1).strip(), None)
+    if not REEF_WROTE_RE.search(text):
+        return ("no terminal 'wrote' line in %s"
+                % os.path.basename(run_log), None)
+    stale = stale_artifact(docs_log, t0)
+    if stale:
+        return (stale, None)
+    m = REEF_SAMPLES_RE.search(open(docs_log, errors="replace").read())
+    if m is None:
+        return ("no sample count in %s" % os.path.basename(docs_log),
+                None)
+    if int(m.group(1)) == 0:
+        return ("0 samples executed", None)
+    ex = REEF_EXHAUST_RE.findall(text)
+    return (None, ("pool exhausted: %s" % ", ".join(ex)) if ex else None)
+
+
 def run_leaf_reef(mode, ctx):
     """Reef nlookup non-match baseline over chr17_variants/reef_regex/.
     dry delegates to dry_run_eval_reef.py (REEF_DRY_PERC%-scaled
     sample_size, same 6-category sweep); full runs eval_reef.py
-    untouched (its own real config is already a 10/category sample)."""
+    untouched (its own real config is already a 10/category sample).
+    Verdict = rc + a completed, un-STOPped sweep with a fresh docs log
+    (the child exits 0 after every hard STOP)."""
     env = dict(os.environ)
     if mode == "dry":
         script = os.path.join(REEF_SCRIPTS_DIR, "dry_run_eval_reef.py")
@@ -1159,8 +1252,16 @@ def run_leaf_reef(mode, ctx):
         script = os.path.join(REEF_SCRIPTS_DIR, "eval_reef.py")
         args = []
     rc = run_external_python(ctx, script, args, env)
+    src = os.path.join(REEF_DIR, "docs", REEF_LOG_NAME)
     if rc == 0:
-        src = os.path.join(REEF_DIR, "docs", REEF_LOG_NAME)
+        reason, note = reef_missing_success(
+            ctx.log_path("run"), src, ctx._t0)
+        if note:
+            ctx.note(note)
+        if reason:
+            ctx.note("success markers missing: %s" % reason)
+            rc = 6
+    if rc == 0:
         dest = place_raw_data(src, REEF_LOG_NAME)
         ctx.raw_data.append(dest)
     return ctx.finish(rc)
@@ -2522,7 +2623,9 @@ class RunLeafZombieTest(unittest.TestCase):
     def test_dry_mode_uses_dry_script_and_perc_arg(self):
         ctx = JobHandle("zombie", "dry")
         with mock.patch.object(_MOD, "run_external_python",
-                                return_value=0) as rep:
+                                return_value=0) as rep, \
+             mock.patch.object(_MOD, "zombie_missing_success",
+                                return_value=(None, None)):
             with mock.patch.object(_MOD, "place_raw_data",
                                     return_value="/fake/dest") as prd:
                 result = run_leaf_zombie("dry", ctx)
@@ -2537,7 +2640,9 @@ class RunLeafZombieTest(unittest.TestCase):
     def test_full_mode_uses_real_script_no_args(self):
         ctx = JobHandle("zombie", "full")
         with mock.patch.object(_MOD, "run_external_python",
-                                return_value=0) as rep:
+                                return_value=0) as rep, \
+             mock.patch.object(_MOD, "zombie_missing_success",
+                                return_value=(None, None)):
             with mock.patch.object(_MOD, "place_raw_data",
                                     return_value="/fake/dest"):
                 run_leaf_zombie("full", ctx)
@@ -2555,6 +2660,34 @@ class RunLeafZombieTest(unittest.TestCase):
         prd.assert_not_called()
         self.assertEqual(ctx.raw_data, [])
         self.assertTrue(result.failed)
+
+    def test_missing_markers_fail_no_placement(self):
+        """A predicate reason must block raw_data and FAIL the leaf."""
+        ctx = JobHandle("zombie", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0), \
+             mock.patch.object(_MOD, "zombie_missing_success",
+                                return_value=("0 of 24 results ok", None)), \
+             mock.patch.object(_MOD, "place_raw_data") as prd:
+            result = run_leaf_zombie("dry", ctx)
+        self.assertEqual(result.rc, 6)
+        self.assertTrue(result.failed)
+        prd.assert_not_called()
+        self.assertIn("0 of 24", result.note)
+
+    def test_partial_note_still_places(self):
+        """A note without a reason still PASSES and publishes."""
+        ctx = JobHandle("zombie", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0), \
+             mock.patch.object(_MOD, "zombie_missing_success",
+                                return_value=(None, "3 of 8 not ok")), \
+             mock.patch.object(_MOD, "place_raw_data",
+                                return_value="/fake/dest") as prd:
+            result = run_leaf_zombie("dry", ctx)
+        self.assertEqual(result.rc, 0)
+        prd.assert_called_once()
+        self.assertIn("3 of 8", result.note)
 
 
 class RunLeafReefTest(unittest.TestCase):
@@ -2579,7 +2712,9 @@ class RunLeafReefTest(unittest.TestCase):
     def test_dry_mode_uses_dry_script_and_perc_arg(self):
         ctx = JobHandle("reef", "dry")
         with mock.patch.object(_MOD, "run_external_python",
-                                return_value=0) as rep:
+                                return_value=0) as rep, \
+             mock.patch.object(_MOD, "reef_missing_success",
+                                return_value=(None, None)):
             with mock.patch.object(_MOD, "place_raw_data",
                                     return_value="/fake/dest") as prd:
                 result = run_leaf_reef("dry", ctx)
@@ -2594,7 +2729,9 @@ class RunLeafReefTest(unittest.TestCase):
     def test_full_mode_uses_real_script_no_args(self):
         ctx = JobHandle("reef", "full")
         with mock.patch.object(_MOD, "run_external_python",
-                                return_value=0) as rep:
+                                return_value=0) as rep, \
+             mock.patch.object(_MOD, "reef_missing_success",
+                                return_value=(None, None)):
             with mock.patch.object(_MOD, "place_raw_data",
                                     return_value="/fake/dest"):
                 run_leaf_reef("full", ctx)
@@ -2612,6 +2749,182 @@ class RunLeafReefTest(unittest.TestCase):
         prd.assert_not_called()
         self.assertEqual(ctx.raw_data, [])
         self.assertTrue(result.failed)
+
+    def test_missing_markers_fail_no_placement(self):
+        """A predicate reason must block raw_data and FAIL the leaf."""
+        ctx = JobHandle("reef", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0), \
+             mock.patch.object(_MOD, "reef_missing_success",
+                                return_value=("sweep STOPped: x", None)), \
+             mock.patch.object(_MOD, "place_raw_data") as prd:
+            result = run_leaf_reef("dry", ctx)
+        self.assertEqual(result.rc, 6)
+        self.assertTrue(result.failed)
+        prd.assert_not_called()
+        self.assertIn("STOPped", result.note)
+
+    def test_partial_note_still_places(self):
+        """A note without a reason still PASSES and publishes."""
+        ctx = JobHandle("reef", "dry")
+        with mock.patch.object(_MOD, "run_external_python",
+                                return_value=0), \
+             mock.patch.object(_MOD, "reef_missing_success",
+                                return_value=(None, "pool exhausted: p")), \
+             mock.patch.object(_MOD, "place_raw_data",
+                                return_value="/fake/dest") as prd:
+            result = run_leaf_reef("dry", ctx)
+        self.assertEqual(result.rc, 0)
+        prd.assert_called_once()
+        self.assertIn("pool exhausted", result.note)
+
+
+class ZombieMissingSuccessTest(unittest.TestCase):
+    OK = ("[run_zombie] docs/run_zombie_x.log : 24 results, 24 ok "
+          "across sizes [700, 800, 1000]\n")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.t0 = time.time() - 10
+        self.docs = os.path.join(self.tmp.name, "zombie.log")
+        with open(self.docs, "w") as f:
+            f.write("fresh\n")
+
+    def _log(self, text):
+        p = os.path.join(self.tmp.name, "run.log")
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def test_all_ok_passes(self):
+        """24/24 ok with a docs log written by this run is a PASS."""
+        self.assertEqual(
+            zombie_missing_success(self._log(self.OK), self.docs,
+                                    self.t0), (None, None))
+
+    def test_partial_ok_passes_with_note(self):
+        """Some not-ok policies are RECORDED, not fatal (M>0 rule)."""
+        lg = self._log(self.OK.replace("24 results, 24 ok",
+                                        "8 results, 5 ok"))
+        reason, note = zombie_missing_success(lg, self.docs, self.t0)
+        self.assertIsNone(reason)
+        self.assertIn("3 of 8", note)
+
+    def test_zero_ok_fails(self):
+        """Every policy failing is a total failure, not a partial one."""
+        lg = self._log(self.OK.replace("24 ok", "0 ok"))
+        self.assertIn("0 of 24",
+                       zombie_missing_success(lg, self.docs, self.t0)[0])
+
+    def test_zero_results_fails(self):
+        """An empty policy list measured nothing."""
+        lg = self._log(self.OK.replace("24 results, 24 ok",
+                                        "0 results, 0 ok"))
+        self.assertIn("0 results",
+                       zombie_missing_success(lg, self.docs, self.t0)[0])
+
+    def test_absent_ruleset_fails(self):
+        """The skip line is the child's silent do-nothing exit."""
+        lg = self._log("[run_zombie] ruleset regex_zombie_x/ absent "
+                       "-- skipping\n")
+        self.assertIn("never ran",
+                       zombie_missing_success(lg, self.docs, self.t0)[0])
+
+    def test_no_summary_line_fails(self):
+        """No summary line at all means the run never reached write_log."""
+        self.assertIn(
+            "no [run_zombie]",
+            zombie_missing_success(self._log("[run] size=700\n"),
+                                    self.docs, self.t0)[0])
+
+    def test_stale_docs_log_fails(self):
+        """A docs log older than the job is a leftover, not this run's."""
+        os.utime(self.docs, (self.t0 - 100, self.t0 - 100))
+        self.assertIn(
+            "stale",
+            zombie_missing_success(self._log(self.OK), self.docs,
+                                    self.t0)[0])
+
+
+class ReefMissingSuccessTest(unittest.TestCase):
+    OK = ("[non_projectable acc=0/1 try=1 disc=0] v1  est_net=1.0s\n"
+          "wrote docs/reef_sample_run.log and docs/variants_category.txt\n")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.t0 = time.time() - 10
+        self.docs = os.path.join(self.tmp.name, "reef.log")
+        self._docs("timed_out: 0 of 6 samples\n")
+
+    def _docs(self, text):
+        with open(self.docs, "w") as f:
+            f.write(text)
+
+    def _log(self, text):
+        p = os.path.join(self.tmp.name, "run.log")
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def test_healthy_run_passes(self):
+        """A sweep that reached its final write with samples is a PASS."""
+        self.assertEqual(
+            reef_missing_success(self._log(self.OK), self.docs, self.t0),
+            (None, None))
+
+    def test_projectability_stop_fails(self):
+        """GATE-1 STOP aborts the sweep yet still exits 0."""
+        lg = self._log("  STOP: projectability mismatch for v1 "
+                       "(real=True, est=False)\n" + self.OK)
+        self.assertIn("projectability",
+                       reef_missing_success(lg, self.docs, self.t0)[0])
+
+    def test_timeout_stop_fails(self):
+        """A fast-predicted sample timing out is a model failure."""
+        lg = self._log("  STOP: v1 timed out but est_net=5.0s <= "
+                       "timeout=2000s\n" + self.OK)
+        self.assertIn("timed out",
+                       reef_missing_success(lg, self.docs, self.t0)[0])
+
+    def test_max_discard_stop_fails(self):
+        """Exceeding max_discard is the third hard-STOP exit."""
+        lg = self._log("  STOP: proj_4M exceeded max_discard=30 "
+                       "outliers\n" + self.OK)
+        self.assertIn("max_discard",
+                       reef_missing_success(lg, self.docs, self.t0)[0])
+
+    def test_missing_wrote_line_fails(self):
+        """No terminal 'wrote' line means write_log never completed."""
+        self.assertIn(
+            "no terminal",
+            reef_missing_success(self._log("[proj_4M acc=0/1]\n"),
+                                  self.docs, self.t0)[0])
+
+    def test_zero_samples_fails(self):
+        """An empty assessment writes a log with no executed samples."""
+        self._docs("timed_out: 0 of 0 samples\n")
+        self.assertIn(
+            "0 samples",
+            reef_missing_success(self._log(self.OK), self.docs,
+                                  self.t0)[0])
+
+    def test_stale_docs_log_fails(self):
+        """A docs log older than the job is a leftover, not this run's."""
+        os.utime(self.docs, (self.t0 - 100, self.t0 - 100))
+        self.assertIn(
+            "stale",
+            reef_missing_success(self._log(self.OK), self.docs,
+                                  self.t0)[0])
+
+    def test_pool_exhausted_passes_with_note(self):
+        """Pool exhaustion is degraded-but-usable: note, not fail."""
+        lg = self._log("  WARN: proj_512k pool exhausted with only 3/10 "
+                       "accepted (2 discarded)\n" + self.OK)
+        reason, note = reef_missing_success(lg, self.docs, self.t0)
+        self.assertIsNone(reason)
+        self.assertIn("proj_512k", note)
 
 
 class RunLeafScaleDlpTest(unittest.TestCase):

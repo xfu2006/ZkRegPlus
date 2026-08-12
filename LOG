@@ -30976,9 +30976,14 @@ Goal 5. S101: soundness issue 101
 Goal 6. S106: 
 	[a] run falsifying test first
 	[b] solve S104 + S105 + S106.
+	[c] approve code and test
+	[d] ??? test result????
 Goal 7. another round of double checking full-run
 	[a] A2001: check if circ breakdown will be similar to legacy for dlp
-	[b] A2002 do that for full clam
+	[b] A2002 do that for full clam -> Closed
+Goal 8. B1 for full-run scripts 
+	[a] approve idea and code
+	[b] test
 
 
 

@@ -886,6 +886,30 @@ where
 			assert!(zi_p2.value().unwrap()==z_i[1].value().unwrap());
 		}}
 		zi_p2.enforce_equal(&z_i[1])?;
+
+		//S106 TERMINALITY PIN. The final state must BE terminal:
+		//  word_id == total_words, word_id != 0, subseg_id ==
+		//  total_word_segs.
+		//With the step circuit's b_last now reading the carried
+		//total_words (sigma_ir1cs.rs, "S106: b_last compares"), these
+		//three clauses are exactly b_last's two conjuncts plus the
+		//word_id != 0 that used to sit in final_step -- so pin =>
+		//final_step is a syntactic identity at the last step, and the
+		//three real checks (I/O, Hab'22, failed-sigs) can no longer be
+		//declared away.
+		//PLACEMENT IS LOAD-BEARING: this must stay ABOVE the
+		//`if !b_light_test` gate below, or every light-mode run skips
+		//it and the regression suite reports green while covering
+		//nothing.
+		zi_part2_inst_var.word_id
+			.enforce_equal(&zi_part2_inst_var.total_words)?;
+		zi_part2_inst_var.subseg_id
+			.enforce_equal(&zi_part2_inst_var.total_word_segs)?;
+		zi_part2_inst_var.word_id.is_zero()?
+			.enforce_equal(&Boolean::FALSE)?;
+		{//DEBUG USE 62106.6
+			println!("DEBUG USE 62106.6: decider terminality pin synthesized");
+		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 6");}
