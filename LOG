@@ -30975,8 +30975,10 @@ Goal 5. S101: soundness issue 101
 	[b] reorder all issues. 
 Goal 6. S106: 
 	[a] run falsifying test first
-	[b]
+	[b] solve S104 + S105 + S106.
 Goal 7. another round of double checking full-run
+	[a] A2001: check if circ breakdown will be similar to legacy for dlp
+	[b] A2002 do that for full clam
 
 
 
