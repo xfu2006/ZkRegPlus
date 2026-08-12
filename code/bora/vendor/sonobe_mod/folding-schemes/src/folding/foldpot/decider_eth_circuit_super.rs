@@ -987,6 +987,61 @@ where
 		c1 = cs.num_constraints();
 		if B_DEBUG3{check_cs(&cs, "phase1 step 7");}
 
+		//7b. S103: bind the INACTIVE accumulator slots. Step 7 above
+		//proves each U_i1[j] is INDIVIDUALLY valid; step 8 below proves
+		//only U_i1[pc_i] = NIFS.V(U_i[pc_i], u_i, cmT). Neither ties
+		//U_i1[j] to U_i[j] for j != pc_i, so without this a prover swaps
+		//a valid-but-unrelated instance into an inactive slot and
+		//discards everything ever folded into that rung. Second half of
+		//the paper's Step 13(v). The native IVC verifier checks the
+		//right vector already -- it checks U_i, which u_i.x[0] binds
+		//(mod_super.rs verify step 6).
+		//PLACEMENT IS LOAD-BEARING: this stays ABOVE the !b_light_test
+		//gate below, or light-mode runs skip it and the suite reports
+		//green over nothing. It needs nothing that gate computes.
+		//CONSTANTS, not witnesses, for the index: as a witness the
+		//prover picks fp_j != pc_i freely, forcing b_inact FALSE at
+		//every j, and conditional_enforce_equal then emits rows that are
+		//all VACUOUS. circuits_super.rs:734,787 uses constants for the
+		//same reason.
+		//FIELD BY FIELD, not CommittedInstanceVarFoldPot::enforce_equal
+		//(circuits.rs:212): that helper pins only u and x -- its
+		//cmE/cmW/cmF compare is a native assert under B_DEBUG=false.
+		//cmW is what carries the accumulated witness, so it must be
+		//compared here explicitly.
+		//SCOPE: this closes n_circ-1 slots. The ACTIVE slot keeps the
+		//same hole, because step 8 drops the commitment fold for the
+		//very same reason (circuits.rs:223-224) and pc_i is a free
+		//witness, so the prover names the victim rung. That is S126,
+		//tracked separately -- do not read this block as closing it.
+		//Honest satisfiability is STRUCTURAL, not incidental: the
+		//prover builds U_i1 as U_i.clone() with only slot pc_i replaced
+		//(mod_super.rs gen_next_folded), and from_nova ships that same
+		//pair, so inactive slots are limb-identical clones.
+		if n_circ > 1 {
+			for j in 0..n_circ{
+				let fp_j = FpVar::<CF1<C1>>::new_constant(cs.clone(),
+					C1::ScalarField::from(j as u32))?;
+				let b_inact = fp_j.is_eq(&pc_i_var)?.not();
+				let (a, b) = (&U_i1.vec_inst[j], &U_i.vec_inst[j]);
+				assert_eq!(a.x.len(), b.x.len(),
+					"S103: U_i1[{}].x len {} != U_i[{}].x len {}",
+					j, a.x.len(), j, b.x.len());
+				a.u.conditional_enforce_equal(&b.u, &b_inact)?;
+				for k in 0..a.x.len(){
+					a.x[k].conditional_enforce_equal(&b.x[k], &b_inact)?;
+				}
+				a.cmE.conditional_enforce_equal(&b.cmE, &b_inact)?;
+				a.cmW.conditional_enforce_equal(&b.cmW, &b_inact)?;
+				a.cmF.conditional_enforce_equal(&b.cmF, &b_inact)?;
+			}
+			//count says n_circ, not n_circ-1: the loop is uniform over
+			//every slot so the R1CS cannot depend on pc_i's VALUE, and
+			//the active slot's rows are the vacuous ones.
+			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 7b: S103 bind inactive slots, {} slots swept. INCREASED r1cs: {}", n_circ, cs.num_constraints()-c1), &mut t1);
+			c1 = cs.num_constraints();
+		}
+
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
 
@@ -1024,8 +1079,15 @@ where
 			let mut Ui_pci = U_i.vec_inst[0].clone(); 
 			let mut expected_Ui1_pci = U_i1.vec_inst[0].clone();
 			for i in 0..n_circ{//this generate FIXED constraints
-				let var_i = FpVar::<CF1<C1>>::new_witness(cs.clone(), || Ok(
-					C1::ScalarField::from(i as u32)))?;
+				//S103b: the selector index must be a CONSTANT. As a
+				//witness the prover sets var_i == pc_i at an index of
+				//their choosing (or at none, leaving the :1024-1025
+				//initializers = slot 0), which redirects this whole
+				//NIFS check to a slot decoupled from pc_i. The
+				//augmented circuit already does it right
+				//(circuits_super.rs:734, :787, :859).
+				let var_i = FpVar::<CF1<C1>>::new_constant(cs.clone(),
+					C1::ScalarField::from(i as u32))?;
 				let b_sel = var_i.is_eq(&pc_i_var)?;
 				Ui_pci = b_sel.select(&U_i.vec_inst[i], &Ui_pci)?;
 				expected_Ui1_pci = b_sel.select(&U_i1.vec_inst[i], &expected_Ui1_pci)?;
@@ -2612,6 +2674,226 @@ pub mod tests_decider_eth_circuit_super {
 			&& i_z0 < i_honest,
 			"rejection not localised: digest {} term {} z0 {} \
 			 honest {}", i_digest, i_term, i_z0, i_honest);
+	}
+
+	// ---------------------------------------------------------------
+	// S103 -- the decider must bind the INACTIVE accumulator slots.
+	//
+	// Vehicle: the same six_root toy as S119, folded with n_circ = 2 and
+	// an ALTERNATING pc schedule so both slots hold real folded work.
+	// The toy's fixture is n_circ = 1 with pc_i = pc_i1 = 0 hard-coded
+	// (sigma_ir1cs.rs gen_six_root_adv, SixRootMapper::build_statement),
+	// so the schedule is patched into the statements here -- BEFORE
+	// pass 1, because the statement vector is what cmF commits to.
+	//
+	// WHY NOT THE S119 INDEX BRACKET. S106/S105b sit UPSTREAM of the
+	// toy's own pre-existing step-7 unsatisfied row, so a first-index
+	// comparison localises them. The S103 block is emitted AFTER step 7
+	// -- DOWNSTREAM -- and which_is_unsatisfied() reports only the FIRST
+	// unsatisfied row, so that pre-existing row MASKS every S103
+	// rejection and honest/corrupt arms report the same index. A test in
+	// the S119 style would be green over nothing. This one diffs the
+	// FULL unsatisfied-row SET instead.
+	// ---------------------------------------------------------------
+
+	/// Fold the six_root toy over `n_circ` slots. `sched[i]` is step i's
+	/// pc_i1; step i's pc_i is sched[i-1], with 0 before the first --
+	/// the same convention as driver.rs pass_all.
+	fn s103_fold(n_steps: usize, n_circ: usize, sched: &[usize])
+		-> S119Circ{
+		assert_eq!(sched.len(), n_steps, "sched len != n_steps");
+		let mut rng = ark_std::test_rng();
+		let cfg = poseidon_canonical_config::<Fr>();
+		let b_full = false;
+		let (lk, f_circ, mut vec_stmt) =
+			gen_six_root::<Fr, Projective, S119Cm, S119Lk, false>(
+				n_steps);
+		//same counter repair as s119_fold, and for the same reason
+		//(build_statement's NOTE): without it assert_msg3 kills any
+		//fold of >= 2 steps. Local to this test.
+		for st in vec_stmt.iter_mut(){
+			st.inp_buf[0] = Fr::zero();
+			st.oup_buf[0] = Fr::zero();
+		}
+		//the pc schedule. n_circ_minus_pc follows the fixture's own
+		//rule (n_circ - pc_i); it is carried in the statement but no
+		//constraint reads it.
+		let pc_of = |i: usize| if i==0 {0usize} else {sched[i-1]};
+		for i in 0..n_steps{
+			vec_stmt[i].pc_i = Fr::from(pc_of(i) as u32);
+			vec_stmt[i].pc_i1 = Fr::from(sched[i] as u32);
+			vec_stmt[i].n_circ = Fr::from(n_circ as u32);
+			vec_stmt[i].n_circ_minus_pc =
+				Fr::from(n_circ as u32) - Fr::from(pc_of(i) as u32);
+		}
+		let vec_f = vec![f_circ.clone(); n_circ];
+		let vec_size = vec![f_circ.get_size_f(); n_circ];
+		let prep = PreprocessorParamFoldPotSuper::<Projective,
+			Projective2, S119Fc, S119Cm, S119Cm2, S119Lk, S119Gm,
+			false>::new(cfg.clone(), vec_f.clone(), lk, vec_size,
+				b_full);
+		let params = S119Nova::preprocess(&mut rng, &prep, 0)
+			.expect("preprocess err");
+		let fq_bits = <<Projective as CurveGroup>::BaseField
+			as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
+
+		//PASS 1: the cmF hash chain, over the PATCHED statements.
+		let zero = Fr::zero();
+		let z0_p2 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, b_full,
+			fq_bits, n_steps);
+		let z_0 = vec![zero, z0_p2.hash(&cfg)];
+		let nova0 = S119Nova::init_adv(&params, vec_f.clone(), z_0,
+			n_circ, 0, b_full, zero, zero, n_steps, None, 0)
+			.expect("init_adv pass1 err");
+		let mut hash_cmf = zero;
+		for i in 0..n_steps{
+			(hash_cmf, _) = nova0.compute_step_hc_cmF(hash_cmf,
+				&vec_stmt[i]).expect("hc_cmF err");
+		}
+		drop(nova0);
+
+		//PASS 2: the real IVC. pc_i / pc_i1 are set per step exactly as
+		//driver.rs pass_all does it (driver.rs "nova.pc_i =
+		//vea[idx].pc_i").
+		let z0_p2 = ZiPartTwoInst::<Fr>::new(hash_cmf, zero, &cfg,
+			b_full, fq_bits, n_steps);
+		let z_0 = vec![hash_cmf, z0_p2.hash(&cfg)];
+		let mut nova = S119Nova::init_adv(&params, vec_f.clone(), z_0,
+			n_circ, 0, b_full, hash_cmf, zero, n_steps, None, 0)
+			.expect("init_adv pass2 err");
+		for j in 0..n_steps{
+			nova.pc_i = Fr::from(pc_of(j) as u32);
+			nova.pc_i1 = Fr::from(sched[j] as u32);
+			nova.prove_step(&mut rng, vec_stmt[j].to_vec(), None)
+				.expect("prove_step err");
+		}
+		assert_eq!(Fr::from(n_steps as u32), nova.i);
+
+		let (u_i1, w_i1, _r, _cmt) = nova.gen_next_folded()
+			.expect("gen_next_folded err");
+		let (com_all_w, _qa, r_all_w, _kzg, _ch) = w_i1
+			.gen_com_all_w_and_qa_nizk_prf::<Bn254, S119Cm, false>(
+				params.0.qa_pp.as_ref().expect("qa_pp null"),
+				&params.0.cs1e_pp,
+				params.1.qa_vp.as_ref().expect("qa_vp null"),
+				&u_i1, &cfg);
+		S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
+			.expect("from_nova err")
+	}
+
+	/// EVERY unsatisfied row, not just the first: (num_constraints, set).
+	/// which_is_unsatisfied() stops at the first row, which is useless
+	/// here (see the note above), so the rows are evaluated directly off
+	/// to_matrices() and the assignments.
+	fn s103_unsat_rows(circ: &S119Circ) -> (usize, Vec<usize>){
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		circ.generate_constraints_adv(0, cs.clone(), Fr::zero())
+			.expect("gen_cs err");
+		//REQUIRED before to_matrices(): make_row calls
+		//get_index_unchecked, which panics on a SymbolicLc, and the LCs
+		//are symbolic until finalize() inlines them. It changes neither
+		//num_constraints nor the assignments.
+		cs.finalize();
+		let m = cs.to_matrices().expect("matrices null");
+		//make_row indexes instance variables first (column 0 is the ONE
+		//variable) and then witness variables, so z is exactly the two
+		//assignment vectors concatenated in that order.
+		let z = {
+			let g = cs.borrow().expect("cs borrow null");
+			[g.instance_assignment.clone(),
+				g.witness_assignment.clone()].concat()
+		};
+		let dot = |row: &Vec<(Fr, usize)>| row.iter()
+			.map(|(c, i)| *c * z[*i]).sum::<Fr>();
+		let bad = (0..m.num_constraints)
+			.filter(|&r| dot(&m.a[r]) * dot(&m.b[r]) != dot(&m.c[r]))
+			.collect::<Vec<usize>>();
+		(m.num_constraints, bad)
+	}
+
+	/// S103: at n_circ=2 the decider rejects a swapped INACTIVE-slot
+	/// commitment; the same swap on the ACTIVE slot is still accepted,
+	/// which measures S126 rather than assuming it.
+	#[test]
+	fn test_s103_inactive_slot_bound(){
+		let n_steps = 5;
+		//alternating, so folds land in slots 0,1,0,1,0 and BOTH hold
+		//real work. A schedule that never leaves slot 0 would compare
+		//dummy against dummy and prove nothing.
+		let sched = vec![1usize, 0, 1, 0, 1];
+		let circ0 = s103_fold(n_steps, 2, &sched);
+		let pci = field_to_usize(&circ0.pc_i);
+		assert!(pci < 2, "pc_i {} out of range", pci);
+		let inact = 1 - pci;
+
+		//ARM A -- honest control. The toy carries its own pre-existing
+		//step-7 unsatisfied row (S120), so this set is NOT empty; it is
+		//the baseline every other arm is diffed against.
+		let (n_a, bad_a) = s103_unsat_rows(&circ0);
+		emit_stdout(format!("S103 arm A honest: {} rows, {} unsat",
+			n_a, bad_a.len()));
+
+		//ARM B -- swap cmW on the INACTIVE slot, change nothing else.
+		//In light mode cmW is read by no other row (step 7 uses only
+		//u, x, W, E; the KZG challenge absorbs it but is recomputed
+		//in-circuit from the same value), so any NEW unsatisfied row is
+		//attributable to the S103 block alone.
+		let mut circ_b = circ0.clone();
+		{
+			let mut u = circ_b.U_i1.clone().expect("U_i1 null");
+			u.vec_inst[inact].cmW = u.vec_inst[inact].cmW
+				+ Projective::generator();
+			circ_b.U_i1 = Some(u);
+		}
+		let (n_b, bad_b) = s103_unsat_rows(&circ_b);
+
+		//ARM D -- the SAME swap on the ACTIVE slot. Step 8 is gated out
+		//in light mode, and even in full mode it drops cm*
+		//(circuits.rs enforce_equal pins only u and x), so this arm
+		//must add NOTHING. Two jobs: it is the selector control -- a
+		//b_inact inversion would swap B and D -- and it MEASURES the
+		//residual S126 hole instead of asserting it.
+		let mut circ_d = circ0.clone();
+		{
+			let mut u = circ_d.U_i1.clone().expect("U_i1 null");
+			u.vec_inst[pci].cmW = u.vec_inst[pci].cmW
+				+ Projective::generator();
+			circ_d.U_i1 = Some(u);
+		}
+		let (n_d, bad_d) = s103_unsat_rows(&circ_d);
+
+		//shape identity: the arms differ in witness VALUES only, so the
+		//row indices name constraints of one and the same system.
+		assert!(n_a == n_b && n_b == n_d,
+			"arms not shape-identical: {} {} {}", n_a, n_b, n_d);
+		let new_b = bad_b.iter().filter(|r| !bad_a.contains(r))
+			.collect::<Vec<_>>();
+		let new_d = bad_d.iter().filter(|r| !bad_a.contains(r))
+			.collect::<Vec<_>>();
+		emit_stdout(format!("S103 arm B inactive slot {}: {} NEW unsat \
+			rows {:?}; arm D active slot {}: {} NEW", inact,
+			new_b.len(), new_b, pci, new_d.len()));
+		assert!(bad_a.iter().all(|r| bad_b.contains(r)),
+			"arm B lost a baseline unsatisfied row -- the arms are not \
+			 comparable");
+		assert!(new_b.len() > 0,
+			"INACTIVE slot cmW swap ACCEPTED -- the S103 block is inert");
+		//ATTRIBUTION: in light mode the S103 block is the LAST thing
+		//gen_cs emits (steps 8-10 are gated out), and it reports its own
+		//width in the "Step 7b" log line. So every new row must fall in
+		//the final `width` indices -- otherwise the rejection came from
+		//somewhere else and this test is measuring the wrong thing.
+		//width = 78 per slot x n_circ; asserted loosely as <= 256 so a
+		//gadget-level cost change does not turn this into a tripwire.
+		let width = 256;
+		assert!(new_b.iter().all(|&&r| r + width >= n_a),
+			"new unsatisfied rows {:?} are NOT inside the last {} rows \
+			 of {} -- rejection is not attributable to the S103 block",
+			new_b, width, n_a);
+		assert_eq!(new_d.len(), 0,
+			"ACTIVE slot cmW swap was REJECTED ({} new rows). Step 8 is \
+			 light-gated and drops cm*, so this was the S126 control -- \
+			 re-derive S126 before trusting it", new_d.len());
 	}
 
 }

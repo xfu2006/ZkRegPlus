@@ -31007,16 +31007,20 @@ Goal 4. next soundness issue S119: verify z_i[1] constraints
 	[a] design
 	[b] test
 	[c] done.
+Goal 5. S102 + S103
+	[a] problem: S103 -> S126. rename and rescope
 ---
 Goal 5. Fix download issue for CentOS: T910
 	[a] develop a plan
 	[b] execute the plan
-	[c]
+	[c] found some files are not genuin centos image
+	[d] define a manifest of excluded files
+	[e] decide how to exclude or union exclusion files.
 Goal 6. T9901  
 	[a] problem: make sure lower ring has
 		low configs
-	[b] 
-Goal 7. 
+	[b] multiple rounds of design to try to simualte legacy 
+
 
 
 
