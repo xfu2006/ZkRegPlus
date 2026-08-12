@@ -511,8 +511,24 @@ where
 			}
 		}
 
+		//S105a: at i=0 the step function must run on z_0, not on the
+		//free witness z_i -- otherwise the chain that S104 builds
+		//bottoms out on a state the prover picked.
+		//PLACEMENT IS LOAD-BEARING: is_basecase must be computed
+		//strictly AFTER to_vec_fp_var (:498) and before this call.
+		//FpVar::is_zero allocates witness variables, and
+		//sigma_ir1cs.rs:2468 asserts the witness count on entry to
+		//to_vec_fp_var is 0 or 6 because start_F = 12 is hard-coded
+		//(mod.rs:452). Hoisting it any higher panics there -- and
+		//without that assert it would silently mis-slice the folded
+		//cmF window.
+		let is_basecase = i.is_zero()?;
+		let mut z_in: Vec<FpVar<CF1<C1>>> = vec![];
+		for k in 0..z_i.len(){
+			z_in.push(is_basecase.select(&z_0[k], &z_i[k])?);
+		}
         let z_i1 = self.F
-                 .generate_step_constraints(cs.clone(), i_usize, z_i.clone(), wtns_vec)?;
+                 .generate_step_constraints(cs.clone(), i_usize, z_in, wtns_vec)?;
 
 		log_perf(self.job_id, log_level,&format!( 
 			"-- circuit_super gen_cs step 3.2: gen_step_cs cs: {}, vars: {}",
@@ -532,7 +548,8 @@ where
 			let zi1_part2_hash = z_i1_part2.hash(&self.poseidon_config);
 			assert!(z_i1[1].value()? == zi1_part2_hash);
 		}
-        let is_basecase = i.is_zero()?;
+		//S105a: is_basecase is now computed above, just before the step
+		//call, and reused here.
 
 		if b_debug{
 			let csat = cs.is_satisfied();

@@ -2146,13 +2146,53 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 	}
 
 	/// hash to one element to use as zi.1
+	/// S104 SPLIT: with cyclepair limbs present the digest is
+	/// H( H(19 fixed fields), H(limbs) ), so a step can bind its INPUT
+	/// state by recomputing only the 19-field half -- the limbs are
+	/// overwritten wholesale each step and are never read on input.
+	/// Without limbs the digest is unchanged, keeping the non-full
+	/// (production) path byte-identical.
+	/// MUST stay in lockstep with ZiPartTwoInstVar::hash.
 	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>)->F{
-        let mut sponge = PoseidonSponge::<F>::new(ps_cfg);
 		let vec = self.to_vec();
-		sponge.absorb(&vec);
-		let res = sponge.squeeze_field_elements(1)[0];
+		let fixed_part = 19;
+		if vec.len()<=fixed_part{
+        	let mut sponge = PoseidonSponge::<F>::new(ps_cfg);
+			sponge.absorb(&vec);
+			return sponge.squeeze_field_elements(1)[0];
+		}
+		let h19 = {
+			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
+			sp.absorb(&vec[..fixed_part].to_vec());
+			sp.squeeze_field_elements::<F>(1)[0]
+		};
+		let h_cp = {
+			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
+			sp.absorb(&vec[fixed_part..].to_vec());
+			sp.squeeze_field_elements::<F>(1)[0]
+		};
+		let mut sp = PoseidonSponge::<F>::new(ps_cfg);
+		sp.absorb(&vec![h19, h_cp]);
+		sp.squeeze_field_elements(1)[0]
+	}
 
-		res
+	/// The 19-field half of the split digest, plus the limb half.
+	/// Returned separately so the step circuit can bind the half it
+	/// actually reads and carry the other as a witness.
+	pub fn hash_halves(&self, ps_cfg: &PoseidonConfig<F>)->(F, F){
+		let vec = self.to_vec();
+		let fixed_part = 19;
+		let h19 = {
+			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
+			sp.absorb(&vec[..fixed_part].to_vec());
+			sp.squeeze_field_elements::<F>(1)[0]
+		};
+		let h_cp = if vec.len()>fixed_part{
+			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
+			sp.absorb(&vec[fixed_part..].to_vec());
+			sp.squeeze_field_elements::<F>(1)[0]
+		} else { F::zero() };
+		(h19, h_cp)
 	}
 }
 
@@ -2232,13 +2272,29 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 	}
 
 	/// hash to one element to use as zi.1
+	/// S104 SPLIT -- mirrors ZiPartTwoInst::hash exactly. Diverging
+	/// from the native version makes the whole chain unsatisfiable
+	/// rather than failing to compile, so change the two together.
 	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>, cs: ConstraintSystemRef<F>)->FpVar<F>{
-        let mut sponge = PoseidonSpongeVar::<F>::new(cs, ps_cfg);
 		let vec = self.to_vec();
-		sponge.absorb(&vec).expect("absort err");
-		let res=sponge.squeeze_field_elements(1).expect("hash err")[0].clone();
+		let fixed_part = 19;
+		if vec.len()<=fixed_part{
+        	let mut sponge = PoseidonSpongeVar::<F>::new(cs, ps_cfg);
+			sponge.absorb(&vec).expect("absort err");
+			return sponge.squeeze_field_elements(1)
+				.expect("hash err")[0].clone();
+		}
+		let h19 = Self::hash_slice(ps_cfg, cs.clone(), &vec[..fixed_part]);
+		let h_cp = Self::hash_slice(ps_cfg, cs.clone(), &vec[fixed_part..]);
+		Self::hash_slice(ps_cfg, cs.clone(), &[h19, h_cp])
+	}
 
-		res
+	/// one-sponge helper shared by hash() and the S104 input binding
+	pub fn hash_slice(ps_cfg: &PoseidonConfig<F>,
+		cs: ConstraintSystemRef<F>, v: &[FpVar<F>])->FpVar<F>{
+		let mut sp = PoseidonSpongeVar::<F>::new(cs, ps_cfg);
+		sp.absorb(&v.to_vec()).expect("absorb err");
+		sp.squeeze_field_elements(1).expect("hash err")[0].clone()
 	}
 }
 
@@ -3252,13 +3308,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			//accumulator stops matching the one the circuit proves.
 			let b_last = si.word_id==zi_part2.total_words &&
 				si.subseg_id==si.total_word_segs;
-			{//DEBUG USE 62106.5
-				use std::sync::atomic::{AtomicBool, Ordering};
-				static P: AtomicBool = AtomicBool::new(false);
-				if !P.swap(true, Ordering::Relaxed) {
-					println!("DEBUG USE 62106.5: native b_last <- carried");
-				}
-			}
 			let b_first_seg = si.subseg_id.is_one();
 			let b_last_seg = si.subseg_id==si.total_word_segs;
 			let ch = zi_part2.ch;
@@ -3734,19 +3783,48 @@ where 	C: CurveGroup<ScalarField=F>,
 
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 		let zi_part2 = ZiPartTwoInstVar::from_vec(&wtns_var.zi_part2, fq_bits);
+		//S104: bind the incoming state to z_i[1]. Without this the step
+		//circuit never reads z_i[1] at all, so every step invents its
+		//own input accumulators and the hash chain is decorative --
+		//which also makes each accumulator forgeable and defeats the
+		//KZG anchor. EVERYTHING ELSE IN THIS FIX SET RESTS ON THIS.
+		//Honest-satisfiable by construction: mod_super.rs already
+		//asserts the same equality natively on every prove_step.
+		//S104 SPLIT: in full mode recompute only the 19-field half and
+		//carry the limb half as a witness. The limbs are overwritten
+		//wholesale each step (see the zi1_part2 build below) and are
+		//never read here, so leaving them unrecomputed costs nothing:
+		//the witness half still has to equal the previous step's, or
+		//the outer hash misses z_i[1]. Saves ~12k R1CS/step in full
+		//mode; the non-full path takes the plain hash unchanged.
+		let zi_vec = zi_part2.to_vec();
+		let fixed_part = 19usize;
+		let zi_in_hash = if zi_vec.len()<=fixed_part{
+			zi_part2.hash(&self.poseidon_config, cs.clone())
+		}else{
+			let h19 = ZiPartTwoInstVar::<F>::hash_slice(
+				&self.poseidon_config, cs.clone(), &zi_vec[..fixed_part]);
+			let h_cp_val = {
+				let mut sp = PoseidonSponge::<F>::new(
+					&self.poseidon_config);
+				let vals = zi_vec[fixed_part..].iter()
+					.map(|v| v.value().unwrap_or(F::zero()))
+					.collect::<Vec<F>>();
+				sp.absorb(&vals);
+				sp.squeeze_field_elements::<F>(1)[0]
+			};
+			let h_cp = FpVar::<F>::new_witness(cs.clone(),
+				|| Ok(h_cp_val))?;
+			ZiPartTwoInstVar::<F>::hash_slice(&self.poseidon_config,
+				cs.clone(), &[h19, h_cp])
+		};
+		zi_in_hash.enforce_equal(&z_i[1])?;
 		//S106: b_last compares word_id against the CARRIED total_words,
 		//not the free per-step si.total_words. Combined with the
 		//decider's terminality pin on the final state, pin => final_step
 		//becomes a syntactic identity at the last step.
 		let b_last = si.word_id.is_eq(&zi_part2.total_words)?
 			.and(&si.subseg_id.is_eq(&si.total_word_segs)?)?;
-		{//DEBUG USE 62106.1: prove this fix site executed (once/process)
-			use std::sync::atomic::{AtomicBool, Ordering};
-			static P: AtomicBool = AtomicBool::new(false);
-			if !P.swap(true, Ordering::Relaxed) {
-				println!("DEBUG USE 62106.1: b_last <- carried total_words");
-			}
-		}
 		let ch = zi_part2.ch.clone();
 		let rc = zi_part2.rc.clone();
 		let mut sum_inp = b_first_seg.select(&zero_var, 
@@ -3804,13 +3882,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		//predicates also stops the KZG closure (gated on b_last) from
 		//firing on a step where the three real checks do not.
 		let final_step = b_last.clone();
-		{//DEBUG USE 62106.2
-			use std::sync::atomic::{AtomicBool, Ordering};
-			static P: AtomicBool = AtomicBool::new(false);
-			if !P.swap(true, Ordering::Relaxed) {
-				println!("DEBUG USE 62106.2: final_step == b_last");
-			}
-		}
 		let not_final_step = final_step.not();
 		let io_res = not_final_step.or(&eq_inp_oup)?;
 		if B_DEBUG {
@@ -4118,6 +4189,23 @@ where 	C: CurveGroup<ScalarField=F>,
 			&zi_part2.total_word_segs)?).expect("is eq err");
 		assert_imply(&b_last_full, &si.subseg_id.is_eq(&one_var)?).expect("eq");
 
+		//S106b: the continuation branch. Without it si.word_id,
+		//si.subseg_id, si.total_word_segs and si.total_word_len are free
+		//witnesses on every mid-word step, and a prover could relabel
+		//the last subsegment "first and only" (subseg_id=1=
+		//total_word_segs). That zeroes both I/O accumulators at the
+		//b_first_seg/b_last_seg selects and discharges the buffer
+		//equality as 0 == 0 while b_last and the decider pin still hold.
+		let b_cont = b_last_full.not();
+		assert_imply(&b_cont, &si.word_id.is_eq(
+			&zi_part2.word_id)?).expect("is eq err");
+		assert_imply(&b_cont, &si.subseg_id.is_eq(
+			&(&zi_part2.subseg_id+&one_var))?).expect("is eq err");
+		assert_imply(&b_cont, &si.total_word_segs.is_eq(
+			&zi_part2.total_word_segs)?).expect("is eq err");
+		assert_imply(&b_cont, &si.total_word_len.is_eq(
+			&zi_part2.total_word_len)?).expect("is eq err");
+
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 6");
 		}
@@ -4150,13 +4238,6 @@ where 	C: CurveGroup<ScalarField=F>,
 			//on exactly the same predicate.
 			let b_last = si.word_id.is_eq(&zi_part2.total_words)?.and(&
 				si.subseg_id.is_eq(&si.total_word_segs)?)?;
-			{//DEBUG USE 62106.3
-				use std::sync::atomic::{AtomicBool, Ordering};
-				static P: AtomicBool = AtomicBool::new(false);
-				if !P.swap(true, Ordering::Relaxed) {
-					println!("DEBUG USE 62106.3: kzg b_last <- carried");
-				}
-			}
 			let b_first_seg = si.subseg_id.is_one()?;
 			let b_last_seg = si.subseg_id.is_eq(&si.total_word_segs)?;
 			let mut rcs = vec![one_var.clone()];
@@ -4342,13 +4423,6 @@ where 	C: CurveGroup<ScalarField=F>,
 		//si.total_words while b_last read the carried copy. The seed is
 		//pinned in the decider (z_0[1]); si.total_words is now unread.
 		let total_words = zi_part2.total_words.clone();
-		{//DEBUG USE 62106.4
-			use std::sync::atomic::{AtomicBool, Ordering};
-			static P: AtomicBool = AtomicBool::new(false);
-			if !P.swap(true, Ordering::Relaxed) {
-				println!("DEBUG USE 62106.4: total_words pure carry");
-			}
-		}
 		//acc_word_len: update from previous or for a new word
 		let accumulated_word_len = b_last_full.select(&si.act_word_subseg_size,
 			&(&zi_part2.accumulated_word_len + &si.act_word_subseg_size))?;
@@ -5059,7 +5133,12 @@ pub mod tests_sigma_ir1cs{
 			};
 			let inp = vec![F::from(n)];
 			let subseg_id = 1usize;
-			let total_word_len = n_steps;
+			//production-faithful: a 1-subsegment word has
+			//total_word_len == act_word_subseg_size, so
+			//accumulated_word_len reaches total at every step and
+			//check 6 stays ARMED. n_steps here left check 6 vacuous
+			//from step 2 on (driver.rs:1908-1969 is the reference).
+			let total_word_len = 1;
 			let total_word_segs = 1;
 			let n_circ = 1;
 			let ea = StatementExtraInfo::<F>{
@@ -5209,6 +5288,37 @@ pub mod tests_sigma_ir1cs{
 			&& !z.word_id.is_zero()
 	}
 
+	/// S104: a step whose witness input state does not match z_i[1] is
+	/// REJECTED. Before the binding this was satisfiable.
+	#[test]
+	pub fn test_s104_input_state_binding(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let n_steps = 3usize;
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, n_steps);
+		let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
+		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+		//the witness now holds the TRUE z2 as its input state
+		let _z3 = s106_step_native(&mut inst, &z2, &stmts[2]);
+
+		//control: the true state satisfies the binding
+		let sat = s106_synth(&inst, &z2);
+		assert!(sat==Ok(true), "honest state rejected: {:?}", sat);
+
+		//attack: same witness, but claim a z_i[1] hashing a state whose
+		//carry accumulator has been moved. This is the fabricated-input
+		//-state route -- it used to be free.
+		let mut z2_poison = z2.clone();
+		z2_poison.sum_oup = z2_poison.sum_oup + Fr::one();
+		let r = s106_synth(&inst, &z2_poison);
+		assert!(r==Ok(false),
+			"S104 binding failed to reject a mismatched input state: {:?}",
+			r);
+	}
+
 	/// S106 residual A: declaring si.total_words != word_id on the last
 	/// step no longer waives the checks, because b_last ignores it.
 	#[test]
@@ -5280,6 +5390,80 @@ pub mod tests_sigma_ir1cs{
 			"b_first hatch still satisfies the terminality pin");
 	}
 
+	/// Relabel the 3-step toy as two words -- word 1 in one subsegment,
+	/// word 2 split in two -- so the LAST step is mid-word.
+	fn s106_two_seg(stmts: &mut Vec<S106Stmt>){
+		let (one, two) = (Fr::one(), Fr::from(2u32));
+		for s in stmts.iter_mut(){
+			s.total_words = two;
+			s.act_word_subseg_size = one;
+		}
+		stmts[0].word_id = one;
+		stmts[0].subseg_id = one;
+		stmts[0].total_word_segs = one;
+		stmts[0].total_word_len = one;
+		stmts[1].word_id = two;
+		stmts[1].subseg_id = one;
+		stmts[1].total_word_segs = two;
+		stmts[1].total_word_len = two;
+		stmts[2].word_id = two;
+		stmts[2].subseg_id = two;
+		stmts[2].total_word_segs = two;
+		stmts[2].total_word_len = two;
+		//inert input loop on the last step, so sum_inp passes the
+		//carried value through and the I/O check reduces to the two
+		//carried accumulators -- the arms then differ in nothing else.
+		stmts[2].act_input_size = Fr::zero();
+	}
+
+	/// S106b: relabelling the last subsegment "first and only" zeroes
+	/// both I/O accumulators, so unequal carried sums would pass 0==0.
+	#[test]
+	pub fn test_s106b_first_seg_io_hatch(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let n_steps = 3usize;
+		let (_lk, mut inst, mut stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		s106_two_seg(&mut stmts);
+		//two words, matching the relabelling: total_words is a carry
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 2);
+		let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
+		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+
+		//control -- carried buffers agree, honest last subsegment
+		let mut z2_ok = z2.clone();
+		z2_ok.sum_inp = Fr::from(11u32);
+		z2_ok.sum_oup = Fr::from(11u32);
+		let _zk = s106_step_native(&mut inst, &z2_ok, &stmts[2]);
+		let r0 = s106_synth(&inst, &z2_ok);
+		assert!(r0==Ok(true), "honest last subsegment rejected: {:?}", r0);
+
+		//carried buffers disagree -> rejected under honest labels
+		let mut z2_bad = z2.clone();
+		z2_bad.sum_inp = Fr::from(11u32);
+		z2_bad.sum_oup = Fr::from(12u32);
+		let _zc = s106_step_native(&mut inst, &z2_bad, &stmts[2]);
+		let ra = s106_synth(&inst, &z2_bad);
+		assert!(ra==Ok(false),
+			"mismatched carried I/O sums accepted: {:?}", ra);
+
+		//THE HATCH -- same carried state and data, relabelled "first
+		//and only subsegment". That zeroes both accumulators and the
+		//mismatch would pass as 0 == 0. Check 6's continuation branch
+		//makes the relabel unstatable; before it this arm was SAT.
+		let mut s_exp = stmts[2].clone();
+		s_exp.subseg_id = Fr::one();
+		s_exp.total_word_segs = Fr::one();
+		let z3 = s106_step_native(&mut inst, &z2_bad, &s_exp);
+		let rb = s106_synth(&inst, &z2_bad);
+		assert!(rb==Ok(false), "b_first_seg hatch still open: {:?}", rb);
+		//and it was invisible to the decider: the state looks terminal
+		assert!(s106_pin_holds(&z3),
+			"hatch state non-terminal, the decider would catch it");
+	}
+
 	/// S106: a failed sig absent from discharged_sigs is REJECTED at an
 	/// honest last step and ACCEPTED with word_id=total_words=0.
 	#[test]
@@ -5321,12 +5505,13 @@ pub mod tests_sigma_ir1cs{
 		s_exp.total_words = Fr::zero();
 		let z3_exp = s106_step_native(&mut inst, &z2, &s_exp);
 		let sat2 = s106_synth(&inst, &z2);
-		//NOTE: the STEP circuit still accepts arm 2 -- b_last is false
-		//because word_id=0 != the carried total_words=3, so the checks
-		//are vacuous at this level. The decider pin is what rejects it,
-		//and that is exactly what the assertion below models. Without
-		//this assertion these tests are NOT acceptance criteria.
-		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
+		//S106b: the STEP circuit now rejects arm 2 on its own. The
+		//fixture is a 1-subsegment word, so b_last_full is TRUE and
+		//check 6 forces si.word_id == carried word_id + 1; word_id=0
+		//is unstatable. Rejection is by check 6, not by b_correct.
+		//The exploit was only ever reachable MID-word, where check 6
+		//used to go vacuous -- see test_s106b_first_seg_io_hatch.
+		assert!(sat2==Ok(false), "arm2 (S106 exploit) is SAT: {:?}", sat2);
 		assert!(!s106_pin_holds(&z3_exp),
 			"S106 exploit still satisfies the terminality pin");
 
@@ -5354,12 +5539,16 @@ pub mod tests_sigma_ir1cs{
 		//relabel two statements as the two segments of ONE word: these
 		//five fields are free witnesses, so a prover may pick them.
 		let (one, two) = (Fr::one(), Fr::from(2u32));
+		//total_word_len must span BOTH subsegments (each of size 1), or
+		//the word completes at seg1 and check 6 demands a new word_id.
 		let mut seg1 = stmts[1].clone(); //hands out a carry of 1
 		seg1.word_id = one; seg1.subseg_id = one;
 		seg1.total_word_segs = two; seg1.total_words = one;
+		seg1.total_word_len = two;
 		let mut seg2 = stmts[2].clone();
 		seg2.word_id = one; seg2.subseg_id = two;
 		seg2.total_word_segs = two; seg2.total_words = one;
+		seg2.total_word_len = two;
 		seg2.inp_buf[0] = one; //honest: consumes seg1's carry
 		seg2.oup_buf[0] = one; //CounterIOGadget enforces oup==inp here
 		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
@@ -5388,7 +5577,12 @@ pub mod tests_sigma_ir1cs{
 		s_exp.total_words = Fr::zero();
 		let z2_exp = s106_step_native(&mut inst, &z1, &s_exp);
 		let sat2 = s106_synth(&inst, &z1);
-		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
+		//S106b: this is the MID-word case -- the one where the exploit
+		//really was reachable, because b_last_full is FALSE at seg2 and
+		//check 6 used to say nothing there. The continuation branch now
+		//pins si.word_id to the carried word_id, so word_id=0 is
+		//unstatable and the step circuit rejects without the decider.
+		assert!(sat2==Ok(false), "arm2 (S106 exploit) is SAT: {:?}", sat2);
 		//post-fix inversion, same reasoning as the sigs test
 		assert!(z2_exp.sum_kzg_eval_others!=z2_bad.sum_kzg_eval_others,
 			"kzg others accumulator still identical: exploit invisible");
@@ -5438,7 +5632,10 @@ pub mod tests_sigma_ir1cs{
 		s_exp.total_words = Fr::zero();
 		let _z3e = s106_step_native(&mut inst, &z2, &s_exp);
 		let sat2 = s106_synth(&inst, &z2);
-		assert!(sat2==Ok(true), "arm2 (S106 exploit) rejected: {:?}", sat2);
+		//S106b: rejected at step level now -- check 6 forbids word_id=0
+		//on a 1-subsegment word. See test_s106b_first_seg_io_hatch for
+		//the mid-word case where the exploit really was reachable.
+		assert!(sat2==Ok(false), "arm2 (S106 exploit) is SAT: {:?}", sat2);
 	}
 
 	#[test]

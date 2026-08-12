@@ -1252,10 +1252,9 @@ pub(crate) fn fold(spec: &DatasetSpec, cfg_dir: &str, cache_dir: &str,
 			g.aggr_needs_subsigs = caps[0].aggr_needs_subsigs;
 		}
 	}
-	// Interleave the shared DB/ACDFA pages across NUMA nodes: the DB
-	// the job threads hammer is reloaded inside the driver, after this
-	// call. No-op unless multi-node + ZKR_NUMA=perjob.
-	folding_schemes::folding::foldpot::numa::set_interleave_all();
+	// NUMA is owned by the launcher: scripts/PAPER_DATA.py pins each
+	// part with numactl --cpunodebind (hard CPU) + --preferred-many
+	// (soft memory, spills instead of OOM). No in-process policy here.
 	if spec.b_aggressive {
 		let cs_caps: Vec<_> =
 			caps.iter().map(caps_from_params_aggr).collect();

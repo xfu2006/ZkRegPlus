@@ -907,8 +907,64 @@ where
 			.enforce_equal(&zi_part2_inst_var.total_word_segs)?;
 		zi_part2_inst_var.word_id.is_zero()?
 			.enforce_equal(&Boolean::FALSE)?;
-		{//DEBUG USE 62106.6
-			println!("DEBUG USE 62106.6: decider terminality pin synthesized");
+
+		//S105b: pin z_0[1] to the CANONICAL initial state. Without it
+		//the chain S104 builds has no root -- z_0 is a decider witness
+		//(:763), so a prover picks the starting accumulators freely and
+		//can seed away any deficit. Rebuilding the state here also
+		//subsumes S101: alpha = H(rc) and beta = H(rc, alpha) are
+		//recomputed in-circuit instead of read from an unbound witness.
+		//SCOPE: this pins the accumulators to zero and alpha/beta to
+		//rc. It does NOT pin total_words to a verifier-known count --
+		//it only ties z_0's copy to the final state's. Anchoring the
+		//count needs total_words as a real public input (BatchClaim +
+		//Phase1CircuitRet + mainres_hash), which is NOT done here.
+		{
+			let zero_v = FpVar::<CF1<C1>>::zero();
+			let mut sp = PoseidonSpongeVar::<CF1<C1>>::new(
+				cs.clone(), &self.poseidon_config);
+			sp.absorb(&zi_part2_inst_var.rc)?;
+			let alpha0 = sp.squeeze_field_elements(1)?[0].clone();
+			sp.absorb(&alpha0)?;
+			let beta0 = sp.squeeze_field_elements(1)?[0].clone();
+			//19 fields, in ZiPartTwoInst::to_vec order. Note indices
+			//14,15,16 (word_id, subseg_id, total_word_segs) are THREE
+			//zeros before total_words -- an off-by-one here yields a
+			//wrong digest and breaks every honest proof.
+			let v19 = vec![
+				zi_part2_inst_var.ch.clone(),
+				zi_part2_inst_var.rc.clone(),
+				zero_v.clone(), zero_v.clone(),
+				alpha0, beta0,
+				zero_v.clone(), zero_v.clone(),
+				zero_v.clone(), zero_v.clone(),
+				zero_v.clone(), zero_v.clone(),
+				zero_v.clone(), zero_v.clone(),
+				zero_v.clone(), zero_v.clone(), zero_v.clone(),
+				zi_part2_inst_var.total_words.clone(),
+				zero_v.clone(),
+			];
+			let h19 = ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
+				&self.poseidon_config, cs.clone(), &v19);
+			//full mode: z_0's cyclepair limbs are all zero, so their
+			//half of the split digest is a compile-time constant --
+			//computed natively, injected as a constant, 0 R1CS.
+			let zp_native = self.zi_part2_inst.clone()
+				.expect("zi_part null");
+			let n_limbs = zp_native.to_vec().len().saturating_sub(19);
+			let z0_hash = if n_limbs==0 { h19 } else {
+				let h_cp0 = {
+					let mut sp2 = PoseidonSponge::<CF1<C1>>::new(
+						&self.poseidon_config);
+					sp2.absorb(&vec![CF1::<C1>::zero(); n_limbs]);
+					sp2.squeeze_field_elements::<CF1<C1>>(1)[0]
+				};
+				let h_cp0_var = FpVar::<CF1<C1>>::new_constant(
+					cs.clone(), h_cp0)?;
+				ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
+					&self.poseidon_config, cs.clone(), &[h19, h_cp0_var])
+			};
+			z0_hash.enforce_equal(&z_0[1])?;
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();

@@ -573,17 +573,22 @@ pub mod tests_sigma_cyclepair{
 
 		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
 		let b_full = true;
-		let zi_part2_inst = ZiPartTwoInst::<F>::dummy(b_full, fq_bits);
+		let zero = Fr::zero();
+		let num_words = 1;
+		//S104: the witness input state and z_0[1] must be the SAME
+		//state -- the step circuit now enforces
+		//hash(input state) == z_i[1]. This test used ::dummy here
+		//(total_words=0) against a z_0 built with num_words=1 and still
+		//passed; that mismatch was the standing falsifier for S104.
+		let z0_part2 = ZiPartTwoInst::<Fr>::new(zero, zero,
+			&cfg, b_full, fq_bits, num_words);
+		let zi_part2_inst = z0_part2.clone();
 		let precomputed_grp_cmf = None;
-		let (wtns, wtns_cfg, _zipart2) = sigma.gen_witness(&stmt.to_vec(), 
+		let (wtns, wtns_cfg, _zipart2) = sigma.gen_witness(&stmt.to_vec(),
 			&zi_part2_inst, precomputed_grp_cmf);
 
 		let cs = ConstraintSystem::<F>::new_ref();
 		let external_inputs = wtns.to_vec_fp_var(cs.clone(), &wtns_cfg);
-		let zero = Fr::zero();
-		let num_words = 1;
-		let z0_part2 = ZiPartTwoInst::<Fr>::new(zero, zero, 
-			&cfg, b_full, fq_bits, num_words);
 		let z0_part2_hash = z0_part2.hash(&cfg);
 		let z_0 = vec![zero, z0_part2_hash];
 		let z_0_var = z_0.into_iter().map(|z| FpVar::new_witness(cs.clone(),
