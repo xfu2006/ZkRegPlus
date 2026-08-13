@@ -31092,6 +31092,11 @@ Goal 6. T902: set up private repo for open science
 	[i] clear more issues of T902
 	[j] do an update menu for prepare.py
 	[k] verify data
+
+Goal 7. T9902: minimize lkup share for tune
+	[a] design
+	[b] review code
+	[c] most tests come back two more tests
 --- TODO ---
 
 Goal 5. more soundness errors
@@ -31104,10 +31109,6 @@ Goal 5. more soundness errors
 
 
 
-Goal 7. T9902: minimize lkup share for tune
-	[a] design
-	[b] review code
-	[c] most tests come back two more tests
 
 
 
