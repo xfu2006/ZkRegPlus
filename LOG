@@ -31035,22 +31035,29 @@ Goal 8. Fix download issue for CentOS: T910
 	[m] check dna ata set
 		-> there is a 7z file
 		-> 
----
-Goal 9. T9901  
+Goal 11. T910 again
+	[a] how to handle dna data
+	[b] create permanant data set for download instead g-drive
+	[c] update INSTALL.py and recompile reef and record patches.
+Goal 12. S102 + S110
+	[a] verify individual proof vector commitment verification
+	[b] new bug: A/B test
+	[c] fix sum_v_i check
+	[d] F1 + F2 + F3
+	[e] F4 fix.
+
+Thursday 08/13/2026
+Goal 1. T9901  
 	[a] problem: make sure lower ring has
 		low configs
 	[b] multiple rounds of design to try to simualte legacy 
 	[c] brief test of measure class first and collect data
 	[d]
-Goal 10. S102 + S110
-	[a] verify individual proof vector commitment verification
-	[b] new bug: A/B test
-	[c] fix sum_v_i check
-	[d] F1 + F2 + F3
-Goal 11. T910 again
-	[a] how to handle dna data
-	[b] create permanant data set for download instead g-drive
-	[c] update INSTALL.py and recompile reef and record patches.
+
+Goal 2. continue S102 + S110 regression testing
+
+Goal 3. T902: set up private repo for open science
+	[a]
 
 
 

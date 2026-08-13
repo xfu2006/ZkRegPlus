@@ -1792,6 +1792,15 @@ pub struct ZiPartTwoInst<F:PrimeField>{
 	/// when a word has multiple segments
 	pub sum_vec_v_i: F,
 
+	/// batch challenge point r_i of the CURRENT word -- the base of the
+	/// Horner evaluation in sum_vec_v_i. Carried so every subseg of one
+	/// word is forced to use the same point (S102/F4).
+	pub batch_r: F,
+	/// claimed evaluation v_i of the CURRENT word. Carried so the copy
+	/// folded into sum_kzg_eval_others at the first subseg is the same
+	/// one F1 pins at the last subseg (S102/F4).
+	pub batch_v: F,
+
 	/// the total length of the CURRENT word
 	/// will be set up at the FIRST subsegement of the word
 	pub total_word_len: F,
@@ -2022,6 +2031,15 @@ pub struct ZiPartTwoInstVar<F:PrimeField>{
 	/// when a word has multiple segments
 	pub sum_vec_v_i: FpVar<F>,
 
+	/// batch challenge point r_i of the CURRENT word -- the base of the
+	/// Horner evaluation in sum_vec_v_i. Carried so every subseg of one
+	/// word is forced to use the same point (S102/F4).
+	pub batch_r: FpVar<F>,
+	/// claimed evaluation v_i of the CURRENT word. Carried so the copy
+	/// folded into sum_kzg_eval_others at the first subseg is the same
+	/// one F1 pins at the last subseg (S102/F4).
+	pub batch_v: FpVar<F>,
+
 	/// the total length of word
 	pub total_word_len: FpVar<F>,
 	/// the current accumulated length of word
@@ -2053,8 +2071,11 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			self.sum_kzg_eval_others, self.sum_vec_v_i,
 			self.total_word_len, 
 			self.accumulated_word_len,
-			self.word_id, self.subseg_id, self.total_word_segs, 
-			self.total_words, self.f_result];
+			self.word_id, self.subseg_id, self.total_word_segs,
+			self.total_words, self.f_result,
+			//S102/F4: appended AFTER f_result so indices 0..18 keep
+			//their meaning; only fixed_part moves 19 -> 21.
+			self.batch_r, self.batch_v];
 		let mut cp = self.cyclepair_input.as_ref().map_or(vec![], |cp_i| 
 			cp_i.x.clone());
 		res.append(&mut cp);
@@ -2065,7 +2086,9 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 	/// deserialize
 	pub fn from_vec(vec: &Vec<F>, fq_bits: usize) ->Self{
 		//1. length check
-		let fixed_part = 19;
+		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
+		//half (the step READS them on input, so they must be bound).
+		let fixed_part = 21;
 		if vec.len()!=fixed_part{ 
 			assert!(vec.len() == 
 				fixed_part+CyclePairInput::<F>::total_size(fq_bits));
@@ -2100,6 +2123,10 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			total_words: vec[17].clone(),
 
 			f_result: vec[18].clone(),
+
+			//S102/F4: appended after f_result by to_vec.
+			batch_r: vec[19].clone(),
+			batch_v: vec[20].clone(),
 
 			cyclepair_input:  cp_input,
 		}
@@ -2141,27 +2168,32 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			word_id: zero, subseg_id: zero, total_word_segs: zero, 
 			total_words: F::from(num_words as u32),
 			f_result: F::zero(),
+			//S102/F4: z_0 has accumulated_word_len == total_word_len == 0,
+			//so b_cont is false on step 0 and these are never compared.
+			batch_r: zero, batch_v: zero,
 			cyclepair_input: cp_inp,
 			}
 	}
 
 	/// hash to one element to use as zi.1
 	/// S104 SPLIT: with cyclepair limbs present the digest is
-	/// H( H(19 fixed fields), H(limbs) ), so a step can bind its INPUT
-	/// state by recomputing only the 19-field half -- the limbs are
+	/// H( H(fixed fields), H(limbs) ), so a step can bind its INPUT
+	/// state by recomputing only the fixed half -- the limbs are
 	/// overwritten wholesale each step and are never read on input.
 	/// Without limbs the digest is unchanged, keeping the non-full
 	/// (production) path byte-identical.
 	/// MUST stay in lockstep with ZiPartTwoInstVar::hash.
 	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>)->F{
 		let vec = self.to_vec();
-		let fixed_part = 19;
+		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
+		//half (the step READS them on input, so they must be bound).
+		let fixed_part = 21;
 		if vec.len()<=fixed_part{
         	let mut sponge = PoseidonSponge::<F>::new(ps_cfg);
 			sponge.absorb(&vec);
 			return sponge.squeeze_field_elements(1)[0];
 		}
-		let h19 = {
+		let h_fixed = {
 			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
 			sp.absorb(&vec[..fixed_part].to_vec());
 			sp.squeeze_field_elements::<F>(1)[0]
@@ -2172,17 +2204,19 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			sp.squeeze_field_elements::<F>(1)[0]
 		};
 		let mut sp = PoseidonSponge::<F>::new(ps_cfg);
-		sp.absorb(&vec![h19, h_cp]);
+		sp.absorb(&vec![h_fixed, h_cp]);
 		sp.squeeze_field_elements(1)[0]
 	}
 
-	/// The 19-field half of the split digest, plus the limb half.
+	/// The fixed half of the split digest, plus the limb half.
 	/// Returned separately so the step circuit can bind the half it
 	/// actually reads and carry the other as a witness.
 	pub fn hash_halves(&self, ps_cfg: &PoseidonConfig<F>)->(F, F){
 		let vec = self.to_vec();
-		let fixed_part = 19;
-		let h19 = {
+		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
+		//half (the step READS them on input, so they must be bound).
+		let fixed_part = 21;
+		let h_fixed = {
 			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
 			sp.absorb(&vec[..fixed_part].to_vec());
 			sp.squeeze_field_elements::<F>(1)[0]
@@ -2192,7 +2226,7 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			sp.absorb(&vec[fixed_part..].to_vec());
 			sp.squeeze_field_elements::<F>(1)[0]
 		} else { F::zero() };
-		(h19, h_cp)
+		(h_fixed, h_cp)
 	}
 }
 
@@ -2209,7 +2243,9 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 			self.total_word_len.clone(), self.accumulated_word_len.clone(),
 			self.word_id.clone(), self.subseg_id.clone(),
 			self.total_word_segs.clone(), self.total_words.clone(),
-			self.f_result.clone()];
+			self.f_result.clone(),
+			//S102/F4: see ZiPartTwoInst::to_vec -- same order.
+			self.batch_r.clone(), self.batch_v.clone()];
 		if self.cyclepair_input.is_some(){
 			let mut v1 = self.cyclepair_input.as_ref().expect("cp null")
 				.to_vec();
@@ -2220,7 +2256,9 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 
 	/// deserialize
 	pub fn from_vec(vec: &Vec<FpVar<F>>, fq_bits: usize) ->Self{
-		let fixed_part = 19;
+		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
+		//half (the step READS them on input, so they must be bound).
+		let fixed_part = 21;
 		if vec.len()!=fixed_part{ 
 			assert!(vec.len() == fixed_part
 				+CyclePairInput::<F>::total_size(fq_bits));
@@ -2255,6 +2293,10 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 
 			f_result: vec[18].clone(),
 
+			//S102/F4: appended after f_result by to_vec.
+			batch_r: vec[19].clone(),
+			batch_v: vec[20].clone(),
+
 			cyclepair_input: cp_input,
 		}
 	}
@@ -2277,16 +2319,18 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 	/// rather than failing to compile, so change the two together.
 	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>, cs: ConstraintSystemRef<F>)->FpVar<F>{
 		let vec = self.to_vec();
-		let fixed_part = 19;
+		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
+		//half (the step READS them on input, so they must be bound).
+		let fixed_part = 21;
 		if vec.len()<=fixed_part{
         	let mut sponge = PoseidonSpongeVar::<F>::new(cs, ps_cfg);
 			sponge.absorb(&vec).expect("absort err");
 			return sponge.squeeze_field_elements(1)
 				.expect("hash err")[0].clone();
 		}
-		let h19 = Self::hash_slice(ps_cfg, cs.clone(), &vec[..fixed_part]);
+		let h_fixed = Self::hash_slice(ps_cfg, cs.clone(), &vec[..fixed_part]);
 		let h_cp = Self::hash_slice(ps_cfg, cs.clone(), &vec[fixed_part..]);
-		Self::hash_slice(ps_cfg, cs.clone(), &[h19, h_cp])
+		Self::hash_slice(ps_cfg, cs.clone(), &[h_fixed, h_cp])
 	}
 
 	/// one-sponge helper shared by hash() and the S104 input binding
@@ -3457,6 +3501,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			//hashes into z_{i+1}[1] and break the chain mid-run.
 			total_words: zi_part2.total_words,
 			f_result: si.f_result,
+			//S102/F4: adopt unconditionally -- on a new word these ARE
+			//the word's values; on a continuation the circuit has
+			//already forced them equal to the carried ones.
+			batch_r: si.batch_r,
+			batch_v: si.batch_v,
 			
 			cyclepair_input: cp,
 		};
@@ -3792,7 +3841,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//KZG anchor. EVERYTHING ELSE IN THIS FIX SET RESTS ON THIS.
 		//Honest-satisfiable by construction: mod_super.rs already
 		//asserts the same equality natively on every prove_step.
-		//S104 SPLIT: in full mode recompute only the 19-field half and
+		//S104 SPLIT: in full mode recompute only the fixed half and
 		//carry the limb half as a witness. The limbs are overwritten
 		//wholesale each step (see the zi1_part2 build below) and are
 		//never read here, so leaving them unrecomputed costs nothing:
@@ -3800,11 +3849,16 @@ where 	C: CurveGroup<ScalarField=F>,
 		//the outer hash misses z_i[1]. Saves ~12k R1CS/step in full
 		//mode; the non-full path takes the plain hash unchanged.
 		let zi_vec = zi_part2.to_vec();
-		let fixed_part = 19usize;
+		//S102/F4: 19 -> 21, and MUST stay in lockstep with the five
+		//`let fixed_part` sites in the ZiPartTwoInst{,Var} impls --
+		//a split mismatch here makes the recomputed input-state hash
+		//disagree with the native one and the decider rejects honest
+		//proofs (measured: "snark main fails").
+		let fixed_part = 21usize;
 		let zi_in_hash = if zi_vec.len()<=fixed_part{
 			zi_part2.hash(&self.poseidon_config, cs.clone())
 		}else{
-			let h19 = ZiPartTwoInstVar::<F>::hash_slice(
+			let h_fixed = ZiPartTwoInstVar::<F>::hash_slice(
 				&self.poseidon_config, cs.clone(), &zi_vec[..fixed_part]);
 			let h_cp_val = {
 				let mut sp = PoseidonSponge::<F>::new(
@@ -3818,7 +3872,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			let h_cp = FpVar::<F>::new_witness(cs.clone(),
 				|| Ok(h_cp_val))?;
 			ZiPartTwoInstVar::<F>::hash_slice(&self.poseidon_config,
-				cs.clone(), &[h19, h_cp])
+				cs.clone(), &[h_fixed, h_cp])
 		};
 		zi_in_hash.enforce_equal(&z_i[1])?;
 		//S106: b_last compares word_id against the CARRIED total_words,
@@ -4151,14 +4205,18 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
-		//S109: the third arm used to be `.or(sum_hab22_right.is_zero())`,
-		//which keyed the waiver on a WITNESS value -- m_share is free
-		//(:4136), so zeroing it waived the equality vacuously. Removed:
-		//a step with no queries has left==right==0 and passes is_eq,
-		//and the dummy statement never reaches here with values.
-		// DEBUG USE 61103.1: S109 A/B -- waiver arm temporarily RESTORED
-		// to test whether small_data_par's hab22 failure is S109's.
-		// Revert to `not_final_step.or(&b_hab_res1)?` after the run.
+		//S109 -- OPEN SOUNDNESS HOLE, KNOWINGLY LEFT IN. The third arm
+		//waives the Hab'22 equality whenever the right sum is zero, and
+		//it keys that waiver on a WITNESS: m_share is free (:4136), so a
+		//prover who zeroes it waives the equality vacuously. The exploit
+		//is real and `test_s109_hab22_zero_waiver` demonstrates it.
+		//It is still here because DELETING IT BREAKS HONEST PROOFS: a
+		//1-line A/B measured waiver OUT = SIGABRT in small_data_par,
+		//waiver IN = PASS. Padded multi-job workloads emit final steps
+		//whose right sum really is zero, so the arm is load-bearing --
+		//single-job workloads cannot pad and so never showed this.
+		//The fix is to gate the waiver on a STATEMENT-side "this step is
+		//padding" bit instead of on m_share; until then S109 is OPEN.
 		let b_hab_res = not_final_step.or(&b_hab_res1)?
 			.or(&sum_hab22_right.is_zero()?)?;
 
@@ -4221,6 +4279,17 @@ where 	C: CurveGroup<ScalarField=F>,
 			&zi_part2.total_word_segs)?).expect("is eq err");
 		assert_imply(&b_cont, &si.total_word_len.is_eq(
 			&zi_part2.total_word_len)?).expect("is eq err");
+
+		//S102/F4: batch_r and batch_v are per-step statement fields. Bind
+		//them across the subsegs of one word: without this the copy
+		//folded into sum_kzg_eval_others at b_first_seg and the copy F1
+		//pins at b_last_seg are independent free witnesses, so the
+		//committed vec_v[i] need not be the Horner sum of the scanned
+		//word at all (measured: a forged vec_v[i] passed verify_batch).
+		assert_imply(&b_cont, &si.batch_r.is_eq(
+			&zi_part2.batch_r)?).expect("is eq err");
+		assert_imply(&b_cont, &si.batch_v.is_eq(
+			&zi_part2.batch_v)?).expect("is eq err");
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 6");
@@ -4479,6 +4548,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			total_word_segs: si.total_word_segs.clone(),
 			total_words: total_words,
 			f_result: si.f_result.clone(),
+			//S102/F4: see the gen_witness mirror -- unconditional adopt.
+			batch_r: si.batch_r.clone(),
+			batch_v: si.batch_v.clone(),
 
 			cyclepair_input: cp_inp,
 		};

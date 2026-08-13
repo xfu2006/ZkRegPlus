@@ -1292,7 +1292,7 @@ pub(crate) struct UnitDemand {
 }
 
 /// T9901 measurement: probe each routing unit against a ONE-RUNG
-/// ladder at the ladder top and record the Q_m demand it emits.
+/// ladder (top rung, or ZKR_METER_RUNG) and record its Q_m demand.
 /// Writes {plan_dir}/meter.json; changes no capacity and no behaviour.
 fn meter_unit_demand(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	ts: &TuningSet, lad: &[CapParams], part_id: usize) {
@@ -1301,11 +1301,20 @@ fn meter_unit_demand(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	use utils::consts::{reset_qm_gauges, QM_REAL_SAT, QM_SAT,
 		QM_SUB_SAT, QM_WRAP_SAT};
 	use utils::logger::{log, LOG1, LOG2};
+	assert!(!lad.is_empty(), "bora_data_driver: empty ladder");
 	// The WIDEST rung, so nothing CapErrs and every unit records its
 	// true demand. It is the LAST: aggr ladders are cheapest-first
 	// (zkp_driver.rs:481, and pad_ladder_to raises clones of rung 0
 	// upward), and non-aggr ships a single converged P_max.
-	let p = lad.last().expect("bora_data_driver: empty ladder");
+	// ZKR_METER_RUNG pins a LOWER rung instead. Sizing a rung to the
+	// demand measured at the TOP is only valid if demand is a property
+	// of the FILE; if it moves with the capacity the unit runs under,
+	// per-rung sizing is circular. Clamped, so an out-of-range value
+	// degrades to the top rung rather than panicking.
+	let ri = std::env::var("ZKR_METER_RUNG").ok()
+		.and_then(|s| s.parse::<usize>().ok())
+		.unwrap_or(usize::MAX).min(lad.len() - 1);
+	let p = &lad[ri];
 	let mw = spec.chunk_len;
 	let lkup_len = db.lkup.get_size();
 	let poseidon = poseidon_canonical_config::<Fr>();
@@ -1385,11 +1394,12 @@ fn meter_unit_demand(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	// tuner shipped. demand << shipped is exactly the T9901 slack.
 	// cap_seen != shipped means the built circuit ignored the ladder
 	// field and fell through to the dense bound -- report both.
-	log(0, LOG1, &format!("METER[{}]: {} units, qm_TOT max cs={}/{} \
+	log(0, LOG1, &format!("METER[{}]: rung {}/{}, {} units, \
+		qm_TOT max cs={}/{} \
 		igc={}/{} (the gating pair), qm_real max cs={}/{} \
 		igc={}/{} (demand/cap_seen) vs shipped qm_real_rows={}/{}, \
 		wrap max cs={}/{} igc={}/{}, sub max cs={}/{} igc={}/{}, \
-		caperr_units={}", spec.name, rows.len(),
+		caperr_units={}", spec.name, ri, lad.len(), rows.len(),
 		mx(|r| r.qm_tot_cs), mx(|r| r.qm_tot_cap_cs),
 		mx(|r| r.qm_tot_igc), mx(|r| r.qm_tot_cap_igc),
 		d_cs, mx(|r| r.qm_real_cap_cs),

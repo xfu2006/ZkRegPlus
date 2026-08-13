@@ -927,11 +927,13 @@ where
 			let alpha0 = sp.squeeze_field_elements(1)?[0].clone();
 			sp.absorb(&alpha0)?;
 			let beta0 = sp.squeeze_field_elements(1)?[0].clone();
-			//19 fields, in ZiPartTwoInst::to_vec order. Note indices
+			//21 fields, in ZiPartTwoInst::to_vec order. Note indices
 			//14,15,16 (word_id, subseg_id, total_word_segs) are THREE
 			//zeros before total_words -- an off-by-one here yields a
 			//wrong digest and breaks every honest proof.
-			let v19 = vec![
+			//S102/F4: indices 19,20 are batch_r and batch_v, both zero
+			//in z_0 (see ZiPartTwoInst::new).
+			let v_fixed = vec![
 				zi_part2_inst_var.ch.clone(),
 				zi_part2_inst_var.rc.clone(),
 				zero_v.clone(), zero_v.clone(),
@@ -943,16 +945,18 @@ where
 				zero_v.clone(), zero_v.clone(), zero_v.clone(),
 				zi_part2_inst_var.total_words.clone(),
 				zero_v.clone(),
+				//S102/F4: batch_r, batch_v -- zero in z_0.
+				zero_v.clone(), zero_v.clone(),
 			];
-			let h19 = ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
-				&self.poseidon_config, cs.clone(), &v19);
+			let h_fixed = ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
+				&self.poseidon_config, cs.clone(), &v_fixed);
 			//full mode: z_0's cyclepair limbs are all zero, so their
 			//half of the split digest is a compile-time constant --
 			//computed natively, injected as a constant, 0 R1CS.
 			let zp_native = self.zi_part2_inst.clone()
 				.expect("zi_part null");
-			let n_limbs = zp_native.to_vec().len().saturating_sub(19);
-			let z0_hash = if n_limbs==0 { h19 } else {
+			let n_limbs = zp_native.to_vec().len().saturating_sub(21);
+			let z0_hash = if n_limbs==0 { h_fixed } else {
 				let h_cp0 = {
 					let mut sp2 = PoseidonSponge::<CF1<C1>>::new(
 						&self.poseidon_config);
@@ -962,7 +966,7 @@ where
 				let h_cp0_var = FpVar::<CF1<C1>>::new_constant(
 					cs.clone(), h_cp0)?;
 				ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
-					&self.poseidon_config, cs.clone(), &[h19, h_cp0_var])
+					&self.poseidon_config, cs.clone(), &[h_fixed, h_cp0_var])
 			};
 			z0_hash.enforce_equal(&z_0[1])?;
 		}

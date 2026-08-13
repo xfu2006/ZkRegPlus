@@ -6166,6 +6166,16 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 	pub fn test_small_debug_main(){
 		let b_check_lkup = false;
 		small_debug::<Fr>(b_check_lkup);
+		assert_no_verify_fails("small_debug");
+	}
+
+	/// foldpot logs a failed self-verification and CONTINUES, so cargo
+	/// prints `ok` on a run whose proof did not verify. Fail here.
+	fn assert_no_verify_fails(label: &str){
+		let n = utils::consts::get_verify_fails();
+		assert!(n == 0, "{}: {} self-verification FAILURE(s) \
+			(verify_batch/verify_individual returned false); see the \
+			job log for the failing sub-check", label, n);
 	}
 
 
@@ -6197,6 +6207,9 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		// declaring success, so the sentinel is never written ahead of
 		// the final lines that prove "ok".
 		utils::logger::flush_logger();
+
+		// A proof that did not verify must not reach the sentinel.
+		assert_no_verify_fails("test_zkreg_main");
 
 		// Completion sentinel for run_checkpoints.py. Not reached if
 		// full_par panics -- panic aborts the test, no sentinel written.
