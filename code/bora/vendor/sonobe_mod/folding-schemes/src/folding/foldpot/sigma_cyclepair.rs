@@ -590,7 +590,9 @@ pub mod tests_sigma_cyclepair{
 		let cs = ConstraintSystem::<F>::new_ref();
 		let external_inputs = wtns.to_vec_fp_var(cs.clone(), &wtns_cfg);
 		let z0_part2_hash = z0_part2.hash(&cfg);
-		let z_0 = vec![zero, z0_part2_hash];
+		//S107: z is now 6 wide (2 + cmF limbs x4).
+		let z_0 = [vec![zero, z0_part2_hash],
+			vec![zero; 4]].concat();
 		let z_0_var = z_0.into_iter().map(|z| FpVar::new_witness(cs.clone(),
 			|| Ok(z)).unwrap() ).collect::<Vec<FpVar<Fr>>>();
 		sigma.generate_step_constraints(cs.clone(), 0, z_0_var, 

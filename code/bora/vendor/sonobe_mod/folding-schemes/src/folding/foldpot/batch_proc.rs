@@ -1065,6 +1065,9 @@ where
 			let snark_inp = CircPubInput{
 				ch1: prf.ch,
 				rc1: prf.rc,
+				//S107: FS-seed pin -- the cp snark verifies only
+				//if prf.hash_cmF == the disclosed decider z_n[0].
+				hash_cmF1: prf.hash_cmF,
 				kzg_sum1: kzg_sum1,
 				kzg_all_com_ch1: prf.kzg_all_com_ch1.clone()
 					.expect("com_ch1 null"),

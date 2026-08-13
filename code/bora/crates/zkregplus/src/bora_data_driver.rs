@@ -35,7 +35,7 @@ use crate::gadgets::word_extract::LEGS;
 use crate::stats_helper::{estimate_config_aggr,
 	estimated_to_capparams_aggr};
 use crate::zkp_driver::{build_circs_adv, build_circs_adv_aggr,
-	determine_config_aggr, determine_config_non_aggr,
+	cover_word_n, determine_config_aggr, determine_config_non_aggr,
 	fmt_cross_rollup, fmt_dfa_cross, select_binding_candidates,
 	zkp_driver_adv, zkp_driver_adv_aggr, DcMode};
 
@@ -953,13 +953,18 @@ impl Drop for EstimateCapsGuard {
 
 /// Index-aligned tuning sample; the 0-pad word is always LAST. Both
 /// stats fixed at construction: total INCLUDES the pad (aggr axis,
-/// zkp_driver.rs:7871), max_bin EXCLUDES it (non-aggr axis, :1647).
+/// zkp_driver.rs:7871), bin_word_lens EXCLUDES it (per-bin axes).
 struct TuningSet {
 	words: Vec<Vec<Fr>>,
 	infos: Vec<WordInfo>,
 	vdata: Vec<FailDischargeRecord>,
 	total_word_n: usize,
-	max_bin_word_n: usize,
+	// One entry per corpus bin, bin order == job order (manifests
+	// are written verbatim, :340): that bin's summed packed word
+	// length, pad excluded -- same population as the fold's
+	// job_word_lens (zkp_driver.rs:1679/:2073). MIN (cover_word_n)
+	// sizes the lkup share; MAX feeds the non-aggr probe axis.
+	bin_word_lens: Vec<usize>,
 }
 
 /// The ONE quick_discharge call site: pack + discharge a single word.
@@ -989,7 +994,7 @@ fn discharge_for_tuning(spec: &DatasetSpec, db: &ClamavDB<Fr>,
 	let proot = utils::os::proj_root();
 	let mw = spec.chunk_len;
 	let (mut words, mut infos, mut vdata) = (vec![], vec![], vec![]);
-	let mut max_bin_word_n = 0;
+	let mut bin_word_lens = vec![];
 	for bin in bins {
 		let trip: Vec<_> = bin.par_iter().map(|p| {
 			let abs = if Path::new(p).is_absolute() { p.clone() }
@@ -998,7 +1003,7 @@ fn discharge_for_tuning(spec: &DatasetSpec, db: &ClamavDB<Fr>,
 				mw)
 		}).collect();
 		let bin_n: usize = trip.iter().map(|(w, _, _)| w.len()).sum();
-		max_bin_word_n = max_bin_word_n.max(bin_n);
+		bin_word_lens.push(bin_n);
 		for (w, i, v) in trip {
 			words.push(w); infos.push(i); vdata.push(v);
 		}
@@ -1007,7 +1012,7 @@ fn discharge_for_tuning(spec: &DatasetSpec, db: &ClamavDB<Fr>,
 		&zero_word_nibbles(mw), mw);
 	words.push(w); infos.push(i); vdata.push(v);
 	let total_word_n = words.iter().map(|w| w.len()).sum();
-	TuningSet { words, infos, vdata, total_word_n, max_bin_word_n }
+	TuningSet { words, infos, vdata, total_word_n, bin_word_lens }
 }
 
 /// Env-free port of perc_lkup_share_for's MATH (zkp_driver.rs:232-243,
@@ -1466,12 +1471,19 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 	assert!(num_circs >= 1, "bora_data_driver: num_circs must be >= 1");
 	let mw = spec.chunk_len;
 	let lkup_len = db.lkup.get_size();
-	// The ONE share derivation, via the env-free port. tune sees ALL
+	// The ONE share derivation, via the env-free port, sized off the
+	// SMALLEST non-empty bin: bins are the fold's jobs, and Pass 1
+	// asserts coverage PER JOB (foldpot driver.rs:2027), so the
+	// fewest-chunk job binds (cover_word_n; T9902). tune sees ALL
 	// bins, so every part derives the same value; the pin makes the
 	// driver skip its own per-slice re-derive at fold time
-	// (zkp_driver.rs:1671/:2057), so no env can reach the neo share.
-	let perc = perc_lkup_share_neo(lkup_len, mw,
-		ts.max_bin_word_n, spec.b_check_lkup);
+	// (zkp_driver.rs:1708/:2103), so no env can reach the neo share.
+	let cover = cover_word_n(&ts.bin_word_lens);
+	assert!(!spec.b_check_lkup || cover > 0,
+		"bora_data_driver: {} check-on tune: all bins empty, no \
+		 job can cover the lkup table", spec.name);
+	let perc = perc_lkup_share_neo(lkup_len, mw, cover,
+		spec.b_check_lkup);
 	{
 		let mut g = get_global_config();
 		g.perc_lkup_share = perc;
@@ -1537,9 +1549,14 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 		// dry_chunk_len); no-op at full shape.
 		p0.acdfa_state_part_bits = spec.range2_bit;
 		p0.max_word_len = spec.chunk_len;
+		// probe axis only, NOT the share: these probes run the
+		// build_circs_adv guard check-off (zkp_driver.rs:1126);
+		// legacy passes its max here too (zkp_driver.rs:1807).
+		let max_bin = ts.bin_word_lens.iter().copied().max()
+			.unwrap_or(0);
 		let new = determine_config_non_aggr::<Fr, C1, CS1>(true,
 			db.clone(), &ts.words, &ts.infos, p0, mw, lkup_len,
-			ts.max_bin_word_n, &spec.vec_decrease_level.to_vec(),
+			max_bin, &spec.vec_decrease_level.to_vec(),
 			num_circs, 60, n_threads)
 			.unwrap_or_else(|e| panic!(
 				"bora_data_driver: determine_config_non_aggr: {}", e));
@@ -3083,7 +3100,7 @@ pub mod tests_bora_data_driver {
 		assert_eq!(ts.words[1].len(), spec.chunk_len);
 		let sum: usize = ts.words.iter().map(|w| w.len()).sum();
 		assert_eq!(ts.total_word_n, sum);         // pad INCLUDED
-		assert_eq!(ts.max_bin_word_n, ts.words[0].len()); // pad NOT
+		assert_eq!(ts.bin_word_lens, vec![ts.words[0].len()]); // pad NOT
 		drop(ts);
 		drop(db);
 		// end-to-end kernel (rebuilds the tiny DB: read=false rule).
@@ -3099,6 +3116,386 @@ pub mod tests_bora_data_driver {
 		let c = read_global_config();
 		assert_eq!(c.perc_lkup_share, 1);
 		assert!(c.b_pin_lkup_share, "tune must pin its derived share");
+	}
+
+	/// Share derives from the min non-empty bin; the max-derived
+	/// share under-covers the binding job (small_data_par numbers).
+	#[test]
+	fn test_t9902_share_min_bin_math() {
+		let lkup = 271_354usize;
+		let mnl = 1 * LEGS;                        // chunk_len = 1
+		let bins = vec![309usize, 28];
+		assert_eq!(cover_word_n(&bins), 28);
+		assert_eq!(cover_word_n(&[309, 0, 28]), 28);  // 0 filtered
+		let p_old = perc_lkup_share_neo(lkup, 1, 309, true);
+		let p_new = perc_lkup_share_neo(lkup, 1, 28, true);
+		assert_eq!((p_old, p_new), (1_418, 15_633));
+		// lk_share as build_circs_adv computes it (zkp_driver.rs:318)
+		let (s_old, s_new) = (p_old * mnl / 100, p_new * mnl / 100);
+		assert_eq!((s_old, s_new), (879, 9_692));
+		assert!(s_old * 28 < lkup);               // OLD: violated
+		assert_eq!(s_new * 28 - lkup, 22);        // NEW: margin +22
+		assert!(s_new * 309 >= lkup);             // big job a fortiori
+		assert_eq!(perc_lkup_share_neo(lkup, 1, 28, false), 1);
+	}
+
+	/// tune pins the share derived from the MIN non-empty bin, not
+	/// the max; empty-corpus check-on tune panics.
+	#[test]
+	fn test_t9902_pin_wired_min_bin() {
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let _g = cfg_lock();
+		let proot = utils::os::proj_root();
+		// redirected clone: never touch the live dlp_neo dirs.
+		let mut spec = DLP.clone();
+		spec.name = "dlp_t9902";         // /tmp/bora/dlp_t9902_neo_p0
+		spec.db_cache_dir = "dlp_t9902_neo";
+		spec.b_check_lkup = true;        // the share axis IS the test
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
+		let _t2 = TmpConfigDir(PathBuf::from(format!(
+			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
+		apply_spec_config(&spec, true, &part_role(0, 1, 1));
+		// bin A: one 805 B email -> 1 chunk at mw=64. bin B: an 8 KB
+		// repeat of it -> >= 2 chunks. Absolute path is honored by
+		// discharge_for_tuning.
+		let small = DLP.scale_sources[1].to_string();
+		let body = std::fs::read(format!("{}/{}", proot, small))
+			.unwrap();
+		let big_path = format!("/tmp/bora/{}_big.dat", spec.name);
+		std::fs::write(&big_path,
+			body.repeat(1 + 8192 / body.len())).unwrap();
+		let bins = vec![vec![small], vec![big_path.clone()]];
+		let src_dir = format!("{}/{}", proot, spec.config_dir);
+		let sig_lines = read_lines_nonblank(
+			&format!("{}/{}", src_dir, spec.sig_file));
+		create_smaller_config(&src_dir, spec.sig_file, 2,
+			&format!("{}/config", plan_dir(spec.name, 0)));
+		let db = build_fresh_db(&spec,
+			&config_dir_for(&spec, 2, sig_lines.len(), 0),
+			&cache_dir_for(&spec, 0));
+		let ts = discharge_for_tuning(&spec, &db, &bins);
+		// bin_word_lens == hand-computed per-bin packed sums, pad out
+		let sums: Vec<usize> = bins.iter().map(|b| b.iter().map(|p| {
+			let abs = if Path::new(p).is_absolute() { p.clone() }
+				else { format!("{}/{}", proot, p) };
+			let fnib: Vec<Fr> = utils::os::read_nibbles(&abs).iter()
+				.map(|x| Fr::from(*x as u32)).collect();
+			utils::data::pack_nibbles(&fnib).len()
+		}).sum()).collect();
+		assert_eq!(ts.bin_word_lens, sums);
+		let (mn, mx) = (sums[0].min(sums[1]), sums[0].max(sums[1]));
+		let mw = spec.chunk_len;
+		// the fixture must discriminate min from max or it is vacuous
+		let lkup_len = db.lkup.get_size();
+		let p_min = perc_lkup_share_neo(lkup_len, mw, mn, true);
+		let p_max = perc_lkup_share_neo(lkup_len, mw, mx, true);
+		assert!(p_min > p_max, "fixture lost its imbalance");
+		// (c) the coverage falsifier, independent of exact lkup size
+		let mnl = mw * LEGS;
+		let chunks_min = ((mn * LEGS) / mnl).max(1);
+		assert!(p_max * mnl / 100 * chunks_min < lkup_len);
+		assert!(p_min * mnl / 100 * chunks_min >= lkup_len);
+		// (b) WIRING: tune pins exactly the min-derived value.
+		let caps = tune(&spec, &db, &ts, 1);
+		assert_eq!(caps.len(), 1);
+		let c = read_global_config();
+		assert!(c.b_pin_lkup_share, "tune must pin its share");
+		assert_eq!(c.perc_lkup_share,
+			perc_lkup_share_neo(lkup_len, mw,
+				cover_word_n(&ts.bin_word_lens), true));
+		assert_ne!(c.perc_lkup_share, p_max);
+		drop(c);
+		// (d) all-empty corpus + check-on must die at the new assert
+		// (fires before the config write lock: catch_unwind-safe).
+		let mut ts0 = ts;
+		ts0.bin_word_lens = vec![0];
+		let r = std::panic::catch_unwind(
+			std::panic::AssertUnwindSafe(
+				|| tune(&spec, &db, &ts0, 1)));
+		assert!(r.is_err(), "empty-corpus check-on tune must panic");
+		std::fs::remove_file(&big_path).ok();
+	}
+
+	/// Per-manifest summed packed word length, one entry per job in
+	/// job order -- the population the FOLD measures (:1683).
+	fn manifest_word_sums(manifests: &[String]) -> Vec<usize> {
+		// repo root: manifests may hold repo-relative paths.
+		let proot = utils::os::proj_root();
+		manifests.iter().map(|m| {
+			// job_<i>.dat is the newline path list load_files reads;
+			// relative entries resolve against proj_root, absolute
+			// ones are taken as-is (zkp_driver.rs:120).
+			let list = fs::read_to_string(m).unwrap_or_else(|e| panic!(
+				"bora_data_driver: read manifest {}: {}", m, e));
+			list.lines().filter(|l| !l.trim().is_empty()).map(|p| {
+				let abs = if Path::new(p).is_absolute() {
+					p.to_string()
+				} else {
+					format!("{}/{}", proot, p)
+				};
+				let fnib: Vec<Fr> = utils::os::read_nibbles(&abs)
+					.iter().map(|x| Fr::from(*x as u32)).collect();
+				utils::data::pack_nibbles(&fnib).len()
+			}).sum()
+		}).collect()
+	}
+
+	/// First byte-sorted maildir path whose size is in [lo, hi) --
+	/// the E2E's many-chunk bin, resolved at run time (no size pinned).
+	fn pick_big_fixture_file(lo: u64, hi: u64) -> String {
+		// repo root: the master list is repo-relative.
+		let proot = utils::os::proj_root();
+		// candidates: DLP's master list IS the Enron maildir corpus.
+		let mut cand: Vec<String> = read_path_list(DLP.master_sources[0])
+			.into_iter()
+			.filter(|p| p.starts_with("data/samples/email/src/maildir/"))
+			.collect();
+		cand.sort();
+		cand.into_iter().find(|p| {
+			fs::metadata(format!("{}/{}", proot, p))
+				.map(|m| m.len() >= lo && m.len() < hi).unwrap_or(false)
+		}).unwrap_or_else(|| panic!(
+			"bora_data_driver: no maildir file in [{}, {}) bytes",
+			lo, hi))
+	}
+
+	/// LARGE-set MANUAL arm (idle box): an imbalanced two-job check-on
+	/// fold -- only the min-derived share covers the binding job.
+	#[test]
+	#[ignore]
+	fn test_t9902_e2e_imbalanced() {
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let _g = cfg_lock();
+		let proot = utils::os::proj_root();
+		// redirected clone: never touch the live dlp_neo dirs.
+		let mut spec = DLP.clone();
+		spec.name = "dlp_t9902_e2e"; // /tmp/bora/dlp_t9902_e2e_neo_p0
+		spec.db_cache_dir = "dlp_t9902_e2e_neo";
+		spec.b_check_lkup = true;    // the share axis IS the arm
+		// dry SHAPE without dry POLICY: effective_spec is never called
+		// here, so the cover check survives the cheap shape (inert for
+		// DLP, whose dry_chunk_len is None).
+		if let Some(c) = DLP.dry_chunk_len { spec.chunk_len = c; }
+		// FIXTURE bit, NOT DLP's dry 22 (deviation, reported): lkup
+		// carries 2^range2_bit+1 range rows (clam_db.rs:2298) and the
+		// binding bin is ONE chunk, so at 22 EVERY step would carry a
+		// 4.19M-key share -- prod-class, not the minutes-class this
+		// arm is budgeted at. 18 = 262,145 rows, still far above what
+		// the max-derived share buys one chunk (asserted below), and
+		// it covers the big fixture file in nibbles (asserted below).
+		spec.range2_bit = 18;
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
+		let _t2 = TmpConfigDir(PathBuf::from(format!(
+			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
+		// 2 bins == 2 jobs == 2 manifests; part 0 of 1 folds both and
+		// proves. b_dry_run=true here selects the LIGHT decider ONLY
+		// (the check is spec-owned), which is what keeps this cheap.
+		let role = part_role(0, 1, 2);
+		apply_spec_config(&spec, true, &role);
+		// pd: the part sandbox (thinned config + jobs/ live under it).
+		let pd = reset_part_dir(&spec, 0);
+		// bin 0: the 805 B dense email -> ONE chunk at chunk_len 64,
+		// the job that binds coverage. bin 1: the first byte-sorted
+		// maildir file in [50 KB, 96 KB) -> ~29 chunks; the window's
+		// top is what keeps the corpus inside the 2^18 range table.
+		let small = DLP.scale_sources[1].to_string();
+		let big = pick_big_fixture_file(50 * 1024, 96 * 1024);
+		// big_len: fixture file size in BYTES (2 nibbles per byte).
+		let big_len = fs::metadata(format!("{}/{}", proot, big))
+			.expect("big fixture file").len() as usize;
+		// the range table must cover the LONGEST file in NIBBLES --
+		// clam_db has no overflow guard (M104's dry sizing rule).
+		assert!(2 * big_len + spec.chunk_len * LEGS
+			< (1usize << spec.range2_bit),
+			"fixture {} ({} B) overflows the 2^{} range table",
+			big, big_len, spec.range2_bit);
+		// bins: index IS the job id, written verbatim as manifests.
+		let bins = vec![vec![small], vec![big]];
+		// db_count: 2 rules = the smallest tuned DB (B102 item 3; 1
+		// underflows the aggressive tuner).
+		let db_count = 2;
+		// src_dir: the real DLP config, thinned into the sandbox.
+		let src_dir = format!("{}/{}", proot, spec.config_dir);
+		// n_sigs: full rule count, only used to route config_dir_for.
+		let n_sigs = read_lines_nonblank(
+			&format!("{}/{}", src_dir, spec.sig_file)).len();
+		// same bound build_and_tune applies (:1602), so the config it
+		// rewrites below is byte-identical to the one built here.
+		create_smaller_config_bounded(&src_dir, spec.sig_file, db_count,
+			&format!("{}/config", pd),
+			(1usize << spec.range2_bit) - spec.chunk_len * LEGS);
+		// cfg_dir / cache_dir: shared by the tune build and the fold
+		// reload, exactly as run_neo pairs them.
+		let cfg_dir = config_dir_for(&spec, db_count, n_sigs, 0);
+		let cache_dir = cache_dir_for(&spec, 0);
+		// pieces first (B102 recipe): this DB carries lkup_len and its
+		// TuningSet fixes the per-bin population the asserts pin.
+		let db = build_fresh_db(&spec, &cfg_dir, &cache_dir);
+		// lkup_len: folded table row count, the coverage target.
+		let lkup_len = db.lkup.get_size();
+		// ts_bins: per-bin packed sums as the TUNER sees them (pad
+		// excluded), to be matched against the written manifests.
+		let ts_bins =
+			discharge_for_tuning(&spec, &db, &bins).bin_word_lens;
+		drop(db);                    // build_and_tune builds its own
+		// num_circs 1: the legacy aggressive default (zkp_driver.rs
+		// :2156) and B102's kernel -- a ladder is not measured here.
+		let num_circs = 1;
+		// manifests: absolute job_<i>.dat paths, in job order.
+		let manifests =
+			write_job_manifests(&format!("{}/jobs", pd), &bins);
+		// ladder: the tuned caps; tune pins the share on the way.
+		let ladder = build_and_tune(&spec, db_count, &bins, num_circs, 0);
+		// (1) tune-vs-fold population equality, end to end: the pinned
+		// share is the one the WRITTEN manifests derive. Read BEFORE
+		// folding -- a check-on aggressive fold may bump the share once
+		// for the dummy self-cover (fold_with_self_cover) and mask it.
+		let sums = manifest_word_sums(&manifests);
+		assert_eq!(sums, ts_bins, "manifest population != tuning bins");
+		// mw: the chunk axis of the share math.
+		let mw = spec.chunk_len;
+		let c = read_global_config();
+		assert!(c.b_pin_lkup_share, "tune must pin its share");
+		assert_eq!(c.perc_lkup_share, perc_lkup_share_neo(lkup_len, mw,
+			cover_word_n(&sums), true));
+		drop(c);
+		// (2) the falsifier at fold scale: the OLD max-derived share
+		// fails build_circs_adv_aggr's guard (zkp_driver.rs:453) on the
+		// binding job; the min-derived one clears it.
+		let mn = cover_word_n(&sums);            // the binding job
+		let mx = sums.iter().copied().max().unwrap();
+		let p_min = perc_lkup_share_neo(lkup_len, mw, mn, true);
+		let p_max = perc_lkup_share_neo(lkup_len, mw, mx, true);
+		assert!(p_min > p_max, "fixture lost its imbalance");
+		let mnl = mw * LEGS;                     // nibbles per chunk
+		let chunks_min = ((mn * LEGS) / mnl).max(1);
+		assert!(p_max * mnl / 100 * chunks_min < lkup_len,
+			"max-derived share already covers: fixture is vacuous");
+		assert!(p_min * mnl / 100 * chunks_min >= lkup_len);
+		println!("T9902 f1: lkup {} bins {:?} perc_min {} perc_max {}",
+			lkup_len, sums, p_min, p_max);
+		// (3) Pass 1 asserts lkup coverage PER JOB inside the fold
+		// (foldpot driver.rs:2027), so fold() RETURNING is the
+		// coverage assert -- there is nothing to check afterwards.
+		// That assert is SKIPPED when word_cap_per_job > 0 (:2032), so
+		// a stale cap from another test would make (3) vacuous.
+		assert_eq!(read_global_config().word_cap_per_job, 0,
+			"word_cap_per_job must be 0 or Pass 1 skips coverage");
+		fold(&spec, &cfg_dir, &cache_dir, &manifests[role.jobs.clone()],
+			&ladder, num_circs);
+	}
+
+	/// LARGE-set MANUAL arm (idle box): a balanced 8-job run_neo, to
+	/// MEASURE the prod min-vs-max share delta instead of simulating.
+	#[test]
+	#[ignore]
+	fn test_t9902_e2e_balanced_large() {
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let _g = cfg_lock();
+		let proot = utils::os::proj_root();
+		// redirected clone: never touch the live dlp_neo dirs.
+		let mut spec = DLP.clone();
+		spec.name = "dlp_t9902_e2e2"; // /tmp/bora/dlp_t9902_e2e2_neo_p0
+		spec.db_cache_dir = "dlp_t9902_e2e2_neo";
+		spec.b_check_lkup = true;     // the share axis IS the arm
+		// dry SHAPE without dry POLICY: run_neo is called NOT dry, so
+		// only these two fields move and the check survives (:2035).
+		spec.range2_bit = DLP.dry_range2_bit
+			.expect("DLP must carry a dry range2_bit");
+		if let Some(c) = DLP.dry_chunk_len { spec.chunk_len = c; }
+		assert!(effective_spec(&spec, false).b_check_lkup,
+			"a non-dry run must keep the clone's cover check");
+		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
+		let _t2 = TmpConfigDir(PathBuf::from(format!(
+			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
+		// perc_samples 0.06% of the 504,854-file Enron master = 303
+		// files / 751 KB: the design's "few hundred files", and LPT
+		// lands 48 chunks in EVERY one of the 8 bins, which is what
+		// makes a delta of 0 a measurement, not a rounding accident.
+		let perc_samples = 0.06;
+		// Pass 1's per-job coverage assert is SKIPPED when
+		// word_cap_per_job > 0 (foldpot driver.rs:2032); a stale cap
+		// from another test would make the run prove nothing.
+		assert_eq!(read_global_config().word_cap_per_job, 0,
+			"word_cap_per_job must be 0 or Pass 1 skips coverage");
+		// num_jobs 8, single part, 2 rungs, NOT dry, not ladder-only:
+		// the production call shape. perc_db is 40 not 100 because the
+		// aggressive sig-id bit split caps sig_id < 2^(range2_bit-10) =
+		// 4096 at this dry-shape range2_bit=22 (hex_acdfa.rs:76 asserts
+		// it) and all 9,861 rules blow it; count_of(9861, 40.0) = 3945
+		// fits, and this arm measures a delta-0 on corpus BALANCE,
+		// which does not need the prod rule count.
+		let num_jobs = 8;
+		let ladder = run_neo(&spec, 40.0, perc_samples, 2, num_jobs, 1,
+			0, false, false);
+		assert_eq!(ladder.len(), 2, "num_circs rungs come back");
+		// manifests: run_neo wrote one per job under its plan dir and
+		// they survive the run (only its ENTRY resets that dir).
+		let jobs_dir = format!("{}/jobs", plan_dir(spec.name, 0));
+		let manifests: Vec<String> = (0..num_jobs)
+			.map(|i| format!("{}/job_{}.dat", jobs_dir, i)).collect();
+		// fixture guard: perc_samples must still land a few hundred
+		// files, or the shape measured is not the reviewed one.
+		let n_files: usize = manifests.iter()
+			.map(|m| read_lines_nonblank(m).len()).sum();
+		assert!((200..=400).contains(&n_files),
+			"corpus drifted to {} files, retune perc_samples", n_files);
+		// lkup_len needs the DB, which the fold dropped. RELOAD it from
+		// the cache this run wrote (read=true, write=false) rather than
+		// rebuilding: it is the very cache the fold reloaded from
+		// (:881), so the table -- and lkup_len -- are the folded ones.
+		let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
+			spec.config_dir, spec.sig_file)).len();
+		let cfg = default_clamav_cfg();
+		let [sig, dfa, ised, ised_igc] = cfg_paths(&spec,
+			&config_dir_for(&spec, n_sigs, n_sigs, 0));
+		// vlog: build_or_load's log sink, unused here.
+		let mut vlog = vec![];
+		let db = ClamavDB::<Fr>::build_or_load(&cfg, &sig, &dfa, &ised,
+			&ised_igc, &mut vlog, &cache_dir_for(&spec, 0), true, false)
+			.expect("bora_data_driver: reload db for lkup_len");
+		// lkup_len: folded table row count, the coverage target.
+		let lkup_len = db.lkup.get_size();
+		drop(db);
+		// sums: per-job packed sums recomputed from the manifests the
+		// fold read; mw/mnl: the chunk axis of the share math.
+		let sums = manifest_word_sums(&manifests);
+		let mw = spec.chunk_len;
+		let mnl = mw * LEGS;
+		// chunks: per-job step count, the axis the share divides by.
+		let chunks: Vec<usize> = sums.iter()
+			.map(|n| ((n * LEGS) / mnl).max(1)).collect();
+		let p_min = perc_lkup_share_neo(lkup_len, mw,
+			cover_word_n(&sums), true);
+		let p_max = perc_lkup_share_neo(lkup_len, mw,
+			sums.iter().copied().max().unwrap(), true);
+		println!("T9902 f2: files {} lkup {} chunks {:?} sums {:?} \
+			perc_min {} perc_max {}", n_files, lkup_len, chunks, sums,
+			p_min, p_max);
+		// the pin is min-derived; a check-on aggressive fold may have
+		// bumped it once for the dummy self-cover, hence >= not ==.
+		let c = read_global_config();
+		assert!(c.b_pin_lkup_share, "tune must pin its share");
+		assert!(c.perc_lkup_share >= p_min,
+			"pinned share {} below the min-derived {}",
+			c.perc_lkup_share, p_min);
+		drop(c);
+		// THE measurement: equal chunk counts => the two sizings agree
+		// exactly (prod delta 0); a straddled chunk boundary must still
+		// cost at most one percent point.
+		if chunks.iter().all(|&k| k == chunks[0]) {
+			assert_eq!(p_min, p_max,
+				"equal chunk counts must give equal shares");
+		} else {
+			assert!(p_min >= p_max, "min sizing must not under-cover");
+			assert!(p_min - p_max <= 1,
+				"prod delta {} > 1 perc point", p_min - p_max);
+		}
+		// run_neo folded and proved before returning, so reaching here
+		// IS Pass 1's per-job coverage assert under the pinned share.
 	}
 
 	#[test]
@@ -4223,5 +4620,102 @@ pub mod tests_bora_data_driver {
 		assert_eq!(lv.basis_pats_in_trace, 100);
 		assert!(sed.next_level().is_none()); // exhausted -> legacy
 		let _ = fs::remove_dir_all(&dir);
+	}
+
+	/// small_full_snark -- the Rust side of PAPER_DATA.py menu #2.
+	///
+	/// A deliberate COPY of zkp_driver's small_par_full_snark rather than a
+	/// call into it: that function belongs to another workstream, and this
+	/// menu entry must not change meaning when it is retuned there. Keep the
+	/// capacities below in sync if small_data_par is ever retuned.
+	///
+	/// Two differences from the original:
+	///   * DcMode::ProbeThenFold, not DcMode::Off -- determine_config runs
+	///     the probe and then folds with the TUNED capacities, so the hand
+	///     capacities below only SEED the probe rather than fixing the run.
+	///   * b_folding_only is set EXPLICITLY. false is its GlobalConfig
+	///     default, but that config is PROCESS-GLOBAL: an earlier test in
+	///     the same `cargo test` process can leave it true, which would
+	///     silently turn this into a folding-only run that emits no proof.
+	///
+	/// The three flags ARE the definition of this entry -- fold for real,
+	/// full decider, exactly one proof (Job 0 only).
+	fn small_full_snark(b_check_lkup: bool) {
+		use crate::circs::cp_mapper::CpCapacity;
+		use crate::circs::dfa_mapper::DfaCapacity;
+		use crate::circs::sed_mapper::SedCapacity;
+
+		utils::os::print_computer_config(Some("small_full_snark"));
+		get_global_config().snark_cache_dir = "small_20".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().range2_bit = 18;
+		get_global_config().b_read_cache = false;
+		get_global_config().b_light_test = false;   // full decider
+		get_global_config().b_folding_only = false; // fold THEN prove
+		get_global_config().b_one_proof = true;     // only Job 0 proves
+		get_global_config().log_level = utils::logger::LOG3;
+
+		let b_write_cache = !read_global_config().b_read_cache;
+		let set1 = "data/debug/small_data_set/config_dfa"; // for dfa
+		let max_word = 1;    // this is chunk_len
+		let sigs = 2;        // good setting: 2
+		let subsigs = 4;
+		let avg_pats_per_subsig = 3;
+		let avg_active_pats_per_subsig = 2;
+		let perc_comp_subsigs = 26;  // 26 for subsigs=4, 34 for subsigs=3
+		let basis_unique_states = 25*100;
+		let basis_acc_states = 807;  // 6.46 percent
+		let basis_pats_in_trace = 1500;
+		let perc_pats_expansion_rate = 200;
+
+		let init_cp_cap = CpCapacity{
+			max_word_len: max_word,
+			basis_unique_states,
+			subsigs,
+			avg_pats_per_subsig,
+		};
+		let init_sed_cap = SedCapacity::new(
+			max_word, read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace,
+			perc_pats_expansion_rate,
+			sigs, perc_comp_subsigs,
+			basis_unique_states, basis_acc_states
+		);
+		let init_dfa_cap = DfaCapacity::new(max_word, sigs, subsigs);
+
+		let scan_files: Vec<String> = (1..=4).map(|i|
+			format!("{}/binexec_p{}.dat", set1, i)).collect();
+		zkp_driver_adv::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(0,
+			&format!("{}/sigs.dat", set1),
+			scan_files,
+			"data/small_data_set/reports/report.dat",
+			b_write_cache,
+			"small_20",
+			&format!("{}/dfa.dat", set1),
+			&format!("{}/ised.dat", set1),
+			&format!("{}/ised_igc.dat", set1),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&init_cp_cap,
+			&init_sed_cap,
+			&vec![],
+			1,
+			b_check_lkup, DcMode::ProbeThenFold
+		);
+	}
+
+	/// PAPER_DATA.py menu #2 selects this by exact path:
+	/// `cargo test -p zkregplus --release -- \
+	///   bora_data_driver::tests_bora_data_driver::test_small_full_snark \
+	///   --exact --nocapture`
+	#[test]
+	pub fn test_small_full_snark() {
+		// small_full_snark writes the process-wide GlobalConfig.
+		let _g = cfg_lock();
+		small_full_snark(false);
 	}
 }

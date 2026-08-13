@@ -389,8 +389,16 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// pass, so inverses and multiplicities can never disagree.
 	fn eval_virt_queries_all(&self, stmt: &Vec<F>) -> (Vec<F>, Vec<F>);
 
-	/// Generate the commitment to the fixed segment
-	fn gen_cmF(&self, stmt: &Vec<F>, zi_part2: &ZiPartTwoInst<F>) -> Result<Self::C, Error>;
+	/// return the cmF commit preimage (const-excluded stmt||msg1);
+	/// the caller commits it under the FOLDING key so the
+	/// transcript cmF IS the folded cmF (S107).
+	fn gen_cmf_vec(&self, stmt: &Vec<F>) -> Vec<F>;
+
+	/// install the folding commitment key for cmF, so paths that
+	/// commit via self.params (gen_witness without a precomputed
+	/// cmF, B_DEBUG asserts) match the folded cmF (S107).
+	fn set_cmf_params(&mut self,
+		pp: <Self::CS as CommitmentScheme<Self::C, H>>::ProverParams);
 
 	/// return the size of F (problem statement (including 
 	/// non-determinstic prover
@@ -1333,6 +1341,34 @@ impl StatementConfig{
 		self.si_data_info = info_data;
 		self.si_inp_info = info_inp;
 		self.si_oup_info = info_oup;
+	}
+
+	/// cmF preimage exactly as the folding layer commits it:
+	/// stmt||msg1 with const si fragments dropped (consts never
+	/// enter W). Order mirrors to_vec_fp_var.
+	pub fn cmf_witness_vec<F: Clone>(&self, stmt: &[F], msg1: &[F])
+	-> Vec<F>{
+		let filter = |info: &Vec<(usize,bool)>, vals: &[F]|{
+			let mut res: Vec<F> = vec![];
+			let mut start = 0;
+			for (ulen, b_const) in info{
+				if !*b_const{
+					res.extend_from_slice(&vals[start..start+ulen]);
+				}
+				start += ulen;
+			}
+			res
+		};
+		let i_inp = self.idx_subtable_id;
+		let i_oup = i_inp + self.input_size;
+		let i_data = i_oup + self.output_size;
+		let i_end = i_data + self.data_size;
+		[stmt[0..i_inp].to_vec(),
+			filter(&self.si_inp_info, &stmt[i_inp..i_oup]),
+			filter(&self.si_oup_info, &stmt[i_oup..i_data]),
+			filter(&self.si_data_info, &stmt[i_data..i_end]),
+			stmt[i_end..].to_vec(),
+			msg1.to_vec()].concat()
 	}
 
 	pub fn total_size(&self)-> usize{
@@ -2569,18 +2605,14 @@ impl <F:PrimeField> WitnessSigmaIR1CS<F>{
 		let z_i2= [fp_part1, new_st_inp, new_st_oup, new_st_data, 
 			fp_part3, fp_m1].concat();
 		assert!(z_i2.len()==self.statement.len() + _m1_len);
-		assert!(init_vars==0 || init_vars==6);
-		assert!(size_F == cs.num_witness_variables() - init_vars - 6); //because
-			//there are 12 vars before the start of F (fixed segment)
-			// which is statement + msg1
-			// see where 12 vars in mod.rs::PreprocessorParamFoldPot::new
-			// NOTE that when the function is in "normal" workflow
-			// the pp_hash, i, z_0 (2 ele), z_i (2 ele) is already
-			// encoded into the constraint system by 
-			// circuit_super.generate_constraints before calling
-			// to_vec_fp_var(). So init_vars will have 6.
-			// for gadgets unit testing function test_adv() it
-			// does not do this, and the init_var is 0
+		assert!(init_vars==0 || init_vars==14);
+		assert!(size_F == cs.num_witness_variables() - init_vars - 6);
+			//there are 20 vars before the start of F (fixed segment):
+			//pp_hash, i, z_0 (6 ele), z_i (6 ele) = 14 allocated by
+			//circuit_super.generate_constraints, then cmF (4) +
+			//unused in/out sizes (2) = 6 from part1 above. Must
+			//equal start_F = 20 in mod.rs::PreprocessorParamFoldPot.
+			//test_adv() unit tests skip the preamble: init_vars 0.
 
 		//2. assemble the the other parts
 		let vec3 = self.msg2.iter().
@@ -3092,14 +3124,20 @@ where 	C: CurveGroup<ScalarField=F>,
 		self.gadget_mapper.clone()
 	}
 
-	/// generate the commitment to the fixed memory segment
+	/// install the folding commitment key for cmF (S107)
+	fn set_cmf_params(&mut self,
+		pp: <Self::CS as CommitmentScheme<Self::C, H>>::ProverParams){
+		self.params = pp;
+	}
+
+	/// generate the commit preimage of the fixed memory segment
 	/// it actually has the same first part of gen_witness
-	fn gen_cmF(&self, stmt: &Vec<F>, _zi_part2: &ZiPartTwoInst<F>) -> Result<Self::C, Error>{
+	fn gen_cmf_vec(&self, stmt: &Vec<F>) -> Vec<F>{
 		//0. check input, will not need the extra constraints
 		// will be enforced somewhere else, but need
 		// the cyclepair input
 		let lkup_share_size = self.stmt_config.lookup_share_size;
-		let (stmt_len, _stmt_cfg, v_idx, _, _cp_inp) = lock_unwrap!(self.gadget_mapper).gen_statement_structure(lkup_share_size); 
+		let (stmt_len, stmt_cfg, v_idx, _, _cp_inp) = lock_unwrap!(self.gadget_mapper).gen_statement_structure(lkup_share_size);
 		assert!(stmt_len==stmt.len(), "stmt.len(): {} != stmt_len: {}",
 			stmt.len(), stmt_len);
 		let v_stmt = stmt.clone();
@@ -3114,19 +3152,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			let mut msg1 = lock_unwrap!(g).gen_msg1(&v_stmt, &v_idx[i]) ;
 			assert!(vec_msg_sizes[i].1==msg1.len(), 
 				"ERROR: mistaching msg1 size for i: {}", i);
-			v_msg1.append(&mut msg1); 
+			v_msg1.append(&mut msg1);
 		}
-		//2. generate cmF
+		//2. return the commit preimage (const-excluded stmt||msg1)
 		// note that r_F is in statement. No need for extra blinding factor
-		let vec = vec![
-			stmt.clone(),
-			v_msg1.clone()
-		].concat();
-		let (zero,_one) = (F::zero(),F::one());
-		let grp_cmF = Self::CS::commit(&self.params, 
-			&vec, &zero).expect("commit fails");
-
-		Ok( grp_cmF )
+		stmt_cfg.cmf_witness_vec(stmt, &v_msg1)
 	}
 
 	/// Given the problem statement, and the part 2 contents
@@ -3192,10 +3222,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			&mut gt1);
 		//2. generate cmF
 		// note that r_F is in statement. No need for extra blinding factor
-		let vec = vec![
-			stmt.clone(),
-			v_msg1.clone()
-		].concat();
+		//S107: commit the const-excluded vector, matching the
+		//folded cmF = commit(W[start_F..start_F+size_F], 0).
+		let vec = stmt_cfg.cmf_witness_vec(stmt, &v_msg1);
 		{
 			use std::sync::atomic::{AtomicUsize, Ordering};
 			static N_PROBE_60931: AtomicUsize = AtomicUsize::new(0);
@@ -3687,9 +3716,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		Err(Error::Other(format!("do not call new(), call new_adv")))
 	}
 
-	/// length of z_i between step circuits
+	/// length of z_i between step circuits:
+	/// [hc_cmF, hash(zi_part2), cmF limbs x4 (S107)]
 	fn state_len(&self) -> usize {
-		2
+		6
 	}
 
 	/// length of secret witness vector (
@@ -3738,7 +3768,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			cs.num_constraints(),
 			cs.num_witness_variables()
 		), &mut gt);
-		assert!(z_i.len()==2);
+		//S107: z = [hc_cmF, hash(zi_part2), cmF limbs x4]; must
+		//track state_len(), which the augmented circuit passes.
+		assert!(z_i.len()==6);
 		let configs = self.gadgets.iter().map(|g| lock_unwrap!(g).get_msg_size())
 			.collect::<Vec<(usize, usize, usize, usize)>>();
 		let cfg = &self.witness_config;
@@ -4660,7 +4692,8 @@ where 	C: CurveGroup<ScalarField=F>,
 			&format!("{}.ext_in", self.name), external_inputs.len() as u64);
 
 		cost_capture_set_end(cs.num_constraints());
-		Ok(vec![new_cur_hc_cmF, hash_zi_part2])
+		Ok([vec![new_cur_hc_cmF, hash_zi_part2],
+			wtns_var.cmF.clone()].concat())
 	}
 }
 
@@ -5316,10 +5349,15 @@ pub mod tests_sigma_ir1cs{
         let cs = ConstraintSystem::<Fr>::new_ref();
         let poseidon_config = poseidon_canonical_config::<Fr>();
 		let zi_part2_hash = z_i_part2.hash(&poseidon_config);
-		let z_i = vec![
+		//S107: z is now 6 wide (2 + cmF limbs x4).
+		let mut z_i = vec![
 			FpVar::<Fr>::new_witness(cs.clone(), || Ok(cm_F)).unwrap(),
 			FpVar::<Fr>::new_input(cs.clone(), || Ok(zi_part2_hash)).unwrap()
 		];
+		for _k in 0..4{
+			z_i.push(FpVar::<Fr>::new_witness(cs.clone(),
+				|| Ok(Fr::zero())).unwrap());
+		}
 		let external_inputs = six_ir1cs.witness_to_vec_fp_var(cs.clone());
 		let _vec_fr = six_ir1cs.generate_step_constraints(cs.clone(), 0,
 			z_i, external_inputs);
@@ -5374,15 +5412,20 @@ pub mod tests_sigma_ir1cs{
 		std::panic::set_hook(Box::new(|_|{})); //silence the arm-1 panic
 		let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
 			let cs = ConstraintSystem::<Fr>::new_ref();
-			//external inputs FIRST: to_vec_fp_var:2468 requires 0 (unit
-			//test) or 6 (normal flow) pre-existing witness vars.
+			//external inputs FIRST: to_vec_fp_var requires 0 (unit
+			//test) or 14 (normal flow) pre-existing witness vars.
 			let ext_in = inst.witness_to_vec_fp_var(cs.clone());
-			let z_i = vec![
+			//S107: z is now 6 wide (2 + cmF limbs x4).
+			let mut z_i = vec![
 				FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::zero()))
 					.unwrap(),
 				FpVar::<Fr>::new_witness(cs.clone(), || Ok(zi_hash))
 					.unwrap(),
 			];
+			for _k in 0..4{
+				z_i.push(FpVar::<Fr>::new_witness(cs.clone(),
+					|| Ok(Fr::zero())).unwrap());
+			}
 			inst.generate_step_constraints(cs.clone(), 0, z_i, ext_in)
 				.expect("gen step err");
 			cs.is_satisfied().unwrap()

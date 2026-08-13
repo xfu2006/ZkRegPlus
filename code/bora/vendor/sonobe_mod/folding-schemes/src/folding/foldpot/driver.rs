@@ -366,8 +366,11 @@ where
 	<E as Pairing>::ScalarField: ColEle,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
+	//S107: CS=CS1 -- init_adv installs the FOLDING cmF key
+	//into each circuit, so the circuits' scheme must BE CS1.
     FC: FCircuit<C1::ScalarField>
-		+ SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Send + Sync,
+		+ SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1,CS=CS1>
+		+ Send + Sync,
 	LK: LookupTableTwoCol<C1::ScalarField> + Send + Sync,
     CS1: CommitmentScheme<C1,H, ProverParams = PedersenParams<C1>>,
     CS1E: CommitmentScheme<
@@ -490,9 +493,11 @@ where
 		let z0_part2 = ZiPartTwoInst::<C1::ScalarField>
 			::new(ch, rc, &poseidon_config, b_full_mode, fq_bits, n_words);
 		let z0_part2_hash = z0_part2.hash(&poseidon_config);
-        let _z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
+        let _z_0 = [vec![hash_cmF, z0_part2_hash],
+			vec![C1::ScalarField::zero(); 4]].concat();
+			//[stage hc_cmF, z_0, cmF limbs x4]
 		log_perf(0, log_level, &format!(
-			"Driver New: Step 3.5: create default z0"), 
+			"Driver New: Step 3.5: create default z0"),
 			&mut gt1);
 
 		//4. set up the batch processor if it is NOT full mode (1st stage)
@@ -1405,7 +1410,8 @@ where
 		let z0_part2 = ZiPartTwoInst::<C1::ScalarField>
 			::new(zero, zero, &self.poseidon_config, b_full_mode, fq_bits, total_words);
 		let z0_part2_hash = z0_part2.hash(&self.poseidon_config);
-		let _z_0 = vec![zero, z0_part2_hash]; //will replaced
+		let _z_0 = [vec![zero, z0_part2_hash],
+			vec![zero; 4]].concat(); //will replaced
 		let mut m_map = HashMap::<usize,usize>::new();
 		t2.prt("step 3: generate z0");
 
@@ -1529,7 +1535,8 @@ where
 			::new(zero, zero, &self.poseidon_config, 
 			b_full_mode, fq_bits,total_words);
 		let z0_part2_hash = z0_part2.hash(&&self.poseidon_config);
-		let z_0 = vec![zero, z0_part2_hash];
+		let z_0 = [vec![zero, z0_part2_hash],
+			vec![zero; 4]].concat();
 		let _n_circ = field_to_usize(&vea[0].n_circ);
 		let mut hash_cmF= C1::ScalarField::zero();
 		let (ch, rc) = (zero, zero);
@@ -1693,7 +1700,10 @@ where
 		let z0_part2 = ZiPartTwoInst::<C1::ScalarField>
 			::new(ch,rc,&self.poseidon_config,b_full_mode,fq_bits,total_words);
 		let z0_part2_hash = z0_part2.hash(&self.poseidon_config);
-        let z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
+		//S107: seed the in-circuit chain at ZERO so the final
+		//state z_n[0] equals the pass-1 hash_cmF that seeded
+		//ch/rc; the decider discloses z_n[0] (Phase1CircuitRet).
+		let z_0 = [vec![zero, z0_part2_hash], vec![zero; 4]].concat();
 		let _n_steps = vea.len();
 		t1.prt("Step 2: build initial z0");
 
@@ -1860,7 +1870,8 @@ where
 		let z0_part2 = ZiPartTwoInst::<C1::ScalarField>
 			::new(zero, zero, &self.poseidon_config, b_full_mode, fq_bits, total_words);
 		let z0_part2_hash = z0_part2.hash(&self.poseidon_config);
-		let _z_0 = vec![zero, z0_part2_hash]; //will replaced
+		let _z_0 = [vec![zero, z0_part2_hash],
+			vec![zero; 4]].concat(); //will replaced
 		let mut m_map = HashMap::<usize,usize>::new();
 		let pc_0_val = 0;
 		let _pc_0 = C1::ScalarField::from(pc_0_val as u32);
@@ -2184,7 +2195,10 @@ where
 		let z0_part2 = ZiPartTwoInst::<C1::ScalarField>
 			::new(ch,rc,&self.poseidon_config,b_full_mode,fq_bits,total_words);
 		let z0_part2_hash = z0_part2.hash(&self.poseidon_config);
-        let z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
+		//S107: seed the in-circuit chain at ZERO so the final
+		//state z_n[0] equals the pass-1 hash_cmF that seeded
+		//ch/rc; the decider discloses z_n[0] (Phase1CircuitRet).
+		let z_0 = [vec![zero, z0_part2_hash], vec![zero; 4]].concat();
 		log_perf(job_id, log_level, &format!(
 			"PERF 1007: {} step 5: prep for proving steps words: {}, n_steps: {}: total_word_len: {}. ", phase_name,  words.len(), n_steps, total_wd_len) , &mut gt1);
 
@@ -2547,7 +2561,10 @@ where
 	<E as Pairing>::ScalarField: ColEle,
     GC1: CurveVar<C1, CF2<C1>> + ToConstraintFieldGadget<CF2<C1>>,
     GC2: CurveVar<C2, CF2<C2>> + ToConstraintFieldGadget<CF2<C2>>,
-    FC: FCircuit<C1::ScalarField> + SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1> + Clone + Send + Sync + CloneDeep,
+	//S107: CS=CS1 -- Driver::new's impl block requires it.
+    FC: FCircuit<C1::ScalarField>
+		+ SigmaIR1CS<H, C1::ScalarField, LK, GM,C=C1,CS=CS1>
+		+ Clone + Send + Sync + CloneDeep,
     //FC: SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, false>,
 	LK: LookupTableTwoCol<C1::ScalarField> + 'static + Send + Sync,
     CS1: CommitmentScheme<C1, H, ProverParams = PedersenParams<C1>> +
@@ -3415,6 +3432,7 @@ where
 	let inp = CircPubInput{
 			ch1: ch1,
 			rc1: rc1,
+			hash_cmF1: mainres.hash_cmF, //== z_n[0], zero seed
 			kzg_sum1: kzg_sum1,
 			kzg_all_com_ch1: kzg_all_com_ch,
 			eval_w_e1: prf_kzg.eval,

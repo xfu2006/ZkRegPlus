@@ -47,6 +47,15 @@ impl<C: CurveGroup, const H: bool> CommitmentScheme<C, H> for Pedersen<C, H> {
         false
     }
 
+    fn trim_pp(pp: &Self::ProverParams, len: usize)
+    -> Self::ProverParams {
+        let n = len.min(pp.generators.len());
+        Params::<C>{
+            h: pp.h,
+            generators: pp.generators[0..n].to_vec(),
+        }
+    }
+
     fn setup(
         mut rng: impl RngCore,
         len: usize,
@@ -257,6 +266,30 @@ mod tests {
 
     use super::*;
     use crate::transcript::poseidon::poseidon_canonical_config;
+
+    /// trim_pp(key, |v|) commits identically to the full key, its
+    /// generators length is exactly the requested prefix, and an
+    /// under-trimmed key fails LOUD (PedersenParamsLen).
+    #[test]
+    fn test_pedersen_trim_pp() {
+        let mut rng = ark_std::test_rng();
+        let (pp, _vp) =
+            Pedersen::<Projective>::setup(&mut rng, 1000).unwrap();
+        let v: Vec<Fr> = (0..100).map(|_| Fr::rand(&mut rng))
+            .collect();
+        let zero = Fr::from(0u64);
+        let full = Pedersen::<Projective>::commit(&pp, &v, &zero)
+            .unwrap();
+        let trimmed = Pedersen::<Projective>::trim_pp(&pp, 100);
+        assert_eq!(trimmed.generators.len(), 100);
+        let cut = Pedersen::<Projective>::commit(&trimmed, &v, &zero)
+            .unwrap();
+        assert_eq!(full, cut, "trimmed key changed the commitment");
+        let short = Pedersen::<Projective>::trim_pp(&pp, 50);
+        let res = Pedersen::<Projective>::commit(&short, &v, &zero);
+        assert!(matches!(res, Err(Error::PedersenParamsLen(50, 100))),
+            "under-trim must fail loud");
+    }
 
     #[test]
     fn test_pedersen() {

@@ -265,6 +265,8 @@ pub struct Phase1CircuitRetVal<F: PrimeField,C: CurveGroup<ScalarField=F>>{
 	pub ch: F,
 	/// the rc (combination)
 	pub rc: F,
+	/// the final cmF hash-chain value z_n[0] (S107 FS-seed pin)
+	pub hash_cmF: F,
 	/// kzg_sum: sum_kzg_eval_lk + sum_kzg_eval_word + sum_kzg_eval_others
 	pub kzg_sum: F,
 	/// rows of [com_all_w, (comW, comE, comF)] for all vec_inst of U_{i+1}
@@ -311,6 +313,8 @@ where C::BaseField: PrimeField,
 	pub ch: FpVar<F>,
 	/// the rc (combination)
 	pub rc: FpVar<F>,
+	/// the final cmF hash-chain value z_n[0] (S107 FS-seed pin)
+	pub hash_cmF: FpVar<F>,
 	/// kzg_sum: sum_kzg_eval_lk + sum_kzg_eval_word + sum_kzg_eval_others
 	pub kzg_sum: FpVar<F>,
 	/// rows of [com_all_w, (comW, comE, comF)] for all vec_inst of U_{i+1}
@@ -357,6 +361,7 @@ where C::BaseField: PrimeField,
 		Self{
 			ch: zvar.clone(),
 			rc: zvar.clone(),
+			hash_cmF: zvar.clone(),
 			kzg_sum: zvar.clone(),
 			vec_coms: vec![avar.clone(); 7],
 			final_result: zvar.clone(),
@@ -379,6 +384,7 @@ where C::BaseField: PrimeField,
 		let res = Self{
 			ch: new_var(cs, val.ch),
 			rc: new_var(cs, val.rc),
+			hash_cmF: new_var(cs, val.hash_cmF),
 			kzg_sum: new_var(cs, val.kzg_sum),
 			vec_coms: val.vec_coms.iter().map(|c|{
 				NonNativeAffineVar::<C>::new_variable(cs.clone(), || Ok(c),
@@ -413,6 +419,7 @@ where C::BaseField: PrimeField,
 		Phase1CircuitRetVal{
 			ch: self.ch.value().unwrap(),
 			rc: self.rc.value().unwrap(),
+			hash_cmF: self.hash_cmF.value().unwrap(),
 			kzg_sum: self.kzg_sum.value().unwrap(),
 			vec_coms: self.vec_coms.iter().map(|c|{
 				let x: C::BaseField = c.x.value().unwrap().into();
@@ -434,7 +441,8 @@ where C::BaseField: PrimeField,
 	/// serialize to a vec of FpVar
 	pub fn to_vec(&self)->Vec<FpVar<F>>{
 		let res = vec![
-			vec![self.ch.clone(), self.rc.clone(), self.kzg_sum.clone()],
+			vec![self.ch.clone(), self.rc.clone(),
+				self.hash_cmF.clone(), self.kzg_sum.clone()],
 			self.vec_coms.iter().map(|c|{
 				c.to_native_sponge_field_elements().unwrap()
 			}).flatten().collect::<Vec<_>>(),
@@ -1046,6 +1054,16 @@ where
 			c1 = cs.num_constraints();
 		}
 
+		//S107: bind the LAST step's absorbed cmF limbs (z_i[2..6])
+		//to the folded commitment u_i.cmF. i >= 1 always holds for
+		//a completed fold, so no basecase gate.
+		//PLACEMENT IS LOAD-BEARING: stays ABOVE the !b_light_test
+		//gate, like the S105b/S106 pins.
+		let u_cmf_limbs = u_i.cmF.to_native_sponge_field_elements()?;
+		for k in 0..4{
+			u_cmf_limbs[k].enforce_equal(&z_i[2+k])?;
+		}
+
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
 
@@ -1177,6 +1195,7 @@ where
 		let res = Phase1CircuitRet::<C1::ScalarField, C1>{
 			ch: zi_part2_inst_var.ch,
 			rc: zi_part2_inst_var.rc,
+			hash_cmF: z_i[0].clone(),
 			kzg_sum: zi_part2_inst_var.sum_kzg_eval_lk + 
 					zi_part2_inst_var.sum_kzg_eval_word + 
 					zi_part2_inst_var.sum_kzg_eval_others,
@@ -1647,6 +1666,8 @@ pub struct CircPubInput<F: PrimeField+ColEle,C: CurveGroup<ScalarField=F>>{
 	pub ch1: F,
 	/// the rc of circ1
 	pub rc1: F,
+	/// the disclosed z_n[0] chain value of circ1 (S107)
+	pub hash_cmF1: F,
 	/// the kzg sum of circ1
 	pub kzg_sum1: F,
 	/// the the challenge of kzg_all_com_e
@@ -1695,6 +1716,7 @@ CF2<C>: PrimeField
 		let mut res = vec![
 			self.ch1.clone(),
 			self.rc1.clone(),
+			self.hash_cmF1.clone(),
 			self.kzg_sum1.clone(),
 			self.kzg_all_com_ch1.clone(),
 			self.eval_w_e1.clone(),
@@ -1715,11 +1737,11 @@ CF2<C>: PrimeField
 
 	/// parse from vector
 	pub fn from_vec(v: &Vec<F>)->Self{
-		let (ch1, rc1, kzg_sum1, kzg_all_com_ch1, eval_w_e1,
-			  mainres_hash, kzg_all_com_ch2, eval_w_e2) = 
-			v[0..8].to_vec().into_iter().collect_tuple().unwrap();
-		let qa_nizk_vkey_hash = v[8];
-		let vec_rest = &v[9..v.len()];
+		let (ch1, rc1, hash_cmF1, kzg_sum1, kzg_all_com_ch1,
+			  eval_w_e1, mainres_hash, kzg_all_com_ch2, eval_w_e2) =
+			v[0..9].to_vec().into_iter().collect_tuple().unwrap();
+		let qa_nizk_vkey_hash = v[9];
+		let vec_rest = &v[10..v.len()];
 		assert!(vec_rest.len()==5*6);
 		let vec_fq = vec_rest.chunks(5).map(|chunk| {
 			f1_limbs_to_f2::<F, CF2<C>>(&chunk.to_vec())
@@ -1732,7 +1754,7 @@ CF2<C>: PrimeField
 		let (comE2, comW2, comF2): (C,C,C) = (v_pt[0].into(), 
 			v_pt[1].into(), v_pt[2].into());
 		Self{
-			ch1, rc1, kzg_sum1, kzg_all_com_ch1, eval_w_e1,
+			ch1, rc1, hash_cmF1, kzg_sum1, kzg_all_com_ch1, eval_w_e1,
 			kzg_all_com_ch2, eval_w_e2,
 			qa_nizk_vkey_hash,
 			mainres_hash,
@@ -2146,8 +2168,8 @@ where
 		// (3) the cyclepair input generates hashchain_b and it
 		//       matches the one in pub_input.
 		let _s_dbg = vec![
-			"ch1", "rc1", "kzg_sum1", "kzg_all_com_ch1", "eval_w_e1",
-			"mainres_hash",
+			"ch1", "rc1", "hash_cmF1", "kzg_sum1", "kzg_all_com_ch1",
+			"eval_w_e1", "mainres_hash",
 			"kzg_all_com_ch2", "eval_w_2", "qa_nizk_vkey_hash", 
 		];
 		let vec_inp = self.inp.to_vec().expect("Inp to Vec error")
@@ -2158,7 +2180,8 @@ where
 
 
 		let mut vec_ret = vec![
-			phase1_ret.ch, phase1_ret.rc, phase1_ret.kzg_sum,
+			phase1_ret.ch, phase1_ret.rc, phase1_ret.hash_cmF,
+				phase1_ret.kzg_sum,
 				phase1_ret.kzg_all_com_ch, phase1_ret.eval_w_e,
 				mainres_hash,
 			phase2_ret.main_ret.kzg_all_com_ch, phase2_ret.main_ret.eval_w_e,
@@ -2235,6 +2258,7 @@ pub mod tests_decider_eth_circuit_super {
 		let inp= CircPubInput::<Fr, Projective>{
 			ch1: Fr::rand(&mut rng),
 			rc1: Fr::rand(&mut rng),
+			hash_cmF1: Fr::rand(&mut rng),
 			kzg_sum1: Fr::rand(&mut rng),
 			kzg_all_com_ch1: Fr::rand(&mut rng),
 			eval_w_e1: Fr::rand(&mut rng),
@@ -2464,7 +2488,7 @@ pub mod tests_decider_eth_circuit_super {
 		mod_super::PreprocessorParamFoldPotSuper,
 		sigma_ir1cs::{
 			LookupTableTwoCol_Inst,
-			tests_sigma_ir1cs::{gen_six_root, SixRootMapper},
+			tests_sigma_ir1cs::{gen_six_root_adv, SixRootMapper},
 		},
 	};
 	use ark_bn254::{Bn254, G2Projective as ProjectiveG2,
@@ -2491,9 +2515,12 @@ pub mod tests_decider_eth_circuit_super {
 		let mut rng = ark_std::test_rng();
 		let cfg = poseidon_canonical_config::<Fr>();
 		let b_full = false;
+		//b_check_lkup=false -- see the S118 note on s103_fold. The
+		//toy's Hab'22 sums cannot balance at a TERMINAL step, and
+		//this fold ends terminal on purpose.
 		let (lk, f_circ, mut vec_stmt) =
-			gen_six_root::<Fr, Projective, S119Cm, S119Lk, false>(
-				n_steps);
+			gen_six_root_adv::<Fr, Projective, S119Cm, S119Lk, false>(
+				n_steps, false);
 		//the toy's counter is inconsistent with what CounterIOGadget
 		//can read (see build_statement's NOTE): for n = 64 the
 		//statement claims oup = inp + 1 while the gadget adds 0, so
@@ -2527,7 +2554,8 @@ pub mod tests_decider_eth_circuit_super {
 		let zero = Fr::zero();
 		let z0_p2 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, b_full,
 			fq_bits, n_steps);
-		let z_0 = vec![zero, z0_p2.hash(&cfg)];
+		let z_0 = [vec![zero, z0_p2.hash(&cfg)],
+			vec![zero; 4]].concat();
 		let nova0 = S119Nova::init_adv(&params, vec![f_circ.clone()],
 			z_0, 1, 0, b_full, zero, zero, n_steps, None, 0)
 			.expect("init_adv pass1 err");
@@ -2539,9 +2567,14 @@ pub mod tests_decider_eth_circuit_super {
 		drop(nova0);
 
 		//PASS 2: the real IVC, seeded with ch = hash_cmf.
+		//S107: z_0[0] is ZERO, not hash_cmf -- the in-circuit chain
+		//re-runs from zero so z_n[0] lands back on hash_cmf, which
+		//is what the decider discloses. ch keeps carrying hash_cmf
+		//through init_adv's own argument (driver.rs pass_all).
 		let z0_p2 = ZiPartTwoInst::<Fr>::new(hash_cmf, zero, &cfg,
 			b_full, fq_bits, n_steps);
-		let z_0 = vec![hash_cmf, z0_p2.hash(&cfg)];
+		let z_0 = [vec![zero, z0_p2.hash(&cfg)],
+			vec![zero; 4]].concat();
 		let mut nova = S119Nova::init_adv(&params,
 			vec![f_circ.clone()], z_0, 1, 0, b_full, hash_cmf, zero,
 			n_steps, None, 0).expect("init_adv pass2 err");
@@ -2709,9 +2742,21 @@ pub mod tests_decider_eth_circuit_super {
 		let mut rng = ark_std::test_rng();
 		let cfg = poseidon_canonical_config::<Fr>();
 		let b_full = false;
+		//b_check_lkup=false. The six_root toy's Hab'22 sums CANNOT
+		//balance at a terminal step: the circuit counts a dynamic
+		//subtable_id=0 query at (0,val) (case 3 of the left sum)
+		//while fill_lkup_mvec counts it at (0,0), so every
+		//multiplicity stays 0 -- right sum 0, left sum not (S118;
+		//see test_s109_hab22_zero_waiver). Folding to a TERMINAL
+		//step therefore trips the native assert now that S109 has
+		//removed the sum_hab22_right.is_zero() waiver that used to
+		//hide it. These tests exercise the DECIDER pins and the
+		//slot binding, not the lookup argument, and
+		//b_check_lkup=false is what legacy production ships (see
+		//the gen_six_root_adv doc comment, S108).
 		let (lk, f_circ, mut vec_stmt) =
-			gen_six_root::<Fr, Projective, S119Cm, S119Lk, false>(
-				n_steps);
+			gen_six_root_adv::<Fr, Projective, S119Cm, S119Lk, false>(
+				n_steps, false);
 		//same counter repair as s119_fold, and for the same reason
 		//(build_statement's NOTE): without it assert_msg3 kills any
 		//fold of >= 2 steps. Local to this test.
@@ -2745,7 +2790,8 @@ pub mod tests_decider_eth_circuit_super {
 		let zero = Fr::zero();
 		let z0_p2 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, b_full,
 			fq_bits, n_steps);
-		let z_0 = vec![zero, z0_p2.hash(&cfg)];
+		let z_0 = [vec![zero, z0_p2.hash(&cfg)],
+			vec![zero; 4]].concat();
 		let nova0 = S119Nova::init_adv(&params, vec_f.clone(), z_0,
 			n_circ, 0, b_full, zero, zero, n_steps, None, 0)
 			.expect("init_adv pass1 err");
@@ -2759,9 +2805,11 @@ pub mod tests_decider_eth_circuit_super {
 		//PASS 2: the real IVC. pc_i / pc_i1 are set per step exactly as
 		//driver.rs pass_all does it (driver.rs "nova.pc_i =
 		//vea[idx].pc_i").
+		//S107 zero seed, same as s119_fold.
 		let z0_p2 = ZiPartTwoInst::<Fr>::new(hash_cmf, zero, &cfg,
 			b_full, fq_bits, n_steps);
-		let z_0 = vec![hash_cmf, z0_p2.hash(&cfg)];
+		let z_0 = [vec![zero, z0_p2.hash(&cfg)],
+			vec![zero; 4]].concat();
 		let mut nova = S119Nova::init_adv(&params, vec_f.clone(), z_0,
 			n_circ, 0, b_full, hash_cmf, zero, n_steps, None, 0)
 			.expect("init_adv pass2 err");
@@ -2882,14 +2930,16 @@ pub mod tests_decider_eth_circuit_super {
 			 comparable");
 		assert!(new_b.len() > 0,
 			"INACTIVE slot cmW swap ACCEPTED -- the S103 block is inert");
-		//ATTRIBUTION: in light mode the S103 block is the LAST thing
-		//gen_cs emits (steps 8-10 are gated out), and it reports its own
-		//width in the "Step 7b" log line. So every new row must fall in
-		//the final `width` indices -- otherwise the rejection came from
+		//ATTRIBUTION: in light mode gen_cs emits, at its very end,
+		//the S103 block (78 rows per slot x n_circ = 156, reported in
+		//the "Step 7b" log line) followed by the S107 cmF-limb pin
+		//(4 nonnative limb equalities, measured 473 rows). Steps 8-10
+		//are gated out. So every new row must fall in the final
+		//`width` indices -- otherwise the rejection came from
 		//somewhere else and this test is measuring the wrong thing.
-		//width = 78 per slot x n_circ; asserted loosely as <= 256 so a
+		//156 + 473 = 629 today; asserted loosely as <= 1024 so a
 		//gadget-level cost change does not turn this into a tripwire.
-		let width = 256;
+		let width = 1024;
 		assert!(new_b.iter().all(|&&r| r + width >= n_a),
 			"new unsatisfied rows {:?} are NOT inside the last {} rows \
 			 of {} -- rejection is not attributable to the S103 block",

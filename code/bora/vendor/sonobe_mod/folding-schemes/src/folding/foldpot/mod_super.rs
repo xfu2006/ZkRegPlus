@@ -75,7 +75,7 @@ C = C1>,
 	hc_cmF: C1::ScalarField, 
 	stmt: &StatementInst<C1::ScalarField, LK>,
 	circ: &FC,
-	_cs_pp: &CS1::ProverParams,
+	cs_pp: &CS1::ProverParams,
 	poseidon_config: &PoseidonConfig<C1::ScalarField>,
 	_job_id: usize
 ) -> Result<(C1::ScalarField,C1), Error>
@@ -87,11 +87,12 @@ where
 	let mut sponge_cmf = 
 		PoseidonSponge::<C1::ScalarField>::new(poseidon_config);
 
-	//2. compute the cmF using witness of F
-	//let act_idx = field_to_usize(&self.pc_i);
-	let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
-	let zi_part2 = ZiPartTwoInst::dummy(circ.is_full_mode(), fq_bits); //does not matter
-	let cmF:C1 = circ.gen_cmF(&stmt.to_vec(), &zi_part2)
+	//2. compute the cmF using witness of F, under the FOLDING key
+	//(S107: was self.params from test_rng -- non-binding AND a
+	//different commitment than the folded cmF).
+	let vec = circ.gen_cmf_vec(&stmt.to_vec());
+	let zero = C1::ScalarField::zero();
+	let cmF: C1 = CS1::commit(cs_pp, &vec, &zero)
 		.expect("gen_cmF error");
 
 	let mut vec_cmF = vec![];
@@ -790,8 +791,22 @@ where
 		n_words: usize,
 		vec_precomputed_group_cmF: Option<Vec<C1>>,
 		job_id: usize,
-    ) -> Result<Self, Error> {
+    ) -> Result<Self, Error>
+	where FC: SigmaIR1CS<H, C1::ScalarField, LK, GM, C=C1, CS=CS1>,
+	{
         let (pp, vp) = params;
+		//S107: the circuits' cmF key must BE the folding key, or
+		//the transcript cmF diverges from the folded cmF and the
+		//leg-2 limb check rejects honest proofs.
+		let mut vec_F = vec_F;
+		for (j, f) in vec_F.iter_mut().enumerate(){
+			//prefix key only: commit() reads the first |v|
+			//generators; an under-trim fails LOUD
+			//(Error::PedersenParamsLen, pedersen.rs).
+			let pp_j = CS1::trim_pp(pp.vec_pp[j].cs_pp.as_ref(),
+				f.get_cmf_len() + 1);
+			f.set_cmf_params(pp_j);
+		}
 		let size_F = pp.vec_pp.iter().map(|p| p.size_F)
 			.collect::<Vec<usize>>();
 		let start_F = pp.vec_pp.iter().map(|p| p.start_F)
@@ -802,7 +817,8 @@ where
 		for f in &vec_F{assert!(f.is_full_mode()==b_full);}
 
 		//1. rebuild z0_part2 using the given random seed
-		assert!(z_0.len()==2, "z_0 length: {} is not 2!", z_0.len());
+		assert!(z_0.len()==vec_F[0].state_len(),
+			"z_0 length: {} != state_len", z_0.len());
 		let hash_cmF = z_0[0];
 		let poseidon_config = pp.vec_pp[0].poseidon_config.clone();
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
@@ -810,7 +826,8 @@ where
 		let z0_part2_hash = z0_part2_inst.hash(&poseidon_config);
 		assert!(z0_part2_hash==z_0[1], "z0_part2_hash: {} != z0[1]: {}",
 			z0_part2_hash, z_0[1]);
-		let z0_new = vec![hash_cmF, z0_part2_hash]; //rewrite it
+		let z0_new = [vec![hash_cmF, z0_part2_hash],
+			z_0[2..].to_vec()].concat(); //rewrite it
 
 		//2. build the r1cs constraint systems
 		let n_circs = pp.vec_pp.len();
@@ -1434,7 +1451,9 @@ where
 			PoseidonSponge::<C1::ScalarField>::new(&self.poseidon_config);
 		sponge_cmf.absorb(&to_hash);
 		let new_hc_cmF:C1::ScalarField=sponge_cmf.squeeze_field_elements(1)[0];
-		let z_i1 = vec![new_hc_cmF, z_i1_part2.hash(&self.poseidon_config)];
+		let z_i1 = [vec![new_hc_cmF,
+			z_i1_part2.hash(&self.poseidon_config)],
+			wtns.cmF.clone()].concat();
 		log_perf(self.job_id, log_level, &format!("prove_step: Step 1. gen_witness: stmt_len: {}, wtns size: {}", wtns.statement.len(), wtns_config.get_total_size()), &mut gt2);
 
         //5. compute cross terms T and cmT for AugmentedFCircuit (active at j)
@@ -2123,7 +2142,8 @@ pub mod tests_mod_super {
 		let n_words = 1;
 		let z0_part2 = ZiPartTwoInst::<Fr>::new(zero, zero, &poseidon_config, b_full, fq_bits, n_words);
 		let z0_part2_hash = z0_part2.hash(&poseidon_config);
-		let z_0 = vec![zero, z0_part2_hash];
+		let z_0 = [vec![zero, z0_part2_hash],
+			vec![zero; 4]].concat();
 		let n_circ = 1;
 		let pc_0_val = 0;
 		let _pc_0 = Fr::from(pc_0_val as u32);
@@ -2159,7 +2179,8 @@ pub mod tests_mod_super {
 		// NOTE: for step 0, the z_0[0] will be the FINAL hc_cmF,
 		// for other steps, it will be hte hashchain of cmF from
 		// the previous step
-        let z_0 = vec![hash_cmF, z0_part2_hash]; //[stage hc_cmF, z_0]
+        let z_0 = [vec![hash_cmF, z0_part2_hash],
+			vec![zero; 4]].concat(); //[stage hc_cmF, z_0]
 		let precomputed_cmF = None;
         let mut nova =
             FoldPotSuper::<E,P,C2G2, Projective, GVar, Projective2, GVar2, SigmaIR1CS_Inst<Fr,Projective,CS1,LK,GM,H>, CS1, CS2, CS1E, LK, GM, H>::init_adv(

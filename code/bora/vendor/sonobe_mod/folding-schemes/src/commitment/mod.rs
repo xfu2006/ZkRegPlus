@@ -29,6 +29,14 @@ pub trait CommitmentScheme<C: CurveGroup, const H: bool = false>: Clone + Debug 
 	// added for retrieving the key for qa-nizk
 	fn pkey_in_affine(pkey: &Self::ProverParams, size: usize) -> Vec<C::Affine>;
 
+	/// prefix of the key sufficient to commit vectors of length
+	/// <= len; commit() only reads the first |v| generators, so
+	/// the result is identical. Default: full clone.
+	fn trim_pp(pp: &Self::ProverParams, _len: usize)
+	-> Self::ProverParams {
+		pp.clone()
+	}
+
     fn commit(
         params: &Self::ProverParams,
         v: &[C::ScalarField],

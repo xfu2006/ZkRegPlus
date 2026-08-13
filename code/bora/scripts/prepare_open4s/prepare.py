@@ -39,6 +39,7 @@ Requires only the Python standard library (>= 3.6) and `git` on PATH.
 """
 
 import argparse
+import datetime
 import hashlib
 import json
 import lzma
@@ -83,7 +84,14 @@ CHECK_DIR = os.path.join(WORK_DIR, "open4s_check")
 # 4open re-reads the branch at most hourly.  Checking sooner downloads the
 # PREVIOUS tree and diffs it against the manifest that was just rewritten, so
 # the failure looks like hundreds of corrupted files rather than "too early".
-MIRROR_LAG_SECONDS = 3600
+#
+# TWO hours, not one.  The hour is only the POLL interval -- the floor before
+# 4open even notices the new tip.  On top of it sits a fetch and a full
+# re-anonymization pass over a multi-GB repository, and the ZIP endpoint may
+# serve an already-built archive from cache.  Waiting exactly one hour budgets
+# for the poll and nothing else; the wait costs only wall-clock, while checking
+# early costs a confusing failure and a second download.
+MIRROR_LAG_SECONDS = 7200
 
 # Identity used for the single squashed commit -- visible in `git log` on the
 # mirror, so it must not resolve to a real person.
@@ -93,6 +101,11 @@ NEUTRAL_EMAIL = "anonymous@example.com"
 # Fixed commit timestamp.  A real one leaks a timezone (hence a rough
 # longitude); a fixed UTC one leaks nothing.
 NEUTRAL_DATE = "2026-08-22T12:00:00+0000"
+
+# The same instant as an epoch, for stamping tar headers in the pack.  Derived
+# rather than hardcoded so the two can never drift apart.
+NEUTRAL_EPOCH = int(datetime.datetime.strptime(
+    NEUTRAL_DATE, "%Y-%m-%dT%H:%M:%S%z").timestamp())
 
 # Deleted after export.
 #   attic/      313 tracked files, 221 of them vendored noname/ark-noname with
@@ -354,12 +367,91 @@ def walk_links(root):
                 yield p, os.path.relpath(p, root)
 
 
+def deref_symlinks(stage):
+    """Replace every symlink with a real copy of whatever it points at.
+
+    4open neither follows symlinks nor drops them: it serves each one as a
+    TEXT FILE whose contents are the link path.  Measured on the live mirror
+    2026-08-13, the 1.45 MB DLP fixture arrived as 68 bytes reading
+    "../../../paper_data/dlp/cfg/regex_pat/main_data_dlp_internationl.dat",
+    and every per-curve LICENSE-MIT as 14 bytes reading "../LICENSE-MIT".
+
+    That is worse than dropping them.  The path still exists, so a
+    completeness check comparing recorded paths passes while the content is
+    garbage -- and the manifest stores None as a symlink's size, so the size
+    comparison has nothing to catch it with either.  Inlining is the only
+    fix that survives the proxy.
+
+    Called AFTER prune deliberately: a link into a pruned path must fail
+    loudly here rather than silently restore what prune just deleted.
+    """
+    root = os.path.realpath(stage)
+    # Materialise the list before mutating the tree -- walk_links is a
+    # generator over os.walk, and swapping a link for a real directory
+    # underneath it would change what the walk sees mid-iteration.
+    links = sorted(walk_links(stage), key=lambda t: t[1])
+    n_file = n_dir = added = 0
+    for p, rel in links:
+        target = os.path.realpath(p)
+        if target != root and not target.startswith(root + os.sep):
+            die("symlink escapes the artifact: %s -> %s\n"
+                "       inlining it would pull in content from outside the "
+                "exported tree" % (rel, os.readlink(p)))
+        if not os.path.exists(target):
+            die("broken symlink: %s -> %s\n"
+                "       target missing (pruned?), so it cannot be inlined"
+                % (rel, os.readlink(p)))
+        os.unlink(p)
+        if os.path.isdir(target):
+            # symlinks=False resolves any nested links into real files too.
+            shutil.copytree(target, p, symlinks=False)
+            n_dir += 1
+            added += sum(os.path.getsize(fp) for fp, _ in walk_files(p))
+        else:
+            shutil.copy2(target, p)
+            n_file += 1
+            added += os.path.getsize(p)
+    left = [r for _, r in walk_links(stage)]
+    if left:
+        die("%d symlink(s) survived inlining, e.g. %s" % (len(left), left[0]))
+    if n_file or n_dir:
+        ok("inlined %d symlink(s) as real files (%d dir), +%s"
+           % (n_file + n_dir, n_dir, mb(added)))
+    else:
+        info("no symlinks to inline")
+
+
 def sha256_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
         for c in iter(lambda: f.read(1 << 20), b""):
             h.update(c)
     return h.hexdigest()
+
+
+def identity_hits(blob, label):
+    """(hits, forgiven) for one blob.  A hit is (label, pattern, snippet).
+
+    Split out of inspect_tree so the same rules -- including BENIGN_CONTEXTS
+    -- apply to bytes that are not loose files on disk, notably the members
+    and headers inside the xz pack.
+    """
+    hits, forgiven = [], 0
+    low = blob.lower()
+    for pat in IDENTITY_PATTERNS:
+        start = 0
+        while True:
+            i = low.find(pat, start)
+            if i < 0:
+                break
+            start = i + 1
+            win = low[max(0, i - CONTEXT_BEFORE):i + len(pat) + CONTEXT_AFTER]
+            if any(b in win for b in BENIGN_CONTEXTS):
+                forgiven += 1
+                continue
+            hits.append((label, pat.decode(),
+                         win.decode("utf-8", "replace").replace("\n", " ")))
+    return hits, forgiven
 
 
 def extract_all(tf, path):
@@ -584,20 +676,38 @@ def inspect_tree(root, label, manifest=None, expect_pack_sha=None,
                 blob = f.read()
         except OSError:
             continue
-        low = blob.lower()
-        for pat in IDENTITY_PATTERNS:
-            start = 0
-            while True:
-                i = low.find(pat, start)
-                if i < 0:
-                    break
-                start = i + 1
-                win = low[max(0, i - CONTEXT_BEFORE):i + len(pat) + CONTEXT_AFTER]
-                if any(b in win for b in BENIGN_CONTEXTS):
-                    forgiven += 1
-                    continue
-                hits.append((r, pat.decode(),
-                             win.decode("utf-8", "replace").replace("\n", " ")))
+        h, g = identity_hits(blob, r)
+        hits += h
+        forgiven += g
+
+    # The pack is xz-compressed, so the loop above scanned nothing but
+    # compressed bytes and could never match.  Both things it hides have to
+    # be opened: the member CONTENTS, and the tar HEADERS, which record the
+    # packing user by name.  "xiang/xiang" shipped in the published snapshot
+    # exactly this way -- see the neutral() filter in step_pack.
+    n_pack = 0
+    pack_abs = os.path.join(root, PACK_PATH)
+    if os.path.isfile(pack_abs):
+        try:
+            with tarfile.open(pack_abs, "r:xz") as tf:
+                for mem in tf:
+                    n_pack += 1
+                    head = ("%s %s %s" % (mem.name, mem.uname, mem.gname))
+                    h, g = identity_hits(head.encode(),
+                                         "%s!%s [tar header]"
+                                         % (PACK_PATH, mem.name))
+                    hits += h
+                    forgiven += g
+                    src = tf.extractfile(mem)
+                    if src is None:
+                        continue
+                    h, g = identity_hits(src.read(),
+                                         "%s!%s" % (PACK_PATH, mem.name))
+                    hits += h
+                    forgiven += g
+        except Exception as exc:
+            failures.append("pack could not be opened for the identity "
+                            "scan: %s" % exc)
     if hits:
         shown = set()
         for r, pat, snip in hits:
@@ -614,8 +724,11 @@ def inspect_tree(root, label, manifest=None, expect_pack_sha=None,
              "BENIGN_CONTEXTS -- do not remove the pattern")
         failures.append("%d identity hit(s)" % len(hits))
     else:
-        ok("anonymity: clean across %d files (%s)"
-           % (len(files), ", ".join(p.decode() for p in IDENTITY_PATTERNS)))
+        ok("anonymity: clean across %d files%s (%s)"
+           % (len(files),
+              " + %d pack member(s), headers included" % n_pack if n_pack
+              else "",
+              ", ".join(p.decode() for p in IDENTITY_PATTERNS)))
         if forgiven:
             info("%d occurrence(s) matched BENIGN_CONTEXTS and were forgiven"
                  % forgiven)
@@ -653,10 +766,13 @@ def inspect_tree(root, label, manifest=None, expect_pack_sha=None,
             print("       %-9s %s -> %s" % (why, r, t))
         failures.append("%d unsafe symlink(s)" % len(unsafe))
     elif links:
-        ok("symlinks: all %d relative and inside the tree" % len(links))
+        # Since step_prune inlines them, a symlink here means the tree was
+        # built by an older prepare.py -- 4open would serve each one as a
+        # text file holding the link path, so they must not ship.
+        warn("symlinks: %d present -- step_prune should have inlined these; "
+             "4open would serve them as text stubs" % len(links))
     else:
-        warn("symlinks: none present "
-             "(the snapshot has 55 -- if this is the mirror, 4open dropped them)")
+        ok("symlinks: none (inlined at export, so the proxy cannot stub them)")
 
     dangling = [r for p, r in links if not os.path.exists(p)]
     if dangling:
@@ -842,7 +958,7 @@ def step_export(ctx):
 
 
 def step_prune(ctx):
-    hdr("STEP 3/12  prune non-shippable paths")
+    hdr("STEP 3/12  prune non-shippable paths, inline symlinks")
     stage = ctx["stage"]
     n_files = n_bytes = 0
     for rel in PRUNE_PATHS:
@@ -890,6 +1006,8 @@ def step_prune(ctx):
     ok("removed %d __pycache__ file(s)" % pyc)
     print()
     info("pruned %d files, %s" % (n_files, mb(n_bytes)))
+    print()
+    deref_symlinks(stage)
 
 
 def step_pack(ctx):
@@ -917,10 +1035,31 @@ def step_pack(ctx):
     info("compressing %s with preset 9|EXTREME -- takes a few minutes" % mb(raw))
     info("member order is deliberate; see PACK_MEMBERS in this script")
 
+    def neutral(ti):
+        """Strip the packer's identity and the wall clock from every header.
+
+        tar records the owning user and group by NAME.  Left alone these read
+        "xiang/xiang" on all 13 members -- which `tar tvf` prints on every
+        line and INSTALL.py restores.  The identity scan cannot see it: the
+        pack is xz-compressed, so a raw byte search over the file matches
+        nothing.  This shipped in the published snapshot before it was found
+        by hand, 2026-08-13; see the pack arm of the scan in inspect_tree.
+
+        Fixing mtime too makes the archive byte-identical across exports.
+        `git archive HEAD:<subdir>` archives a TREE, which carries no commit
+        timestamp, so it stamps the current time -- without this the pack,
+        and therefore the snapshot commit, changes on every single run.
+        """
+        ti.uid = ti.gid = 0
+        ti.uname = ti.gname = ""
+        ti.mtime = NEUTRAL_EPOCH
+        return ti
+
     with tarfile.open(pack_abs, mode="w:xz",
                       preset=9 | lzma.PRESET_EXTREME) as tf:
         for m in PACK_MEMBERS:
-            tf.add(os.path.join(stage, m), arcname=m, recursive=False)
+            tf.add(os.path.join(stage, m), arcname=m, recursive=False,
+                   filter=neutral)
 
     size = os.path.getsize(pack_abs)
     digest = sha256_file(pack_abs)
@@ -1031,6 +1170,14 @@ def step_manifest(ctx):
                         else ctx.get("pack_sha")),
         "files": files,
     }
+    # Keep the OUTGOING manifest before overwriting it.  If the mirror later
+    # serves a tree matching this file rather than the new one, the mirror is
+    # merely stale -- and that is the difference between "wait another hour"
+    # and "the scrub failed", which the raw per-file diff cannot express.
+    if os.path.isfile(ctx["manifest_path"]):
+        shutil.copy2(ctx["manifest_path"], ctx["manifest_path"] + ".prev")
+        info("previous manifest kept at %s.prev" % ctx["manifest_path"])
+
     with open(ctx["manifest_path"], "w") as f:
         json.dump(data, f, indent=1, sort_keys=True)
     ctx["pack_sha"] = data["pack_sha256"]
@@ -1187,6 +1334,58 @@ def step_fouropen(ctx):
         """ % "\n".join("          " + t for t in REDACTION_TERMS), y)
 
 
+def tree_matches_manifest(root, manifest):
+    """True when `root` reproduces `manifest` exactly -- same names, same sizes."""
+    have = {r: os.path.getsize(p) for p, r in walk_files(root)}
+    have.update({r: None for _, r in walk_links(root)})
+    want = manifest.get("files") or {}
+    if set(have) != set(want):
+        return False
+    return not [r for r in want
+                if want[r] is not None and have[r] is not None
+                and want[r] != have[r]]
+
+
+def diagnose_stale(root, ctx):
+    """Distinguish "the mirror has not refreshed" from "the scrub is broken".
+
+    A mirror that has not re-polled serves the PREVIOUS tree, which the current
+    manifest then reports as thousands of missing and changed files -- a wall of
+    noise that reads exactly like catastrophic corruption.  Re-testing the same
+    tree against the manifest saved just before the last rebuild collapses that
+    into a one-line verdict, and only that comparison can tell the two apart.
+    """
+    prev_path = ctx["manifest_path"] + ".prev"
+    if not os.path.isfile(prev_path):
+        return
+    try:
+        with open(prev_path) as f:
+            prev = json.load(f)
+    except Exception as exc:
+        warn("could not read %s: %s" % (prev_path, exc))
+        return
+    if not tree_matches_manifest(root, prev):
+        return          # genuinely different from BOTH snapshots -- a real fault
+
+    print()
+    bad("STALE MIRROR -- this ZIP is the PREVIOUS snapshot %s, not the %s you"
+        % ((prev.get("snapshot_commit") or "?")[:12],
+           (ctx.get("snap_sha") or "?")[:12]))
+    bad("just pushed.  Nothing above is a scrub failure.")
+    info("The tree matches %s exactly, so 4open simply has not re-read the"
+         % prev_path)
+    info("branch yet. Wait, re-download, and check again.")
+    if ctx.get("pushed_at"):
+        info("pushed %s ago; allow %s in total."
+             % (human_delta(time.time() - ctx["pushed_at"]),
+                human_delta(MIRROR_LAG_SECONDS)))
+    print()
+    info("Re-download later, then check again with EITHER:")
+    info("  --only checkmirror --zip <new file>   inspect now, no waiting")
+    info("  --update --resume  --zip <new file>   wait out the clock first")
+    info("Re-checking is free and repeatable: nothing is pushed or rebuilt.")
+
+
 def check_mirror_zip(ctx, zip_path):
     """Expand a downloaded 4open ZIP under CHECK_DIR and inspect it.
 
@@ -1221,11 +1420,14 @@ def check_mirror_zip(ctx, zip_path):
         failures = inspect_tree(root, "4open mirror (downloaded ZIP)",
                                 manifest=ctx.get("manifest"),
                                 expect_pack_sha=ctx.get("pack_sha"))
+        if failures:
+            diagnose_stale(root, ctx)
 
         print()
         info("REMINDER: the mirror is a live proxy, not a copy. Any fix means")
-        info("push to GitHub, wait for auto-update (hourly max), re-download,")
-        info("and re-run: --update  (or --update --resume to skip the rebuild)")
+        info("push to GitHub, wait for auto-update, re-download, re-check:")
+        info("  --update                             rebuild, push, wait, check")
+        info("  --only checkmirror --zip <file>      just re-check, no waiting")
         info("Do NOT re-mint to force a refresh -- you risk losing the ID.")
         return failures
     finally:
@@ -1474,7 +1676,7 @@ def run_update(ctx, resume=False):
 STEPS = [
     ("preflight", "environment, git state, staging dir", step_preflight),
     ("export", "git archive HEAD:%s into staging" % SOURCE_SUBDIR, step_export),
-    ("prune", "delete attic/ and editor swap files", step_prune),
+    ("prune", "delete attic/ and swap files, inline symlinks", step_prune),
     ("pack", "build data/bigfiles.tar.xz, drop loose originals", step_pack),
     ("verify", "inspect the staging tree", step_verify),
     ("initrepo", "git init + one squashed commit + reconciliation", step_initrepo),

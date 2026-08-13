@@ -6191,19 +6191,21 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 	}
 
 
-	#[test]
-	pub fn test_zkreg_main(){//test zkreg.main
+	/// ONE body for the zkreg main vehicles: b_par=false = the
+	/// historical small_data entry; b_par=true = small_data_par
+	/// (parallel jobs, LARGE set). Tail shared verbatim.
+	fn zkreg_main_body(b_par: bool){//test zkreg.main
 		let b_check_lkup = true;
 		let _b_light_test = false;
 		let _b_setup = false;
-		small_data::<Fr>(b_check_lkup); //small data
+		if b_par { small_data_par::<Fr>(b_check_lkup); }
+		else { small_data::<Fr>(b_check_lkup); }
 		//small_email::<Fr>(b_check_lkup); //M6: aggressive multi-chunk run
 		//small_dna::<Fr>(); //small data dna set
 		//full_dna::<Fr>(b_check_lkup);
 		//small_debug::<Fr>(b_check_lkup); //small_data + max_word=2
 		//small_data2::<Fr>(b_check_lkup);  //10k data
 		//small_data3::<Fr>(b_check_lkup); //multi circ of 10k data -> fails
-		//small_data_par::<Fr>(b_check_lkup); //small data (parallel jobs)
 		//small_data_debug::<Fr>(b_check_lkup);  //for debug
 		//small_data4::<Fr>(b_check_lkup); //multi circ of 1M, 2M, 4M data
 		//full_data1::<Fr>(b_check_lkup);
@@ -6221,7 +6223,9 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		utils::logger::flush_logger();
 
 		// A proof that did not verify must not reach the sentinel.
-		assert_no_verify_fails("test_zkreg_main");
+		// Label names the arm so a failure attributes to its vehicle.
+		assert_no_verify_fails(
+			if b_par {"small_data_par"} else {"test_zkreg_main"});
 
 		// Completion sentinel for run_checkpoints.py. Not reached if
 		// full_par panics -- panic aborts the test, no sentinel written.
@@ -6230,6 +6234,14 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 			utils::os::proj_root());
 		let _ = std::fs::write(&sentinel, "ok\n");
 	}
+
+	#[test]
+	pub fn test_zkreg_main(){ zkreg_main_body(false) }
+
+	/// small_data_par coverage (T9902): LARGE set, run via --ignored.
+	#[test]
+	#[ignore]
+	pub fn test_zkreg_par_main(){ zkreg_main_body(true) }
 
 	/// Discharge-approach stats over the paper_data debug bundle.
 	/// TEMP (gen dlp list -- remove after): discharge the clean Enron emails

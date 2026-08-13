@@ -31072,11 +31072,6 @@ Goal 1. T9901: determine_config
 	[i] run two other tasks of verification
 	[j] test most clean
 	[f] final check -> close
---- TODO ---
-
-Goal 5. more soundness errors
-	[a] S109 design check -> test -> closed
-	[b] S107: bound cmF and z[0] -> 
 
 Goal 6. T902: set up private repo for open science
 	[a] design for the prep script
@@ -31096,10 +31091,23 @@ Goal 6. T902: set up private repo for open science
 	[h] more cleaning issues.
 	[i] clear more issues of T902
 	[j] do an update menu for prepare.py
+	[k] verify data
+--- TODO ---
+
+Goal 5. more soundness errors
+	[a] S109 design check -> test -> closed
+	[b] S107: bound cmF and z[0] -> add a vector of four more cmF
+		-> mostly ok
+		-> continue to test
+		-> find waste of RAM in key replication -> measure it
+		-> do trunction of key to save RAM and test it.
+
+
 
 Goal 7. T9902: minimize lkup share for tune
 	[a] design
 	[b] review code
+	[c] most tests come back two more tests
 
 
 
@@ -31109,6 +31117,9 @@ Goal 7. T9902: minimize lkup share for tune
 
 
 ----- ACTIVE GOALS -----
+Setting: https://anonymous.4open.science/r/bora_sec27
+	https://github.com/xfu2006/borasub49001
+	(for code anonymous release)
 Goal FINAL1. start data collection on GCP
 	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs. -> DONE
 	[b] server2 -> full_clam (6:45pm 06/24 W->7:75pm 06/26) -> DONE for now

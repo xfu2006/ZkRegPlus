@@ -520,8 +520,8 @@ where
 		//PLACEMENT IS LOAD-BEARING: is_basecase must be computed
 		//strictly AFTER to_vec_fp_var (:498) and before this call.
 		//FpVar::is_zero allocates witness variables, and
-		//sigma_ir1cs.rs:2468 asserts the witness count on entry to
-		//to_vec_fp_var is 0 or 6 because start_F = 12 is hard-coded
+		//sigma_ir1cs.rs asserts the witness count on entry to
+		//to_vec_fp_var is 0 or 14 because start_F = 20 is hard-coded
 		//(mod.rs:452). Hoisting it any higher panics there -- and
 		//without that assert it would silently mis-slice the folded
 		//cmF window.
@@ -691,6 +691,18 @@ where
                 Ok(self.u_i_cmF.unwrap_or(C1::zero()))
             })?,
         };
+
+		//S107: the cmF limbs absorbed into the msg2 transcript at
+		//the PREVIOUS step (carried in z_i[2..6]) must BE the
+		//folded commitment u_i.cmF. Basecase: u_i is the dummy
+		//and z_i is unread, so the check is gated off.
+		let u_cmf_limbs = u_i.cmF.to_native_sponge_field_elements()?;
+		assert!(u_cmf_limbs.len()==4, "cmF limbs not 4");
+		let not_base = is_basecase.clone().not();
+		for k in 0..4{
+			u_cmf_limbs[k].conditional_enforce_equal(
+				&z_i[2+k], &not_base)?;
+		}
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 6: cs: {}, vars: {}",
 				cs.num_constraints() - nc,

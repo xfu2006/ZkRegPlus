@@ -794,6 +794,47 @@ def point_current_job(part1_log, part2_log):
             pass
 
 
+# ---- greppable run trailer (peak RSS + wall clock) -------------------
+# spawn() writes ONLY the child's stdout into the per-job run log, and
+# point_current_job() symlinks CURRENT_JOB.log at that file, so neither
+# the wall clock nor the peak RSS appears there unless we append it.
+# Each line below starts with a FIXED prefix at column 0 so a grep
+# matches the label, never the number.
+#
+# PEAK RSS SOURCE: JobHandle.peak_rss_gb, filled by _watch_child from
+# _rss_gb(_tree_pids(pid)) -- the max, over samples, of the SUM of
+# /proc/<pid>/status VmRSS across every process whose parent chain
+# reaches the spawned child.  UNIT: GiB (1024^3 bytes).
+#   COVERS   the whole descendant tree alive at sample time: numactl,
+#            cargo, the test binary and any grandchildren (the pid walk
+#            follows parent chains to any depth, not just direct
+#            children).
+#   MISSES   (a) a spike shorter than the RSS_POLL_S (10 s) sampling
+#            interval; (b) a process that both starts and exits between
+#            two samples; (c) PAPER_DATA.py's own RSS, which is not in
+#            the child's tree.
+#   INFLATES pages SHARED between tree members (mapped libraries, COW
+#            after fork) count once per process, so a many-process fold
+#            reads higher than the kernel's true unique footprint.
+# Deliberately NOT resource.getrusage(RUSAGE_CHILDREN): its ru_maxrss is
+# the max over INDIVIDUAL reaped children and never their sum, so it
+# under-reports a parallel multi-job fold -- exactly this run's shape --
+# and it only counts children already waited for.
+RC_PREFIX = "PAPER_DATA_RC"
+RSS_PREFIX = "PAPER_DATA_PEAK_RSS_GIB"
+WALL_PREFIX = "PAPER_DATA_WALL_CLOCK_S"
+
+
+def append_run_trailer(log_path, res):
+    """Append the rc / peak-RSS / wall-clock trailer to the per-job run
+    log -- the file CURRENT_JOB.log points at.  Call AFTER ctx.finish()
+    so these lines are never seen by the failure scan."""
+    with open(log_path, "a") as f:
+        f.write("\n%s %d\n" % (RC_PREFIX, res.rc))
+        f.write("%s %.3f\n" % (RSS_PREFIX, res.peak_rss_gb))
+        f.write("%s %.1f\n" % (WALL_PREFIX, res.wall_s))
+
+
 def _log_mtime(path):
     try:
         return os.path.getmtime(path)
@@ -1853,6 +1894,7 @@ def dry_total():
 
 TOP_CHOICES = [
     ("small", "small data"),
+    ("small_full_snark", "small sample, one full SNARK proof"),
     ("dry_run", "dry_run %s" % _cost_tag(*dry_total(), lead="")),
     ("full_run", "full_run"),
     ("figs", "generate list of figures"),
@@ -1894,8 +1936,11 @@ def _parse_items(items):
     return keys
 
 
+NO_ITEM_TOPS = ("small", "figs", "small_full_snark")
+
+
 def resolve_plan(run, items):
-    if run in ("small", "figs"):
+    if run in NO_ITEM_TOPS:
         return ResolvedPlan(top=run, mode=None, leaf_keys=[])
     if run not in ("dry_run", "full_run"):
         raise SystemExit("--run: unknown value %r" % run)
@@ -1944,7 +1989,7 @@ def interactive_select():
     if not choice.isdigit() or not 1 <= int(choice) <= len(TOP_CHOICES):
         raise SystemExit("invalid choice %r" % choice)
     top = TOP_CHOICES[int(choice) - 1][0]
-    if top in ("small", "figs"):
+    if top in NO_ITEM_TOPS:
         return resolve_plan(top, None)
     _show_submenu(top)
     items = input("choice(s) [1]: ").strip() or "1"
@@ -2002,7 +2047,61 @@ def run_small():
 
 
 # =====================================================================
-# Layer A -- figs (menu #4: regenerate every figure + review PDF)
+# Layer A -- small_full_snark (menu #2: small sample, one full
+# SNARK proof)
+# =====================================================================
+
+# Same small_data_set config and capacities as small_data_par (the
+# 4-parallel-job small sample), but with the decider run for real.  The
+# three flags that define this entry are Rust GlobalConfig fields
+# (crates/utils/src/consts.rs), NOT env vars or CLI args, and they are
+# set in small_par_full_snark() in crates/zkregplus/src/zkp_driver.rs:
+#   b_light_test   = false  -- nothing in the decider circuit is elided
+#   b_folding_only = false  -- a proof IS produced after the folding
+#   b_one_proof    = true   -- every job folds, only Job 0 proves
+# Selecting the Rust test that sets them is the same mechanism menu #1
+# uses for SMALL_TEST; neo_env() strips every ZKR_* knob, so nothing
+# from the operator's shell can override the three.
+SMALL_SNARK_TEST = ("bora_data_driver::tests_bora_data_driver::"
+                     "test_small_full_snark")
+SMALL_SNARK_REPORT = os.path.join(REPO, "data", "small_data_set",
+                                   "reports", "report.dat")
+
+
+def run_small_full_snark():
+    """Menu item #2: one-process cargo test of the small_data_par
+    config that folds every job and then emits ONE complete SNARK
+    proof, with no light-test elision of the decider circuit.  Runs in
+    the FOREGROUND like small/figs -- it is far longer than either, so
+    the operator watches CURRENT_JOB.log, which gains a trailer
+    carrying peak RSS and wall clock."""
+    ctx = JobHandle("small_snark", "full_snark")
+    ctx.note("mode=small_full_snark (single proc; b_light_test="
+             "false, b_folding_only=false, b_one_proof=true)")
+    ctx.reports.append(SMALL_SNARK_REPORT)
+    run_log = ctx.log_path("run")
+    rc = run_rust_single(ctx, SMALL_SNARK_TEST, neo_env())
+    res = ctx.finish(rc)
+    # After finish(): the trailer must not be visible to the fail scan,
+    # and res is where peak_rss_gb / wall_s become final.
+    append_run_trailer(run_log, res)
+    _summary_line("%-4s   small_full_snark rc=%s wall=%ds "
+                  "peak_rss=%.1fGB idle=%ds/%ds" % (
+                      "FAIL" if res.failed else "OK", res.rc,
+                      int(res.wall_s), res.peak_rss_gb,
+                      int(res.peak_idle_s), STALL_S))
+    log("small_full_snark: peak RSS and wall clock -> %s"
+        % CURRENT_JOB_LOG)
+    if res.failed:
+        log("small_full_snark: FAILED -- triage: %s"
+            % res.triage_tgz)
+        return 1
+    log("small_full_snark: report -> %s" % SMALL_SNARK_REPORT)
+    return 0
+
+
+# =====================================================================
+# Layer A -- figs (menu #5: regenerate every figure + review PDF)
 # =====================================================================
 
 RUN_DATA_DIR = os.path.join(REPO, "data", "paper_data", "run_data")
@@ -2012,7 +2111,7 @@ PDF_PATH = os.path.join(PDF_DIR, "list_figures.pdf")
 
 
 def run_figs():
-    """Menu item #4: regenerate every figs/*.tex fragment from whatever
+    """Menu item #5: regenerate every figs/*.tex fragment from whatever
     is currently in raw_data/ (RUNALL.sh tolerates per-generator
     failures -- an ungenerated table just keeps its prior content),
     then compile list_figures.pdf. Runs in the foreground: this takes
@@ -2068,6 +2167,11 @@ def main():
         if args.plan_only:
             return 0
         return run_figs()
+
+    if plan.top == "small_full_snark":
+        if args.plan_only:
+            return 0
+        return run_small_full_snark()
 
     if args.plan_only:
         return 0
@@ -5167,7 +5271,12 @@ class InteractiveSelectTest(unittest.TestCase):
         self.assertEqual(plan, ResolvedPlan("small", None, []))
 
     def test_submenu_selection(self):
-        with mock.patch("builtins.input", side_effect=["2", "dlp,clam"]):
+        # Derive the digit from TOP_CHOICES rather than hard-coding it: this
+        # test is about "a top entry WITH a submenu prompts for leaves", not
+        # about dry_run being second. It used to type "2", which silently
+        # became a different entry the moment the menu was reordered.
+        n = [k for k, _ in TOP_CHOICES].index("dry_run") + 1
+        with mock.patch("builtins.input", side_effect=[str(n), "dlp,clam"]):
             plan = interactive_select()
         self.assertEqual(plan.top, "dry_run")
         self.assertEqual(plan.leaf_keys, ["dlp", "clam"])

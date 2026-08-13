@@ -449,13 +449,10 @@ where
 	GM: GadgetMapper<C1::ScalarField,LK> + std::clone::Clone + Debug,
 {
     pub fn new(poseidon_config: PoseidonConfig<C1::ScalarField>, F: FC, lk: Arc<LK>, size_F: usize) -> Self {
-		let start_F = 12;
-							//because there are 6 vars (pp_hash, i,z_0 (2 ele), 
-							//z_i (2 ele) - see gen_constraints of circuit.rs)
-							//before F.witness in AugFCirc.
-							//Plus the sum of cmF_size (4)
-							// + extra_var_size (2) of Wit
-							// that's where statement starts
+		//pp_hash + i + z_0(6) + z_i(6) + cmF(4) + unused sizes(2);
+		//the witness index where stmt||msg1 begins -- runtime-
+		//asserted in to_vec_fp_var (sigma_ir1cs.rs).
+		let start_F = 20;
         Self {
 			_gm: PhantomData,
             poseidon_config,
