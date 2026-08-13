@@ -2071,10 +2071,11 @@ SMALL_SNARK_REPORT = os.path.join(REPO, "data", "small_data_set",
 def run_small_full_snark():
     """Menu item #2: one-process cargo test of the small_data_par
     config that folds every job and then emits ONE complete SNARK
-    proof, with no light-test elision of the decider circuit.  Runs in
-    the FOREGROUND like small/figs -- it is far longer than either, so
-    the operator watches CURRENT_JOB.log, which gains a trailer
-    carrying peak RSS and wall clock."""
+    proof, with no light-test elision of the decider circuit.  The
+    caller has already daemonized, so this runs with stdio on
+    /dev/null: the operator follows CURRENT_JOB.log (repointed by
+    run_rust_single) and SUMMARY.log.  CURRENT_JOB.log gains a trailer
+    carrying peak RSS and wall clock once the run finishes."""
     ctx = JobHandle("small_snark", "full_snark")
     ctx.note("mode=small_full_snark (single proc; b_light_test="
              "false, b_folding_only=false, b_one_proof=true)")
@@ -2171,6 +2172,21 @@ def main():
     if plan.top == "small_full_snark":
         if args.plan_only:
             return 0
+        # Unlike small/figs this runs for hours, so it detaches like the
+        # sequenced tops do.  Only ONE process runs, so there is no
+        # part2 log to advertise.  run_rust_single() repoints
+        # CURRENT_JOB.log and the leaf writes SUMMARY.log, so nothing is
+        # lost when stdio goes to /dev/null.
+        ts = _ts()
+        print("[paper_data %s] detaching into the background "
+              "(survives logout; no nohup needed)." % ts)
+        print("[paper_data %s]   summary log:    tail -F %s"
+              % (ts, SUMMARY_LOG))
+        print("[paper_data %s]   current job:    tail -F %s"
+              % (ts, CURRENT_JOB_LOG))
+        sys.stdout.flush()
+        go_background()
+        install_signal_handlers()
         return run_small_full_snark()
 
     if args.plan_only:
