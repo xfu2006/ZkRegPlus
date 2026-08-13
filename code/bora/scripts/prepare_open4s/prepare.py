@@ -135,13 +135,23 @@ GITIGNORE_BLOCK_HEADER = """
 # binary.  4open auto-anonymizes only owner/org/repo, only in text files.
 IDENTITY_PATTERNS = [b"xiang", b"hofstra", b"xfu20", b"/home/", b"thinkpad"]
 
-# (pattern, path substring) pairs that are known-benign.  Empty today: the
-# tracked tree scans clean once attic/ and the two swap files are pruned.  Add
-# entries here rather than weakening the sweep -- e.g. ICU locale tags render
-# as "zh-xiang", and the public Enron corpus contains the token "hofstra".
-IDENTITY_ALLOWLIST = [
-    # (b"xiang", "some/vendored/icu/path"),
+# A hit is forgiven only when one of these byte strings appears in the window
+# AROUND it.  Allowlisting by context rather than by filename matters: a real
+# /home/xiang added to an already-forgiven file would still be caught.
+#
+# Grow this list rather than weakening IDENTITY_PATTERNS.  Known future
+# candidates, should they ever reach the tracked tree: b"zh-xiang" (an ICU
+# locale tag inside CentOS .so files) and "hofstra" occurring inside the public
+# Enron corpus, which is about a mail author, not this paper's author.
+BENIGN_CONTEXTS = [
+    # Two clamav READMEs cite an example path that was scrubbed to "anon"
+    # long ago: "/home/anon/Desktop/NewResearch/Projects/ZkregPlus/...".
+    b"/home/anon/",
 ]
+
+# Bytes of context shown for each hit, and searched for BENIGN_CONTEXTS.
+CONTEXT_BEFORE = 40
+CONTEXT_AFTER = 60
 
 # Terms to paste into the 4open.science "Terms to redact" box.
 REDACTION_TERMS = [
@@ -256,6 +266,20 @@ def walk_links(root):
                 yield p, os.path.relpath(p, root)
 
 
+def extract_all(tf, path):
+    """tf.extractall with an explicit filter where the runtime supports one.
+
+    Python 3.12 deprecates the filterless call and 3.14 makes it an error.
+    "tar" is used rather than "data" because it preserves the executable bit,
+    which several shipped scripts rely on; it still blocks absolute paths and
+    ../ traversal.
+    """
+    try:
+        tf.extractall(path, filter="tar")
+    except TypeError:                      # Python < 3.12
+        tf.extractall(path)
+
+
 def sha256_file(path):
     h = hashlib.sha256()
     with open(path, "rb") as f:
@@ -330,7 +354,7 @@ def step_export(ctx):
     proc = subprocess.Popen(["git", "archive", "HEAD:%s" % SOURCE_SUBDIR],
                             cwd=ctx["repo"], stdout=subprocess.PIPE)
     with tarfile.open(fileobj=proc.stdout, mode="r|") as tf:
-        tf.extractall(stage)
+        extract_all(tf, stage)
     proc.stdout.close()
     if proc.wait() != 0:
         die("git archive failed")
@@ -484,42 +508,74 @@ def step_verify(ctx):
            % (mb(SIZE_LIMIT), mb(biggest[0]), biggest[1]))
 
     # --- identity sweep, text AND binary ---
+    # Binaries are included on purpose: 4open's redaction terms apply to text
+    # only, so anything embedded in a binary reaches reviewers verbatim.
     hits = []
+    forgiven = 0
+    n_scanned = 0
     for p, r in walk_files(stage):
         try:
             with open(p, "rb") as f:
                 blob = f.read()
         except OSError:
             continue
+        n_scanned += 1
         low = blob.lower()
         for pat in IDENTITY_PATTERNS:
-            if pat in low:
-                if any(a_pat == pat and a_path in r for a_pat, a_path in IDENTITY_ALLOWLIST):
+            start = 0
+            while True:
+                i = low.find(pat, start)
+                if i < 0:
+                    break
+                start = i + 1
+                window = low[max(0, i - CONTEXT_BEFORE): i + len(pat) + CONTEXT_AFTER]
+                if any(b in window for b in BENIGN_CONTEXTS):
+                    forgiven += 1
                     continue
-                hits.append((r, pat.decode()))
+                snippet = window.decode("utf-8", "replace").replace("\n", " ")
+                hits.append((r, pat.decode(), snippet))
     if hits:
-        for r, pat in hits[:25]:
-            print("       %-12s %s" % (pat, r))
+        seen = set()
+        for r, pat, snip in hits:
+            key = (r, pat)
+            if key in seen:
+                continue
+            seen.add(key)
+            if len(seen) > 25:
+                break
+            print("       %-10s %s" % (pat, r))
+            print("       %-10s %s...%s" % ("", " " * 0, snip[:110]))
         if len(hits) > 25:
-            info("... and %d more" % (len(hits) - 25))
+            info("... and %d more hit(s)" % (len(hits) - 25))
+        info("if a hit is genuinely harmless, add its surrounding text to "
+             "BENIGN_CONTEXTS -- do not remove the pattern")
         failures.append("%d identity hit(s)" % len(hits))
     else:
-        ok("identity sweep clean (%s) across %d files"
-           % ("/".join(p.decode() for p in IDENTITY_PATTERNS),
-              sum(1 for _ in walk_files(stage))))
+        ok("identity sweep clean across %d files (patterns: %s)"
+           % (n_scanned, ", ".join(p.decode() for p in IDENTITY_PATTERNS)))
+        if forgiven:
+            info("%d occurrence(s) matched BENIGN_CONTEXTS and were forgiven"
+                 % forgiven)
 
     # --- stray VCS / editor metadata ---
+    # .gitignore / .gitkeep / .gitattributes are ordinary repo files here (19,
+    # 8 and 1 of them respectively, all carrying no identity), so only the
+    # genuinely dangerous shapes are flagged: .gitmodules records submodule
+    # URLs -- which is how a bitbucket username reached the tracked tree -- and
+    # a nested .git directory would carry full author history.
     strays = [r for _, r in walk_files(stage)
-              if os.path.basename(r) in (".gitmodules", ".gitattributes")
-              or os.path.basename(r).startswith(".git")
+              if os.path.basename(r) == ".gitmodules"
+              or ".git/" in r.replace(os.sep, "/") + "/"
               or r.endswith(PRUNE_SUFFIXES)]
-    strays = [r for r in strays if os.path.basename(r) != ".gitignore"]
     if strays:
         for r in strays:
             print("       %s" % r)
         failures.append("%d stray VCS/editor file(s)" % len(strays))
     else:
-        ok("no stray .git* or editor files (.gitignore files are expected)")
+        n_keep = sum(1 for _, r in walk_files(stage)
+                     if os.path.basename(r).startswith(".git"))
+        ok("no .gitmodules, nested .git, or editor swap files "
+           "(%d expected .gitignore/.gitkeep entries kept)" % n_keep)
 
     # --- symlinks must be relative and stay inside the tree ---
     bad_links = []

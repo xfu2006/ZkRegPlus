@@ -437,14 +437,12 @@ pub struct SnarkAdvice<F:PrimeField>{
 	pub r_all_words: F,
 	/// the nonce for kzg_len
 	pub r_kzg_len: F,
-	/// random nonce for vec_r (for vec com)
+	/// nonce hiding vec_r, shared by the vec_com and the kzg commit:
+	/// the qa_nizk proves both from ONE witness vector, so a split
+	/// nonce would make that proof unsatisfiable.
 	pub r_vec_r: F,
-	/// random nonce for vec_r (for kzg )
-	pub r_vec_r_kzg: F,
-	/// nonce for hiding vec_v (for vec_com)
+	/// nonce hiding vec_v; shared by vec_com and kzg as for r_vec_r.
 	pub r_vec_v: F,
-	/// nonce for hiding vec_v (for kzg)
-	pub r_vec_v_kzg: F,
 	/// the vec of v_i
 	pub vec_v: Vec<F>,
 	/// the vec of r_i
@@ -461,9 +459,7 @@ impl <F:PrimeField> SnarkAdvice<F>{
 			r_all_words: zero,
 			r_kzg_len: zero,
 			r_vec_r: zero,
-			r_vec_r_kzg: zero,
 			r_vec_v: zero,
-			r_vec_v_kzg: zero,
 			vec_v: vf.clone(),
 			vec_r: vf.clone()
 		}
@@ -673,15 +669,14 @@ where
 			}).collect::<Vec<(F,F)>>();
 		let (vec_r, vec_v): (Vec<F>, Vec<F>) = vec_r_v.into_iter().unzip(); 
 
-		let rs:Vec<E::ScalarField> = 
-			rayon::iter::repeat(<E::G1 as Group>::ScalarField::rand(rng))
-			.take(4).collect();
-		let (r_vec_r, r_vec_r_kzg, r_vec_v, r_vec_v_kzg) =
-			(rs[0], rs[1], rs[2], rs[3]);
+		//two INDEPENDENT nonces: rayon::iter::repeat draws once and
+		//clones, which made all four of these identical.
+		let r_vec_r = <E::G1 as Group>::ScalarField::rand(rng);
+		let r_vec_v = <E::G1 as Group>::ScalarField::rand(rng);
 
 		let snark_input = SnarkAdvice::<F>{
-			rands, 
-			r_all_words, r_kzg_len, r_vec_r, r_vec_v, r_vec_r_kzg, r_vec_v_kzg,
+			rands,
+			r_all_words, r_kzg_len, r_vec_r, r_vec_v,
 			vec_r, vec_v
 		};
 
@@ -814,9 +809,9 @@ where
 			vec![snark_input.r_vec_r]].concat();
 		let vcom_vec_r = VecCom::<'a,E>::commit(&pkey.vec, &vec_r, &zero)
 			.expect("vcom_vec_r error");
-		//vec_r[vec_r_len-1] = snark_input.r_vec_r_kzg.clone();
+		//after the reverse, index 0 IS the r_vec_r appended above:
+		//kzg and vec_com must commit to the SAME vector.
 		vec_r.reverse();
-		vec_r[0] = snark_input.r_vec_r_kzg.clone();
 		let kzg_vec_r = KZG::<'a,E>::commit(&pkey.kzg, &vec_r, &zero)
 			.expect("kzg_vec_r error"); 
 
@@ -825,9 +820,9 @@ where
 			vec![snark_input.r_vec_v]].concat();
 		let vcom_vec_v = VecCom::<'a,E>::commit(&pkey.vec, &vec_v, &zero)
 			.expect("vcom_vec_v error");
-		//vec_v[vec_v_len-1] = snark_input.r_vec_v_kzg.clone();
+		//after the reverse, index 0 IS the r_vec_v appended above:
+		//kzg and vec_com must commit to the SAME vector.
 		vec_v.reverse();
-		vec_v[0] = snark_input.r_vec_v_kzg.clone();
 		let kzg_vec_v = KZG::<'a,E>::commit(&pkey.kzg, &vec_v, &zero)
 			.expect("kzg_vec_r error"); 
 		rand_inp.kzg_vec_r = kzg_vec_r.clone();
@@ -875,11 +870,11 @@ where
 			all_len.reverse();
 
 			let mut vec_r = snark_input.vec_r.clone();
-			vec_r.push(snark_input.r_vec_r_kzg);
+			vec_r.push(snark_input.r_vec_r);
 			vec_r.reverse();
 
 			let mut vec_v = snark_input.vec_v.clone();
-			vec_v.push(snark_input.r_vec_v_kzg);
+			vec_v.push(snark_input.r_vec_v);
 			vec_v.reverse();
 
 
@@ -1371,5 +1366,44 @@ mod tests_batch_proc {
 		p.hash_cmF.serialize_compressed(&mut buf).unwrap();
 		assert_eq!(reported, buf.len(),
 			"BatchProof size estimate != serialized bytes");
+	}
+
+	/// S121: the per-word pads and the two vector nonces must be fresh
+	/// draws; rayon::iter::repeat clones ONE value into every slot.
+	#[test]
+	fn snark_advice_nonces_are_distinct(){
+		use std::collections::HashSet;
+		type CS1E = KZG<'static, Bn254>;
+		let mut words = vec![];
+		let n_words = 20;
+		let mut rng = &mut test_rng();
+		for _i in 0..n_words{
+			let mut word = vec![];
+			for _j in 0..2{ word.push(Fr::rand(&mut rng)); }
+			words.push(word);
+		}
+		let lk = LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)), //0, null entry
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(1u32))]);
+		let lkup = Arc::new(lk);
+
+		let keysize = BatchProcessor::<Bn254,
+			LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>
+			::key_size(&words);
+		let (pk, _vk) = BatchProcessor::<Bn254,
+			LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>
+			::setup(&mut rng, keysize, n_words,
+				poseidon_canonical_config::<Fr>(), 0);
+		let (_gc, _ic, si) = BatchProcessor::<Bn254,
+			LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>
+			::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
+
+		assert_eq!(si.rands.len(), n_words, "rands length changed");
+		let uniq: HashSet<Fr> = si.rands.iter().cloned().collect();
+		assert_eq!(uniq.len(), n_words,
+			"per-word rands are not pairwise distinct");
+		assert!(si.r_vec_r != si.r_vec_v,
+			"r_vec_r and r_vec_v are the same draw");
 	}
 }

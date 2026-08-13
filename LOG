@@ -31048,19 +31048,35 @@ Goal 12. S102 + S110
 Goal 13. continue S102 + S110 regression testing -> DONE
 
 Thursday 08/13/2026
-Goal 1. T9901  
+Goal 1. T9901: determine_config  
 	[a] problem: make sure lower ring has
 		low configs
 	[b] multiple rounds of design to try to simualte legacy 
 	[c] brief test of measure class first and collect data
 	[d] go ove rthe deisng and critera again
+	[e] list all design defects right now.
 
 Goal 2. S121
 	[a] problem: rand generation
 	[b] code done and in test
+	[c] phase 1 edit passing
+	[d] phase 2 edit and test 
 
 Goal 3. T902: set up private repo for open science
-	[a]
+	[a] design for the prep script
+	[b] write a function to perform post packing
+		inspection after private repo is created:
+		annomymity scan, (2) file size limit scan,
+		(3) scan the data needed for the PAPER_DATA.py will be ready
+		after INSTALL.py 
+	[c] requirement: the interactive instruction should be clear about
+		how to deal with open4science, I'm going to use github
+		for the private repo. Show me instructions by instructions
+		and consider the lock up date of open4science.
+	[d] clear design issues
+		--
+	[d] implement prepare.py
+	[e] refine INSTALL.py given prepare.py generated tgz
 
 
 

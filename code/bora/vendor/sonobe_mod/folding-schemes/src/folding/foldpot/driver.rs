@@ -1466,8 +1466,8 @@ where
 					batch_v: snark_inp.vec_v[(word_id as usize)-1],
 					r_all_words: snark_inp.r_all_words,
 					r_kzg_len: snark_inp.r_kzg_len,
-					r_vec_r: snark_inp.r_vec_r_kzg,
-					r_vec_v: snark_inp.r_vec_v_kzg,
+					r_vec_r: snark_inp.r_vec_r,
+					r_vec_v: snark_inp.r_vec_v,
 					r_word_i: snark_inp.rands[(word_id as usize)-1],
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
 				};//end constructor StatementExtraInfo
@@ -1963,8 +1963,8 @@ where
 					batch_v: snark_inp.vec_v[(word_id as usize)-1],
 					r_all_words: snark_inp.r_all_words,
 					r_kzg_len: snark_inp.r_kzg_len,
-					r_vec_r: snark_inp.r_vec_r_kzg,
-					r_vec_v: snark_inp.r_vec_v_kzg,
+					r_vec_r: snark_inp.r_vec_r,
+					r_vec_v: snark_inp.r_vec_v,
 					r_word_i: snark_inp.rands[(word_id as usize)-1],
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
 				};//end constructor StatementExtraInfo
