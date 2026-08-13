@@ -54,6 +54,26 @@ TARGET_CLNSIG = {"Pathogenic", "Likely_pathogenic",
 # Fallback chrom -> RefSeq accession (GRCh38.p14). Normally taken from CLNHGVS.
 ACC_FALLBACK = {"17": "NC_000017.11", "21": "NC_000021.9"}
 
+# --- reference genome (NCBI E-utilities efetch) ----------------------------
+# NC_000017.11 is a VERSIONED RefSeq accession, so the sequence itself is
+# immutable. But efetch is a dynamic API, not a static file: it can return an
+# error page, a rate-limit notice, or a truncated body -- all with HTTP 200.
+# FASTA_MD5 is therefore the real gate (the role EXPECTED_MD5 plays for the
+# ClinVar .vcf.gz), backed by a cheap "does it start with '>'" check so a bad
+# body reports "not a FASTA" instead of an opaque digest mismatch.
+#
+# DELIBERATELY no tool=/email= parameters. NCBI's E-utilities guidelines ask
+# for them, but they are advisory, and an address baked into a tracked script
+# and a published provenance log would deanonymize the artifact. One request
+# per install sits orders of magnitude below the rate limits.
+FASTA_ACC   = "NC_000017.11"
+FASTA_MD5   = "581988bf93ed3f1f1a268c2608d6e0d0"
+FASTA_URL   = ("https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
+               f"?db=nuccore&id={FASTA_ACC}&rettype=fasta&retmode=text")
+SAMPLES_DIR = "chr17_samples"
+FASTA_FILE  = os.path.join(SAMPLES_DIR, f"{FASTA_ACC}.fasta")
+SAMPLE_LOG  = os.path.join(DOCS_DIR, "chr17_sample.log")
+
 # --- helpers ---------------------------------------------------------------
 def parse_info(info):
     """Parse a VCF INFO column 'k=v;k=v;flag' into a dict (flags -> True)."""
@@ -114,6 +134,31 @@ def write_variant_file(variants_dir, name, rec):
         for k, v in rec:
             f.write(f"{k}: {v}\n")
     return path
+
+
+# --- reference FASTA -------------------------------------------------------
+def parse_fasta_header(path):
+    """(accession, description) from the leading '>' line. Doubles as the
+    first line of defence against efetch returning an HTTP-200 error page."""
+    with open(path, "rb") as f:
+        first = f.readline()
+    if not first.startswith(b">"):
+        raise SystemExit(
+            f"[verify] ABORT: {path} does not start with '>'; efetch returned "
+            f"a non-FASTA body (error page or rate-limit notice?)")
+    acc, _, desc = first[1:].decode("ascii", "replace").rstrip("\n").partition(" ")
+    return acc, desc
+
+
+def count_fasta_bases(path):
+    """Sequence length: every post-header byte that is not whitespace."""
+    total = 0
+    with open(path, "rb") as f:
+        f.readline()                          # skip the header line
+        for line in f:
+            total += len(line.strip())
+    return total
+
 
 # --- external-tool wrappers (bgzip / tabix) --------------------------------
 # Project rule: one verify_* and one run_<tool> per external binary, all
@@ -227,6 +272,57 @@ def download_all(urls, dest):
     if os.path.exists(part):
         os.remove(part)
     raise RuntimeError(f"all candidate URLs failed; last error: {last_err}")
+
+
+def write_sample_log(acc, desc, seq_len, file_bytes, md5_local):
+    """docs/chr17_sample.log -- the peer of docs/retrieve_log.txt. BOTH are
+    parsed by data/paper_data/run_data/scripts/common.py:352-368 to source the
+    paper's dataset facts, so these key names are load-bearing: do not rename
+    them without updating that reader."""
+    os.makedirs(DOCS_DIR, exist_ok=True)
+    rows = [("date",            datetime.date.today().isoformat()),
+            ("accession",       acc),
+            ("description",     desc),
+            ("source_url",      FASTA_URL),
+            ("local_file",      FASTA_FILE),
+            ("file_bytes",      file_bytes),
+            ("md5",             md5_local),
+            ("sequence_length", seq_len)]
+    with open(SAMPLE_LOG, "w") as f:
+        for k, v in rows:
+            f.write(f"{k + ':':<19}{v}\n")
+        f.write(f"{'notes:':<19}FASTA format (header line + 70-char wrapped "
+                f"sequence).\n")
+        f.write(f"{'':<19}md5 verified against the pinned value above; "
+                f"convert_nc_to_str.py\n")
+        f.write(f"{'':<19}reduces this to {FASTA_ACC}.reef.txt "
+                f"(pure ACGT, no header, no newlines).\n")
+
+
+def retrieve_reference_fasta():
+    """Download + verify the pinned reference FASTA, then write its provenance
+    log. Idempotent: download_all skips a complete local file, but the md5 is
+    re-checked EVERY run, so a corrupted cache can never slip through."""
+    os.makedirs(SAMPLES_DIR, exist_ok=True)
+    download_all([FASTA_URL], FASTA_FILE)     # .part + atomic rename, as ClinVar
+
+    acc, desc = parse_fasta_header(FASTA_FILE)
+    md5_local = compute_md5(FASTA_FILE)
+    print(f"[verify] fasta md5_local={md5_local} expected={FASTA_MD5} "
+          f"-> {'OK' if md5_local == FASTA_MD5 else 'MISMATCH'}")
+    if md5_local != FASTA_MD5:
+        raise SystemExit(
+            f"[verify] ABORT: {FASTA_FILE} does not match the pinned "
+            f"{FASTA_ACC} reference; refusing to proceed with a different "
+            f"sequence.")
+    if acc != FASTA_ACC:
+        raise SystemExit(
+            f"[verify] ABORT: header accession {acc!r} != pinned {FASTA_ACC!r}")
+
+    seq_len = count_fasta_bases(FASTA_FILE)
+    write_sample_log(acc, desc, seq_len,
+                     os.path.getsize(FASTA_FILE), md5_local)
+    print(f"[fasta] {FASTA_FILE}: {seq_len} bases -> {SAMPLE_LOG}")
 
 
 # given the chromosome id (e.g. 17 or 21) and the path to clinvar.vcf.gz,
@@ -357,6 +453,12 @@ def main():
     # 0. fail fast if the external tools used for the per-variant VCFs are absent
     verify_tool_existence("bgzip")
     verify_tool_existence("tabix")
+
+    # 0b. reference genome: pinned NC_000017.11 FASTA + docs/chr17_sample.log.
+    #     Independent of the ClinVar path below, but done FIRST because every
+    #     downstream step (convert_nc_to_str.py, gen_reef_regex.py's samtools
+    #     faidx slicing, gen_bora_regex.py's bcftools consensus) reads it.
+    retrieve_reference_fasta()
 
     # 1. download the pinned dated ClinVar VCF (skips if already present),
     #    trying weekly/ then archive_2.0/

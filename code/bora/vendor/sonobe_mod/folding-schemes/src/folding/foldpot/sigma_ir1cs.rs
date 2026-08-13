@@ -3362,17 +3362,13 @@ where 	C: CurveGroup<ScalarField=F>,
 				{old_sum_vec_v_i} else {sum_vec_v_i};
 			sum_vec_v_i = if b_last_seg
 				{sum_vec_v_i*si.batch_r + si.r_word_i} else {sum_vec_v_i};
-			if B_DEBUG {
-				if b_last_seg {
-					assert!(sum_vec_v_i == si.batch_v);
-				}
+			//S110/F1: native mirror of the in-circuit pin (:4356).
+			//Unconditional so a prover-side violation names itself here
+			//instead of surfacing as an opaque UNSAT row later.
+			if b_last_seg {
+				assert!(sum_vec_v_i == si.batch_v,
+					"S110: batch_v != Horner sum at last subseg");
 			}
-			// DEBUG USE 61102.2: S102/S110 F1 falsifier, native mirror.
-			println!("DEBUG USE 61102.2: last_seg={} eq={} act0={} \
-				word_id={} subseg_id={} tsegs={}",
-				b_last_seg, sum_vec_v_i == si.batch_v,
-				si.act_word_subseg_size.is_zero(),
-				si.word_id, si.subseg_id, si.total_word_segs);
 
 			//6.4 update the sum_kzg_eval_others
 			sum_kzg_eval_others = if b_first_seg {
@@ -4363,20 +4359,17 @@ where 	C: CurveGroup<ScalarField=F>,
 				if b_last_seg.value()? {assert!(sum_vec_v_i.value()?
 					== si.batch_v.value()?);}
 			}
-			// DEBUG USE 61102.1: S102/S110 F1 falsifier, circuit site.
-			// Setup mode has no witness, so probe only when assigned.
-			if let (Ok(f_last), Ok(f_sum), Ok(f_bv), Ok(f_act),
-				Ok(f_wid), Ok(f_sid), Ok(f_seg)) = (
-				b_last_seg.value(), sum_vec_v_i.value(),
-				si.batch_v.value(), si.act_word_subseg_size.value(),
-				si.word_id.value(), si.subseg_id.value(),
-				si.total_word_segs.value(),
-			) {
-				println!("DEBUG USE 61102.1: last_seg={} eq={} \
-					act0={} word_id={} subseg_id={} tsegs={}",
-					f_last, f_sum == f_bv, f_act.is_zero(),
-					f_wid, f_sid, f_seg);
-			}
+			//S110/F1: pin the statement's batch_v to the circuit's own
+			//Horner evaluation of this word, so vec_v[i] cannot be a
+			//free witness. Last subseg ONLY: sum_vec_v_i is not final
+			//before the :4353 fold-in, so an unconditional equality
+			//would reject honest proofs (measured).
+			//NOTE this binds batch_v on the LAST subseg, while
+			//sum_kzg_eval_others folds batch_v in on the FIRST (:4362).
+			//For a multi-subseg word those are different, unbound
+			//witnesses -- closing that gap is a separate item.
+			sum_vec_v_i.conditional_enforce_equal(
+				&si.batch_v, &b_last_seg)?;
 
 			//6.4 update the sum_kzg_eval_others
 			sum_kzg_eval_others = b_first_seg.select(&( 

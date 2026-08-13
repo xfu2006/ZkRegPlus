@@ -1243,6 +1243,49 @@ pub(crate) struct UnitDemand {
 	pub sub_cap_cs: usize,
 	/// Same, ignore-case arm.
 	pub sub_cap_igc: usize,
+	// PREDICTOR COLUMNS -- measurement only, never read back. Every
+	// per-file quantity the discharge trace exposes at this point, so
+	// the Q_m rows above can be correlated against each one offline.
+	// A column that reproduces the qm_real_cs vector is the candidate
+	// to replace max_fwd at determine_config.rs:559.
+	/// FailDischargeRecord::flen, bytes. A CONTROL, not a candidate:
+	/// DLP demand is size-uncorrelated (the 8402-row outlier is a
+	/// 75-word file, while the 2555-word file needs 1530).
+	pub flen: usize,
+	/// Chunks this unit splits into (needs_per_chunk.len()). 0 when
+	/// the aggressive estimator pass left the profile empty.
+	pub n_chunks: usize,
+	/// ChunkPeaks::max_needs_subsigs -- per-chunk NEEDS universe, max
+	/// over chunks. Selector proxy 1.
+	pub p_needs: usize,
+	/// ChunkPeaks::max_fwd_entries_per_chunk -- what :559 uses TODAY,
+	/// via RungSpec::max_fwd. Expected to read 0 across the body.
+	pub p_fwd: usize,
+	/// ChunkPeaks::max_active_steps_per_chunk -- active pattern-steps
+	/// summed across subsigs, max over chunks. Selector proxy 3.
+	pub p_active: usize,
+	/// ChunkPeaks::max_pats_in_trace -- sum of freq*#patterns in a
+	/// chunk, max over chunks. Selector proxy 4.
+	pub p_pats: usize,
+	/// ChunkPeaks::max_unique_states -- distinct DFA states per chunk,
+	/// max over chunks. Selector proxy 5.
+	pub p_uniq: usize,
+	/// ChunkPeaks::max_acc_states -- accepted-state count per chunk,
+	/// max over chunks. Selector proxy 6.
+	pub p_acc: usize,
+	/// ChunkPeaks::max_cp_unique_states -- distinct crit-pattern DFA
+	/// states per chunk, max over chunks. Selector proxy 7.
+	pub p_cpu: usize,
+	/// ChunkPeaks::max_carried_live_per_chunk -- carried live-location
+	/// count summed across subsigs. NOT a selector proxy; included
+	/// because the carried StepQueue is the nearest kin to T_qm.
+	pub p_live: usize,
+	/// ChunkPeaks::seg_size -- nibbles per chunk. A normaliser: a
+	/// per-chunk demand may only compare once divided by it.
+	pub p_seg: usize,
+	/// ChunkPeaks::perc_pats_expansion_rate -- 100*avg chunks a
+	/// pattern spans (>=100). Normaliser, not a candidate.
+	pub p_perc: usize,
 	/// false if this unit CapErr'd even at the ladder top, which makes
 	/// every value above a LOWER BOUND rather than the true demand.
 	pub ok: bool,
@@ -1306,8 +1349,23 @@ fn meter_unit_demand(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 		let (wr_ig, wc_ig) = QM_WRAP_SAT[1].get();
 		let (sr_cs, sc_cs) = QM_SUB_SAT[0].get();
 		let (sr_ig, sc_ig) = QM_SUB_SAT[1].get();
+		// vdata is pushed in lockstep with words/infos, zero-pad word
+		// included (:998-1005), so the unit index addresses all three.
+		let cp = &ts.vdata[i].chunk_peaks;
 		rows.push(UnitDemand {
 			unit: i, word_len: ts.words[i].len(),
+			flen: ts.vdata[i].flen,
+			n_chunks: cp.needs_per_chunk.len(),
+			p_needs: cp.max_needs_subsigs,
+			p_fwd: cp.max_fwd_entries_per_chunk,
+			p_active: cp.max_active_steps_per_chunk,
+			p_pats: cp.max_pats_in_trace,
+			p_uniq: cp.max_unique_states,
+			p_acc: cp.max_acc_states,
+			p_cpu: cp.max_cp_unique_states,
+			p_live: cp.max_carried_live_per_chunk,
+			p_seg: cp.seg_size,
+			p_perc: cp.perc_pats_expansion_rate,
 			qm_tot_cs: qt_cs, qm_tot_igc: qt_ig,
 			qm_tot_cap_cs: qtc_cs, qm_tot_cap_igc: qtc_ig,
 			qm_real_cs: qr_cs, qm_real_igc: qr_ig,

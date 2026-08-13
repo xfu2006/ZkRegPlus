@@ -7,7 +7,12 @@ members = [
 	# main zkregplus framework
 	"crates/zkregplus",
 ]
-exclude = ["./foldpot", "./new_r1cs", "vendor/dependency/nonnative"]
+# chr17_variants/reef is a vendored third-party crate (Reef, MIT, upstream
+# github.com/eniac/Reef) that the dna dataset unpacks INSIDE this repo. Cargo
+# walks up from it, finds this workspace, and aborts with "current package
+# believes it's in a workspace when it's not" unless it is excluded here.
+exclude = ["./foldpot", "./new_r1cs", "vendor/dependency/nonnative",
+           "data/src_sig/chr17_variants/reef"]
 resolver = "2"
 
 # we ADDED support for pairing

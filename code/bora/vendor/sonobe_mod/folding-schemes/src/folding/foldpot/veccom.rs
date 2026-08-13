@@ -41,6 +41,16 @@ pub fn interpret_poly_from_vec<F: PrimeField>(v: &Vec<F>) -> Result<DensePolynom
 	Ok(poly)
 }
 
+/// omega^i for the veccom evaluation domain holding `n` entries.
+/// Single source of truth for the index-to-point map: ProverKey::
+/// get_idx and the verifier both call it, so they cannot drift.
+pub fn omega_pow_idx<F: PrimeField>(n: usize, i: usize)
+	-> Result<F, Error> {
+	let d = GeneralEvaluationDomain::<F>::new(n)
+		.ok_or(Error::NewDomainFail)?;
+	Ok(d.element(i))
+}
+
 pub fn compute_powers_and_mul_by_const_serial<F: PrimeField>( size: usize, root: F, c: F) -> Vec<F> {
     let mut value = c;
     (0..size)
@@ -159,7 +169,10 @@ impl <'a, C:CurveGroup> ProverKey<'a,C>{
 	/// return omega^i where omega is the root of unity
 	pub fn get_idx(&self, i: usize)->C::ScalarField{
 		assert!(i<self.lagkeys.len());
-		self.domain.domain.element(i)
+		//S102/F2: route through the shared helper so the prover's
+		//index-to-point map cannot drift from the verifier's.
+		omega_pow_idx::<C::ScalarField>(self.domain.domain.size(), i)
+			.expect("veccom domain")
 	}
 }
 

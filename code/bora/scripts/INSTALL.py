@@ -7,9 +7,9 @@
 # maildir; samples.7z is a byte-identical fallback used only when the
 # CMU host is unreachable.  The binexec corpus comes from its Zenodo
 # deposit (DOI 10.5281/zenodo.21909549), which also carries the licence
-# texts and the per-file manifest; chr17 (sig_c21) variants deploy from
-# sig_c21.7z.  All scratch lives under /tmp/bora_install and is removed
-# on completion.
+# texts and the per-file manifest; the chr17 (dna) corpus comes from its own
+# Zenodo deposit (DOI 10.5281/zenodo.21911045).  Both are sha256-verified.
+# All scratch lives under /tmp/bora_install and is removed on completion.
 #
 # Run from anywhere:
 #   python3 INSTALL.py             menu: pick ALL / email / dna / binexec
@@ -39,8 +39,14 @@ TMP_DIR     = "/tmp/bora_install"                 # all scratch (item 4)
 EXTRACT_DIR = os.path.join(TMP_DIR, "extract")
 
 # ---- Google Drive ids (src_sig.7z intentionally NOT fetched) --------
-SAMPLES_ID  = "1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_"   # samples.7z
-SIG_C21_ID  = "https://drive.google.com/file/d/1314OL6_FYLmBH2i2_kQd7fwuVv73g6LU/view?usp=sharing"   # sig_c21*.7z
+# Drive now serves ONLY the email fallback.  binexec and dna both come from
+# Zenodo: DOI-pinned, sha256-verified, and free of Drive's download logging.
+# SAMPLES_ID = "1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_"  # samples.7z -- RETIRED.
+#   It backed only the email fallback, which is commented out below: the
+#   fallback bypassed EMAIL_TREE_DIGEST, so a CMU outage silently yielded an
+#   unverified corpus.  Enron now comes from CMU or not at all.
+# SIG_C21_ID = ".../1314OL6_FYLmBH2i2_kQd7fwuVv73g6LU/..."  # superseded by
+#                                                    # Zenodo, see DNA_URL
 SIG_C21_TOP = "chr17_variants"                      # archive top dir
 
 # ---- src_sig/.gitignore (canonical) --------------------------------
@@ -219,11 +225,12 @@ def ensure_toolchain():
 # =====================================================================
 
 # Download a Google Drive file to dest (skips if already present).
-# Accepts either a bare file id (SAMPLES_ID) or a full share URL
-# (".../file/d/<id>/view?usp=sharing", as SIG_C21_ID now is). We extract
-# the id from the URL ourselves and always hand gdown a uc?id= link, so it
-# works on older gdown (<4.0) too -- those lack the fuzzy= kwarg that the
-# URL form would otherwise need (TypeError: unexpected keyword 'fuzzy').
+# Only the email fallback still uses this: binexec and dna both moved to
+# Zenodo (http_download + sha256).  Accepts either a bare file id (as
+# SAMPLES_ID is) or a full ".../file/d/<id>/view?usp=sharing" share URL. We
+# extract the id ourselves and always hand gdown a uc?id= link, so it works
+# on older gdown (<4.0) too -- those lack the fuzzy= kwarg that the URL form
+# would otherwise need (TypeError: unexpected keyword 'fuzzy').
 def _extract_drive_id(s):
     import re
     for pat in (r"/file/d/([A-Za-z0-9_-]+)",      # .../file/d/<id>/view
@@ -303,9 +310,24 @@ LICENSES_DIR   = os.path.join(DATA_DIR, "licenses")
 MANIFEST_DIR   = os.path.join(DATA_DIR, "manifest")
 BINEXEC_DOC    = os.path.join(DATA_DIR, "DATASET_BINEXEC.md")
 
-# Set by main() from --verify; the DATASETS registry calls install
-# functions with no arguments, so the flag travels as module state.
+# ---- dna (chr17 x NCBI ClinVar) Zenodo deposit ----------------------
+# DNA_DOI is the CONCEPT doi (always resolves to the newest version, cite
+# this); DNA_URL pins version v1 so the bytes never move under us.  The
+# archive omits scripts/ (they live in git), Reef's commitment file, and
+# Reef's target/ + tests/ -- all regenerated on first use; see its
+# README.md and PROVENANCE.md.
+DNA_DOI    = "https://doi.org/10.5281/zenodo.21911045"
+DNA_URL    = ("https://zenodo.org/records/21911046/files/"
+              "bora_dna.7z?download=1")
+DNA_SHA256 = ("fd83ee6bcde431037ce986b0b52a7597000b439a0"
+              "4461cf74a420c4892a2d0ca")
+REEF_DIR   = os.path.join(SRC_SIG_DIR, "chr17_variants", "reef")
+REEF_BIN   = os.path.join(REEF_DIR, "target", "release", "reef")
+
+# Set by main() from --verify / --skip-reef-build; the DATASETS registry
+# calls install functions with no arguments, so flags travel as module state.
 _VERIFY_ALL = False
+_SKIP_REEF_BUILD = False
 
 
 def sha256_file(path):
@@ -406,10 +428,10 @@ def install_binexec_from_zenodo(verify_all=False):
 
 
 # Superseded source: the corpus used to ship inside the Google Drive
-# samples.7z.  Kept as a documented fallback -- Drive has no DOI,
-# throttles large files and reports downloads to the file owner -- but
-# no longer called.  samples.7z itself is STILL used by the email
-# fallback (ensure_samples_deployed) and must not be removed.
+# samples.7z.  Drive has no DOI, throttles large files and reports
+# downloads to the file owner.  The email fallback that was samples.7z's
+# last consumer has since been retired too, so NOTHING fetches from Drive
+# any more and ensure_samples_deployed() is itself commented out below.
 # def install_binexec_from_gdrive():
 #     ensure_samples_deployed()
 
@@ -514,6 +536,104 @@ def write_src_sig_gitignore():
 # is NOT moved out; instead data/samples/chr17_samples is a symlink into
 # chr17_variants/chr17_samples, so the corpus lives in one place only.
 # The link target is relative, so it survives a repo relocation.
+# The six scripts under chr17_variants/scripts/ are version-controlled, but
+# they sit INSIDE the directory clean_dna() empties.  PAPER_DATA.py launches
+# eval_reef.py and dry_run_eval_reef.py from that exact path, so losing them
+# breaks the reproduction run -- and it is invisible without `git status`.
+# Snapshot before the wipe, restore after the deploy.  A filesystem copy, not
+# `git checkout --`: the artifact may be unpacked from a tarball with no git
+# metadata.  (The Zenodo archive also omits scripts/, so nothing would
+# restore them otherwise.)
+# ---- Reef build ----------------------------------------------------
+# The Zenodo archive ships Reef as SOURCE ONLY -- target/ was 1.0 GB of build
+# artifacts that also embedded absolute build paths -- so the binary is
+# produced here.  eval_reef.py resolves REEF_BIN to exactly
+# target/release/reef and refuses to run without it, so a dna install that
+# skipped this would fail much later, during evaluation, not now.
+#
+# NOTE: reef/rust-toolchain pins channel = "nightly", NOT the 1.76.0 this
+# script installs for the main crate.  rustup reads that file and switches
+# automatically, installing nightly if absent.  "nightly" FLOATS, so this
+# build can break on an upstream compiler change; reef/UPSTREAM.txt records
+# the dated-nightly workaround.
+def cargo_exe():
+    return (shutil.which("cargo") or
+            os.path.join(os.path.expanduser("~/.cargo/bin"), "cargo"))
+
+
+# Run argv inside cwd, echoing it; raise on non-zero.
+def run_cmd_in(argv, cwd):
+    print("  $ (cd %s && %s)" % (cwd, " ".join(argv)))
+    subprocess.run(argv, cwd=cwd, check=True)
+
+
+def build_reef():
+    cargo = cargo_exe()
+    if shutil.which("cargo") is None and not os.path.isfile(cargo):
+        raise RuntimeError(
+            "cargo not found; run `python3 scripts/INSTALL.py --toolchain` "
+            "first, or `source ~/.cargo/env` in this shell")
+    print("  build reef (pulls crates.io deps; takes several minutes)")
+    run_cmd_in([cargo, "build", "--release", "--features", "metrics"],
+               REEF_DIR)
+
+
+# Confirm the build produced a runnable binary at the exact path
+# eval_reef.py looks for.  Checked rather than assumed: a cargo run that
+# exits 0 without emitting the binary (wrong --features, renamed target)
+# would otherwise surface only at evaluation time.
+def verify_reef_binary():
+    if not os.path.isfile(REEF_BIN):
+        raise RuntimeError(
+            "reef build produced no binary at %s (eval_reef.py needs exactly "
+            "this path)" % REEF_BIN)
+    if not os.access(REEF_BIN, os.X_OK):
+        raise RuntimeError("%s exists but is not executable" % REEF_BIN)
+    with open(REEF_BIN, "rb") as f:
+        magic = f.read(4)
+    if magic != b"\x7fELF":
+        raise RuntimeError("%s is not an ELF executable (magic %r)"
+                           % (REEF_BIN, magic))
+    size = os.path.getsize(REEF_BIN)
+    if size < (1 << 20):
+        raise RuntimeError("%s is only %d bytes; the build looks truncated"
+                           % (REEF_BIN, size))
+    print("    reef binary OK: target/release/reef (%.1f MB)"
+          % (size / (1024.0 ** 2)))
+
+
+CHR17_SCRIPTS = os.path.join(SRC_SIG_DIR, "chr17_variants", "scripts")
+_CHR17_SNAP = None
+
+
+def snapshot_chr17_scripts():
+    if not os.path.isdir(CHR17_SCRIPTS):
+        return None
+    snap = os.path.join(TMP_DIR, "chr17_scripts")
+    shutil.rmtree(snap, ignore_errors=True)
+    shutil.copytree(CHR17_SCRIPTS, snap,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    print("  saved %d script(s) from chr17_variants/scripts/"
+          % len(os.listdir(snap)))
+    return snap
+
+
+def restore_chr17_scripts(snap):
+    if snap is not None:
+        if os.path.isdir(CHR17_SCRIPTS):
+            shutil.rmtree(CHR17_SCRIPTS)
+        shutil.move(snap, CHR17_SCRIPTS)
+        print("  restored chr17_variants/scripts/ (working-tree copy)")
+    # Guard the two PAPER_DATA.py entry points: this is the case that would
+    # otherwise fail silently at evaluation time, long after the install.
+    for n in ("eval_reef.py", "dry_run_eval_reef.py"):
+        if not os.path.isfile(os.path.join(CHR17_SCRIPTS, n)):
+            raise RuntimeError(
+                "%s missing after the dna deploy; PAPER_DATA.py launches it "
+                "for the Reef baseline. Restore with: git checkout -- "
+                "data/src_sig/chr17_variants/scripts/" % n)
+
+
 def deploy_chr17(extract_root):
     top = os.path.join(extract_root, SIG_C21_TOP)
     dst_var = os.path.join(SRC_SIG_DIR, "chr17_variants")
@@ -551,22 +671,26 @@ def cleanup_temp():
 # wiping it would be the one "overkill") -- main() handles that once.
 # =====================================================================
 
-# Download + extract + deploy the shared samples.7z payload once per
-# run (binexec and email both consume it).
-_samples_ready = False
-
-
-def ensure_samples_deployed():
-    global _samples_ready
-    if _samples_ready:
-        return
-    samples_7z = os.path.join(TMP_DIR, "samples.7z")
-    print("  download samples.7z")
-    gdrive_download(SAMPLES_ID, samples_7z)
-    print("  extract + deploy samples")
-    extract_7z(samples_7z, EXTRACT_DIR)
-    deploy_samples(EXTRACT_DIR)
-    _samples_ready = True
+# RETIRED: the shared samples.7z payload from Google Drive.  binexec moved
+# to Zenodo, and the email fallback that was its last consumer is commented
+# out below -- so nothing calls this and no dataset touches Drive any more.
+# Kept commented rather than deleted: it is the only record of how the
+# pre-Zenodo layout was assembled.
+#
+# _samples_ready = False
+#
+#
+# def ensure_samples_deployed():
+#     global _samples_ready
+#     if _samples_ready:
+#         return
+#     samples_7z = os.path.join(TMP_DIR, "samples.7z")
+#     print("  download samples.7z")
+#     gdrive_download(SAMPLES_ID, samples_7z)
+#     print("  extract + deploy samples")
+#     extract_7z(samples_7z, EXTRACT_DIR)
+#     deploy_samples(EXTRACT_DIR)
+#     _samples_ready = True
 
 
 # ---- binexec (CentOS binaries) -------------------------------------
@@ -653,23 +777,32 @@ def install_email_from_cmu():
 
 
 # Fallback: deploy the maildir (among other samples) from samples.7z.
-def install_email_from_samples7z():
-    ensure_samples_deployed()
-    write_email_readme()
+# RETIRED: the Google Drive fallback for the Enron corpus.  It called
+# ensure_samples_deployed(), which did NOT check EMAIL_TREE_DIGEST -- that
+# gate exists only on the CMU path -- so a CMU outage silently produced an
+# unverified corpus from a non-archival host that logs downloads to the file
+# owner.  Enron is public, stable since 2015 and widely mirrored, so a hard
+# failure is the honest outcome.
+# def install_email_from_samples7z():
+#     ensure_samples_deployed()
+#     write_email_readme()
 
 
 # Prefer the CMU source; fall back to samples.7z only when CMU is
 # unreachable or its download/verify fails.
 def install_dataset_email():
-    if cmu_email_available():
-        try:
-            install_email_from_cmu()
-            return
-        except Exception as e:
-            print("  CMU install failed (%s); using samples.7z." % e)
-    else:
-        print("  CMU source unavailable; using samples.7z.")
-    install_email_from_samples7z()
+    # CMU is now the ONLY source: the Drive fallback was retired because it
+    # bypassed EMAIL_TREE_DIGEST.  Fail loudly rather than half-install --
+    # a missing corpus is obvious, an unverified one is not.
+    if not cmu_email_available():
+        raise RuntimeError(
+            "the CMU Enron source is unreachable (%s) and the Google Drive "
+            "fallback has been retired because it bypassed the "
+            "EMAIL_TREE_DIGEST check. Retry later, or fetch the tarball by "
+            "hand and place maildir/ at %s (sha256 of the sorted tree "
+            "manifest must equal %s)."
+            % (ENRON_URL, EMAIL_MAILDIR, EMAIL_TREE_DIGEST))
+    install_email_from_cmu()
 
 
 # ---- dna (chr17 / sig_c21 variants) --------------------------------
@@ -679,6 +812,8 @@ def install_dataset_email():
 # follow the link and delete the real payload).  chr17_variants holds
 # the real chr17_samples, so emptying it wipes the corpus.
 def clean_dna():
+    global _CHR17_SNAP
+    _CHR17_SNAP = snapshot_chr17_scripts()   # BEFORE the empty_dir below
     link = os.path.join(SAMPLES_DIR, "chr17_samples")
     if os.path.islink(link):
         os.remove(link)
@@ -689,21 +824,47 @@ def clean_dna():
     empty_dir(os.path.join(SRC_SIG_DIR, "chr17_variants"))
 
 
-# Download + extract sig_c21.7z and deploy chr17_samples / chr17_variants.
+# Download + extract bora_dna.7z from Zenodo and deploy chr17_variants.
 def install_dataset_dna():
-    sig_7z = os.path.join(TMP_DIR, "sig_c21.7z")
-    print("  download sig_c21.7z")
-    gdrive_download(SIG_C21_ID, sig_7z)
-    print("  extract sig_c21.7z")
-    extract_7z(sig_7z, EXTRACT_DIR)
+    dna_7z = os.path.join(TMP_DIR, "bora_dna.7z")
+    print("  download bora_dna.7z from Zenodo (%s)" % DNA_DOI)
+    http_download(DNA_URL, dna_7z)
+    got = sha256_file(dna_7z)
+    if got != DNA_SHA256:
+        raise RuntimeError(
+            "bora_dna.7z sha256 mismatch:\n  got      %s\n  expected %s"
+            % (got, DNA_SHA256))
+    print("    sha256 OK")
+    print("  extract bora_dna.7z")
+    extract_7z(dna_7z, EXTRACT_DIR)
     deploy_chr17(EXTRACT_DIR)
+    restore_chr17_scripts(_CHR17_SNAP)     # after the archive lands
+    if _SKIP_REEF_BUILD:
+        print("  SKIP reef build (--skip-reef-build). Build it before the")
+        print("       Reef baseline:  cd %s && \\" % REEF_DIR)
+        print("       cargo build --release --features metrics")
+    else:
+        build_reef()
+        verify_reef_binary()
+    print("  NOTE: Reef's commitment file (~4.3 GB) is NOT shipped;")
+    print("        eval_reef.py regenerates it on first run.")
+    print("        See reef/UPSTREAM.txt (upstream commit + our patch).")
+
+
+# def install_dataset_dna_from_gdrive():   # superseded by the Zenodo path
+#     sig_7z = os.path.join(TMP_DIR, "sig_c21.7z")
+#     gdrive_download(SIG_C21_ID, sig_7z)
+#     extract_7z(sig_7z, EXTRACT_DIR)
+#     deploy_chr17(EXTRACT_DIR)
 
 
 # Registry in menu order: (key, label, est. installed GB, clean, install).
 DATASETS = [
     ("email",   "email (Enron)",          3.8,
      clean_email,   install_dataset_email),
-    ("dna",     "dna (chr17 variants)",   6.6,
+    # 0.43 GB installed. Reef's commitment (~4.3 GB) and reef/target/ are
+    # built on first eval run, so the on-disk total grows well past this.
+    ("dna",     "dna (chr17 variants)",   0.43,
      clean_dna,     install_dataset_dna),
     ("binexec", "binexec (CentOS bins)",  1.5,
      clean_binexec, install_dataset_binexec),
@@ -752,10 +913,15 @@ def main():
                     help="binexec: check all 2702 files against "
                          "manifest.list after download (the archive's "
                          "own sha256 is always checked)")
+    ap.add_argument("--skip-reef-build", action="store_true",
+                    help="dna: deploy the corpus but do NOT run "
+                         "`cargo build` for Reef (the baseline binary will "
+                         "be missing until you build it by hand)")
     args = ap.parse_args()
 
-    global _VERIFY_ALL
+    global _VERIFY_ALL, _SKIP_REEF_BUILD
     _VERIFY_ALL = args.verify
+    _SKIP_REEF_BUILD = args.skip_reef_build
 
     if args.toolchain:
         install_toolchain()

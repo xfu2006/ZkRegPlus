@@ -31014,7 +31014,6 @@ Goal 6. S126.
 Goal 7. T109
 	[a] problem: hab'22 check enhancements (boolean condition)
 	[b] implement and test
----
 Goal 8. Fix download issue for CentOS: T910
 	[a] develop a plan
 	[b] execute the plan
@@ -31033,6 +31032,10 @@ Goal 8. Fix download issue for CentOS: T910
 		-> gen_data.py comment
 		-> doc updates
 		-> license add to git 
+	[m] check dna ata set
+		-> there is a 7z file
+		-> 
+---
 Goal 9. T9901  
 	[a] problem: make sure lower ring has
 		low configs
@@ -31042,7 +31045,12 @@ Goal 9. T9901
 Goal 10. S102 + S110
 	[a] verify individual proof vector commitment verification
 	[b] new bug: A/B test
-	[c]
+	[c] fix sum_v_i check
+	[d] F1 + F2 + F3
+Goal 11. T910 again
+	[a] how to handle dna data
+	[b] create permanant data set for download instead g-drive
+	[c] update INSTALL.py and recompile reef and record patches.
 
 
 

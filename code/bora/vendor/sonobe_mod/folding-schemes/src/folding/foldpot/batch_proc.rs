@@ -152,6 +152,10 @@ where CS1E: CommitmentScheme<
 	pub kzg_driver1: Option<CS1E::VerifierParams>,
 	/// for driver 2
 	pub kzg_driver2: Option<CS1E::VerifierParams>,
+	/// entry count the veccom eval domain was built for (= n_words+1,
+	/// the same value passed to VecCom::setup). Needed to recompute
+	/// omega^i for the position opening in verify_individual.
+	pub vec_dom_size: usize,
 }
 
 
@@ -565,7 +569,10 @@ where
 			vk_qa_nizk: vkey_qanizk,
 			kzg_driver1: None,
 			kzg_driver2: None,
-			qa_nizk_vkey_hash: qa_nizk_vkey_hash, 
+			qa_nizk_vkey_hash: qa_nizk_vkey_hash,
+			//same length handed to VecCom::setup just above; setup
+			//rounds it to a power of two internally.
+			vec_dom_size: n_words + 1,
 		};
 		let m2 = get_mem_usage_mb();
 		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}, TOTAL RAM now: {}. ", mb2s(m2-m0), mb2s(m2)), &mut gt2);
@@ -702,8 +709,12 @@ where
 			map(|(a,b)| *a + ch * *b).collect::<Vec<E::ScalarField>>();
 		let last_ele = snark_input.r_vec_r + ch * snark_input.r_vec_v;
 		vec.push(last_ele);
-		let vcom_prf = 
-			VecCom::<'a,E>::prove_with_challenge(&pkey.vec, ch, &vec, 
+		//S102/F2: open the combined vec-com at the POSITION omega^i.
+		//`ch` stays what it should be -- the linear-combination
+		//coefficient that folds vec_r and vec_v into one vector.
+		let idx_pt = pkey.vec.get_idx(i);
+		let vcom_prf =
+			VecCom::<'a,E>::prove_with_challenge(&pkey.vec, idx_pt, &vec,
 			&zero, None).expect("vcom proof err");
 		let mut wi = words[i].clone();
 		wi.push(snark_input.rands[i]);
@@ -746,15 +757,33 @@ where
 		sponge.absorb(&vec![r_i, v_i]);
 		let ch: E::ScalarField = sponge.squeeze_field_elements(1)[0];
 
-		//2. verify the vec_com
+		//2. verify the vec_com AT omega^i, and bind the opened value.
+		//S102/F2: opening at `ch` and trusting the prover's own
+		//proof.eval proved only "can open a commitment it knows" --
+		//nothing about index i. The combined vector interpolates to
+		//vec_r[i] + ch*vec_v[i] at omega^i, so that is the value the
+		//opening must report.
 		let newcm = batch_proof.vcom_vec_r + batch_proof.vcom_vec_v.mul(ch);
-		let bres = VecCom::<'a,E>::verify_with_challenge(&vkey.vec, ch, 
-			&newcm, &ind_proof.vcom_prf);
+		let idx_pt = match veccom::omega_pow_idx::<E::ScalarField>(
+			vkey.vec_dom_size, i) {
+			Ok(p) => p,
+			Err(_) => return false,
+		};
+		if ind_proof.vcom_prf.eval != r_i + ch * v_i {
+			return false;
+		}
+		let bres = VecCom::<'a,E>::verify_with_challenge(&vkey.vec,
+			idx_pt, &newcm, &ind_proof.vcom_prf);
 		if !bres.is_ok() {
 			return false;
 		}
 
-		//3. verify the kzg commitment
+		//3. verify the kzg commitment, and bind its opened value to v_i.
+		//S102/F3: without this the check only proves the word
+		//commitment opens to SOME value at r_i, not that it is v_i.
+		if ind_proof.kzg_prf.eval != v_i {
+			return false;
+		}
 		let bres = KZG::<'a,E>::verify_with_challenge(&vkey.kzg, r_i,
 			&claim.kzg_word, &ind_proof.kzg_prf);
 		bres.is_ok()
@@ -1094,6 +1123,16 @@ mod tests_batch_proc {
    use crate::transcript::poseidon::poseidon_canonical_config;
    use crate::folding::foldpot::{batch_proc::KZG};
    use std::sync::Arc;
+	//S102/F2+F3: for the forged-word rejection test below.
+	use crate::folding::foldpot::batch_proc::{IndividualClaim,
+		IndividualProof};
+	use crate::folding::foldpot::veccom::VecCom;
+	use ark_crypto_primitives::sponge::{
+		poseidon::PoseidonSponge, Absorb, CryptographicSponge};
+	use crate::transcript::AbsorbNonNative;
+	use crate::utils::vec::poly_from_vec;
+	use crate::commitment::CommitmentScheme;
+	use ark_poly::Polynomial;
 
 
    #[test]
@@ -1142,6 +1181,106 @@ mod tests_batch_proc {
 			&ind_claims[i], &batch_proof, &ind_prf);
 		assert!(res, "verify indidivudal proof failed");
    }
+
+	/// S102/F2+F3: a certificate for a word never in the batch must be
+	/// REJECTED. Pre-fix both checks were vacuous and this passed.
+	#[test]
+	fn individual_proof_rejects_forged_word(){
+		type CS1E = KZG<'static, Bn254>;
+		let mut rng = test_rng();
+		let n_words = 20;
+		let mut words = vec![];
+		for _i in 0..n_words{
+			let mut word = vec![];
+			for _j in 0..2{ word.push(Fr::rand(&mut rng)); }
+			words.push(word);
+		}
+		let lk = LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(1u32))]);
+		let lkup = Arc::new(lk);
+		let keysize = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
+			Groth16<Bn254>,CS1E,false>::key_size(&words);
+		let (pk,vk) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
+			Groth16<Bn254>,CS1E,false>::setup(&mut rng, keysize, n_words,
+			poseidon_canonical_config::<Fr>(), 0);
+		let (global_claim, ind_claims, snark_inp) =
+			BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
+			Groth16<Bn254>,CS1E,false>::gen_claims(
+			&pk, &mut rng, &words, lkup.clone()).unwrap();
+		let poseidon_config = poseidon_canonical_config::<Fr>();
+		let g1 = G1::generator();
+		let partial_input = SnarkRandInput::<Bn254>{
+			kzg_all_words: global_claim.kzg_all_words.clone(),
+			kzg_length: global_claim.kzg_length.clone(),
+			kzg_lk_col1: global_claim.kzg_lk_col1.clone(),
+			kzg_lk_col2: global_claim.kzg_lk_col2.clone(),
+			hash_cmF: Fr::zero(),
+			kzg_vec_r: g1.clone(),
+			kzg_vec_v: g1.clone(),
+			poseidon_config: poseidon_config.clone()
+		};
+		let (batch_proof, _r2) = BatchProcessor::<Bn254,
+			LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>
+			::prove_batch(&pk, &snark_inp, &words, lkup, &partial_input);
+
+		//the forgery: a word that is NOT in the batch, committed and
+		//opened HONESTLY at every step. Only its membership is a lie.
+		let i = 2;
+		let zero = Fr::zero();
+		let mut w2 = vec![Fr::rand(&mut rng), Fr::rand(&mut rng)];
+		w2.push(Fr::rand(&mut rng)); //the 1-leaky nonce
+		w2.reverse();
+		let kzg_word_fake = KZG::<Bn254>::commit(&pk.kzg, &w2, &zero)
+			.unwrap();
+		let claim_fake = IndividualClaim::<Bn254>{ i,
+			kzg_word: kzg_word_fake,
+			ref_batch_claim: ind_claims[i].ref_batch_claim.clone()};
+
+		//r_i' is an RO output over the FORGED commitment, so it differs
+		//from the honest vec_r[i]; the forger then opens honestly at it.
+		let mut sponge = PoseidonSponge::<Fr>::new(&poseidon_config);
+		let mut arr_fe: Vec<Fr> = vec![];
+		for c in vec![global_claim.kzg_all_words.clone(),
+			global_claim.kzg_length.clone(), kzg_word_fake]{
+			c.to_native_sponge_field_elements_as_vec()
+				.to_sponge_field_elements(&mut arr_fe);
+		}
+		sponge.absorb(&Fr::from(i as u32));
+		sponge.absorb(&arr_fe);
+		let r_fake: Fr = sponge.squeeze_field_elements(1)[0];
+		let v_fake = poly_from_vec(w2.clone()).unwrap().evaluate(&r_fake);
+		let kzg_prf = KZG::<Bn254>::prove_with_challenge(
+			&pk.kzg, r_fake, &w2, &zero, None).unwrap();
+		let mut sponge = PoseidonSponge::<Fr>::new(&poseidon_config);
+		sponge.absorb(&vec![r_fake, v_fake]);
+		let ch: Fr = sponge.squeeze_field_elements(1)[0];
+
+		//best effort on the vec-com: open the REAL combined vector, the
+		//only one matching newcm, at omega^i.
+		let mut vec_c = snark_inp.vec_r.iter().zip(snark_inp.vec_v.iter())
+			.map(|(a,b)| *a + ch * *b).collect::<Vec<Fr>>();
+		vec_c.push(snark_inp.r_vec_r + ch * snark_inp.r_vec_v);
+		//Try BOTH opening points. omega^i is the forger's best move
+		//against the current verifier; `ch` is what a pre-fix forger
+		//used. Asserting on both stops this test passing for the
+		//trivial reason that the opening point simply mismatched --
+		//with F2/F3 reverted, the `ch` arm IS accepted (measured).
+		for (name, pt) in vec![("omega^i", pk.vec.get_idx(i)),
+			("ch", ch)]{
+			let vcom_prf = VecCom::<Bn254>::prove_with_challenge(
+				&pk.vec, pt, &vec_c, &zero, None).unwrap();
+			let ind_prf = IndividualProof::<Bn254>{
+				vcom_prf, v_i: v_fake, kzg_prf: kzg_prf.clone()};
+			let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
+				Groth16<Bn254>,CS1E,false>::verify_individual(
+				&vk, i, &claim_fake, &batch_proof, &ind_prf);
+			assert!(!res,
+				"forged word ACCEPTED (opened at {}): F2/F3 not binding",
+				name);
+		}
+	}
 
 	/// print_size() must equal the true compressed serialized length.
 	#[test]
