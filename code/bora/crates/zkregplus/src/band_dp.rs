@@ -33,12 +33,14 @@ pub struct RungSpec {
 }
 
 #[inline]
-fn cdiv(a: usize, b: usize) -> usize { (a + b.max(1) - 1) / b.max(1) }
+pub(crate) fn cdiv(a: usize, b: usize) -> usize {
+    (a + b.max(1) - 1) / b.max(1)
+}
 
 /// Pre-clamp forward/live demand proxy (mirrors stats_helper back-solve,
 /// without margin/clamp). perc is linear in this, so the per-rung perc is
 /// pmax_perc scaled by raw/top_raw -- top band == pmax_perc exactly.
-fn raw_perc(fwd: usize, live: usize, basis_pats: usize,
+pub(crate) fn raw_perc(fwd: usize, live: usize, basis_pats: usize,
     seg_size: usize) -> usize {
     let scale = 100_000_000usize; // 1e8
     let (bp, seg) = (basis_pats.max(1), seg_size.max(1));

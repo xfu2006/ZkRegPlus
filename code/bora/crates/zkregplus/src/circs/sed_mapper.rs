@@ -118,6 +118,9 @@ pub struct SedCapacity{
 		//extracted from all states of a path (usually this is < 0.5%)
 	pub basis_acc_states: usize, //basis points of ALL accepted states
 		//along the path (usually less than 5%, max 305)
+	//v5: pending descended-level params, TOP-FIRST; consumed one per
+	//descent step by build_circs_adv. Empty = legacy ratio descent.
+	level_targets: Vec<crate::determine_config::CapParams>,
 }
 
 /// Now the "official" capacity of the SedComponent
@@ -224,7 +227,8 @@ impl SedCapacity{
 		Self{comp_capacities, max_word_len, acdfa_state_part_bits,
 			subsigs, avg_pats_per_subsig, avg_active_pats_per_subsig,
 			basis_pats_in_trace, sigs_sed, perc_comp_subsigs,
-			basis_unique_states, basis_acc_states, perc_pats_expansion_rate}
+			basis_unique_states, basis_acc_states, perc_pats_expansion_rate,
+			level_targets: vec![]}
 	}
 
 	/// level1: double the subsig and sig size
@@ -368,6 +372,27 @@ impl SedCapacity{
 		self.comp_capacities[2] = Arc::new(da);
 	}
 
+	/// v5: install the per-level descent params (TOP-FIRST). Empty =
+	/// the legacy ratio descent stays in force.
+	pub fn set_levels(&mut self,
+		v: Vec<crate::determine_config::CapParams>){
+		self.level_targets = v;
+	}
+
+	/// v5: pop the next level's params; None = use the ratio descent.
+	pub fn next_level(&mut self)
+		-> Option<crate::determine_config::CapParams>{
+		if self.level_targets.is_empty() { None }
+		else { Some(self.level_targets.remove(0)) }
+	}
+
+	/// v5: take the remaining level params (reinstalled on the fresh
+	/// capacity build_circs_adv derives for the next circuit).
+	pub fn take_levels(&mut self)
+		-> Vec<crate::determine_config::CapParams>{
+		std::mem::take(&mut self.level_targets)
+	}
+
 	pub fn da_capacity(&self)->&DischargeAdvCapacity{
 		self.comp_capacities[2].as_any()
 			.downcast_ref::<DischargeAdvCapacity>().unwrap()
@@ -413,6 +438,8 @@ impl Capacity for SedCapacity{
 			perc_comp_subsigs: self.perc_comp_subsigs,
 			basis_unique_states: self.basis_unique_states,
 			basis_acc_states: self.basis_acc_states,
+			//v5: the pending descent queue rides the clone.
+			level_targets: self.level_targets.clone(),
 		})
 	}
 

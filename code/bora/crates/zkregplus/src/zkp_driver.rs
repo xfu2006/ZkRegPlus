@@ -393,16 +393,28 @@ where C: CurveGroup<ScalarField=F>,
 		).expect("error building circ");
 		layer_circs.push( vec![circ] ); //legacy to keep 2d layer
 
-		//3.4.5 update the capacities.
+		//3.4.5 update the capacities. v5: an installed level target
+		//rebuilds ALL FIVE from its full params (measured-or-carry);
+		//otherwise the legacy ratio descent runs unchanged.
 		if i<vec_decrease_level.len(){
-			let level = vec_decrease_level[i];
-			cp_cap_cs = cp_cap_cs.decreased_copy(level); 
-			sed_cap_cs = sed_cap_cs.decreased_copy(level,
-				utils::consts::min_subsigs_for(false));
-			cp_cap_igc = cp_cap_igc.decreased_copy(level);
-			sed_cap_igc = sed_cap_igc.decreased_copy(level,
-				utils::consts::min_subsigs_for(true));
-			dfa_cap= dfa_cap.decreased_copy(level); 
+			if let Some(lv) = sed_cap_cs.next_level() {
+				let rest = sed_cap_cs.take_levels();
+				let (cp, sed, dfa2, cp_igc, sed_igc) =
+					crate::determine_config
+						::caps_from_params_general(&lv);
+				cp_cap_cs = cp; sed_cap_cs = sed; dfa_cap = dfa2;
+				cp_cap_igc = cp_igc; sed_cap_igc = sed_igc;
+				sed_cap_cs.set_levels(rest);
+			} else {
+				let level = vec_decrease_level[i];
+				cp_cap_cs = cp_cap_cs.decreased_copy(level);
+				sed_cap_cs = sed_cap_cs.decreased_copy(level,
+					utils::consts::min_subsigs_for(false));
+				cp_cap_igc = cp_cap_igc.decreased_copy(level);
+				sed_cap_igc = sed_cap_igc.decreased_copy(level,
+					utils::consts::min_subsigs_for(true));
+				dfa_cap= dfa_cap.decreased_copy(level);
+			}
 		}
 	}//for category
 

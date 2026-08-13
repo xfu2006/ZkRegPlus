@@ -31,21 +31,68 @@ such files.
 
 ---
 
-## The nine steps
+## The twelve steps
 
 | # | Step | What happens |
 |---|------|--------------|
 | 1 | `preflight` | Python/git/lzma present, **no `.git/index.lock`**, HEAD reported, dirty-tree warning |
 | 2 | `export` | `git archive HEAD:code/bora` → staging |
-| 3 | `prune` | delete `attic/` and every editor swap file |
+| 3 | `prune` | delete `attic/`, **this tool**, editor swap files, `__pycache__` |
 | 4 | `pack` | build `data/bigfiles.tar.xz`, drop the loose originals, extend `data/.gitignore` |
-| 5 | `verify` | size / identity / symlink / entry-point checks — hard-fails the run |
-| 6 | `initrepo` | `git init`, branch `artifact-sec27`, **one** squashed commit, neutral identity |
-| 7 | `github` | **manual**: create the private repo, push |
-| 8 | `4open` | **manual**: mint the URL, field by field |
-| 9 | `browsercheck` | **manual**: verify the live mirror |
+| 5 | `verify` | full inspection of the staging tree — hard-fails the run |
+| 6 | `initrepo` | `git init`, branch `artifact-sec27`, **one** squashed commit, reconciliation |
+| 7 | `manifest` | record the local manifest (kept **outside** the artifact) |
+| 8 | `github` | **manual**: create the private repo, push — one action per prompt |
+| 9 | `checkpush` | clone the pushed repo back and inspect it |
+| 10 | `fouropen` | **manual**: mint the URL, one field per prompt |
+| 11 | `checkmirror` | inspect the downloaded 4open ZIP |
+| 12 | `freeze` | **manual**: 08-25 URL final, 08-28 pin the SHA (T913) |
 
-Steps 7–9 print instructions and stop. Nothing is pushed or published for you.
+Manual steps print **one action at a time** and wait for Enter, so you are never
+reading ahead of what you are doing. Nothing is pushed or published for you.
+
+### The inspection, and why it runs three times
+
+`inspect_tree()` is one function run against three different trees, because each
+isolates a different failure:
+
+| Checkpoint | Answers |
+|---|---|
+| **staging** (step 5) | is what I built clean? |
+| **GitHub clone** (step 9) | did the push deliver all of it? |
+| **4open ZIP** (step 11) | is what reviewers actually receive still correct? |
+
+It performs: **anonymity** (text *and* binary, context-allowlisted), **file-size
+limit**, **PAPER_DATA.py readiness**, pack integrity by SHA-256, stray
+VCS/bytecode files, symlink safety, and — where a manifest is available — a
+**completeness diff** against the published snapshot.
+
+Verified against deliberately broken inputs: a dropped file, a one-byte change
+to the pack, and an injected identity string are each caught with a specific
+diagnostic.
+
+### Readiness: where the required-input list comes from
+
+`PAPER_DATA.py` declares `required_files` for only 2 of its 8 `JOB_SPECS`
+leaves, and that is deliberate — `PAPER_DATA.py:1144-1146` says the rest "assert
+on their own config/corpus paths, which live in DatasetSpec". `DatasetSpec` is
+**Rust**, at `crates/zkregplus/src/bora_data_driver.rs:367` (consts `DLP` :441,
+`DNA` :501, `CLAM` :579).
+
+So the checker reads both: the 2 Python declarations, plus the Rust consts
+parsed statically (`config_dir`, `sig_file`, `master_sources`, `scale_sources`
+are plain `&'static str` — no build required). That gives 8/8 coverage with one
+source of truth. Currently 21 required inputs: **16 present, 1 restored by the
+pack** (`CLAM.sig_file` → `data/debug/full_clamav/config/main.dat`), **4 from
+INSTALL.py downloads**, **0 unaccounted**.
+
+Two honest limits, both surfaced in the report rather than hidden:
+
+- "from INSTALL.py download" is **accounted for, not verified**. Only a real
+  install proves those corpora arrive intact.
+- The Rust parser is brittle by nature. It asserts that all 3 consts parse with
+  non-empty fields and **fails loudly** if the Rust ever switches to `concat!()`
+  or a helper function, rather than silently reporting less.
 
 ---
 
@@ -94,7 +141,45 @@ relocation, not a transformation: `INSTALL.py` restores the 13 files with
 explicit design constraint — no rewriting of `gen_data.py`, no per-file `.xz`,
 no install-time regeneration.
 
-### 4. Redaction terms cannot protect binaries
+### 4. This tool prunes *itself* — and that is not tidiness
+
+`scripts/prepare_open4s/` is in `PRUNE_PATHS`. It must never ship inside the
+artifact it builds, because `REDACTION_TERMS` in `prepare.py` is a literal list
+of the author's name, GitHub handle, Bitbucket handle and institution, and this
+README names the build hostname. Publishing the scrubber inside the thing it
+scrubs hands a reviewer exactly what it exists to hide.
+
+This was not foreseen — it was **caught by the tool flagging itself** the first
+time these two files were committed and therefore appeared in
+`git archive HEAD:code/bora`. The identity scan reported 27 hits, all of them in
+`prepare.py` and this README. That is the single best argument for keeping the
+scan broad and refusing to allowlist by filename: had those two files been
+excused as "obviously fine, they're just tooling", the leak would have shipped.
+
+### 5. `git add -A -f`, and the file that proved why
+
+Step 6 forces the add. In a **fresh** repo `git add -A` honours `.gitignore`; in
+ZkregPlus these files survive only because ignore rules never apply to
+already-tracked files. Without `-f`, `data/.gitignore:3` (`samples/*`) silently
+dropped `data/samples/email/README.md` from the snapshot — 12,143 files on disk,
+12,142 committed, no warning. Step 6 now also reconciles the two sets and fails
+if anything on disk missed the commit.
+
+### 6. The readiness check must not write into the tree it checks
+
+Importing `PAPER_DATA.py` makes CPython write `scripts/__pycache__/*.pyc` next
+to the imported file — inside the tree under inspection. That `.pyc` was then
+swept into the commit by `git add -A -f`, **after** the anonymity scan had
+already passed. Harmless with a `/tmp` staging dir, but `.pyc` files embed the
+absolute path they were compiled from, so `--stage ~/work` would have baked a
+home directory into a file nothing ever scanned.
+
+Fixed three ways: the subprocess runs with `-B` and `PYTHONDONTWRITEBYTECODE=1`,
+`prune` removes any `__pycache__`, and `inspect_tree` treats one as a failure.
+Found by the completeness diff in step 9 — the size mismatch was the only
+symptom.
+
+### 7. Redaction terms cannot protect binaries
 
 4open's "Terms to redact" box applies to **text files only**; binaries are
 served verbatim, and only owner/org/repo names are scrubbed automatically. That
@@ -106,33 +191,48 @@ path.
 
 ---
 
-## Wiring the pack into INSTALL.py
+## The restore side, in INSTALL.py
 
-**Not done by this script** — it prepares the snapshot; restoring is
-`INSTALL.py`'s job. The step to add is roughly:
+Implemented: `read_bigfiles_sums()` + `restore_bigfiles()`, called at the top of
+`main()` before `install_toolchain()` and the dataset loop. `lzma` and
+`tarfile` are stdlib, so `APT_PACKAGES` and `requirements.txt` are unchanged.
 
-```python
-PACK      = os.path.join(DATA_DIR, "bigfiles.tar.xz")
-PACK_SHA  = "<sha256 printed by prepare.py step 4>"
+**Expected digests are read from `data/bigfiles.sha256`, never hardcoded.** tar
+records mtimes, so rebuilding the pack from identical inputs yields a different
+sha256; a constant in `INSTALL.py` would drift silently the first time the
+snapshot was rebuilt. `prepare.py` writes that file in step 4 — the pack digest
+on the first line, then one line per member.
 
-def install_bigfiles():
-    """Restore the 13 fixtures that exceed 4open.science's 8 MB file limit."""
-    if not os.path.exists(PACK):
-        return                      # full checkouts already have them loose
-    got = sha256_file(PACK)
-    if got != PACK_SHA:
-        raise RuntimeError("bigfiles.tar.xz sha256 mismatch: %s" % got)
-    with tarfile.open(PACK, "r:xz") as tf:
-        tf.extractall(ROOT)
-```
+Behaviour:
 
-Call it early in `main()` — before any dataset step, since
-`data/src_sig/clamav/categories/main.dat` is an input to the eval path. `lzma`
-and `tarfile` are stdlib, so `APT_PACKAGES` and `requirements.txt` need no
-change.
+| Situation | Result |
+|---|---|
+| pack + sums absent | no-op — an ordinary full checkout has the files loose |
+| all 13 present and matching | no-op, after one hashing pass |
+| some missing, or one altered | verify pack sha256 → extract → re-verify all 13 |
+| pack altered in transit | raises, naming expected vs got |
+| pack present, sums missing (or vice versa) | raises — refuses to guess |
+| pack holds a member with no recorded digest | raises — refuses to extract unverifiable files |
+
+It raises rather than half-restoring: a silently missing fixture would surface
+much later as an unexplained eval failure.
+
+Verified on the real snapshot: all 13 restored files hash **identical to git
+HEAD**, and every failure mode above was exercised.
+
+**Ordering is safe.** None of `clean_email` / `clean_dna` / `clean_binexec`
+touches the restore targets (they wipe `samples/binexec_merged128k`,
+`samples/merge_records`, `EMAIL_MAILDIR`, and `src_sig/chr17_variants`), so
+restoring once before the loop is not undone by it. It runs unconditionally
+because these fixtures are inputs regardless of which corpus is selected — the
+Rust `DatasetSpec` `CLAM.sig_file` is one of them.
 
 `data/.gitignore` in the snapshot already lists the 13 restore targets (step 4
 appends them), so a reviewer's clone stays clean after install.
+
+> Rebuilding the snapshot after any `INSTALL.py` change also rebuilds the pack,
+> and its sha256 will differ — that is expected, and `data/bigfiles.sha256` is
+> regenerated alongside it.
 
 ---
 

@@ -906,5 +906,7 @@ pub fn estimated_to_capparams_aggr(e: &EstimatedConfig,
 		aggr_needs_subsigs: hm(e.needs_subsigs).max(1),
 		max_word_len,
 		acdfa_state_part_bits,
+		//v5: aggr ladders never carry per-level descent targets.
+		levels: vec![],
 	}
 }

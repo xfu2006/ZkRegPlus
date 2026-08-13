@@ -31048,6 +31048,15 @@ Goal 12. S102 + S110
 Goal 13. continue S102 + S110 regression testing -> DONE
 
 Thursday 08/13/2026
+Goal 1. S121
+	[a] problem: rand generation
+	[b] code done and in test
+	[c] phase 1 edit passing
+	[d] phase 2 edit and test 
+Goal 2: S115 [a] issue: false alarm on check sum_inp/sum_oup 
+Goal 3. S116
+	[a] problem: b_light_test still generates snark , it's ok, false alarm
+--- TODO ---
 Goal 1. T9901: determine_config  
 	[a] problem: make sure lower ring has
 		low configs
@@ -31055,12 +31064,10 @@ Goal 1. T9901: determine_config
 	[c] brief test of measure class first and collect data
 	[d] go ove rthe deisng and critera again
 	[e] list all design defects right now.
+	[f] appove design and now wait for code
+	[g] approve test plan
 
-Goal 2. S121
-	[a] problem: rand generation
-	[b] code done and in test
-	[c] phase 1 edit passing
-	[d] phase 2 edit and test 
+Goal 2. check remaining issue
 
 Goal 3. T902: set up private repo for open science
 	[a] design for the prep script
@@ -31074,9 +31081,9 @@ Goal 3. T902: set up private repo for open science
 		for the private repo. Show me instructions by instructions
 		and consider the lock up date of open4science.
 	[d] clear design issues
-		--
-	[d] implement prepare.py
-	[e] refine INSTALL.py given prepare.py generated tgz
+	[e] implement prepare.py
+	[f] refine INSTALL.py given prepare.py generated tgz
+	[g] set up the private repo
 
 
 

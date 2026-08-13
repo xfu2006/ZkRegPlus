@@ -324,6 +324,26 @@ DNA_SHA256 = ("fd83ee6bcde431037ce986b0b52a7597000b439a0"
 REEF_DIR   = os.path.join(SRC_SIG_DIR, "chr17_variants", "reef")
 REEF_BIN   = os.path.join(REEF_DIR, "target", "release", "reef")
 
+# ---- oversized in-repo fixtures (the bigfiles pack) -----------------
+# anonymous.4open.science refuses to serve any file over 8 MB, and it gives
+# no warning when it drops one -- the file is simply absent.  Thirteen
+# tracked fixtures exceed that, so the anonymous snapshot ships them inside
+# one xz archive instead of as loose files and restores them here.
+#
+# Nothing is regenerated or re-encoded: the archive holds the exact bytes
+# that are in git, and every restored file is checked against the digest
+# recorded when the pack was built (scripts/prepare_open4s/prepare.py).
+#
+# The expected digests are READ FROM BIGFILES_SUMS rather than hardcoded
+# here.  tar records mtimes, so a rebuilt pack has a different sha256 even
+# from identical inputs; a constant in this file would drift silently the
+# first time the snapshot was rebuilt.
+#
+# A full git checkout has these files loose and no pack, so this is a no-op
+# there.  Both absent is a broken artifact and raises.
+BIGFILES_PACK = os.path.join(DATA_DIR, "bigfiles.tar.xz")
+BIGFILES_SUMS = os.path.join(DATA_DIR, "bigfiles.sha256")
+
 # Set by main() from --verify / --skip-reef-build; the DATASETS registry
 # calls install functions with no arguments, so flags travel as module state.
 _VERIFY_ALL = False
@@ -358,6 +378,109 @@ def http_download(url, dest):
                       end="", flush=True)
         print()
     os.replace(tmp, dest)
+
+
+# =====================================================================
+# bigfiles pack -- restore the fixtures 4open.science will not serve
+# =====================================================================
+
+# Parse data/bigfiles.sha256 -> (pack_digest, {repo-rel path: digest}).
+# Format is `sha256␣␣name`, first line the pack itself, the rest members.
+def read_bigfiles_sums():
+    pack_sha, members = None, {}
+    with open(BIGFILES_SUMS) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            digest, _, name = line.partition("  ")
+            if not name:
+                raise RuntimeError("malformed line in %s: %r"
+                                   % (BIGFILES_SUMS, line))
+            if pack_sha is None and name == os.path.basename(BIGFILES_PACK):
+                pack_sha = digest
+            else:
+                members[name] = digest
+    if pack_sha is None:
+        raise RuntimeError("%s names no digest for %s"
+                           % (BIGFILES_SUMS, os.path.basename(BIGFILES_PACK)))
+    if not members:
+        raise RuntimeError("%s lists no members" % BIGFILES_SUMS)
+    return pack_sha, members
+
+
+# Restore the 13 oversized fixtures from data/bigfiles.tar.xz.
+#
+# Idempotent: returns early when every member is already present and
+# correct, so re-running INSTALL.py costs one pass of hashing and nothing
+# else.  Raises rather than half-restoring -- a silently missing fixture
+# would surface much later as an unexplained eval failure.
+def restore_bigfiles():
+    have_pack = os.path.isfile(BIGFILES_PACK)
+    have_sums = os.path.isfile(BIGFILES_SUMS)
+
+    if not have_pack and not have_sums:
+        # Ordinary full checkout: the fixtures are loose in git.
+        return
+
+    if not have_pack or not have_sums:
+        raise RuntimeError(
+            "incomplete bigfiles pack: %s is present but %s is missing. "
+            "Re-download the artifact; do not proceed."
+            % ((BIGFILES_PACK, BIGFILES_SUMS) if have_pack
+               else (BIGFILES_SUMS, BIGFILES_PACK)))
+
+    pack_sha, members = read_bigfiles_sums()
+
+    missing = [rel for rel in members
+               if not os.path.isfile(os.path.join(ROOT, rel))]
+    if not missing:
+        stale = [rel for rel, want in members.items()
+                 if sha256_file(os.path.join(ROOT, rel)) != want]
+        if not stale:
+            print("=== bigfiles: %d fixture(s) already restored and verified"
+                  % len(members))
+            return
+        print("=== bigfiles: %d restored file(s) do not match their digest, "
+              "re-extracting" % len(stale))
+    else:
+        print("=== restore %d oversized fixture(s) from %s ==="
+              % (len(missing), os.path.basename(BIGFILES_PACK)))
+
+    got = sha256_file(BIGFILES_PACK)
+    if got != pack_sha:
+        raise RuntimeError(
+            "%s sha256 mismatch\n  expected %s\n  got      %s\n"
+            "The archive was altered in transit; every fixture it holds "
+            "would be wrong.  Re-download the artifact."
+            % (BIGFILES_PACK, pack_sha, got))
+    print("    archive sha256 OK (%s)" % pack_sha[:16])
+
+    with tarfile.open(BIGFILES_PACK, "r:xz") as tf:
+        names = [m.name for m in tf.getmembers()]
+        unexpected = sorted(set(names) - set(members))
+        if unexpected:
+            raise RuntimeError(
+                "%s holds %d member(s) with no recorded digest (%s); "
+                "refusing to extract unverifiable files"
+                % (BIGFILES_PACK, len(unexpected), ", ".join(unexpected[:3])))
+        # "tar" rather than "data": it still blocks absolute paths and ../
+        # traversal, but keeps the mode bits.  Older Pythons have no filter=.
+        try:
+            tf.extractall(ROOT, filter="tar")
+        except TypeError:                      # Python < 3.12
+            tf.extractall(ROOT)
+
+    bad = []
+    for rel, want in sorted(members.items()):
+        p = os.path.join(ROOT, rel)
+        if not os.path.isfile(p):
+            bad.append("%s: not restored" % rel)
+        elif sha256_file(p) != want:
+            bad.append("%s: digest mismatch" % rel)
+    if bad:
+        raise RuntimeError("bigfiles restore failed:\n  " + "\n  ".join(bad))
+    print("    restored and verified %d file(s)" % len(members))
 
 
 # Check every file named in manifest.list against its recorded digest.
@@ -922,6 +1045,14 @@ def main():
     global _VERIFY_ALL, _SKIP_REEF_BUILD
     _VERIFY_ALL = args.verify
     _SKIP_REEF_BUILD = args.skip_reef_build
+
+    # Before anything else: needs no toolchain, no network and no dataset
+    # selection, and data/debug + data/paper_data + data/src_sig/clamav
+    # fixtures are inputs the eval path reads regardless of which corpus is
+    # installed (e.g. DatasetSpec CLAM's sig_file is one of them).  No
+    # clean_* function touches these paths, so restoring once here is not
+    # undone by the loop below.
+    restore_bigfiles()
 
     if args.toolchain:
         install_toolchain()

@@ -2,7 +2,7 @@
 //! zkp_driver. Hosts perc-parameterized dataset thinning and the
 //! perc-driven Q2 lookup-composition report.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -569,6 +569,7 @@ pub const DNA: DatasetSpec = DatasetSpec {
 		aggr_needs_subsigs: 0,
 		max_word_len: 4096,
 		acdfa_state_part_bits: 27,
+		levels: Vec::new(),
 	}),
 	scale_tune: None,
 };
@@ -665,6 +666,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 		aggr_needs_subsigs: 0,
 		max_word_len: 4096,
 		acdfa_state_part_bits: 26,
+		levels: Vec::new(),
 	}),
 	// legacy collect_scale_data's Option A (zkp_driver.rs:
 	// 7480-7550): low floors + low seed per round.
@@ -704,6 +706,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 			aggr_needs_subsigs: 0,
 			max_word_len: 4096,
 			acdfa_state_part_bits: 26,
+			levels: Vec::new(),
 		},
 	}),
 };
@@ -1044,6 +1047,415 @@ fn pad_ladder_to(lad: &mut Vec<CapParams>, num_circs: usize) {
 	}
 }
 
+// ================= T9901 v5: demand-vector ladder =================
+
+use crate::band_dp::{cdiv, raw_perc};
+
+/// Pooled T_qm demand of one unit on one arm, from the gauges of its
+/// completed P_max walk (QM_REAL_SAT / QM_SAT / QM_WRAP_SAT).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct QmNeed {
+	/// Non-wrap rows emitted (QM_REAL_SAT fill side).
+	real: usize,
+	/// Total rows emitted -- the pooled operand (QM_SAT fill side).
+	tot: usize,
+	/// Wrap-key budget of the walked rung (QM_WRAP_SAT cap side).
+	wrap_b: usize,
+}
+
+impl QmNeed {
+	/// The pooled CapErr guard inverted (fit iff tot <= cap+wrap_b),
+	/// floored at true real demand.
+	fn need(&self) -> usize {
+		self.real.max(self.tot.saturating_sub(self.wrap_b))
+	}
+}
+
+/// One routing unit's measured demand on every sized axis. Absolute
+/// worst-chunk counts (ChunkPeaks scalars); qm from the unit's walk.
+#[derive(Clone, Debug, Default, PartialEq)]
+struct UnitVec {
+	/// NEEDS-subsig universe max over segs (rung fit: <= subsigs-1).
+	univ: usize,
+	/// FSM pats-in-trace rows, worst chunk (ChunkPeaks).
+	pats: usize,
+	/// FSM unique states, worst chunk.
+	uniq: usize,
+	/// FSM accepting states, worst chunk.
+	acc: usize,
+	/// CP unique states, worst chunk.
+	cpu: usize,
+	/// SED forward-queue rows, worst chunk.
+	fwd: usize,
+	/// Carried-live rows, worst chunk (perc back-solve input).
+	live: usize,
+	/// Active steps, worst chunk (avg_active input).
+	active: usize,
+	/// Pooled T_qm need per arm [cs, igc], from the P_max walk.
+	qm: [usize; 2],
+}
+
+impl UnitVec {
+	/// Component-wise max -- the group envelope.
+	fn join(&mut self, o: &UnitVec) {
+		self.univ = self.univ.max(o.univ);
+		self.pats = self.pats.max(o.pats);
+		self.uniq = self.uniq.max(o.uniq);
+		self.acc = self.acc.max(o.acc);
+		self.cpu = self.cpu.max(o.cpu);
+		self.fwd = self.fwd.max(o.fwd);
+		self.live = self.live.max(o.live);
+		self.active = self.active.max(o.active);
+		self.qm[0] = self.qm[0].max(o.qm[0]);
+		self.qm[1] = self.qm[1].max(o.qm[1]);
+	}
+}
+
+/// NEEDS universe of one unit: max over its segs of the summed subsig
+/// count of the failed critical sigs (the same derivation
+/// determine_config_aggr runs per chunk, zkp_driver.rs:516-535).
+fn universe_of_unit(wi: &WordInfo,
+	cnt_by_id: &HashMap<usize, usize>) -> usize {
+	wi.failed_c_all_segs.iter().map(|seg| seg.iter()
+		.map(|&id| cnt_by_id.get(&id).copied().unwrap_or(0))
+		.sum::<usize>()).max().unwrap_or(0)
+}
+
+/// Subsig count per sig id (zkp_driver.rs:516-522 verbatim).
+fn subsig_cnt_by_id(db: &ClamavDB<Fr>) -> HashMap<usize, usize> {
+	let mut m = HashMap::new();
+	for s in db.vec_sigs.iter()
+		.chain(db.vec_sigs_no_critical_pat.iter()) {
+		if let Some(&id) = db.sig_to_id.get(&s.name) {
+			m.insert(id, s.vec_subsig_obj.len());
+		}
+	}
+	m
+}
+
+/// Count -> basis-rate conversion, CEILING: the derived container
+/// nlen*basis/10000 is then >= count, exactly (no slack term).
+fn to_basis(count: usize, nlen: usize) -> usize {
+	cdiv(count * 10000, nlen.max(1))
+}
+
+/// Rung cost for the DP: per-chunk container rows, every term the
+/// builder's own formula (band_dp cost + FSM/CP/qm containers).
+fn rung_cost(p: &CapParams) -> usize {
+	let nlen = p.max_word_len * LEGS;
+	let fsm = nlen * (p.basis_pats_in_trace + p.basis_unique_states
+		+ p.basis_acc_states) / 10000;
+	let cp = nlen * p.cp_basis_unique_states / 10000;
+	// StepQueue::vec_size (discharge_adv.rs:526-586): size_pat vs the
+	// prod-driven (aggr) or basis*perc-driven (non-aggr) trace side.
+	let pat = p.subsigs * p.avg_active_pats_per_subsig;
+	let que = if p.prod_pats_expansion == 0 {
+		nlen * p.basis_pats_in_trace * p.perc_pats_expansion_rate
+			* crate::gadgets::discharge_adv::RES_LARGE_COST
+			/ (10000 * 100 * 100)
+	} else {
+		p.prod_pats_expansion * nlen
+			* crate::gadgets::discharge_adv::FWD_COST
+			/ (10000 * 100 * 100)
+	};
+	fsm + cp + que.max(pat) + p.qm_real_rows
+}
+
+/// Non-top rung params from a group envelope: measured axes sized by
+/// exact inversion, unmeasured axes ride p_max verbatim. Aggr also
+/// sizes subsigs/prod and re-applies the dummy-sentinel floors
+/// (zkp_driver.rs:650-661); non-aggr carries subsigs and prod (a
+/// nonzero prod flips the gadget into the aggressive override) and
+/// re-applies the GlobalConfig min_* clamps decreased_copy would.
+fn rung_params_from_env(env: &UnitVec, p_max: &CapParams,
+	b_aggr: bool) -> CapParams {
+	let mut c = p_max.clone();
+	c.levels = vec![];
+	let nlen = (p_max.max_word_len * LEGS).max(1);
+	let fwd_cost = crate::gadgets::discharge_adv::FWD_COST;
+	// non-aggr: the v5 carrier bypasses decreased_copy, so its
+	// read_global_config().min_* clamps are re-applied here.
+	let (mn_pats, mn_uniq, mn_acc, mn_perc, mn_avg) = if b_aggr {
+		(2usize, 2usize, 2usize, 1usize, 1usize)
+	} else {
+		let g = read_global_config();
+		(g.min_basis_pats_in_trace.max(2),
+			g.min_basis_unique_states.max(2),
+			g.min_basis_acc_states.max(2),
+			g.min_perc_pats_expansion_rate.max(1),
+			g.min_avg_active_pats_per_subsig.max(1))
+	};
+	if b_aggr {
+		c.subsigs = (env.univ + 1).min(p_max.subsigs);
+		c.aggr_needs_subsigs = p_max.subsigs;
+	}
+	let bas = |cnt: usize, pm: usize, mn: usize| to_basis(cnt, nlen)
+		.clamp(mn, pm.max(mn));
+	c.basis_pats_in_trace =
+		bas(env.pats, p_max.basis_pats_in_trace, mn_pats);
+	c.basis_unique_states =
+		bas(env.uniq, p_max.basis_unique_states, mn_uniq);
+	c.basis_acc_states =
+		bas(env.acc, p_max.basis_acc_states, mn_acc)
+		.max(c.basis_pats_in_trace / 10 + 1); // fsm_adv floor (:568)
+	c.cp_basis_unique_states =
+		bas(env.cpu, p_max.cp_basis_unique_states, 2);
+	// forward queue: exact measured demand (no +10%, no 5/4 -- an
+	// under-count promotes the seg via the per-seg router).
+	if b_aggr {
+		c.prod_pats_expansion = ((env.fwd + 1) * 100_000_000
+			/ (nlen * fwd_cost).max(1) + 1)
+			.min(p_max.prod_pats_expansion);
+	}
+	c.perc_pats_expansion_rate =
+		raw_perc(env.fwd, env.live, c.basis_pats_in_trace, nlen)
+		.min(p_max.basis_pats_in_trace
+			* p_max.perc_pats_expansion_rate
+			/ c.basis_pats_in_trace.max(1))
+		.max(mn_perc);
+	c.avg_active_pats_per_subsig =
+		cdiv(env.active, c.subsigs.max(1))
+		.min(p_max.subsigs * p_max.avg_active_pats_per_subsig
+			/ c.subsigs.max(1))
+		.max(mn_avg);
+	// qm per arm: v4 reducer (sentinel arm off; floor = smallest
+	// shippable non-sentinel cap; ceiling = the fixpoint top).
+	c.qm_real_rows = if p_max.qm_real_rows == 0 { 0 }
+		else { env.qm[0].min(p_max.qm_real_rows).max(2) };
+	c.qm_real_rows_igc = if p_max.qm_real_rows_igc == 0 { 0 }
+		else { env.qm[1].min(p_max.qm_real_rows_igc).max(2) };
+	if b_aggr {
+		// dummy-sentinel floors (zkp_driver.rs:650-661 verbatim).
+		let pmin = |bp: usize| 16 * 100_000_000
+			/ (nlen * bp.max(1) * fwd_cost).max(1) + 1;
+		let prod_min = 16 * 100_000_000 / (nlen * fwd_cost).max(1) + 1;
+		c.perc_pats_expansion_rate = c.perc_pats_expansion_rate
+			.max(pmin(c.basis_pats_in_trace));
+		c.perc_pats_expansion_rate_igc = c.perc_pats_expansion_rate_igc
+			.max(pmin(c.basis_pats_in_trace_igc));
+		c.prod_pats_expansion = c.prod_pats_expansion.max(prod_min);
+		c.prod_pats_expansion_igc =
+			c.prod_pats_expansion_igc.max(prod_min);
+	}
+	c
+}
+
+/// Exact weighted DP: <= k contiguous groups over cost-sorted rows
+/// minimizing sum(weight * rung_cost(group env)). Returns group end
+/// indices into `rows` (exclusive); may return < k groups.
+fn dp_partition(rows: &[(UnitVec, usize)], k: usize,
+	env_cost: &dyn Fn(&UnitVec) -> usize) -> Vec<usize> {
+	let n = rows.len();
+	if n == 0 { return vec![]; }
+	let k = k.min(n).max(1);
+	const INF: usize = usize::MAX / 2;
+	// dp[g][j]: best cost of the first j rows in g groups.
+	let mut dp = vec![vec![INF; n + 1]; k + 1];
+	let mut par = vec![vec![0usize; n + 1]; k + 1];
+	dp[0][0] = 0;
+	for g in 1..=k {
+		for j in 1..=n {
+			// walk i = j-1 .. 0, growing the envelope incrementally.
+			let mut env = UnitVec::default();
+			let mut w = 0usize;
+			for i in (0..j).rev() {
+				env.join(&rows[i].0);
+				w += rows[i].1;
+				if dp[g - 1][i] == INF { continue; }
+				let cst = dp[g - 1][i] + w * env_cost(&env);
+				if cst < dp[g][j] { dp[g][j] = cst; par[g][j] = i; }
+			}
+		}
+	}
+	// best g: smallest total; ties -> fewer groups.
+	let best_g = (1..=k).min_by_key(|&g| (dp[g][n], g)).unwrap();
+	let (mut ends, mut j) = (vec![], n);
+	for g in (1..=best_g).rev() {
+		ends.push(j);
+		j = par[g][j];
+	}
+	ends.reverse();
+	ends
+}
+
+/// Sort units by the cost of their OWN one-unit rung, dedup equal
+/// vectors into weighted rows, DP-partition into <= k contiguous
+/// groups. Returns the groups cheapest-first (rows kept, not envelopes,
+/// so a caller can verify per-occupant fit).
+fn group_units_v5(units: Vec<UnitVec>, p_max: &CapParams, k: usize,
+	b_aggr: bool) -> Vec<Vec<(UnitVec, usize)>> {
+	let ucost = |u: &UnitVec| -> usize {
+		rung_cost(&rung_params_from_env(u, p_max, b_aggr))
+	};
+	let mut sorted = units;
+	sorted.sort_by_cached_key(|u| ucost(u));
+	// lossless dedup: equal vectors are interchangeable in a sorted
+	// contiguous partition.
+	let mut rows: Vec<(UnitVec, usize)> = vec![];
+	for u in sorted {
+		match rows.last_mut() {
+			Some((v, w)) if *v == u => *w += 1,
+			_ => rows.push((u, 1)),
+		}
+	}
+	let ends = dp_partition(&rows, k, &ucost);
+	let (mut out, mut start) = (vec![], 0usize);
+	for &end in &ends {
+		out.push(rows[start..end].to_vec());
+		start = end;
+	}
+	out
+}
+
+/// Component-wise envelope of one DP group.
+fn env_of(grp: &[(UnitVec, usize)]) -> UnitVec {
+	let mut env = UnitVec::default();
+	for (u, _) in grp { env.join(u); }
+	env
+}
+
+/// Occupancy (unit count, dedup weights summed) of one DP group.
+fn occ_of(grp: &[(UnitVec, usize)]) -> usize {
+	grp.iter().map(|(_, w)| w).sum()
+}
+
+/// Serial per-unit qm harvest at P_max: one-rung planner, the meter's
+/// own walk pattern (reset -> walk -> read the arm gauges). Walks ONLY
+/// `units`; a failed walk is a loud invariant break (P_max is the
+/// converged fixpoint -- everything must fit it).
+fn qm_walk_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
+	ts: &TuningSet, p_max: &CapParams, units: &[usize])
+	-> HashMap<usize, [QmNeed; 2]> {
+	use folding_schemes::folding::foldpot::sigma_ir1cs
+		::LookupTableTwoCol as _;
+	use utils::consts::{reset_qm_gauges, QM_REAL_SAT, QM_SAT,
+		QM_WRAP_SAT};
+	use utils::logger::LOG2;
+	let mut out = HashMap::new();
+	if units.is_empty() { return out; }
+	let poseidon = poseidon_canonical_config::<Fr>();
+	let mw = spec.chunk_len;
+	let lkup_len = db.lkup.get_size();
+	let layered = if spec.b_aggressive {
+		let caps = vec![caps_from_params_aggr(p_max)];
+		build_circs_adv_aggr::<Fr, C1, CS1>(&poseidon,
+			ts.total_word_n, mw, lkup_len, db.clone(), &caps, false)
+	} else {
+		let (cp, sed, dfa, cp_igc, sed_igc) =
+			caps_from_params_general(p_max);
+		build_circs_adv::<Fr, C1, CS1>(&poseidon, ts.total_word_n,
+			mw, lkup_len, db.clone(), &cp, &sed, &dfa, &cp_igc,
+			&sed_igc, &vec![], 1, false)
+	};
+	let planner = CapacityPlanner::<C1, FC<Fr, C1, CS1>, LK<Fr>,
+		GM<Fr>, false>::new(layered);
+	for &i in units {
+		let padded =
+			utils::data::pad_word_to_multiple::<Fr>(&ts.words[i], mw);
+		reset_qm_gauges();
+		planner.plan_nd_advice(0, LOG2, false, &padded,
+			&ts.infos[i], "v5").unwrap_or_else(|e| panic!(
+			"v5[{}]: unit {} fails the P_max walk: {:?}",
+			spec.name, i, e));
+		let mk = |arm: usize| QmNeed {
+			real: QM_REAL_SAT[arm].get().0,
+			tot: QM_SAT[arm].get().0,
+			wrap_b: QM_WRAP_SAT[arm].get().1,
+		};
+		out.insert(i, [mk(0), mk(1)]);
+	}
+	out
+}
+
+/// Harvest every unit's demand vector: ChunkPeaks scalars + the NEEDS
+/// universe (both already computed by the tuning discharge), plus the
+/// qm walk. b_walk_all=false screens the walk to units with a nonzero
+/// universe (aggr: no obligation -> empty SED store -> empty Q_m).
+fn harvest_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
+	ts: &TuningSet, p_max: &CapParams, b_walk_all: bool)
+	-> Vec<UnitVec> {
+	let cnt = subsig_cnt_by_id(db);
+	let mut units: Vec<UnitVec> = (0..ts.words.len()).map(|i| {
+		let cp = &ts.vdata[i].chunk_peaks;
+		UnitVec {
+			univ: universe_of_unit(&ts.infos[i], &cnt),
+			pats: cp.max_pats_in_trace,
+			uniq: cp.max_unique_states,
+			acc: cp.max_acc_states,
+			cpu: cp.max_cp_unique_states,
+			fwd: cp.max_fwd_entries_per_chunk,
+			live: cp.max_carried_live_per_chunk,
+			active: cp.max_active_steps_per_chunk,
+			qm: [0, 0],
+		}
+	}).collect();
+	let need_walk: Vec<usize> = (0..units.len())
+		.filter(|&i| b_walk_all || units[i].univ > 0).collect();
+	let qm = qm_walk_units(spec, db, ts, p_max, &need_walk);
+	for (i, q) in qm {
+		units[i].qm = [q[0].need(), q[1].need()];
+	}
+	units
+}
+
+/// v5 aggressive ladder: DP-partition the harvested units and size
+/// every non-top rung to its occupants' measured max; the top rung is
+/// the fixpoint P_max VERBATIM. Replaces the band/peel ladder.
+fn build_ladder_v5_aggr(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
+	ts: &TuningSet, fixpoint: Vec<CapParams>, num_circs: usize)
+	-> Vec<CapParams> {
+	let p_max = fixpoint.last().expect("v5: empty fixpoint").clone();
+	if num_circs <= 1 { return vec![p_max]; }
+	let units = harvest_units(spec, db, ts, &p_max, false);
+	let grps = group_units_v5(units, &p_max, num_circs, true);
+	// size rungs; the LAST group ships P_max verbatim (fixpoint).
+	let (mut lad, mut hist) = (vec![], vec![]);
+	for (gi, grp) in grps.iter().enumerate() {
+		if gi + 1 == grps.len() {
+			lad.push(p_max.clone());
+		} else {
+			lad.push(rung_params_from_env(&env_of(grp), &p_max, true));
+		}
+		hist.push(occ_of(grp));
+	}
+	utils::logger::log(0, utils::logger::LOG1, &format!(
+		"v5[{}]: {} rungs, occupancy hist={:?}, costs={:?}",
+		spec.name, lad.len(), hist,
+		lad.iter().map(rung_cost).collect::<Vec<_>>()));
+	lad
+}
+
+/// v5 non-aggressive levels: same harvest + DP over the job's units;
+/// returns the per-descent-step CapParams TOP-FIRST (levels[i] = the
+/// circuit built at descent step i+1), len == num_circs-1. Unmeasured
+/// axes (avg_pats, sigs_sed, perc_comp, dfa_*, igc) ride P_max.
+fn size_levels_v5_non_aggr(spec: &DatasetSpec,
+	db: &Arc<ClamavDB<Fr>>, ts: &TuningSet, p_max: &CapParams,
+	num_circs: usize) -> Vec<CapParams> {
+	let units = harvest_units(spec, db, ts, p_max, true);
+	let grps = group_units_v5(units, p_max, num_circs, false);
+	// groups ascending; drop the top group (it IS the converged P_max);
+	// emit the rest TOP-FIRST for build order; pad with the cheapest
+	// group's params if the DP merged below num_circs.
+	let mut envs: Vec<UnitVec> =
+		grps.iter().map(|g| env_of(g)).collect();
+	let hist: Vec<usize> = grps.iter().map(|g| occ_of(g)).collect();
+	envs.pop(); // top group -> P_max itself, not a level
+	let mut lvls: Vec<CapParams> = envs.iter().rev()
+		.map(|e| rung_params_from_env(e, p_max, false)).collect();
+	while lvls.len() < num_circs - 1 {
+		let pad = lvls.last().cloned()
+			.unwrap_or_else(|| rung_params_from_env(
+				&UnitVec::default(), p_max, false));
+		lvls.push(pad);
+	}
+	utils::logger::log(0, utils::logger::LOG1, &format!(
+		"v5[{}]: {} levels, occupancy hist={:?}, costs={:?}",
+		spec.name, lvls.len(), hist,
+		lvls.iter().map(rung_cost).collect::<Vec<_>>()));
+	lvls
+}
+
 /// Capacity tuner for one (db, tuning set): aggr -> rung ladder via
 /// determine_config_aggr, non-aggr -> single converged CapParams.
 /// GlobalConfig touches: share derive+pin, non-aggr floor write-back.
@@ -1082,12 +1494,16 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 		// 1 rung needs no log-bucket coarsening (:7711); peel 90 as
 		// runcfg_full.json, inert below k_max=3 (:560).
 		let n_buckets = if num_circs == 1 { 1 } else { 2048 };
-		let (mut lad, hist) = determine_config_aggr::<Fr, C1, CS1>(true,
+		let (lad, hist) = determine_config_aggr::<Fr, C1, CS1>(true,
 			db.clone(), &ts.words, &ts.infos, &ts.vdata, seed, mw,
 			lkup_len, ts.total_word_n, k_max, n_buckets, 60,
 			n_threads, 8, 90)
 			.unwrap_or_else(|e| panic!(
 				"bora_data_driver: determine_config_aggr: {}", e));
+		// T9901 v5: re-derive every non-top rung from the measured
+		// per-unit demand; the fixpoint top carries verbatim.
+		let mut lad = build_ladder_v5_aggr(spec, db, ts, lad,
+			num_circs);
 		if lad.len() < num_circs {
 			let short = lad.len();
 			pad_ladder_to(&mut lad, num_circs);
@@ -1137,6 +1553,13 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 		g.min_subsigs_igc = new.subsigs_igc;
 		g.min_cp_subsigs = cp_floor.min(new.cp_subsigs);
 		drop(g);
+		// T9901 v5: measured level targets replace the ratio descent
+		// (consumed by build_circs_adv via CapParams.levels).
+		let mut new = new;
+		if num_circs > 1 {
+			new.levels = size_levels_v5_non_aggr(spec, db, ts, &new,
+				num_circs);
+		}
 		vec![new]
 	}
 }
@@ -2093,6 +2516,29 @@ pub mod tests_bora_data_driver {
 			basis_acc_states_igc: 2, basis_unique_states_igc: 4,
 			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
 			max_word_len: 64, acdfa_state_part_bits: 4,
+			levels: vec![],
+		}
+	}
+
+	/// Generous P_max for the v5 sizing tests: every measured axis has
+	/// headroom, so any clamp that fires means measurement, not P_max.
+	fn big_pmax_fixture() -> CapParams {
+		CapParams {
+			cp_basis_unique_states: 9999, cp_subsigs: 2001,
+			cp_avg_pats: 4, subsigs: 2001, avg_pats_per_subsig: 4,
+			avg_active_pats_per_subsig: 8, basis_pats_in_trace: 9999,
+			perc_pats_expansion_rate: 64,
+			prod_pats_expansion: 16_000_000, qm_real_rows: 20000,
+			sigs_sed: 16, perc_comp_subsigs: 100,
+			basis_unique_states: 9999, basis_acc_states: 9999,
+			subsigs_igc: 1, avg_active_pats_per_subsig_igc: 1,
+			basis_pats_in_trace_igc: 8,
+			perc_pats_expansion_rate_igc: 64,
+			prod_pats_expansion_igc: 0, qm_real_rows_igc: 20000,
+			basis_acc_states_igc: 2, basis_unique_states_igc: 4,
+			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
+			max_word_len: 64, acdfa_state_part_bits: 4,
+			levels: vec![],
 		}
 	}
 
@@ -3157,7 +3603,10 @@ pub mod tests_bora_data_driver {
 		assert_eq!(DNA.min_dfa_subsigs, 2);
 
 		// 5. hand caps (zkp_driver.rs:5309-5361), the non-aggr seed.
-		let h = DNA.hand_seed.as_ref().expect("DNA needs hand_seed");
+		// bound: CapParams carries a Vec (v5 levels), so the const is
+		// no longer promoted to a 'static temporary.
+		let dna = DNA;
+		let h = dna.hand_seed.as_ref().expect("DNA needs hand_seed");
 		assert_eq!((h.max_word_len, h.acdfa_state_part_bits),
 			(4096, 27));
 		assert_eq!((h.cp_basis_unique_states, h.cp_subsigs,
@@ -3385,7 +3834,8 @@ pub mod tests_bora_data_driver {
 			CLAM.min_basis_acc_states, CLAM.min_basis_pats_in_trace,
 			CLAM.min_avg_pats_per_subsig), (368, 1054, 268, 295, 8));
 		assert_eq!((CLAM.min_dfa_sigs, CLAM.min_dfa_subsigs), (3, 3));
-		let h = CLAM.hand_seed.as_ref().unwrap();
+		let clam = CLAM;   // see the DNA note: const holds a Vec now
+		let h = clam.hand_seed.as_ref().unwrap();
 		assert_eq!((h.max_word_len, h.acdfa_state_part_bits),
 			(4096, 26));
 		assert_eq!((h.cp_basis_unique_states, h.cp_subsigs,
@@ -3401,7 +3851,7 @@ pub mod tests_bora_data_driver {
 			h.perc_pats_expansion_rate_igc, h.basis_acc_states_igc),
 			(580, 820, 2, 750));
 		assert_eq!((h.dfa_sigs, h.dfa_subsigs), (8, 8));
-		let st = CLAM.scale_tune.as_ref().unwrap();
+		let st = clam.scale_tune.as_ref().unwrap();
 		assert_eq!((st.min_subsigs, st.min_basis_unique_states,
 			st.min_basis_acc_states, st.min_basis_pats_in_trace,
 			st.min_avg_pats_per_subsig), (64, 100, 2, 4, 1));
@@ -3614,5 +4064,164 @@ pub mod tests_bora_data_driver {
 		let k2 = read_lines_nonblank(&o2);
 		assert_eq!(k2.len(), 12, "count == len keeps every real sig");
 		assert!(!k2.iter().any(|l| l.starts_with("Win.Alphabet")));
+	}
+
+	// ---------------- T9901 v5: demand-vector ladder ----------------
+
+	/// qm_need = max(real, tot - wrap_b), saturating; the pooled
+	/// CapErr guard inverted.
+	#[test]
+	fn test_v5_qm_need() {
+		let q = |r, t, w| QmNeed { real: r, tot: t, wrap_b: w };
+		assert_eq!(q(0, 0, 10).need(), 0);            // zero unit
+		assert_eq!(q(60, 70, 25).need(), 60);         // real binds
+		assert_eq!(q(90, 130, 25).need(), 105);       // pool binds
+		assert_eq!(q(7, 12, 87).need(), 7);           // CLAM dry shape
+		assert_eq!(q(1700, 2700, 1407).need(), 1700); // unit 443
+	}
+
+	/// DP: boundaries land on the demand jumps; uniform input collapses
+	/// to one group; the 12-unit design example verbatim.
+	#[test]
+	fn test_v5_dp_partition() {
+		let u = |pats: usize| (UnitVec { pats, ..Default::default() },
+			1usize);
+		let cost = |e: &UnitVec| e.pats;   // transparent stand-in
+		// uniform -> 1 group regardless of k.
+		let rows: Vec<_> = (0..10).map(|_| u(100)).collect();
+		assert_eq!(dp_partition(&rows, 4, &cost), vec![10]);
+		// design example A: bulk 100..300, tail 650/700, body
+		// 1610..3000, outlier 14402 -> 4 groups at the jumps.
+		let vals = [100, 150, 200, 250, 280, 300, 650, 700,
+			1610, 2330, 3000, 14402];
+		let rows: Vec<_> = vals.iter().map(|&v| u(v)).collect();
+		assert_eq!(dp_partition(&rows, 4, &cost), vec![6, 8, 11, 12]);
+	}
+
+	/// Weighted dedup == the expanded multiset (DP invariance).
+	#[test]
+	fn test_v5_dp_weights() {
+		let u = |p: usize, w: usize|
+			(UnitVec { pats: p, ..Default::default() }, w);
+		let cost = |e: &UnitVec| e.pats;
+		let a = dp_partition(&[u(10, 5), u(1000, 1)], 2, &cost);
+		let mut rows = vec![];
+		for _ in 0..5 { rows.push(u(10, 1)); }
+		rows.push(u(1000, 1));
+		let b = dp_partition(&rows, 2, &cost);
+		// same group STRUCTURE: {all 10s}{1000}.
+		assert_eq!(a, vec![1, 2]);
+		assert_eq!(b, vec![5, 6]);
+	}
+
+	/// Ceiling inversion: derived container >= count, exact at the
+	/// boundary; plus the acc/pats structural floor and the qm floor.
+	#[test]
+	fn test_v5_rung_params_inversion() {
+		let p_max = big_pmax_fixture();   // subsigs 2001, rates 9999
+		let env = UnitVec { univ: 200, pats: 1991, uniq: 633,
+			acc: 1263, cpu: 317, fwd: 3550, live: 100, active: 400,
+			qm: [1700, 0] };
+		let c = rung_params_from_env(&env, &p_max, true);
+		let nlen = p_max.max_word_len * LEGS;
+		assert!(nlen * c.basis_pats_in_trace / 10000 >= env.pats);
+		assert!(nlen * c.basis_unique_states / 10000 >= env.uniq);
+		assert!(nlen * c.basis_acc_states / 10000 >= env.acc);
+		assert!(nlen * c.cp_basis_unique_states / 10000 >= env.cpu);
+		assert!(c.basis_acc_states >= c.basis_pats_in_trace / 10 + 1);
+		assert_eq!(c.subsigs, 201);
+		assert_eq!(c.qm_real_rows, 1700);
+		assert_eq!(c.qm_real_rows_igc, 2);    // floor, arm on
+	}
+
+	/// Sentinel: a 0 qm arm at P_max stays 0 on every rung; non-aggr
+	/// keeps prod at 0 (a nonzero one flips the aggressive override).
+	#[test]
+	fn test_v5_rung_params_sentinel() {
+		let mut p_max = big_pmax_fixture();
+		p_max.qm_real_rows = 0;
+		let env = UnitVec { qm: [500, 0], ..Default::default() };
+		let c = rung_params_from_env(&env, &p_max, true);
+		assert_eq!(c.qm_real_rows, 0);
+		let _lk = cfg_lock();
+		let mut q = big_pmax_fixture();
+		q.prod_pats_expansion = 0;
+		let n = rung_params_from_env(&env, &q, false);
+		assert_eq!(n.prod_pats_expansion, 0, "non-aggr keeps prod 0");
+		assert_eq!(n.subsigs, q.subsigs, "non-aggr carries subsigs");
+	}
+
+	/// Coverage: every unit fits its own group's rung on every
+	/// arithmetic axis (the no-eviction invariant), 200 random units.
+	#[test]
+	fn test_v5_ladder_coverage() {
+		// deterministic pseudo-random units (no Date/rand: LCG).
+		let mut s = 12345usize;
+		let mut units = vec![];
+		for _ in 0..200 {
+			s = s.wrapping_mul(1103515245).wrapping_add(12345);
+			let r = |k: usize| (s >> k) % 1000;
+			units.push(UnitVec { univ: r(3) % 50, pats: r(5),
+				uniq: r(7), acc: r(9), cpu: r(11), fwd: r(13),
+				live: r(15), active: r(17), qm: [r(19), 0] });
+		}
+		let p_max = big_pmax_fixture();
+		let k = 4usize;
+		let grps = group_units_v5(units.clone(), &p_max, k, true);
+		assert!(!grps.is_empty() && grps.len() <= k,
+			"<= K rungs, got {}", grps.len());
+		let occ: usize = grps.iter().map(|g| occ_of(g)).sum();
+		assert_eq!(occ, units.len(), "every unit is placed once");
+		let nlen = p_max.max_word_len * LEGS;
+		let mut prev = 0usize;
+		for (gi, grp) in grps.iter().enumerate() {
+			assert!(!grp.is_empty(), "rung {} is dead", gi);
+			let c = if gi + 1 == grps.len() { p_max.clone() }
+				else { rung_params_from_env(&env_of(grp), &p_max,
+					true) };
+			for (u, _) in grp.iter() {
+				assert!(u.univ + 1 <= c.subsigs,
+					"rung {}: univ {} > subsigs-1 {}", gi, u.univ,
+					c.subsigs - 1);
+				assert!(nlen * c.basis_pats_in_trace / 10000 >= u.pats,
+					"rung {}: pats {}", gi, u.pats);
+				assert!(nlen * c.basis_unique_states / 10000 >= u.uniq,
+					"rung {}: uniq {}", gi, u.uniq);
+				assert!(nlen * c.basis_acc_states / 10000 >= u.acc,
+					"rung {}: acc {}", gi, u.acc);
+				assert!(nlen * c.cp_basis_unique_states / 10000
+					>= u.cpu, "rung {}: cpu {}", gi, u.cpu);
+				assert!(c.qm_real_rows == 0
+					|| u.qm[0] <= c.qm_real_rows,
+					"rung {}: qm {} > {}", gi, u.qm[0],
+					c.qm_real_rows);
+			}
+			let cost = rung_cost(&c);
+			assert!(cost >= prev,
+				"rung {} cost {} < previous {}", gi, cost, prev);
+			prev = cost;
+		}
+	}
+
+	/// CapParams.levels survives the save/load_ladder round trip and
+	/// the SedCapacity carrier pops it TOP-FIRST, then exhausts.
+	#[test]
+	fn test_v5_levels_carrier() {
+		let mut top = big_pmax_fixture();
+		let mut l1 = top.clone();
+		l1.basis_pats_in_trace = 100;
+		top.levels = vec![l1.clone()];
+		let dir = fresh_tmp_dir("v5levels");
+		let path = dir.join("ladder.json");
+		let p = path.to_str().unwrap();
+		save_ladder(&vec![top.clone()], p).unwrap();
+		let back = crate::determine_config::load_ladder(p);
+		assert_eq!(back[0].levels.len(), 1);
+		assert_eq!(back[0].levels[0].basis_pats_in_trace, 100);
+		let (_, mut sed, _, _, _) = caps_from_params_general(&top);
+		let lv = sed.next_level().expect("target installed");
+		assert_eq!(lv.basis_pats_in_trace, 100);
+		assert!(sed.next_level().is_none()); // exhausted -> legacy
+		let _ = fs::remove_dir_all(&dir);
 	}
 }

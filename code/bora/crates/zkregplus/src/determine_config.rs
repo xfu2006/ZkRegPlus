@@ -69,6 +69,11 @@ pub struct CapParams {
     pub aggr_needs_subsigs: usize,
     pub max_word_len: usize,
     pub acdfa_state_part_bits: usize,
+    // v5 non-aggr descent: full params of each descended circuit,
+    // TOP-FIRST (levels[i] = descent step i+1). Empty = the legacy
+    // ratio descent. Aggr ladders never set it.
+    #[serde(default)]
+    pub levels: Vec<CapParams>,
 }
 
 impl CapParams {
@@ -378,6 +383,8 @@ pub fn caps_from_params_general(p: &CapParams)
     // T305: override the T_qm real-row budget with the tuner-converged
     // demand (no-op when 0 -> keeps the dense derive).
     sed_cs.set_qm_real_rows(p.qm_real_rows);
+    // v5: install the per-level descent targets (no-op when empty).
+    sed_cs.set_levels(p.levels.clone());
     let mut sed_igc = SedCapacity::new(p.max_word_len, p.acdfa_state_part_bits,
         p.subsigs_igc, p.avg_pats_per_subsig, p.avg_active_pats_per_subsig_igc,
         p.basis_pats_in_trace_igc, p.perc_pats_expansion_rate_igc, p.sigs_sed,
@@ -418,6 +425,7 @@ pub fn capparams_from_caps_general(cp_cs: &CpCapacity, sed_cs: &SedCapacity,
         aggr_needs_subsigs: 0,
         max_word_len: sed_cs.max_word_len,
         acdfa_state_part_bits: sed_cs.acdfa_state_part_bits,
+        levels: vec![],
     }
 }
 
@@ -456,6 +464,7 @@ pub fn capparams_from_caps_aggr(cp: &CpCapacity, sed: &SedCapacity,
         aggr_needs_subsigs,
         max_word_len: sed.max_word_len,
         acdfa_state_part_bits: sed.acdfa_state_part_bits,
+        levels: vec![],
     }
 }
 
@@ -604,6 +613,7 @@ mod tests {
             basis_acc_states_igc: 0, basis_unique_states_igc: 0,
             dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
             max_word_len: 0, acdfa_state_part_bits: 0,
+            levels: vec![],
         }
     }
 
