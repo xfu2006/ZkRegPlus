@@ -190,11 +190,6 @@ impl SedCapacity{
 		basis_unique_states: usize,
 		basis_acc_states: usize,
 	)->Self{
-		//REMOVE LATER ---------
-		if basis_pats_in_trace==822{
-			panic!("STOP HERE 100: basis pats is 822!");
-		}
-		//REMOVE LATER --------- ABOVE
 		let wea_capacity = WordExtractAdvCapacity{max_word_len};
 		let max_nibble_len = max_word_len * LEGS;
 		let faa_capacity = FsmAdvCapacity{max_nibble_len, acdfa_state_part_bits,			subsigs, avg_pats_per_subsig, basis_pats_in_trace,
@@ -272,7 +267,7 @@ impl SedCapacity{
 	/// (zkp_driver's ladder loop) holds cs and igc separately.
 	pub fn decreased_copy(&self, level: usize, min_sub: usize)->Self{
 		assert!(level==1 || level==2);
-		if level==1{//incrase subsigs and sigs
+		let mut res = if level==1{//incrase subsigs and sigs
 			Self::new(
 				self.max_word_len,
 				self.acdfa_state_part_bits,
@@ -300,7 +295,12 @@ impl SedCapacity{
 				(self.basis_unique_states*9/16).max(read_global_config().min_basis_unique_states), // OLD: *3/4
 				(self.basis_acc_states/16).max(read_global_config().min_basis_acc_states), // OLD: /4
 			)
-		}
+		};
+		//new() resets the T_qm budget to the dense sentinel. The descent
+		//shrinks sizing params only, so carry the converged value across
+		//(no-op when the parent is itself on the dense path).
+		res.set_qm_real_rows(self.da_capacity().qm_real_rows);
+		res
 	}
 
 	/// syntax sugar for returning a reference to its wea_capacity

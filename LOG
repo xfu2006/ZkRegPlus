@@ -31045,6 +31045,7 @@ Goal 12. S102 + S110
 	[c] fix sum_v_i check
 	[d] F1 + F2 + F3
 	[e] F4 fix.
+Goal 13. continue S102 + S110 regression testing -> DONE
 
 Thursday 08/13/2026
 Goal 1. T9901  
@@ -31052,9 +31053,11 @@ Goal 1. T9901
 		low configs
 	[b] multiple rounds of design to try to simualte legacy 
 	[c] brief test of measure class first and collect data
-	[d]
+	[d] go ove rthe deisng and critera again
 
-Goal 2. continue S102 + S110 regression testing
+Goal 2. S121
+	[a] problem: rand generation
+	[b]
 
 Goal 3. T902: set up private repo for open science
 	[a]
