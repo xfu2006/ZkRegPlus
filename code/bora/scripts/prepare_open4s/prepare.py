@@ -28,6 +28,13 @@ USAGE
             --zip ~/Downloads/bora_sec27.zip
     python3 scripts/prepare_open4s/prepare.py --yes          # no pauses
 
+    Once the repo exists and the 4open ID is minted, publishing a change is
+    one command -- it rebuilds, force-pushes, waits out 4open's hourly poll
+    and re-inspects what the mirror then serves:
+
+    python3 scripts/prepare_open4s/prepare.py --update
+    python3 scripts/prepare_open4s/prepare.py --update --resume  # after a quit
+
 Requires only the Python standard library (>= 3.6) and `git` on PATH.
 """
 
@@ -43,6 +50,7 @@ import sys
 import tarfile
 import tempfile
 import textwrap
+import time
 import zipfile
 
 # ---------------------------------------------------------------------------
@@ -61,6 +69,21 @@ BRANCH = "artifact-sec27"
 # a preference; it must match character for character.
 OPEN4S_ID = "bora_sec27"
 OPEN4S_URL = "https://anonymous.4open.science/r/%s" % OPEN4S_ID
+
+# Scratch space for the mirror check.  The downloaded ZIP is copied here and
+# expanded here, then both go away together, so a full second copy of the
+# artifact never lingers in /tmp under a random mkdtemp name nobody remembers.
+#
+# ONLY CHECK_DIR is ever deleted.  WORK_DIR is this project's own scratch root
+# and holds gigabytes of sweep logs (/tmp/bora/scale_dlp and friends), so
+# cleanup must never be pointed at WORK_DIR itself.
+WORK_DIR = "/tmp/bora"
+CHECK_DIR = os.path.join(WORK_DIR, "open4s_check")
+
+# 4open re-reads the branch at most hourly.  Checking sooner downloads the
+# PREVIOUS tree and diffs it against the manifest that was just rewritten, so
+# the failure looks like hundreds of corrupted files rather than "too early".
+MIRROR_LAG_SECONDS = 3600
 
 # Identity used for the single squashed commit -- visible in `git log` on the
 # mirror, so it must not resolve to a real person.
@@ -229,6 +252,32 @@ def info(t):
 
 def mb(n):
     return "%.2f MB" % (n / 1048576.0)
+
+
+def human_delta(seconds):
+    seconds = int(max(0, seconds))
+    m, s = divmod(seconds, 60)
+    h, m = divmod(m, 60)
+    if h:
+        return "%dh %02dm" % (h, m)
+    if m:
+        return "%dm %02ds" % (m, s)
+    return "%ds" % s
+
+
+def check_dir(sub=""):
+    """A path inside CHECK_DIR, created on demand."""
+    p = os.path.join(CHECK_DIR, sub) if sub else CHECK_DIR
+    if not os.path.isdir(p):
+        os.makedirs(p)
+    return p
+
+
+def clean_check_dir():
+    """Remove CHECK_DIR -- and never WORK_DIR, which is not ours to delete."""
+    if os.path.isdir(CHECK_DIR):
+        shutil.rmtree(CHECK_DIR, ignore_errors=True)
+        ok("cleaned %s" % CHECK_DIR)
 
 
 def ask(prompt, auto_yes, default=""):
@@ -1138,6 +1187,53 @@ def step_fouropen(ctx):
         """ % "\n".join("          " + t for t in REDACTION_TERMS), y)
 
 
+def check_mirror_zip(ctx, zip_path):
+    """Expand a downloaded 4open ZIP under CHECK_DIR and inspect it.
+
+    The ZIP is COPIED, not moved: the browser's download stays where the
+    browser put it.  The copy and its expansion both live under CHECK_DIR and
+    are deleted together on the way out, pass or fail.
+
+    Returns the inspect_tree failure list.
+    """
+    zip_path = os.path.expanduser(zip_path)
+    if not os.path.isfile(zip_path):
+        die("no such file: %s" % zip_path)
+
+    try:
+        staged = os.path.join(check_dir(), os.path.basename(zip_path))
+        if os.path.abspath(zip_path) != os.path.abspath(staged):
+            shutil.copy2(zip_path, staged)
+            info("copied the ZIP to %s (%s)" % (staged,
+                                                mb(os.path.getsize(staged))))
+        dest = check_dir("extracted")
+        with zipfile.ZipFile(staged) as zf:
+            zf.extractall(dest)
+        ok("extracted into %s" % dest)
+
+        # 4open may wrap everything in one top directory; descend if so.
+        entries = [e for e in os.listdir(dest) if not e.startswith("__MACOSX")]
+        root = dest
+        if len(entries) == 1 and os.path.isdir(os.path.join(dest, entries[0])):
+            root = os.path.join(dest, entries[0])
+            info("descended into single top-level dir: %s" % entries[0])
+
+        failures = inspect_tree(root, "4open mirror (downloaded ZIP)",
+                                manifest=ctx.get("manifest"),
+                                expect_pack_sha=ctx.get("pack_sha"))
+
+        print()
+        info("REMINDER: the mirror is a live proxy, not a copy. Any fix means")
+        info("push to GitHub, wait for auto-update (hourly max), re-download,")
+        info("and re-run: --update  (or --update --resume to skip the rebuild)")
+        info("Do NOT re-mint to force a refresh -- you risk losing the ID.")
+        return failures
+    finally:
+        clean_check_dir()
+        if os.path.isfile(zip_path):
+            info("your original download is untouched at %s" % zip_path)
+
+
 def step_checkmirror(ctx):
     hdr("STEP 11/12  inspect what the 4open mirror actually serves")
     y = ctx["yes"]
@@ -1153,35 +1249,8 @@ def step_checkmirror(ctx):
         warn("skipped -- no ZIP given")
         info("re-run later with: --only checkmirror --zip <file>")
         return
-    zip_path = os.path.expanduser(zip_path)
-    if not os.path.isfile(zip_path):
-        die("no such file: %s" % zip_path)
-
-    tmp = tempfile.mkdtemp(prefix="bora_mirrorcheck_")
-    try:
-        with zipfile.ZipFile(zip_path) as zf:
-            zf.extractall(tmp)
-        ok("extracted %s" % zip_path)
-        # 4open may wrap everything in one top directory; descend if so.
-        entries = [e for e in os.listdir(tmp) if not e.startswith("__MACOSX")]
-        root = tmp
-        if len(entries) == 1 and os.path.isdir(os.path.join(tmp, entries[0])):
-            root = os.path.join(tmp, entries[0])
-            info("descended into single top-level dir: %s" % entries[0])
-
-        failures = inspect_tree(root, "4open mirror (downloaded ZIP)",
-                                manifest=ctx.get("manifest"),
-                                expect_pack_sha=ctx.get("pack_sha"))
-
-        print()
-        info("REMINDER: the mirror is a live proxy, not a copy. Any fix means")
-        info("push to GitHub, wait for auto-update (hourly max), re-download,")
-        info("and re-run: --only checkmirror --zip <new file>")
-        info("Do NOT re-mint to force a refresh -- you risk losing the ID.")
-        if failures:
-            die("the mirror is not clean")
-    finally:
-        shutil.rmtree(tmp, ignore_errors=True)
+    if check_mirror_zip(ctx, zip_path):
+        die("the mirror is not clean")
 
 
 def step_freeze(ctx):
@@ -1212,6 +1281,194 @@ def step_freeze(ctx):
         grace period; if something is genuinely broken, email
         sec27chairs@usenix.org rather than pushing silently.
         """ % (OPEN4S_ID, sha), y)
+
+
+# ---------------------------------------------------------------------------
+# --update: republish an already-minted mirror
+#
+# Steps 8 and 10 are one-time: the GitHub repo exists and the 4open ID is
+# minted and cited in the paper.  Everything after that is a loop -- rebuild,
+# replace the branch tip, wait out the poll interval, re-inspect -- and that
+# loop is what this section automates.  The 4open ID, branch, auto-update flag
+# and redaction terms are never touched; the mirror is a live proxy on BRANCH,
+# so replacing the tip IS the update, and re-minting to "refresh" would put
+# the ID the submitted PDF cites at risk.
+# ---------------------------------------------------------------------------
+
+def record_push_time(ctx):
+    """Persist push time and repo URL so a later --resume can find them."""
+    path = ctx["manifest_path"]
+    try:
+        with open(path) as f:
+            data = json.load(f)
+        data["pushed_at"] = ctx["pushed_at"]
+        data["github_url"] = ctx.get("github_url")
+        with open(path, "w") as f:
+            json.dump(data, f, indent=1, sort_keys=True)
+        ctx["manifest"] = data
+    except Exception as exc:
+        warn("could not record the push time in %s: %s" % (path, exc))
+        info("--update --resume will not know when the hour started")
+
+
+def push_snapshot(ctx):
+    """Force-push the rebuilt snapshot over the published branch.
+
+    --force is structural, not a convenience: step_initrepo builds a brand new
+    repository with one squashed commit every time, so the new tip shares no
+    ancestry with the published one and can never fast-forward.
+    """
+    hdr("UPDATE 2/3  force-push the rebuilt snapshot")
+    stage = ctx["stage"]
+    y = ctx["yes"]
+
+    url = ctx.get("github_url") or ask(
+        "GitHub repo URL to push to (Enter to abort):", y)
+    if not url:
+        die("no repo URL -- pass --repo-url, or answer the prompt")
+    ctx["github_url"] = url
+
+    # step_initrepo refuses to leave a remote behind, so this is normally a
+    # fresh add; the remove keeps a re-run from tripping over a stale one.
+    if git(["remote"], stage):
+        git(["remote", "remove", "origin"], stage)
+    git(["remote", "add", "origin", url], stage)
+    ok("origin -> %s" % url)
+
+    confirm("force-push %s to %s, replacing the published tree?" % (BRANCH, url),
+            y)
+
+    r = subprocess.run(["git", "push", "--force", "-u", "origin", BRANCH],
+                       cwd=stage, stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE)
+    if r.returncode != 0:
+        bad("push failed: %s"
+            % r.stderr.decode("utf-8", "replace").strip().split("\n")[-1])
+        info("this needs your own GitHub credentials in this shell (SSH key")
+        info("or gh token). Fix auth and re-run --update.")
+        die("cannot publish the rebuilt snapshot")
+    ok("pushed %s to %s" % ((ctx.get("snap_sha") or "?")[:12], BRANCH))
+    ctx["pushed_at"] = time.time()
+    record_push_time(ctx)
+
+
+def wait_for_mirror(ctx):
+    """Hold until 4open can plausibly have re-read the branch."""
+    pushed = ctx.get("pushed_at")
+    if not pushed:
+        warn("no recorded push time -- cannot tell whether the mirror is current")
+        info("if you pushed less than %s ago, the check below will compare the"
+             % human_delta(MIRROR_LAG_SECONDS))
+        info("OLD tree against the NEW manifest and fail confusingly.")
+        return
+    ready = pushed + MIRROR_LAG_SECONDS
+    if time.time() >= ready:
+        ok("pushed %s ago -- the mirror has had time to re-read the branch"
+           % human_delta(time.time() - pushed))
+        return
+
+    hdr("UPDATE 3/3  wait for the mirror to catch up")
+    info("pushed at   %s" % time.strftime("%H:%M:%S", time.localtime(pushed)))
+    info("ready after %s  (4open polls hourly at most)"
+         % time.strftime("%H:%M:%S", time.localtime(ready)))
+    print()
+    info("Downloading before then gets the PREVIOUS tree, which is then diffed")
+    info("against the manifest written minutes ago: the report is a wall of")
+    info("bogus per-file differences, not a clear 'too early'.")
+
+    if ctx["yes"]:
+        warn("--yes: not waiting %s" % human_delta(ready - time.time()))
+        return
+
+    print()
+    r = ask("[Enter] wait here (%s) / s = check now anyway / q = quit:"
+            % human_delta(ready - time.time()), False)
+    if r[:1].lower() == "q":
+        print()
+        info("Resume with:  --update --resume")
+        sys.exit(0)
+    if r[:1].lower() == "s":
+        warn("checking early at your request -- expect noisy differences")
+        return
+
+    info("Ctrl-C is safe here: the push is done and nothing is half-written.")
+    try:
+        while True:
+            left = ready - time.time()
+            if left <= 0:
+                break
+            sys.stdout.write("\r  " + C.D + "waiting %-10s" % human_delta(left)
+                             + C.X)
+            sys.stdout.flush()
+            time.sleep(min(30, left))
+        sys.stdout.write("\r" + " " * 40 + "\r")
+    except KeyboardInterrupt:
+        print()
+        info("interrupted -- resume with: --update --resume")
+        sys.exit(0)
+    ok("the mirror has had its hour")
+
+
+def run_update(ctx, resume=False):
+    """Rebuild, force-push, wait out the poll interval, re-inspect."""
+    hdr("UPDATE  republish the artifact snapshot")
+    info("The 4open ID, branch, auto-update flag and redaction terms are all")
+    info("left alone. Only the branch tip moves.")
+
+    if not resume:
+        prev_sha = ctx.get("snap_sha")
+
+        hdr("UPDATE 1/3  rebuild the snapshot")
+        # Steps 1-7 verbatim.  export MUST be included: it is the only step
+        # that recreates staging, and re-pruning an already-packed tree fails
+        # in step 4 with "pack member(s) missing from the export".
+        for name, _, fn in STEPS:
+            if name == "github":
+                break
+            fn(ctx)
+            if name == "manifest":
+                with open(ctx["manifest_path"]) as f:
+                    ctx["manifest"] = json.load(f)
+                ctx["pack_sha"] = ctx["manifest"].get("pack_sha256")
+            else:
+                confirm("continue to next step?", ctx["yes"])
+
+        new_sha = ctx.get("snap_sha")
+        if prev_sha and new_sha == prev_sha:
+            hdr("UPDATE  nothing to publish")
+            ok("the snapshot commit is unchanged: %s" % new_sha[:12])
+            info("Identity and timestamps are fixed constants, so an identical")
+            info("tree reproduces an identical commit. The mirror already")
+            info("serves this exact snapshot; nothing was pushed.")
+            return
+        if prev_sha:
+            info("replacing published %s with %s"
+                 % (prev_sha[:12], (new_sha or "?")[:12]))
+
+        push_snapshot(ctx)
+        step_checkpush(ctx)
+    else:
+        info("--resume: skipping rebuild and push")
+        if not ctx.get("pushed_at"):
+            warn("no push recorded in %s" % ctx["manifest_path"])
+
+    wait_for_mirror(ctx)
+
+    hdr("UPDATE  re-inspect what the mirror now serves")
+    zip_path = ctx.get("zip")
+    if not zip_path:
+        print()
+        info("Open %s in a browser and download the ZIP." % OPEN4S_URL)
+        info("(curl cannot: 4open answers 403 to non-browser agents.)")
+        zip_path = ask("path to the freshly downloaded ZIP (Enter to skip):",
+                       ctx["yes"])
+    if not zip_path:
+        warn("skipped -- no ZIP given")
+        info("finish later with: --update --resume --zip <file>")
+        return
+    if check_mirror_zip(ctx, zip_path):
+        die("the refreshed mirror is not clean")
+    ok("the mirror now serves snapshot %s" % (ctx.get("snap_sha") or "?")[:12])
 
 
 STEPS = [
@@ -1249,6 +1506,10 @@ def main():
                     help="GitHub URL for the push check")
     ap.add_argument("--from", dest="start", metavar="STEP")
     ap.add_argument("--only", metavar="STEP")
+    ap.add_argument("--update", action="store_true",
+                    help="republish: rebuild, force-push, wait, re-check")
+    ap.add_argument("--resume", action="store_true",
+                    help="with --update: skip rebuild+push, just wait and check")
     ap.add_argument("--list", action="store_true")
     ap.add_argument("--yes", action="store_true", help="do not pause")
     ap.add_argument("--no-color", action="store_true")
@@ -1264,6 +1525,11 @@ def main():
             print("  %2d. %-13s %s%s" % (i, n, d,
                                          " [MANUAL]" if n in MANUAL else ""))
         return
+
+    if args.resume and not args.update:
+        die("--resume only means anything with --update")
+    if args.update and (args.only or args.start):
+        die("--update runs its own sequence; drop --only/--from")
 
     selected = STEPS
     if args.only:
@@ -1294,6 +1560,8 @@ def main():
                 ctx["manifest"] = json.load(f)
             ctx["pack_sha"] = ctx["manifest"].get("pack_sha256")
             ctx["snap_sha"] = ctx["manifest"].get("snapshot_commit")
+            ctx["pushed_at"] = ctx["manifest"].get("pushed_at")
+            ctx["github_url"] = ctx["github_url"] or ctx["manifest"].get("github_url")
         except Exception as exc:
             warn("could not read manifest %s: %s" % (ctx["manifest_path"], exc))
 
@@ -1303,9 +1571,17 @@ def main():
     print("  staging  : %s" % stage)
     print("  manifest : %s%s" % (ctx["manifest_path"],
                                  "  (loaded)" if "manifest" in ctx else ""))
-    print("  steps    : %s" % ", ".join(s[0] for s in selected))
+    if args.update:
+        print("  mode     : --update%s" % (" --resume" if args.resume else ""))
+    else:
+        print("  steps    : %s" % ", ".join(s[0] for s in selected))
     if args.start and args.start != "preflight":
         info("resuming: earlier steps assumed already done in staging")
+
+    if args.update:
+        run_update(ctx, resume=args.resume)
+        print()
+        return
 
     for name, _, fn in selected:
         fn(ctx)

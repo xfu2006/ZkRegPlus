@@ -31075,8 +31075,8 @@ Goal 1. T9901: determine_config
 --- TODO ---
 
 Goal 5. more soundness errors
-	[a] S109 design check -> test
-	[b] 
+	[a] S109 design check -> test -> closed
+	[b] S107: bound cmF and z[0] -> 
 
 Goal 6. T902: set up private repo for open science
 	[a] design for the prep script
@@ -31095,12 +31095,11 @@ Goal 6. T902: set up private repo for open science
 	[g] set up the private repo
 	[h] more cleaning issues.
 	[i] clear more issues of T902
-	-- TODO -- 
-	[a] do an update menu for prepare.py
+	[j] do an update menu for prepare.py
 
 Goal 7. T9902: minimize lkup share for tune
 	[a] design
-	[b]
+	[b] review code
 
 
 
