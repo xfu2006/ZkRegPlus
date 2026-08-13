@@ -31056,7 +31056,9 @@ Goal 1. S121
 Goal 2: S115 [a] issue: false alarm on check sum_inp/sum_oup 
 Goal 3. S116
 	[a] problem: b_light_test still generates snark , it's ok, false alarm
---- TODO ---
+Goal 4. check remaining issue
+	[a] double check issue
+	[b] remaiining:  3
 Goal 1. T9901: determine_config  
 	[a] problem: make sure lower ring has
 		low configs
@@ -31066,10 +31068,17 @@ Goal 1. T9901: determine_config
 	[e] list all design defects right now.
 	[f] appove design and now wait for code
 	[g] approve test plan
+	[h] delegate tasks to Opus to save token cost
+	[i] run two other tasks of verification
+	[j] test most clean
+	[f] final check -> close
+--- TODO ---
 
-Goal 2. check remaining issue
+Goal 5. more soundness errors
+	[a] S109 design check -> test
+	[b] 
 
-Goal 3. T902: set up private repo for open science
+Goal 6. T902: set up private repo for open science
 	[a] design for the prep script
 	[b] write a function to perform post packing
 		inspection after private repo is created:
@@ -31084,6 +31093,14 @@ Goal 3. T902: set up private repo for open science
 	[e] implement prepare.py
 	[f] refine INSTALL.py given prepare.py generated tgz
 	[g] set up the private repo
+	[h] more cleaning issues.
+	[i] clear more issues of T902
+	-- TODO -- 
+	[a] do an update menu for prepare.py
+
+Goal 7. T9902: minimize lkup share for tune
+	[a] design
+	[b]
 
 
 

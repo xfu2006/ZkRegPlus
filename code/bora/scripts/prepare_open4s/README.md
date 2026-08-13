@@ -240,7 +240,7 @@ appends them), so a reviewer's clone stays clean after install.
 
 | Date | What |
 |---|---|
-| **2026-08-25** | artifact **URL** is final — it is already cited at `src/apdx_open_sci.tex:16` as `https://anonymous.4open.science/r/bora-sec27`, so the minted ID must match exactly |
+| **2026-08-25** | artifact **URL** is final — it is already cited at `src/apdx_open_sci.tex:16` as `https://anonymous.4open.science/r/bora_sec27`, so the minted ID must match exactly |
 | **2026-08-28** | artifact **content** frozen — come back and pin the commit SHA on the 4open form (**T913**), a harder freeze than switching auto-update off |
 
 Between those two dates, leave **Auto update ON** and **Commit blank**: that is

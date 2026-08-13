@@ -349,10 +349,13 @@ where
 	GM: GadgetMapper<C1::ScalarField,LK> + std::clone::Clone + Debug,
 {
 	/// NOTE that F_circuit's full_mode decides its full mode
-    pub fn empty(poseidon_config: &PoseidonConfig<CF1<C1>>, F_circuit: FC, n_circ: usize, j: usize, job_id: usize)->Self{
+    pub fn empty(poseidon_config: &PoseidonConfig<CF1<C1>>, mut F_circuit: FC, n_circ: usize, j: usize, job_id: usize)->Self{
 		let mut dummy_external_inputs = F_circuit.gen_dummy_stmt();
 		// make pc_i1 part to be consistent with j
 		dummy_external_inputs[1] = C1::ScalarField::from(j as u32);
+		// this synthesis only feeds extract_r1cs; the dummy stmt has
+		// no m_share fill, so quiet the hab22 assert (S109)
+		F_circuit.set_keygen_synth(true);
 		let zero = C1::ScalarField::zero();
 		let b_full = F_circuit.is_full_mode();
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;

@@ -355,6 +355,10 @@ pub trait SigmaIR1CS<const H: bool, F: PrimeField, LK: LookupTableTwoCol<F>, GM:
 	/// set its own dummy statement
 	fn set_dummy_stmt(&mut self, stmt: StatementInst<F,LK>);
 
+	/// mark this instance as the keygen-shape synthesis vehicle
+	/// (native-only; gates prover asserts the dummy cannot satisfy)
+	fn set_keygen_synth(&mut self, b: bool);
+
 	/// set job_id for logging isolation
 	fn set_job_id(&mut self, job_id: usize);
 
@@ -2761,6 +2765,11 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// the value for dummy stmt
 	pub dummy_stmt: Option<Vec<F>>,
 
+	/// true only on the keygen R1CS-extraction synthesis, whose dummy
+	/// stmt has no m_share fill; gates the native hab22 assert. Never
+	/// read in-circuit, so it cannot change the constraint shape.
+	pub b_keygen_synth: bool,
+
 	pub job_id: usize,
 }
 
@@ -2826,6 +2835,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			b_full_mode: self.b_full_mode,
 			fq_bits: self.fq_bits,
 			dummy_stmt: self.dummy_stmt.clone(),
+			b_keygen_synth: self.b_keygen_synth,
 			_lk: PhantomData,
 			b_cyclepair: self.b_cyclepair,
 			b_check_lkup: self.b_check_lkup,
@@ -2866,6 +2876,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			b_full_mode: self.b_full_mode,
 			fq_bits: self.fq_bits,
 			dummy_stmt: self.dummy_stmt.clone(),
+			b_keygen_synth: self.b_keygen_synth,
 			_lk: PhantomData,
 			b_cyclepair: self.b_cyclepair,
 			b_check_lkup: self.b_check_lkup,
@@ -3555,6 +3566,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			stmt_config: stmt_cfg,
 			params: cs_pp, b_full_mode: b_full_mode, fq_bits: fq_bits,
 			dummy_stmt: None,
+			b_keygen_synth: false,
 			_lk: PhantomData, b_cyclepair,
 			b_check_lkup,
 			job_id: 0})
@@ -3597,6 +3609,11 @@ where 	C: CurveGroup<ScalarField=F>,
 		let (cs_pp, _cs_vp) = CS::setup(&mut rng, cmf_len + 1)
 			.expect("resize cmF params");
 		self.params = cs_pp;
+	}
+
+	/// keygen-synthesis marker; see the field doc on b_keygen_synth.
+	fn set_keygen_synth(&mut self, b: bool){
+		self.b_keygen_synth = b;
 	}
 
 	// 2026-05-15: propagate job_id to ALL per-job state, not just
@@ -4205,26 +4222,22 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 		let b_hab_res1 = sum_hab22_right.is_eq(&sum_hab22_left)?;
-		//S109 -- OPEN SOUNDNESS HOLE, KNOWINGLY LEFT IN. The third arm
-		//waives the Hab'22 equality whenever the right sum is zero, and
-		//it keys that waiver on a WITNESS: m_share is free (:4136), so a
-		//prover who zeroes it waives the equality vacuously. The exploit
-		//is real and `test_s109_hab22_zero_waiver` demonstrates it.
-		//It is still here because DELETING IT BREAKS HONEST PROOFS: a
-		//1-line A/B measured waiver OUT = SIGABRT in small_data_par,
-		//waiver IN = PASS. Padded multi-job workloads emit final steps
-		//whose right sum really is zero, so the arm is load-bearing --
-		//single-job workloads cannot pad and so never showed this.
-		//The fix is to gate the waiver on a STATEMENT-side "this step is
-		//padding" bit instead of on m_share; until then S109 is OPEN.
-		let b_hab_res = not_final_step.or(&b_hab_res1)?
-			.or(&sum_hab22_right.is_zero()?)?;
+		//S109 FIX. A third arm used to waive the equality whenever the
+		//right sum was zero -- keyed on the prover-free m_share, so a
+		//prover zeroing it skipped the whole lookup argument
+		//(test_s109_hab22_zero_waiver). Measured on small_data_par: no
+		//emitted proof ever used that arm; its only consumer was the
+		//keygen dummy synthesis (m_share unfilled), whose CS is only
+		//mined for matrices and never satisfiability-checked. So the
+		//waiver is gone; b_keygen_synth quiets the native assert below
+		//on that knowingly-unsatisfied keygen pass.
+		let b_hab_res = not_final_step.or(&b_hab_res1)?;
 
-		if b_has_lookup && self.b_check_lkup{ 
+		if b_has_lookup && self.b_check_lkup{
 			//NOTE self.b_check_lkup is ONLY for testing purpose
 			//when we pass a large lookup table but set small lkup_share_size
 			//in circ.
-			if b_hab_res.value().is_ok(){
+			if b_hab_res.value().is_ok() && !self.b_keygen_synth{
 				assert!(b_hab_res.value()?, "failed checking hab22 equation");
 			}
 			b_hab_res.enforce_equal(&Boolean::TRUE)?;

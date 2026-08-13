@@ -426,9 +426,12 @@ where
     for<'a> &'a GC2: GroupOpsBounds<'a, C2, GC2>,
 	<C1 as Group>::ScalarField: Absorb,
 {
-    pub fn empty(poseidon_config: &PoseidonConfig<CF1<C1>>, F_circuit: FC, full_mode: bool) -> Self {
+    pub fn empty(poseidon_config: &PoseidonConfig<CF1<C1>>, mut F_circuit: FC, full_mode: bool) -> Self {
 		assert!(full_mode==false, "full_mode not supported. Only SuperNova version supports it");
 		let dummy_external_inputs = F_circuit.gen_dummy_stmt();
+		// this synthesis only feeds extract_r1cs; the dummy stmt has
+		// no m_share fill, so quiet the hab22 assert (S109)
+		F_circuit.set_keygen_synth(true);
 		let zero = C1::ScalarField::zero();
 		let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
 		let zi_dummy= ZiPartTwoInst::new(zero, zero, poseidon_config, full_mode, fq_bits, 0);

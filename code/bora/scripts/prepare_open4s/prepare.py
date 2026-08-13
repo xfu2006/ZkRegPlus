@@ -25,7 +25,7 @@ USAGE
     python3 scripts/prepare_open4s/prepare.py --list
     python3 scripts/prepare_open4s/prepare.py --from pack
     python3 scripts/prepare_open4s/prepare.py --only checkmirror \\
-            --zip ~/Downloads/bora-sec27.zip
+            --zip ~/Downloads/bora_sec27.zip
     python3 scripts/prepare_open4s/prepare.py --yes          # no pauses
 
 Requires only the Python standard library (>= 3.6) and `git` on PATH.
@@ -59,7 +59,7 @@ BRANCH = "artifact-sec27"
 
 # The ID is already cited in the paper at src/apdx_open_sci.tex:16.  It is not
 # a preference; it must match character for character.
-OPEN4S_ID = "bora-sec27"
+OPEN4S_ID = "bora_sec27"
 OPEN4S_URL = "https://anonymous.4open.science/r/%s" % OPEN4S_ID
 
 # Identity used for the single squashed commit -- visible in `git log` on the
@@ -151,7 +151,8 @@ GITIGNORE_BLOCK_HEADER = """
 
 # Identity strings that must not appear anywhere, in text OR binary.  4open
 # auto-anonymizes only owner/org/repo, and only in text files.
-IDENTITY_PATTERNS = [b"xiang", b"hofstra", b"xfu20", b"/home/", b"thinkpad"]
+IDENTITY_PATTERNS = [b"xiang", b"hofstra", b"xfu20", b"/home/", b"thinkpad",
+                     b"fu.tex"]
 
 # A hit is forgiven only when one of these appears in the window AROUND it.
 # Context beats filename: a real /home/xiang added to an already-forgiven file
