@@ -596,9 +596,11 @@ where
 		lk2.reverse();
 
 		let zero = F::zero();
-		let rands: Vec<F> = 
-			rayon::iter::repeat( <E::G1 as Group>::ScalarField::rand(rng) ).
-				take(n_words).collect();
+		//one INDEPENDENT hiding pad per word: rayon::iter::repeat
+		//would draw once and clone, sharing one pad across all words.
+		let rands: Vec<F> = (0..n_words)
+			.map(|_| <E::G1 as Group>::ScalarField::rand(rng))
+			.collect();
 		let r_all_words = <E::G1 as Group>::ScalarField::rand(rng);
 		let r_kzg_len = <E::G1 as Group>::ScalarField::rand(rng);
 		let all_words = words.concat();
