@@ -1150,9 +1150,11 @@ def plan_required_files(plan):
 
 
 def _preflight(plan):
-    """Launch gate, run BEFORE go_background() so sudo still has a tty.
-    A missing input file aborts (nonzero rc); a failed numactl probe
-    only degrades the run to one unpinned process per leaf."""
+    """Sequenced-top launch gate, run BEFORE go_background() so a
+    failure lands on the terminal.  A missing input file aborts (nonzero
+    rc); a failed numactl probe only degrades the run to one unpinned
+    process per leaf.  The vm.max_map_count raise is main()'s, not this
+    gate's -- three tops never reach here."""
     global _NUMA_PROBE_OK
     ok, reasons = check_required_files(plan_required_files(plan))
     if not ok:
@@ -1167,7 +1169,6 @@ def _preflight(plan):
             log("PREFLIGHT WARN: %s" % r)
         log("PREFLIGHT: NUMA split disabled; one unpinned process "
             "per leaf")
-    ensure_vma(VMA_TARGET)
     return 0
 
 
@@ -2151,6 +2152,15 @@ def main():
         _show_menu()
         _show_submenu("dry_run")
         return 0
+
+    # vm.max_map_count for EVERY top, raised here and NOT in _preflight:
+    # small / figs / small_full_snark return before that gate, so a box
+    # at the kernel default hits the mimalloc VMA ceiling as "memory
+    # allocation of N bytes failed" / SIGABRT with RAM still free
+    # (small_full_snark, 512GB box, 2026-08-13).  Rust's own check
+    # (foldpot/driver.rs:2467) sizes off packed fields and false-passed
+    # it at 52,544 est vs >1M actual.  Earliest point with a tty for sudo.
+    ensure_vma(VMA_TARGET)
 
     plan = resolve_plan(args.run, args.items) if args.run \
         else interactive_select()
@@ -4924,7 +4934,9 @@ class PreflightTest(unittest.TestCase):
     file, degrade-only when the numactl probe fails."""
 
     def setUp(self):
-        # never touch the real box from a unit test: no sudo sysctl
+        # never touch the real box from a unit test: no sudo sysctl.
+        # _preflight no longer raises the VMA ceiling (main() does), but
+        # test_main_returns_preflight_rc_without_detaching drives main().
         p = mock.patch.object(_MOD, "ensure_vma")
         self.vma = p.start()
         self.addCleanup(p.stop)
@@ -4942,7 +4954,6 @@ class PreflightTest(unittest.TestCase):
             rc = _preflight(self._plan(["a"]))
         self.assertEqual(rc, 2)
         pn.assert_not_called()
-        self.vma.assert_not_called()
 
     def test_numactl_failure_degrades_instead_of_aborting(self):
         """A failed --preferred-many probe still returns 0, but clears
@@ -4958,15 +4969,14 @@ class PreflightTest(unittest.TestCase):
             self.assertFalse(numa_available())
             self.assertEqual(resolve_process_model().n_parts, 1)
 
-    def test_clean_box_raises_vma_to_target(self):
-        """The happy path proceeds and asks for VMA_TARGET."""
+    def test_clean_box_returns_zero(self):
+        """The happy path proceeds with rc 0."""
         specs = {"a": JobSpec("a", "a", lambda m, c: None)}
         with mock.patch.object(_MOD, "JOB_SPECS", specs), \
              mock.patch.object(_MOD, "preflight_numactl",
                                 return_value=(True, [])):
             rc = _preflight(self._plan(["a"]))
         self.assertEqual(rc, 0)
-        self.vma.assert_called_once_with(VMA_TARGET)
 
     def test_required_files_union_is_ordered_and_deduped(self):
         """Leaves sharing a file contribute it once, in plan order; an
@@ -5337,10 +5347,28 @@ class MainTest(unittest.TestCase):
             _MOD, "SUMMARY_LOG", os.path.join(self.tmp.name, "SUMMARY.log"))
         p.start()
         self.addCleanup(p.stop)
+        # main() raises vm.max_map_count for every top: never let a unit
+        # test reach the real sudo sysctl.
+        v = mock.patch.object(_MOD, "ensure_vma")
+        self.vma = v.start()
+        self.addCleanup(v.stop)
 
     def test_list_flag_prints_and_returns(self):
         with mock.patch("sys.argv", ["prog", "--list"]):
             self.assertEqual(main(), 0)
+        self.vma.assert_not_called()
+
+    def test_every_top_raises_vma_before_dispatch(self):
+        """Every menu top asks for VMA_TARGET, including the three that
+        return before _preflight()."""
+        for top, _ in TOP_CHOICES:
+            argv = ["prog", "--dry-run", "--run", top]
+            if top not in NO_ITEM_TOPS:
+                argv += ["--items", "dlp"]
+            with self.subTest(top=top), mock.patch("sys.argv", argv):
+                self.vma.reset_mock()
+                self.assertEqual(main(), 0)
+                self.vma.assert_called_once_with(VMA_TARGET)
 
     def test_small_dispatch_calls_run_small_no_backgrounding(self):
         """--run small runs in the foreground, like figs."""

@@ -31108,9 +31108,16 @@ Goal 8. more soundness errors
 		-> includes an extra element
 
 Friday 08/14/2026 
---- TODO ---
 Goal 1. quick test on 512gb server first
-	[a] small + dry_run + small_full_snark + scale1/2/3 + reef + eval
+	[a] reinstall the entire system (gitclone + install data + small test)
+	[b] dry_run + small_full_snark + scale1/2/3 + reef + eval
+		:: STARTED 6:30am 08/14 (expected to run 24 hrs) -> 
+		-> small: 42 sec
+		-> small_fullsnark: -> failed, the malloc config needs pack
+		-> dry run slack
+		-> 
+Goal 2. Reference check
+	[a]
 
 
 
