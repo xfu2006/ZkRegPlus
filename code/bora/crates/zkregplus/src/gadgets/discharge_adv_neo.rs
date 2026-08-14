@@ -63,7 +63,7 @@ use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use utils::consts::{read_global_config, B_DEBUG};
-use utils::logger::{log, LOG3, LOG4};
+use utils::logger::{log, LOG4};
 use ark_r1cs_std::R1CSVar;
 use folding_schemes::Error;
 use folding_schemes::folding::foldpot::{
@@ -1046,10 +1046,10 @@ B0={} B1={} B2={} B3_4={} B5plus={}", self.b_igc, b_hist[0],
 				if *e > peak { peak = *e; }
 			}
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61080.1 cand_rows={} real_cap={} dens_pm={}",
 			rows, n_cap, rows * 1000 / n_cap.max(1)));
-		log(job_id, LOG3,
+		log(job_id, LOG4,
 			&format!("PERF 61080.3 step_peak={}", peak));
 		Ok(res)
 	}
@@ -2651,7 +2651,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		sel.is_pad = is_pad; sel.is_bp = is_bp; sel.is_sp = is_sp;
 		sel.is_step0 = is_step0; sel.is_last = is_last;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.1: block=selectors cs={} pred={}",
 			cs.num_constraints() - n0,
 			(if b_aggr { 16 } else { 18 }) * n));
@@ -3161,7 +3161,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		check_prod_zero(&(&c_one - &sel.is_pad[n - 1]),
 			&(&c_one - &sel.is_last[n - 1]), lc!(),
 			"neo final run ends at LAST")?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.2: block=wf cs={} pred={}",
 			cs.num_constraints() - n0, 13 * n));
 		Ok((grp_start, rid, n_runs, g_fp, g_wr))
@@ -3330,7 +3330,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			check_eq(&v.si_b_bwd[i], &(&c_fbase + &v.subsig[i]),
 				"neo si_b_bwd pin")?;
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.5: block=si_pins cs={} pred={}",
 			cs.num_constraints() - n0, 4 * n));
 		Ok(())
@@ -3975,7 +3975,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			&StepQueueType::ResSmall, &g.capacity);
 		let qc_rows: usize = qc_sq.store_items.values().map(|v|
 			v.iter().map(|it| it.locs.len()).sum::<usize>()).sum();
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61080.2 qc_rows={} qc_cap={} sat_pm={}",
 			qc_rows, n_qc, qc_rows * 1000 / n_qc.max(1)));
 		utils::consts::QC_SAT[g.b_igc as usize].record(qc_rows, n_qc);
@@ -4120,7 +4120,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		}
 		assert_logup_cond(cs.clone(), &qry, &sq, &tgt.to_vec(),
 			&sel_qr.to_vec(), mtbl_qr, r2)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.3: block=certs cs={} pred={}",
 			cs.num_constraints() - n0, 31 * n));
 		Ok(())
@@ -4267,7 +4267,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			&(&(&v.enc[i] * &sel.is_last[i]) * &sel.is_c[i])
 				* &(&c_one - &sel.is_step0[i])).collect();
 		assert_logup(cs.clone(), &qry_a, acc_out, mtbl_acc, r2)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.4: block=merge_acc cs={} pred={}",
 			cs.num_constraints() - n0,
 			13 * n + 7 * l_pat.len() + 3 * d_pat.len()));
@@ -4306,7 +4306,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			(&nat.l_pat, &nat.l_loc), &vars.m_aux, &vars.d_pat,
 			&vars.d_cnt, &vars.d_diff, &vars.s_pat, &vars.mtbl_d,
 			&vars.acc_out, &vars.mtbl_acc, r1, r2, job_id)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.9: block=TOTAL cs={} rows={}",
 			cs.num_constraints() - n0, nat.t.enc.len()));
 		Ok(())
@@ -4529,7 +4529,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			check_si_pin(&sel_jr[k], &jr.enc[k], &jr.si_pat[k],
 				&c_pat, &c_rg2t, "neo jr si_pat pin")?;
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.6: block=si_pins_nonaggr cs={} pred={}",
 			cs.num_constraints() - n0,
 			13 * n + jr.enc.len()));
@@ -4708,7 +4708,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			&sel_qr, mtbl_qr, r2)?;
 		assert_logup_cond(cs.clone(), &qry_c, &sq_c, &tgt_qc,
 			&sel_qc, mtbl_qc, r2)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.7: block=certs_nonaggr cs={} pred={}",
 			cs.num_constraints() - n0, 56 * n));
 		Ok(())
@@ -4805,7 +4805,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let ones = vec![c_one.clone(); n];
 		assert_logup_cond(cs.clone(), &qry_qc, &sel_qco, &tgt_qm,
 			&sel.is_c.to_vec(), &ones, r2)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.8: block=merge_nonaggr cs={} pred={}",
 			cs.num_constraints() - n0, 19 * n
 				+ 7 * vars.l_pat.len() + 3 * vars.d_pat.len()));
@@ -4847,7 +4847,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			default_min, r1, r2, job_id)?;
 		Self::assert_neo_merge_nonaggr(cs.clone(), &nat.t,
 			&vars.qm, &sel, vars, nat, r1, r2, job_id)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.9: block=TOTAL cs={} rows={}",
 			cs.num_constraints() - n0, nat.t.enc.len()));
 		Ok(())
@@ -5036,7 +5036,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		assert_logup_cond(cs.clone(), &qry, &sel_q.to_vec(),
 			&lk, &tsel, &m_tm.to_vec(), r2)?;
 		let mem_cs = cs.num_constraints() - n_m0;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.1: block=join ext_wf={} cs={} pred={}",
 			b_ext_wf, cs.num_constraints() - n0,
 			(if b_ext_wf { 2 } else { 5 }) * enc.len()
@@ -5165,7 +5165,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let ones = vec![c_one.clone(); tgt.len()];
 		assert_logup_cond(cs.clone(), &qry, &sel_ns.to_vec(),
 			&tgt, &ones, &mtbl_ns.to_vec(), r2)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.3: block=ns_gap cs={} pred={}",
 			cs.num_constraints() - n0,
 			4 * (n + ns_pat.len())));
@@ -5321,7 +5321,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 				q_c.0, &sq, r2, &c_base);
 			check_eq(&lhs, &rhs, "neo carry-out bijection")?;
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.4: block=carry cs={} pred={}",
 			cs.num_constraints() - n0,
 			if b_aggr { 3 * n } else { 4 * n + 4 * q_c.0.len() }));
@@ -5494,7 +5494,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			}
 			buf.push(pv.key2[i].clone(), sel.is_fp[i].clone());
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.5: block=fwd_prune cs={} pred={}",
 			cs.num_constraints() - n0,
 			(if b_aggr { 5 } else { 4 }) * n));
@@ -5584,7 +5584,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 				+ &(r1sq * &na.w_next[i]),
 				sel.is_bp[i].clone());
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.6: block=bwd_prune cs={} pred={}",
 			cs.num_constraints() - n0, 5 * n));
 		Ok(())
@@ -5676,7 +5676,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 				+ &(r1sq * &na.w_kept[i]),
 				sel.is_sp[i].clone());
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.7: block=singleton_prune cs={} pred={}",
 			cs.num_constraints() - n0, 4 * n));
 		Ok(())
@@ -5761,7 +5761,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let mut n_listed = FpVar::<F>::Constant(F::zero());
 		for z in z_sub.iter() { n_listed = &n_listed + &(&c_one - z); }
 		check_eq(n_runs, &n_listed, "neo run/subsig count")?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.8: block=seed_anchors cs={} pred={}",
 			cs.num_constraints() - n0, 2 * m));
 		Ok(())
@@ -5860,7 +5860,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			.collect();
 		verify_union_prf_vars(cs.clone(), &vec1, &vec2, &vec3,
 			&prf.b_left_more_zero, &prf.diff_zero, r1)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.2: block=union cs={} pred={}",
 			cs.num_constraints() - n0,
 			3 * n + 5 * vec1.len() + vec2.len()
@@ -5966,7 +5966,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 				&buf_qc.sel, &tgt_qc, &sel_qc,
 				&mtbl_qc.to_vec(), r2)?;
 		}
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.9: block=qm_lookups cs={} pred={}",
 			cs.num_constraints() - n0,
 			4 * n + 2 * buf_qr.qry.len()
@@ -6029,7 +6029,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			&(&qm.enc[i] * &sel.is_last[i])
 				* &(&sel.is_c[i] - &sel.is_seed[i])).collect();
 		assert_logup(cs.clone(), &qry, acc_out, mtbl_acc, r2)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61082.10: block=verdict cs={} pred={}",
 			cs.num_constraints() - n0,
 			3 * n + 2 * acc_out.len()));
@@ -6172,7 +6172,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    must be recorded in acc_out (own logup) --
 		Self::assert_verdict_aggr(cs.clone(), &vars.qm, &sel,
 			&vars.acc_out, &vars.mtbl_acc, r2, job_id)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.9: block=TOTAL cs={} rows={}",
 			cs.num_constraints() - n0, nat.t.enc.len()));
 		Ok(())
@@ -6290,7 +6290,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			&ranks, buf_qr, buf_qc, &vars.mtbl_qr,
 			&vars.mtbl_qc, &vars.qr_anch, r1, &r1sq, r2,
 			job_id)?;
-		log(job_id, LOG3, &format!(
+		log(job_id, LOG4, &format!(
 			"PERF 61081.9: block=TOTAL cs={} rows={}",
 			cs.num_constraints() - n0, nat.t.enc.len()));
 		Ok(())

@@ -2020,6 +2020,58 @@ LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
                  for k, name, mins, gb, note in DRY_COST]
 _LEAF_KEYS = [k for k, _ in LEAF_CHOICES]     # canonical order (2.2)
 
+# Full-run cost per leaf, MEASURED from the paper's production
+# artifacts (ZkregPlusPaper .../raw_data, READ-ONLY; extracted
+# 2026-08-14): (key, wall_hours, peak_rss_gb, note); None = never
+# measured.  SOURCES: dlp/clam the part logs' ALL-JOBS trailers, dna
+# its /usr/bin/time -v block (wall 5:22:56, maxrss 559,310,200 kB),
+# zombie/reef the docs logs' per-policy sums (582 runs / 60 samples),
+# scale the nested per-round trailers summed.  CAVEATS: dlp and clam
+# run their two halves CONCURRENTLY -- the leaf wall is the slower
+# part, but the box holds BOTH parts at once (dlp 262+260, clam
+# 373+531 GB -> the 1 TB box).  dna's 533 GB is a true time -v tree
+# peak; the dlp/clam/scale figures are in-log "RAM: N GB" step
+# samples, which the 08-14 calibration showed under-report the tree
+# peak by up to ~1.3x.
+FULL_COST = [
+    ("dlp",        119.2, 262,  " x2 parts"),
+    ("dna",        5.4,   533,  ""),
+    ("clam",       19.4,  531,  " x2 parts"),
+    ("zombie",     5.2,   None, ""),
+    ("reef",       5.2,   None, ""),
+    ("lkup",       None,  None, ""),
+    ("scale_clam", 10.9,  139,  ""),
+    ("scale_dlp",  1.3,   149,  ""),
+    ("effective",  None,  None, ""),
+]
+
+
+def _full_tag(hours, gb, note=""):
+    """'[full ~5.4h, ~533GB]'; days past 48h; '[full: not measured]'
+    when the leaf has no production artifact."""
+    if hours is None:
+        return "[full: not measured]"
+    wall = ("~%sd" % _fmt_min(hours / 24.0) if hours >= 48
+            else "~%sh" % _fmt_min(hours))
+    if gb is None:
+        return "[full %s%s]" % (wall, note)
+    return "[full %s%s, ~%dGB]" % (wall, note, gb)
+
+
+def full_total():
+    """Rollup of the measured full leaves: wall SUMS (they run in
+    sequence), RSS is the MAX.  Returns (hours, gb, n_unmeasured)."""
+    hrs = sum(c[1] for c in FULL_COST if c[1] is not None)
+    gb = max(c[2] for c in FULL_COST if c[2] is not None)
+    n_un = sum(1 for c in FULL_COST if c[1] is None)
+    return hrs, gb, n_un
+
+
+FULL_LEAF_CHOICES = [
+    (k, "%s %s" % (name, _full_tag(h, gb, fnote)))
+    for (k, name, _m, _g, _n), (_fk, h, gb, fnote)
+    in zip(DRY_COST, FULL_COST)]
+
 
 @dataclass
 class ResolvedPlan:
@@ -2089,14 +2141,17 @@ def _show_menu():
 def _show_submenu(top):
     print("PAPER_DATA -- %s: select one or more "
           "(e.g. \"1,3,5\", \"dlp,clam\", or \"A\"):" % top)
-    for i, (_, label) in enumerate(LEAF_CHOICES, 1):
+    # dry shows the DRY measurements, full the production figures
+    # harvested from the paper's raw_data (see FULL_COST's caveats).
+    choices = FULL_LEAF_CHOICES if top == "full_run" else LEAF_CHOICES
+    for i, (_, label) in enumerate(choices, 1):
         print("  (%d) %s" % (i, label))
-    # the per-leaf costs are DRY measurements, so only dry_run's All
-    # gets the rollup; full_run's leaf costs are not measured.
     if top == "dry_run":
         print("  (A) All %s" % _cost_tag(*dry_total(), lead=""))
     else:
-        print("  (A) All")
+        hrs, gb, n_un = full_total()
+        print("  (A) All [measured ~%sd, ~%dGB peak; %d leaves "
+              "unmeasured]" % (_fmt_min(hrs / 24.0), gb, n_un))
 
 
 def interactive_select():
@@ -5275,14 +5330,35 @@ class DryCostRollupTest(unittest.TestCase):
             _show_submenu("dry_run")
         self.assertIn("(A) All %s" % tag, buf.getvalue())
 
-    def test_full_run_all_has_no_dry_rollup(self):
-        """full_run's leaf costs are unmeasured -- its All stays bare
-        rather than quoting dry numbers."""
+    def test_full_run_shows_measured_production_costs(self):
+        """full_run's submenu quotes the paper-artifact figures, never
+        the dry tags, and its All carries the measured rollup."""
         buf = io.StringIO()
         with mock.patch("sys.stdout", buf):
             _show_submenu("full_run")
-        self.assertIn("(A) All\n", buf.getvalue())
-        self.assertNotIn("(A) All [", buf.getvalue())
+        out = buf.getvalue()
+        self.assertIn("Dna [full ~5.4h, ~533GB]", out)
+        self.assertIn("DLP [full ~5d x2 parts, ~262GB]", out)
+        self.assertIn("Analyze lkup [full: not measured]", out)
+        self.assertNotIn("dry", out)
+        hrs, gb, n_un = full_total()
+        self.assertIn("(A) All [measured ~%sd, ~%dGB peak; %d leaves "
+                      "unmeasured]" % (_fmt_min(hrs / 24.0), gb, n_un),
+                      out)
+
+    def test_full_cost_mirrors_leaf_keys(self):
+        """FULL_COST rows pair 1:1 with DRY_COST -- a new leaf must
+        land in BOTH tables or the full submenu mislabels it."""
+        self.assertEqual([c[0] for c in FULL_COST], _LEAF_KEYS)
+
+    def test_full_tag_forms(self):
+        """Hours under 48 print as h, above as d; missing RSS drops
+        the GB field; missing wall says not measured."""
+        self.assertEqual(_full_tag(5.4, 533), "[full ~5.4h, ~533GB]")
+        self.assertEqual(_full_tag(119.2, 262, " x2 parts"),
+                          "[full ~5d x2 parts, ~262GB]")
+        self.assertEqual(_full_tag(5.2, None), "[full ~5.2h]")
+        self.assertEqual(_full_tag(None, None), "[full: not measured]")
 
     def test_snark_label_is_measured_not_dry(self):
         """Menu #2 quotes its own run trailer, so its tag must say

@@ -430,6 +430,9 @@ pub struct DatasetSpec {
 	/// Non-aggr tuner seed (the dataset's legacy hand caps).
 	/// None when aggressive.
 	pub(crate) hand_seed: Option<CapParams>,
+	/// Fold-run log verbosity: full runs LOG3 (6108x probes off),
+	/// scale sweeps LOG4 (full probe trace, discharge_adv_neo).
+	pub(crate) log_level: usize,
 	/// Scale-round floors + seed override (legacy scale's low
 	/// "Option A" profile). None = scale keeps the full-run values.
 	pub(crate) scale_tune: Option<ScaleTune>,
@@ -490,6 +493,7 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	min_dfa_sigs: 0,
 	min_dfa_subsigs: 0,
 	hand_seed: None,
+	log_level: utils::logger::LOG3,
 	scale_tune: None,
 };
 
@@ -571,6 +575,7 @@ pub const DNA: DatasetSpec = DatasetSpec {
 		acdfa_state_part_bits: 27,
 		levels: Vec::new(),
 	}),
+	log_level: utils::logger::LOG3,
 	scale_tune: None,
 };
 
@@ -670,6 +675,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 	}),
 	// legacy collect_scale_data's Option A (zkp_driver.rs:
 	// 7480-7550): low floors + low seed per round.
+	log_level: utils::logger::LOG3,
 	scale_tune: Some(ScaleTune {
 		min_subsigs: 64,
 		min_basis_unique_states: 100,
@@ -866,7 +872,7 @@ fn apply_spec_config(spec: &DatasetSpec, b_dry_run: bool,
 	// semaphore is inside pass_all (driver.rs:1831), before the
 	// b_one_proof / b_folding_only returns.
 	g.n_par_batch_claim = spec.n_par_batch_claim;
-	g.log_level = utils::logger::LOG3;
+	g.log_level = spec.log_level;
 	// legacy couples fold-only with the light decider (zkp_driver.rs
 	// :6768-6772): a non-proving part must never build heavy keys.
 	g.b_light_test = b_dry_run || !role.b_proves;
@@ -2125,6 +2131,9 @@ fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
 	// scale never cover-checks, so fold's self-cover one-bump path
 	// stays disengaged inside retry_caperr's own bump loop.
 	s.b_check_lkup = false;
+	// scale wants the full 6108x probe trace (discharge_adv_neo);
+	// full runs keep LOG3, which silences every LOG4 probe.
+	s.log_level = utils::logger::LOG4;
 	s.vec_decrease_level = &[];
 	// scale-round tuning profile: low floors + low seed (a full-run
 	// floor would pin every subset to full size -- flat curve).
@@ -3190,6 +3199,7 @@ pub mod tests_bora_data_driver {
 			g.b_dryrun_after_capcheck = true;   // would no-op the fold
 			g.b_scale_catch_caperr = true;      // would kill fail-fast
 			g.b_check_lkup = !DLP.b_check_lkup; // must come from spec
+			g.log_level = 99;               // must come from spec
 			g.b_pin_lkup_share = true;      // the legacy pin
 			g.perc_lkup_share = 42;         // a stale ratchet value
 			g.snark_wait_flag = Some("/tmp/stale".to_string());
@@ -3215,7 +3225,10 @@ pub mod tests_bora_data_driver {
 		assert_eq!(c.n_par_snark_cp, DLP.n_par_snark_cp);
 		// spec-owned since M103 (was the hardcoded default-1 rule).
 		assert_eq!(c.n_par_batch_claim, DLP.n_par_batch_claim);
+		assert_eq!(c.log_level, DLP.log_level, "from the spec");
 		assert_eq!(c.log_level, utils::logger::LOG3);
+		assert_eq!(scale_spec_clone(&DLP).log_level,
+			utils::logger::LOG4, "scale flips the probe trace on");
 		assert_eq!(c.b_check_lkup, DLP.b_check_lkup, "from the spec");
 		assert!(!c.b_light_test,
 			"prover part at b_light=false stays heavy");
