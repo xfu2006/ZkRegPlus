@@ -6,6 +6,6 @@ config.lk_share 1
 paircycle.ext_in 627
 paircycle.nc 21595
 paircycle.nv 22265
-universe.lkup_len 6274
+universe.lkup_len 6272
 universe.sigs 2
 universe.subsig_ids 2

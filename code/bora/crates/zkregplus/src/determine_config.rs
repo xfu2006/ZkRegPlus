@@ -524,14 +524,20 @@ pub fn assemble_ladder(p_max: &CapParams,
     let g_p = specs.last().map_or(0, |s| s.max_pats_in_trace);
     let g_c = specs.last().map_or(0, |s| s.max_cp_unique_states);
     let g_f = specs.last().map_or(0, |s| s.max_fwd);
-    // Ladder sufficiency: the gauges hold what fast_finalize just
-    // observed, and reset_sat() clears them before the fold -- so this
-    // is the last point where an under-provisioned cap is visible
-    // BEFORE committing to a multi-day fold. "OVER" = over budget.
+    // TUNE-WIDE worst emission, NOT a ladder verdict: nothing resets
+    // the neo gauges inside fast_finalize, so this max spans every
+    // probe round -- including finalize_caps_probe's Phase-B floor
+    // reset (zkp_driver.rs:846), which under-sizes on PURPOSE and so
+    // makes "OVER" the NORMAL reading (e.g. real cs=12702/2, the
+    // qm_real_rows .max(2) floor below meeting a full chunk). It says
+    // how hard the tuner had to push, not whether the ladder covers.
+    // For a converged-cap measurement use the meter path, which calls
+    // reset_qm_gauges() first (bora_data_driver.rs:1360/1790).
     let rep = utils::consts::sat_report_max();
     if !rep.is_empty() {
         utils::logger::log(0, utils::logger::LOG1,
-            &format!("LADDER SAT (worst chunk): {}", rep));
+            &format!("TUNE SAT (worst emission, probes included): {}",
+                rep));
     }
     let scale = |pmax_b: usize, rate: usize, g: usize| -> usize {
         if g == 0 { pmax_b }              // no per-chunk data -> keep P_max
@@ -860,7 +866,7 @@ mod tests {
         for w in l.windows(2) { assert!(w[0].subsigs <= w[1].subsigs); }
     }
 
-    // Ladder sufficiency line: an over-budget chunk must read OVER, and
+    // TUNE SAT line: an over-budget emission must read OVER, and
     // get_max must report the worst chunk rather than independent peaks.
     #[test]
     fn test_sat_report_max_flags_overflow() {
