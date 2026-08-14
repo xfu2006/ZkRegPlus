@@ -1733,6 +1733,25 @@ def _summary_line(line):
         f.write("[%s] %s\n" % (_ts(), line))
 
 
+def reset_summary_log(top):
+    """Truncate SUMMARY.log and stamp one NEW RUN banner, so a stale
+    FAIL from an earlier run can never be misread as the current state.
+
+    Destroys nothing durable: a failed leaf's rc / wall / peak RSS /
+    failure signatures and every log already go into its
+    FAILED_TGZ_DIR bundle (_pack_bundle), a succeeded leaf's numbers
+    survive in the run-log trailer under LOGS_DIR, and NOTHING in
+    production reads this file -- it is purely a `tail -F` target.
+
+    The banner deliberately avoids the word START: the per-leaf marker
+    at _summary_line("START  %-6s ...") is scanned as START\\s+(\\S+),
+    and a banner carrying that token joins the leaf list."""
+    os.makedirs(os.path.dirname(SUMMARY_LOG), exist_ok=True)
+    with open(SUMMARY_LOG, "w") as f:
+        f.write("=== NEW RUN %s | %s | host=%s ===\n"
+                % (_ts(), top, platform.node()))
+
+
 def _terminate_all():
     """SIGTERM every tracked child's whole process group (spawn() gives
     each child its own session, so this reaps numactl+cargo+test)."""
@@ -1870,6 +1889,17 @@ DRY_COST = [
     ("scale_dlp",  "Scale-DLP",     8.5,  13.0, ""),
 ]
 
+# small_full_snark is MEASURED, not dry -- a real 4-job fold plus a full
+# decider.  Source is the run's own trailer (PAPER_DATA_WALL_CLOCK_S /
+# PAPER_DATA_PEAK_RSS_GIB, rc 0, 2026-08-14, 512 GB Jetstream2 box), NOT
+# the log's "RAM: nnn GB" lines: those topped out at 327 GB and under-
+# report the tree-wide peak by ~106 GiB because they sample only at step
+# boundaries.  433 GiB is ~91 percent of a 512 GB box, so this entry is
+# marginal there -- it aborted mid-decider on 2026-08-13 and completed
+# on the retry.  Units match DRY_COST (GiB, printed as GB).
+SNARK_COST_MIN = 113.4     # 6804.8 s, whole leaf including cargo build
+SNARK_COST_GIB = 433.2     # tree-wide peak RSS across the 4 jobs
+
 
 def _fmt_min(m):
     """9.0 -> '9', 2.5 -> '2.5' (no trailing .0 in the menu)."""
@@ -1895,7 +1925,9 @@ def dry_total():
 
 TOP_CHOICES = [
     ("small", "small data"),
-    ("small_full_snark", "small sample, one full SNARK proof"),
+    ("small_full_snark", "small sample, one full SNARK proof %s"
+                         % _cost_tag(SNARK_COST_MIN, SNARK_COST_GIB,
+                                     lead="measured ")),
     ("dry_run", "dry_run %s" % _cost_tag(*dry_total(), lead="")),
     ("full_run", "full_run"),
     ("figs", "generate list of figures"),
@@ -2056,7 +2088,9 @@ def run_small():
 # 4-parallel-job small sample), but with the decider run for real.  The
 # three flags that define this entry are Rust GlobalConfig fields
 # (crates/utils/src/consts.rs), NOT env vars or CLI args, and they are
-# set in small_par_full_snark() in crates/zkregplus/src/zkp_driver.rs:
+# set in small_full_snark() in crates/zkregplus/src/bora_data_driver.rs
+# -- a deliberate COPY of zkp_driver's small_par_full_snark, so retuning
+# that one cannot silently change this menu entry:
 #   b_light_test   = false  -- nothing in the decider circuit is elided
 #   b_folding_only = false  -- a proof IS produced after the folding
 #   b_one_proof    = true   -- every job folds, only Job 0 proves
@@ -2168,6 +2202,17 @@ def main():
     log("resolved: python3 PAPER_DATA.py --run %s%s" % (
         plan.top,
         " --items %s" % ",".join(plan.leaf_keys) if plan.leaf_keys else ""))
+
+    # Wipe SUMMARY.log HERE, not next to ensure_vma: this is the first
+    # point where a run is actually committed.  Past the --list return
+    # and past interactive_select(), so neither --list nor a Ctrl-C at
+    # the prompt destroys the previous run's record; guarded on
+    # plan_only so "just show me the plan" does not either.  In the
+    # parent, before go_background(), so exactly one truncation per
+    # invocation and no daemon race.  NOT at module scope -- the unit
+    # suite imports this module and would wipe a live operator run.
+    if not args.plan_only:
+        reset_summary_log(plan.top)
 
     if plan.top == "small":
         if args.plan_only:
@@ -4835,6 +4880,13 @@ class DryCostRollupTest(unittest.TestCase):
         self.assertIn("(A) All\n", buf.getvalue())
         self.assertNotIn("(A) All [", buf.getvalue())
 
+    def test_snark_label_is_measured_not_dry(self):
+        """Menu #2 quotes its own run trailer, so its tag must say
+        measured and must never read as one of the dry estimates."""
+        label = dict(TOP_CHOICES)["small_full_snark"]
+        self.assertIn("[measured ~113.4min, ~433.2GB]", label)
+        self.assertNotIn("dry", label)
+
     def test_every_leaf_key_has_a_cost_row(self):
         """DRY_COST is the single source of the leaf order and keys."""
         self.assertEqual([c[0] for c in DRY_COST], _LEAF_KEYS)
@@ -5353,10 +5405,44 @@ class MainTest(unittest.TestCase):
         self.vma = v.start()
         self.addCleanup(v.stop)
 
+    def _seed_summary(self):
+        """A stale FAIL line from an earlier run, as SUMMARY.log would
+        really hold it."""
+        with open(_MOD.SUMMARY_LOG, "w") as f:
+            f.write("[11:44:18] FAIL   small_full_snark rc=101\n")
+
     def test_list_flag_prints_and_returns(self):
+        self._seed_summary()
         with mock.patch("sys.argv", ["prog", "--list"]):
             self.assertEqual(main(), 0)
         self.vma.assert_not_called()
+        with open(_MOD.SUMMARY_LOG) as f:
+            self.assertIn("rc=101", f.read())
+
+    def test_committed_run_wipes_stale_summary(self):
+        """A real launch truncates SUMMARY.log and stamps NEW RUN, so an
+        earlier run's FAIL cannot be read as the current state."""
+        self._seed_summary()
+        with mock.patch("sys.argv", ["prog", "--run", "small"]), \
+             mock.patch.object(_MOD, "run_small", return_value=0):
+            self.assertEqual(main(), 0)
+        with open(_MOD.SUMMARY_LOG) as f:
+            txt = f.read()
+        self.assertNotIn("rc=101", txt)
+        self.assertIn("=== NEW RUN", txt)
+        self.assertIn("| small |", txt)
+        # the banner must not join the per-leaf START scan (:1785).
+        self.assertEqual(re.findall(r"START\s+(\S+)", txt), [])
+
+    def test_plan_only_keeps_the_previous_summary(self):
+        """--dry-run only prints the plan, so it must not destroy the
+        last real run's record."""
+        self._seed_summary()
+        with mock.patch("sys.argv",
+                         ["prog", "--dry-run", "--run", "small"]):
+            self.assertEqual(main(), 0)
+        with open(_MOD.SUMMARY_LOG) as f:
+            self.assertIn("rc=101", f.read())
 
     def test_every_top_raises_vma_before_dispatch(self):
         """Every menu top asks for VMA_TARGET, including the three that

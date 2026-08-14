@@ -31115,9 +31115,13 @@ Goal 1. quick test on 512gb server first
 		-> small: 42 sec
 		-> small_fullsnark: -> failed, the malloc config needs pack
 		-> dry run slack
+			-> zombie fails
+			-> fix install.py and install pre-req for zombie
 		-> 
-Goal 2. Reference check
-	[a]
+Goal 2. T916 Reference check
+	[a] feasibility analysis: do a workflow
+	[b] identify more doi service
+	[c]
 
 
 

@@ -11,9 +11,14 @@
 # Zenodo deposit (DOI 10.5281/zenodo.21911045).  Both are sha256-verified.
 # All scratch lives under /tmp/bora_install and is removed on completion.
 #
+# The zombie entry is not a corpus: it clones the NSDI'24 Zombie baseline
+# (gitignored, unlicensed upstream) and installs the extra apt/pip/rustup
+# deps its CirC build needs.  PAPER_DATA.py's zombie leaf fails without it.
+#
 # Run from anywhere:
-#   python3 INSTALL.py             menu: pick ALL / email / dna / binexec
-#   python3 INSTALL.py --data all  non-interactive (all|email|dna|binexec)
+#   python3 INSTALL.py             menu: ALL / email / dna / binexec / zombie
+#   python3 INSTALL.py --data all  non-interactive
+#                                  (all|email|dna|binexec|zombie)
 #
 # NOTE: python file generated under the instruction of paper author.
 #   code reviewed and tested manually by paper author.
@@ -107,6 +112,32 @@ APT_PACKAGES = [
 ]
 RUST_VERSION = "1.76.0"
 
+# ---- zombie (NSDI'24 baseline) build prerequisites ------------------
+# Kept OUT of APT_PACKAGES / install_rust deliberately: these are needed
+# only by the zombie dataset, and the pinned nightly alone is ~1.5 GB, so
+# an email-or-dna install must not pay for them.  ensure_toolchain()
+# installs them when "zombie" is in the selection, and nothing else does.
+#
+# SOURCE OF TRUTH is the DEPS table in
+# data/src_sig/ms_dlp/scripts/download_zombie.py (see its lines 48-71).
+# check_zombie_dep_drift() re-reads that table at install time and warns
+# if it has gained a package this list does not carry -- the lists cannot
+# silently diverge.  cvc4 and coinor-* live in Ubuntu "universe", enabled
+# by default on 24.04 server images.
+ZOMBIE_APT_PACKAGES = [
+    "libgmp-dev",        # TestRegex links -lgmpxx -lgmp
+    "libmpfr-dev",       # CirC gmp-mpfr-sys system-libs build
+    "libmpc-dev",        # CirC gmp-mpfr-sys system-libs build
+    "cvc4",              # CirC SMT backend
+    "coinor-cbc",        # CirC ILP backend
+    "coinor-libcbc-dev",
+]
+ZOMBIE_NIGHTLY = "nightly-2023-02-01"   # pinned by circ/rust-toolchain.toml
+ZOMBIE_PIP     = "tqdm==4.63.0"         # circ driver.py
+# apt packages the downloader hints that APT_PACKAGES supplies indirectly,
+# so the drift check does not flag them.  python3-pip depends on python3.
+_APT_IMPLIED = ("python3",)
+
 
 # Run argv, echoing it; raise on non-zero.
 def run_cmd(argv):
@@ -121,6 +152,16 @@ def install_apt_deps():
     run_cmd(sudo + ["apt-get", "install", "-y"] + APT_PACKAGES)
 
 
+# Install the zombie-only apt deps.  Runs its own `apt-get update`: this
+# can fire when apt_tools_present() was already True, so install_apt_deps
+# (the only other updater) never ran, and a fresh instance with a stale or
+# empty package cache would fail with "Unable to locate package".
+def install_zombie_apt_deps():
+    sudo = [] if os.geteuid() == 0 else ["sudo"]
+    run_cmd(sudo + ["apt-get", "update"])
+    run_cmd(sudo + ["apt-get", "install", "-y"] + ZOMBIE_APT_PACKAGES)
+
+
 # pip-install gdown (Ubuntu 24 is PEP-668 managed -> retry w/ override).
 def install_pip_deps():
     try:
@@ -129,6 +170,31 @@ def install_pip_deps():
     except subprocess.CalledProcessError:
         run_cmd([sys.executable, "-m", "pip", "install", "--user",
                  "--break-system-packages", "gdown"])
+
+
+# pip-install circ's tqdm pin (same PEP-668 retry as gdown).
+def install_zombie_pip_deps():
+    try:
+        run_cmd([sys.executable, "-m", "pip", "install", "--user",
+                 ZOMBIE_PIP])
+    except subprocess.CalledProcessError:
+        run_cmd([sys.executable, "-m", "pip", "install", "--user",
+                 "--break-system-packages", ZOMBIE_PIP])
+
+
+# Install the nightly circ pins.  rustup would fetch it lazily on the
+# first cargo build in that tree, but that build happens INSIDE a timed
+# PAPER_DATA leaf -- pull it here so a network failure surfaces at install
+# time instead of corrupting a measurement.  Callers run install_rust()
+# first, so rustup exists; the guard covers a direct call.
+def install_zombie_rust():
+    rustup = shutil.which("rustup") or \
+        os.path.join(os.path.expanduser("~/.cargo/bin"), "rustup")
+    if not os.path.isfile(rustup) and shutil.which("rustup") is None:
+        raise RuntimeError(
+            "rustup not found; run `python3 scripts/INSTALL.py --toolchain` "
+            "first, or `source ~/.cargo/env` in this shell")
+    run_cmd([rustup, "toolchain", "install", ZOMBIE_NIGHTLY])
 
 
 # Install rustup non-interactively, then the pinned 1.76.0 toolchain.
@@ -163,12 +229,20 @@ def persist_cargo_env():
 
 
 # Full toolchain bring-up for a fresh instance (force all steps).
-def install_toolchain():
+# with_zombie adds the baseline's extra apt/pip/rustup deps; main() sets
+# it from --data, so `--toolchain` alone still installs only the base.
+def install_toolchain(with_zombie=False):
     print("=== install toolchain (Rust %s + build deps) ==="
           % RUST_VERSION)
     install_apt_deps()
     install_pip_deps()
     install_rust()
+    if with_zombie:
+        print("=== zombie baseline build deps (rust %s) ==="
+              % ZOMBIE_NIGHTLY)
+        install_zombie_apt_deps()
+        install_zombie_pip_deps()
+        install_zombie_rust()
     print("toolchain ready -- build with:")
     print('  RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" '
           "cargo build --release")
@@ -180,10 +254,46 @@ def apt_tools_present():
     return all(shutil.which(b) is not None for b in need)
 
 
+# True if <header> compiles.  Same probe download_zombie.py:have_header
+# uses -- the three -dev packages ship no binary, so `which` cannot see
+# them and only a compile answers the question.
+def have_header(header):
+    if shutil.which("g++") is None:
+        return False
+    src = "#include <%s>\nint main(){ return 0; }\n" % header
+    try:
+        p = subprocess.run(["g++", "-x", "c++", "-fsyntax-only", "-"],
+                           input=src, capture_output=True, text=True,
+                           timeout=30)
+        return p.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+# True if every ZOMBIE_APT_PACKAGES payload is usable.  This probe MUST
+# track that list: ensure_toolchain() skips the apt step when its probe
+# says present, so a package added there without a probe here is never
+# installed on a box that already satisfies apt_tools_present().
+def zombie_apt_present():
+    if not all(shutil.which(b) is not None for b in ("cvc4", "cbc")):
+        return False
+    return all(have_header(h)
+               for h in ("gmpxx.h", "mpfr.h", "mpc.h"))
+
+
 # True if the gdown python module imports.
 def have_gdown():
     try:
         import gdown  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
+# True if circ's tqdm imports.
+def have_tqdm():
+    try:
+        import tqdm  # noqa: F401
         return True
     except ImportError:
         return False
@@ -203,13 +313,35 @@ def have_rust():
         return False
 
 
+# True if rustup has the nightly circ pins.
+def have_zombie_rust():
+    rustup = shutil.which("rustup") or \
+        os.path.join(os.path.expanduser("~/.cargo/bin"), "rustup")
+    if not os.path.isfile(rustup) and shutil.which("rustup") is None:
+        return False
+    try:
+        out = subprocess.run([rustup, "toolchain", "list"],
+                             capture_output=True, text=True, check=True)
+        return ZOMBIE_NIGHTLY in out.stdout
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return False
+
+
 # Default gate: install only the tools that are missing (idempotent).
-def ensure_toolchain():
+# selected is the dataset key list main() resolved; the zombie deps are
+# probed and installed only when that baseline is actually being set up.
+def ensure_toolchain(selected=()):
+    want_z = "zombie" in selected
     ok_apt, ok_gdown, ok_rust = \
         apt_tools_present(), have_gdown(), have_rust()
-    if ok_apt and ok_gdown and ok_rust:
-        print("toolchain present (apt deps, gdown, rust %s)."
-              % RUST_VERSION)
+    ok_z_apt = zombie_apt_present() if want_z else True
+    ok_z_pip = have_tqdm() if want_z else True
+    ok_z_rust = have_zombie_rust() if want_z else True
+    if (ok_apt and ok_gdown and ok_rust
+            and ok_z_apt and ok_z_pip and ok_z_rust):
+        print("toolchain present (apt deps, gdown, rust %s%s)."
+              % (RUST_VERSION,
+                 ", zombie deps, rust " + ZOMBIE_NIGHTLY if want_z else ""))
         return
     print("=== ensure toolchain (installing missing tools) ===")
     if not ok_apt:
@@ -218,6 +350,12 @@ def ensure_toolchain():
         install_pip_deps()
     if not ok_rust:
         install_rust()
+    if not ok_z_apt:
+        install_zombie_apt_deps()
+    if not ok_z_pip:
+        install_zombie_pip_deps()
+    if not ok_z_rust:
+        install_zombie_rust()
 
 
 # =====================================================================
@@ -344,10 +482,24 @@ REEF_BIN   = os.path.join(REEF_DIR, "target", "release", "reef")
 BIGFILES_PACK = os.path.join(DATA_DIR, "bigfiles.tar.xz")
 BIGFILES_SUMS = os.path.join(DATA_DIR, "bigfiles.sha256")
 
-# Set by main() from --verify / --skip-reef-build; the DATASETS registry
+# ---- zombie (NSDI'24 baseline) tree ---------------------------------
+# A gitignored upstream clone, not an archive we deploy: the repo carries
+# no licence ("all rights reserved"), so it is fetched per-machine and
+# never redistributed in this tree.  download_zombie.py owns the clone.
+MS_DLP_DIR      = os.path.join(SRC_SIG_DIR, "ms_dlp")
+ZOMBIE_DIR      = os.path.join(MS_DLP_DIR, "zombie")
+ZOMBIE_REGEX    = os.path.join(ZOMBIE_DIR, "regex")
+ZOMBIE_CIRC     = os.path.join(ZOMBIE_DIR, "circ")
+ZOMBIE_UPSTREAM = os.path.join(ZOMBIE_DIR, "UPSTREAM.txt")
+ZOMBIE_DOWNLOAD = os.path.join(MS_DLP_DIR, "scripts", "download_zombie.py")
+
+# Set by main() from --verify / --skip-reef-build / --force-zombie /
+# --build-zombie; the DATASETS registry
 # calls install functions with no arguments, so flags travel as module state.
 _VERIFY_ALL = False
 _SKIP_REEF_BUILD = False
+_FORCE_ZOMBIE = False
+_BUILD_ZOMBIE = False
 
 
 def sha256_file(path):
@@ -981,6 +1133,107 @@ def install_dataset_dna():
 #     deploy_chr17(EXTRACT_DIR)
 
 
+# ---- zombie (NSDI'24 baseline) -------------------------------------
+
+# Re-read download_zombie.py's DEPS table and warn if it now asks for
+# something this script does not install.  Textual, not an import: that
+# module chdir()s and pulls in ms_dlp/scripts/common.py, neither of which
+# should happen as a side effect of a dep check.  Warns rather than
+# raises -- an upstream edit to a hint string must not abort an install,
+# and the downloader prints its own MISS report moments later.
+def check_zombie_dep_drift():
+    import re
+    try:
+        with open(ZOMBIE_DOWNLOAD) as f:
+            src = f.read()
+    except OSError:
+        return
+    known = set(APT_PACKAGES) | set(ZOMBIE_APT_PACKAGES) | set(_APT_IMPLIED)
+    want = set()
+    for hint in re.findall(r'"apt install ([^"]+)"', src):
+        want.update(hint.split())
+    missing = sorted(want - known)
+    if missing:
+        print("  WARN: download_zombie.py now hints apt package(s) this "
+              "script does not install: %s" % ", ".join(missing))
+        print("        add them to ZOMBIE_APT_PACKAGES.")
+    m = re.search(r'RUST_NIGHTLY\s*=\s*"([^"]+)"', src)
+    if m and m.group(1) != ZOMBIE_NIGHTLY:
+        print("  WARN: nightly pin drifted -- downloader %s, this script %s"
+              % (m.group(1), ZOMBIE_NIGHTLY))
+    m = re.search(r'"pip install (tqdm==[0-9.]+)"', src)
+    if m and m.group(1) != ZOMBIE_PIP:
+        print("  WARN: tqdm pin drifted -- downloader %s, this script %s"
+              % (m.group(1), ZOMBIE_PIP))
+
+
+# Short upstream commit recorded by the last clone, for the skip message.
+def zombie_commit():
+    try:
+        with open(ZOMBIE_UPSTREAM) as f:
+            for line in f:
+                if line.startswith("commit:"):
+                    return line.split(":", 1)[1].strip()[:12] or "unknown"
+    except OSError:
+        pass
+    return "unknown"
+
+
+# No-op by design.  download_zombie.py rmtree()s zombie/ itself before
+# cloning, so a clean_* wipe here would only add a second destructive
+# path -- and one that runs even when install_dataset_zombie() decides to
+# keep the existing tree.  Present to keep the DATASETS 5-tuple shape.
+def clean_zombie():
+    pass
+
+
+# Confirm the clone left what run_zombie.py actually opens.  Checked, not
+# assumed: download_zombie.py exits 0 on a clone whose build step was
+# skipped, and a missing subtree would otherwise surface mid-evaluation.
+def verify_zombie_tree():
+    for p in (ZOMBIE_REGEX, ZOMBIE_CIRC):
+        if not os.path.isdir(p):
+            raise RuntimeError(
+                "zombie clone left no %s; run_zombie.py needs it" % p)
+    print("    zombie tree OK: upstream commit %s" % zombie_commit())
+
+
+# Clone the Zombie baseline via download_zombie.py.
+#
+# Skips when the tree is already there.  download_zombie.py clones the
+# DEFAULT BRANCH and records HEAD only afterwards, so re-cloning can move
+# the baseline to a different upstream commit than UPSTREAM.txt reports --
+# silently changing what the paper compares against.  Keeping the pinned
+# tree is the safe default; --force-zombie re-clones.
+#
+# No build here, unlike build_reef().  That one runs at install time
+# because eval_reef.py REFUSES to run without target/release/reef;
+# run_zombie.py instead builds TestRegex and its out-of-workspace circ
+# copy on demand (ensure_testregex / ensure_zombie_built), so the clone is
+# sufficient and a ~30 min CirC build stays opt-in via --build-zombie.
+def install_dataset_zombie():
+    check_zombie_dep_drift()
+    if os.path.isdir(ZOMBIE_REGEX) and not _FORCE_ZOMBIE:
+        print("  zombie/ already present (upstream commit %s) -- kept."
+              % zombie_commit())
+        print("    re-cloning tracks the default branch and could move the")
+        print("    baseline commit; pass --force-zombie to do it anyway.")
+        return
+    if not os.path.isfile(ZOMBIE_DOWNLOAD):
+        raise RuntimeError("missing %s (expected in the repo)"
+                           % ZOMBIE_DOWNLOAD)
+    argv = [sys.executable, "-u", ZOMBIE_DOWNLOAD]
+    if _BUILD_ZOMBIE:
+        argv.append("--verify-build")
+    print("  clone Zombie (upstream is unlicensed: local research use,")
+    print("        do not redistribute -- zombie/ stays git-ignored)")
+    run_cmd_in(argv, os.path.dirname(ZOMBIE_DOWNLOAD))
+    verify_zombie_tree()
+    if not _BUILD_ZOMBIE:
+        print("  NOTE: TestRegex + circ are built on first use by")
+        print("        run_zombie.py; pass --build-zombie to do it now.")
+
+
 # Registry in menu order: (key, label, est. installed GB, clean, install).
 DATASETS = [
     ("email",   "email (Enron)",          3.8,
@@ -991,6 +1244,13 @@ DATASETS = [
      clean_dna,     install_dataset_dna),
     ("binexec", "binexec (CentOS bins)",  1.5,
      clean_binexec, install_dataset_binexec),
+    # APPENDED, never inserted: the interactive menu numbers options from
+    # the registry order, so putting zombie anywhere else would renumber
+    # email/dna/binexec out from under anyone following the README.
+    # 0.04 GB for the clone; run_zombie.py's TestRegex + out-of-workspace
+    # circ copy add several GB under /tmp at evaluation time, not here.
+    ("zombie",  "zombie (NSDI'24)",       0.04,
+     clean_zombie,  install_dataset_zombie),
 ]
 
 
@@ -1040,11 +1300,22 @@ def main():
                     help="dna: deploy the corpus but do NOT run "
                          "`cargo build` for Reef (the baseline binary will "
                          "be missing until you build it by hand)")
+    ap.add_argument("--force-zombie", action="store_true",
+                    help="zombie: re-clone even when zombie/ is already "
+                         "present (the clone follows the default branch, "
+                         "so this can move the baseline commit)")
+    ap.add_argument("--build-zombie", action="store_true",
+                    help="zombie: also compile TestRegex + circ now "
+                         "instead of on first use (slow); implies "
+                         "--force-zombie, since the downloader can only "
+                         "build a tree it just cloned")
     args = ap.parse_args()
 
-    global _VERIFY_ALL, _SKIP_REEF_BUILD
+    global _VERIFY_ALL, _SKIP_REEF_BUILD, _FORCE_ZOMBIE, _BUILD_ZOMBIE
     _VERIFY_ALL = args.verify
     _SKIP_REEF_BUILD = args.skip_reef_build
+    _BUILD_ZOMBIE = args.build_zombie
+    _FORCE_ZOMBIE = args.force_zombie or args.build_zombie
 
     # Before anything else: needs no toolchain, no network and no dataset
     # selection, and data/debug + data/paper_data + data/src_sig/clamav
@@ -1055,7 +1326,11 @@ def main():
     restore_bigfiles()
 
     if args.toolchain:
-        install_toolchain()
+        # --toolchain runs BEFORE the dataset selection, so the only
+        # signal for the zombie extras is --data.  Bare --toolchain stays
+        # base-only; the extras land in ensure_toolchain() below if the
+        # menu later picks zombie.
+        install_toolchain(with_zombie=args.data in ("all", "zombie"))
         if not args.data:
             return
 
@@ -1064,7 +1339,7 @@ def main():
     else:
         selected = select_datasets()
 
-    ensure_toolchain()                            # install missing tools
+    ensure_toolchain(selected)                    # install missing tools
 
     os.makedirs(TMP_DIR, exist_ok=True)
     os.makedirs(CACHE_MAIN, exist_ok=True)        # ensure (never wiped)
