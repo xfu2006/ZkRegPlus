@@ -31097,9 +31097,7 @@ Goal 7. T9902: minimize lkup share for tune
 	[a] design
 	[b] review code
 	[c] most tests come back two more tests
---- TODO ---
-
-Goal 5. more soundness errors
+Goal 8. more soundness errors
 	[a] S109 design check -> test -> closed
 	[b] S107: bound cmF and z[0] -> add a vector of four more cmF
 		-> mostly ok
@@ -31108,6 +31106,12 @@ Goal 5. more soundness errors
 		-> do trunction of key to save RAM and test it.
 	[c] S117 issue: range problem
 		-> includes an extra element
+
+Friday 08/14/2026 
+--- TODO ---
+Goal 1. quick test on 512gb server first
+	[a] small + dry_run + small_full_snark + scale1/2/3 + reef + eval
+
 
 
 
