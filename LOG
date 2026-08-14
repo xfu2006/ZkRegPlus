@@ -31117,11 +31117,26 @@ Goal 1. quick test on 512gb server first
 		-> dry run slack
 			-> zombie fails
 			-> fix install.py and install pre-req for zombie
-		-> 
+		-> dry run zombie again
+			-> ok, but missing two items (effective etc.)
+		-> dlp full run (started 3:15pm-> restarted 4:28pm
+			-> check 8:15pm?)
+	[c] add menu items for the missing info
+
 Goal 2. T916 Reference check
 	[a] feasibility analysis: do a workflow
 	[b] identify more doi service
-	[c]
+	[c] refine workflow
+	[d] second revision of workflow
+
+Goal 3. continue to test on 512gb server
+	[a] next to test
+		-> scale_dlp
+		-> scale_clam (partial)
+		-> full_dlp (partial)
+		-> full_clam (partial)
+		-> the effectiveness run (dry-run)
+		-> dry-run draw diagram
 
 
 

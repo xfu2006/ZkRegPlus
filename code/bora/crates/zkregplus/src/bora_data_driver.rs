@@ -2268,7 +2268,10 @@ pub fn collect_scale_clamav_neo(corpus_idx: usize,
 /// dest_path.
 pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 	get_global_config().log_level = utils::logger::LOG3;
-	let cfg = default_clamav_cfg();
+	// Pristine defaults, captured BEFORE any global writes; the loop
+	// restores these on the non-aggressive datasets and re-snapshots
+	// its build cfg per iteration (see the comment there).
+	let cfg0 = default_clamav_cfg();
 
 	let rc = crate::determine_config::RunCfg::from_path(&format!(
 		"{}/data/paper_data/dlp/cfg/config/runcfg_full.json",
@@ -2296,7 +2299,19 @@ pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 			get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
 			get_global_config().clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
 			get_global_config().clamav_cfg.min_pm_word_len = 3;
+		} else {
+			// restore -- a flip above would outlive its iteration
+			let mut g = get_global_config();
+			g.clamav_cfg.b_aggressive_sde_for_rep = false;
+			g.clamav_cfg.sde_rep_fanout_cap = cfg0.sde_rep_fanout_cap;
+			g.clamav_cfg.min_pm_word_len = cfg0.min_pm_word_len;
 		}
+		// Snapshot AFTER the writes above: expand_rep_subsig and the
+		// aggressive shape guard read this THREADED cfg (clam_db.rs
+		// :2115), not the global.  The old pre-loop snapshot silently
+		// built the Dlp DB with rep expansion OFF while the global
+		// said aggressive -- a mixed-mode DB.
+		let cfg = default_clamav_cfg();
 
 		let (build_dir, sig_path, tmp_guard):
 			(String, String, Option<TmpConfigDir>) = if perc >= 100 {
@@ -2339,11 +2354,212 @@ pub fn collect_lookup_stats_adv(perc: usize, dest_path: &str) {
 		panic!("bora_data_driver: write {}: {}", dest_path, e));
 }
 
+/// One tier block of eval_effective.txt, in the exact line shapes
+/// effectiveness.py parses.  Per (file,sig) pair: cp = never critical,
+/// sde/dfa = tier reached, fail = |all_dfa|; the four sum to pairs.
+fn fmt_tier_block(label: &str, recs: &[FailDischargeRecord],
+	total_sigs: usize) -> String {
+	if recs.is_empty() { return String::new(); }
+	let n = recs.len();
+	let (mut cp, mut sde, mut dfa, mut fail) = (0i64, 0i64, 0i64, 0i64);
+	for r in recs {
+		let (crit, pm, adfa) = (r.crit.len() as i64,
+			r.pm.len() as i64, r.all_dfa.len() as i64);
+		cp += total_sigs as i64 - crit;
+		sde += crit - pm;
+		dfa += pm - adfa;
+		fail += adfa;
+	}
+	let total = total_sigs as i64 * n as i64;
+	let pct = |x: i64| if total > 0 { 100.0 * x as f64 / total as f64 }
+		else { 0.0 };
+	let mut s = String::new();
+	s.push_str(&format!("=== {} ===\n", label));
+	s.push_str(&format!("total_sigs: {}  files: {}  total_pairs: {}\n",
+		total_sigs, n, total));
+	s.push_str(&format!(
+		"cp: {} ({:.4}%)  sde: {} ({:.4}%)  dfa: {} ({:.4}%)  \
+fail: {} ({:.4}%)\n",
+		cp, pct(cp), sde, pct(sde), dfa, pct(dfa), fail, pct(fail)));
+	// sample one-liners only -- the legacy fn also dumped 3 whole
+	// FailDischargeRecords (~100KB each dataset) nothing parses
+	for (i, r) in recs.iter().take(3).enumerate() {
+		s.push_str(&format!(
+			"sample {}: fname: {}  flen: {}  |crit|: {}  |bag|: {}  \
+|pm|: {}  |all_dfa|: {}\n",
+			i + 1, r.fname, r.flen, r.crit.len(), r.bag.len(),
+			r.pm.len(), r.all_dfa.len()));
+	}
+	s.push('\n');
+	s
+}
+
+/// Refined collect_assess_tier_data (zkp_driver.rs:7428): S7.3 tier
+/// shares + the flen filesize re-buckets, written to dest_path.
+///
+/// Differences from the legacy fn, each one a defect there:
+/// - Dlp builds AGGRESSIVE (production DLP.b_aggressive; the legacy
+///   forced non-aggr for all three yet read the dlp_corpus_aggr cache,
+///   so its output depended on whatever cache happened to exist);
+/// - per-dataset knobs are written to the GLOBAL first and the build
+///   cfg snapshotted AFTER (both flag channels agree by construction);
+/// - no DB cache read or written: (false,false) builds in RAM, so
+///   data/cache cannot be poisoned; dry temp configs go to /tmp/bora;
+/// - perc thins both the signature set and the scan corpus (dry).
+pub fn collect_assess_tier_data_adv(perc: usize, dest_path: &str) {
+	use rayon::prelude::*;
+	get_global_config().log_level = utils::logger::LOG3;
+	// Pristine defaults, captured BEFORE any global writes.
+	let cfg0 = default_clamav_cfg();
+	let rc = crate::determine_config::RunCfg::from_path(&format!(
+		"{}/data/paper_data/dlp/cfg/config/runcfg_full.json",
+		utils::os::proj_root()));
+	let dlp_sig_name = Path::new(&rc.sig_file)
+		.file_name().and_then(|s| s.to_str())
+		.expect("bora_data_driver: bad Dlp sig_file").to_string();
+	let proot = utils::os::proj_root();
+
+	// (name, config_dir, sig_file, scan lists, range2_bit,
+	//  max_word_len, b_aggr); b_aggr mirrors the DatasetSpec arms --
+	//  only DLP deploys aggressive.  max_word_len as the legacy fn.
+	let mal_scan: Vec<String> = (0..8).map(|i| format!(
+		"data/debug/full_clamav/config/binexec_p{}.dat", i)).collect();
+	let datasets: Vec<(String, String, String, Vec<String>, usize,
+		usize, bool)> = vec![
+		("Mal".to_string(),
+			"data/debug/full_clamav/config".to_string(),
+			"main.dat".to_string(), mal_scan, 26, 512 * 8, false),
+		("Dna".to_string(),
+			"data/paper_data/dna/config".to_string(),
+			"main.dat".to_string(),
+			vec!["data/paper_data/dna/config/binexec.dat".to_string()],
+			27, 512 * 8, false),
+		("Dlp".to_string(), format!("{}/regex_pat", rc.config_dir),
+			dlp_sig_name,
+			vec!["data/paper_data/dlp/cfg/jobs/final_enron_list.txt.tgz"
+				.to_string()],
+			rc.range2_bit, 64, true),
+	];
+
+	let mut report = format!(
+		"#################### EFFECTIVENESS REPORT (perc={}) \
+####################\n\n", perc);
+	// records kept per dataset for the filesize re-buckets below
+	let mut kept: Vec<(String, Vec<FailDischargeRecord>, usize)> =
+		Vec::new();
+
+	for (name, src_dir, sig_file_name, scan_lists, range2_bit,
+		max_word_len, b_aggr) in &datasets {
+		// Write the per-dataset knobs to the GLOBAL first...
+		{
+			let mut g = get_global_config();
+			g.range2_bit = *range2_bit;
+			if *b_aggr {
+				g.clamav_cfg.b_aggressive_sde_for_rep = true;
+				g.clamav_cfg.sde_rep_fanout_cap = rc.fanout_cap;
+				g.clamav_cfg.min_pm_word_len = 3;
+			} else {
+				g.clamav_cfg.b_aggressive_sde_for_rep = false;
+				g.clamav_cfg.sde_rep_fanout_cap =
+					cfg0.sde_rep_fanout_cap;
+				g.clamav_cfg.min_pm_word_len = cfg0.min_pm_word_len;
+			}
+		}
+		// ...THEN snapshot: expand_rep_subsig and the shape guard read
+		// this threaded cfg (clam_db.rs:2115), not the global.  The
+		// write-then-snapshot order is the flag-handling soundness.
+		let cfg = default_clamav_cfg();
+
+		let (build_dir, sig_path, tmp_guard):
+			(String, String, Option<TmpConfigDir>) = if perc >= 100 {
+			(src_dir.clone(),
+				format!("{}/{}", src_dir, sig_file_name), None)
+		} else {
+			let tmp = format!("/tmp/bora/effective_adv_{}_{}",
+				std::process::id(), name);
+			let n_sigs = read_lines_nonblank(
+				&format!("{}/{}", src_dir, sig_file_name)).len();
+			let sig_path = create_smaller_config(src_dir,
+				sig_file_name, count_of(n_sigs, perc as f64), &tmp);
+			(tmp.clone(), sig_path,
+				Some(TmpConfigDir(PathBuf::from(tmp))))
+		};
+		let _tmp_guard = tmp_guard;
+
+		let mut vlog = vec![];
+		// (false, false): built in RAM, nothing read from or written
+		// to data/cache -- the cache-dir string below is inert.
+		let db = ClamavDB::<Fr>::build_or_load(&cfg, &sig_path,
+			&format!("{}/main_dfa.dat", build_dir),
+			&format!("{}/needs_ised.dat", build_dir),
+			&format!("{}/needs_ised_igc.dat", build_dir),
+			&mut vlog, "effective_adv_unused", false, false)
+			.expect(&format!("build {} db", name));
+		let total_sigs = db.vec_sigs.len();
+
+		// scan corpus: concat the lists, then the same perc thins it
+		// (strided so the kept subset spans the corpus; >= 1 kept)
+		let mut paths: Vec<String> = scan_lists.iter()
+			.flat_map(|l| read_path_list(l)).collect();
+		if perc < 100 {
+			let k = (100 + perc - 1) / perc.max(1);
+			paths = paths.into_iter().enumerate()
+				.filter(|(i, _)| i % k == 0)
+				.map(|(_, p)| p).collect();
+		}
+		let recs: Vec<FailDischargeRecord> = paths.par_iter()
+			.map(|fp| {
+				let nib = utils::os::read_nibbles(
+					&format!("{}/{}", proot, fp));
+				let (fdr, _wi) = quick_discharge_file_by_crit_bag_pm(
+					fp, &nib, &db.vec_sigs,
+					&db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+					&db.map_crit_pat_igc, &db.dfa_crit,
+					&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+					&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+					&db.sig_to_id, *max_word_len, *max_word_len);
+				fdr
+			}).collect();
+		report.push_str(&fmt_tier_block(
+			&format!("Data for {}", name), &recs, total_sigs));
+		kept.push((name.clone(), recs, total_sigs));
+	}
+
+	// Filesize re-buckets (fig 9b): Mal and Dlp, same records, split
+	// by flen = floor(log2 bytes)+1 as the legacy fn.
+	for (name, recs, total_sigs) in &kept {
+		if name != "Mal" && name != "Dlp" { continue; }
+		report.push_str(&format!(
+			"######## Filesize data for {} ########\n", name));
+		let mut by_flen: std::collections::BTreeMap<usize,
+			Vec<FailDischargeRecord>> =
+			std::collections::BTreeMap::new();
+		for r in recs {
+			by_flen.entry(r.flen).or_default().push(r.clone());
+		}
+		for (flen, bucket) in &by_flen {
+			let lo = if *flen == 0 { 0 } else { 1usize << (flen - 1) };
+			let hi = 1usize << flen;
+			report.push_str(&fmt_tier_block(
+				&format!("Filesize data for {} -- flen={} \
+({}..{} bytes)", name, flen, lo, hi),
+				bucket, *total_sigs));
+		}
+	}
+	report.push_str(
+		"#################### END EFFECTIVENESS REPORT \
+####################\n");
+	println!("{}", report);
+	fs::write(dest_path, &report).unwrap_or_else(|e| panic!(
+		"bora_data_driver: write {}: {}", dest_path, e));
+}
+
 pub const USAGE: &str = "bora_cli: backend of \
 	scripts/PAPER_DATA.py -- run that driver instead; \
 	direct invocation is for debugging only.\n\
 	usage: bora_cli <subcommand>\n \
 	 lkup <perc> <dest_path>\n \
+	 effective <perc> <dest_path>\n \
 	 full_dlp <perc_db> <perc_samples> <num_circs> <num_jobs> \
 	<numa_num> <part_id> <dry 0|1> <ladder_only 0|1>\n \
 	   (dry=1 also drops the hab22 cover check)\n \
@@ -2356,6 +2572,7 @@ pub const USAGE: &str = "bora_cli: backend of \
 #[derive(Debug, PartialEq)]
 pub enum Cmd {
 	Lkup { perc: usize, dest_path: String },
+	Effective { perc: usize, dest_path: String },
 	FullDlp { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_dry_run: bool, b_ladder_only: bool },
@@ -2438,6 +2655,13 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				"bora_data_driver: lkup takes 2 args, got {}\n{}",
 				args.len() - 1, USAGE);
 			Cmd::Lkup { perc: arg_usize(args, 1, "perc"),
+				dest_path: args[2].clone() }
+		}
+		Some("effective") => {
+			assert!(args.len() == 3,
+				"bora_data_driver: effective takes 2 args, got {}\n{}",
+				args.len() - 1, USAGE);
+			Cmd::Effective { perc: arg_usize(args, 1, "perc"),
 				dest_path: args[2].clone() }
 		}
 		Some("full_dlp") => {
@@ -3799,6 +4023,21 @@ pub mod tests_bora_data_driver {
 	#[should_panic(expected = "scale_dlp takes 3 args, got 2")]
 	fn test_parse_args_scale_dlp_rejects_old_arity() {
 		parse_args(&argv(&["scale_dlp", "0", "2,987"]));
+	}
+
+	/// effective parses (perc, dest_path), same shape as lkup.
+	#[test]
+	fn test_parse_args_effective() {
+		assert_eq!(parse_args(&argv(&["effective", "2", "/tmp/e.txt"])),
+			Cmd::Effective { perc: 2,
+				dest_path: "/tmp/e.txt".to_string() });
+	}
+
+	/// effective without a dest_path must refuse, not default one.
+	#[test]
+	#[should_panic(expected = "effective takes 2 args, got 1")]
+	fn test_parse_args_effective_rejects_short() {
+		parse_args(&argv(&["effective", "2"]));
 	}
 
 	/// DLP dry swaps in the 22-bit range table; full keeps 25.

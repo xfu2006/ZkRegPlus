@@ -1090,11 +1090,15 @@ class JobHandle:
 # Layer D -- common infra (D6: preflight)
 # =====================================================================
 
-# vm.max_map_count floor requested at launch.  Rust re-checks with a
-# data-derived estimate and aborts after the DB build (foldpot/driver
-# .rs:2453); 8M covers that formula for the measured full run (8 jobs
-# x 34071 packed fields: 32768 + 8*34071*16 -> next power of two).
-VMA_TARGET = 8_388_608
+# vm.max_map_count floor requested at launch, ZKR_VM_MAX_MAP_COUNT
+# overridable -- the legacy attic/scripts/PAPER_DATA.py:61 parameters,
+# restored verbatim.  Rust re-checks with a data-derived estimate and
+# aborts after the DB build (foldpot/driver.rs:2453); the interim 8M
+# floor was sized for the 8-job DLP shape (32768 + 8*34071*16) and
+# under-covered full_dna, whose single job carries 1,342,862 packed
+# fields -> est need 21,518,560 -> PREFLIGHT ABORT on a fresh box.
+# The raise is lazy kernel bookkeeping: no memory cost until mapped.
+VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))
 
 
 def ensure_vma(target):
@@ -1270,6 +1274,63 @@ def run_leaf_analyze_lkup(mode, ctx):
             dest = place_raw_data(local_out, "lookup_stats.dat",
                                    server_specific=False)
             ctx.raw_data.append(dest)
+    return ctx.finish(rc, b_fail_scan=False)
+
+
+# effective leaf's dry thinning: collect_assess_tier_data_adv applies
+# it to BOTH the signature set and the scan corpus, so the dry DB stays
+# small (the aggressive Dlp DB is ~10 GB serialized at full size).
+EFFECTIVE_DRY_PERC = 2
+
+# Positive markers the report must carry: one "Data for" block per
+# dataset, the two filesize re-bucket groups (fig 9b), and the END
+# banner (truncation guard).  These are the exact strings
+# scripts/eval/effectiveness.py regexes for.
+EFFECT_SECTIONS = ("=== Data for Mal ===", "=== Data for Dna ===",
+                   "=== Data for Dlp ===", "Filesize data for Mal",
+                   "Filesize data for Dlp")
+EFFECT_END = "END EFFECTIVENESS REPORT"
+
+
+def effective_missing_success(path, t0):
+    """None when the tier-discharge report is complete and was written
+    by THIS run, else the reason.  Positive predicate (lkup pattern):
+    the collector println!s the report, so its text is in run.log
+    either way and the fail scan cannot judge it."""
+    if not os.path.isfile(path):
+        return "no report at %s" % path
+    if os.path.getmtime(path) < t0:
+        return "stale report, not rewritten this run"
+    text = open(path, errors="replace").read()
+    missing = [s for s in EFFECT_SECTIONS if s not in text]
+    if missing:
+        return "report missing: %s" % ", ".join(missing)
+    if EFFECT_END not in text:
+        return "report has no END banner (truncated)"
+    return None
+
+
+def run_leaf_effective(mode, ctx):
+    """S7.3 tier-discharge report (eval_effective.txt) via
+    bora_data_driver::collect_assess_tier_data_adv.  Dlp builds
+    AGGRESSIVE (its deployed mode); Mal/Dna non-aggressive.  dry thins
+    signatures and scan corpus to perc%; full is the real report."""
+    perc = EFFECTIVE_DRY_PERC if mode == "dry" else 100
+    local_out = ctx.report_path("eval_effective")
+    env = neo_env()
+    rc = run_rust_example(ctx, "bora_cli",
+                           ["effective", str(perc), local_out], env)
+    if rc == 0:
+        missing = effective_missing_success(local_out, ctx._t0)
+        if missing:
+            ctx.note("effective: %s" % missing)
+            rc = 6
+        else:
+            dest = place_raw_data(local_out, "eval_effective.txt",
+                                   server_specific=False)
+            ctx.raw_data.append(dest)
+    # b_fail_scan=False as lkup: the report itself is println!'d into
+    # run.log, and ClamAV signature NAMES are arbitrary text.
     return ctx.finish(rc, b_fail_scan=False)
 
 
@@ -1725,6 +1786,7 @@ JOB_SPECS.update({
     "scale_clam": JobSpec("scale_clam", "Scale-ClamAV", run_leaf_scale_clamav),
     "scale_dlp":  JobSpec("scale_dlp",  "Scale-DLP",    run_leaf_scale_dlp),
     "lkup":       JobSpec("lkup",       "Analyze lkup", run_leaf_analyze_lkup),
+    "effective":  JobSpec("effective",  "Effectiveness", run_leaf_effective),
     "zombie":     JobSpec("zombie",     "Zombie",       run_leaf_zombie,
                           lambda m: [zombie_script(m)]),
     "reef":       JobSpec("reef",       "Reef",         run_leaf_reef,
@@ -1902,6 +1964,10 @@ DRY_COST = [
     ("lkup",       "Analyze lkup",  3.5,  8.3,  ""),
     ("scale_clam", "Scale-ClamAV",  7.3,  5.2,  ""),
     ("scale_dlp",  "Scale-DLP",     8.5,  13.0, ""),
+    # APPENDED, never inserted (leaves 1-8 keep their menu numbers).
+    # effective is ESTIMATED, not measured: gb None until its first
+    # instrumented dry run replaces this row.
+    ("effective",  "Effectiveness", 6.0,  None, ""),
 ]
 
 # small_full_snark is MEASURED, not dry -- a real 4-job fold plus a full
@@ -1945,6 +2011,8 @@ TOP_CHOICES = [
                                      lead="measured ")),
     ("dry_run", "dry_run %s" % _cost_tag(*dry_total(), lead="")),
     ("full_run", "full_run"),
+    # clean sits at #5 BY REQUEST (2026-08-14), renumbering figs to #6.
+    ("clean", "clean generated data (raw_data/*, pdf/*)"),
     ("figs", "generate list of figures"),
 ]
 
@@ -1984,7 +2052,7 @@ def _parse_items(items):
     return keys
 
 
-NO_ITEM_TOPS = ("small", "figs", "small_full_snark")
+NO_ITEM_TOPS = ("small", "figs", "small_full_snark", "clean")
 
 
 def resolve_plan(run, items):
@@ -2152,7 +2220,7 @@ def run_small_full_snark():
 
 
 # =====================================================================
-# Layer A -- figs (menu #5: regenerate every figure + review PDF)
+# Layer A -- clean (menu #5) + figs (menu #6)
 # =====================================================================
 
 RUN_DATA_DIR = os.path.join(REPO, "data", "paper_data", "run_data")
@@ -2161,12 +2229,84 @@ PDF_DIR = os.path.join(REPO, "data", "paper_data", "pdf")
 PDF_PATH = os.path.join(PDF_DIR, "list_figures.pdf")
 
 
+def _wipe_generated(root):
+    """Delete every file under root except the tracked .gitkeep /
+    .gitignore markers, then prune emptied subdirs.  Returns
+    (n_files, n_bytes)."""
+    n = b = 0
+    for dirpath, _dirs, filenames in os.walk(root, topdown=False):
+        for fn in filenames:
+            if fn in (".gitkeep", ".gitignore"):
+                continue
+            p = os.path.join(dirpath, fn)
+            try:
+                b += os.lstat(p).st_size
+                os.unlink(p)
+                n += 1
+            except OSError as e:
+                log("clean: cannot remove %s (%s)" % (p, e))
+        if dirpath != root:
+            try:
+                os.rmdir(dirpath)     # succeeds only when emptied
+            except OSError:
+                pass
+    return n, b
+
+
+def run_clean():
+    """Menu item #5: delete the PROJECT's generated run data -- every
+    file under raw_data/ (jet1tb, any_server, failed_tgz, ...) and
+    pdf/, keeping the git-tracked marker files and their dirs.  Both
+    roots derive from REPO, so the paper tree cannot be touched."""
+    total_n, total_b = 0, 0
+    for root in (RAW_DATA_ROOT, PDF_DIR):
+        # hard guard: only the project's data/paper_data subtree is
+        # ever wiped -- a bad edit upstream must fail loudly here.
+        assert root.startswith(
+            os.path.join(REPO, "data", "paper_data") + os.sep), root
+        if not os.path.isdir(root):
+            log("clean: %s absent -- skipped" % root)
+            continue
+        n, b = _wipe_generated(root)
+        log("clean: %s -- removed %d file(s), %.2f GB"
+            % (root, n, b / 2**30))
+        total_n += n
+        total_b += b
+    log("clean: done -- %d file(s), %.2f GB total"
+        % (total_n, total_b / 2**30))
+    return 0
+
+
+# The git-tracked DLP corpus manifest (the ONLY retained copy of the
+# pass/fail email lists; see zkp_driver.rs:8342).  datasets.py reads it
+# from raw_data/any_server/, which is gitignored, so a fresh box needs
+# it staged before every figs run.
+CORPUS_TGZ_SRC = os.path.join(REPO, "data", "paper_data", "dlp",
+                               "cfg", "corpus.tgz")
+
+
+def stage_corpus_tgz():
+    """Copy the tracked corpus.tgz into raw_data/any_server/ where
+    datasets.py (Table 1) reads it.  Missing source is a loud WARN,
+    not an abort: RUNALL tolerates the single failing generator."""
+    if not os.path.isfile(CORPUS_TGZ_SRC):
+        log("figs: WARN missing %s -- datasets.py will fail"
+            % CORPUS_TGZ_SRC)
+        return False
+    dest = raw_data_path("corpus.tgz", server_specific=False)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copy2(CORPUS_TGZ_SRC, dest)
+    log("figs: staged corpus.tgz -> %s" % dest)
+    return True
+
+
 def run_figs():
-    """Menu item #5: regenerate every figs/*.tex fragment from whatever
+    """Menu item #6: regenerate every figs/*.tex fragment from whatever
     is currently in raw_data/ (RUNALL.sh tolerates per-generator
     failures -- an ungenerated table just keeps its prior content),
     then compile list_figures.pdf. Runs in the foreground: this takes
     seconds, unlike a Sequencer leaf, so no daemonizing."""
+    stage_corpus_tgz()
     log("figs: running RUNALL.sh (per-generator failures are non-fatal)")
     rc = subprocess.run(["bash", "RUNALL.sh"], cwd=EVAL_DIR).returncode
     if rc != 0:
@@ -2233,6 +2373,11 @@ def main():
         if args.plan_only:
             return 0
         return run_small()
+
+    if plan.top == "clean":
+        if args.plan_only:
+            return 0
+        return run_clean()
 
     if plan.top == "figs":
         if args.plan_only:
@@ -3854,6 +3999,123 @@ class RunLeafAnalyzeLkupTest(unittest.TestCase):
         self.assertTrue(any("lkup:" in n for n in ctx._notes))
 
 
+class EffectiveMissingSuccessTest(unittest.TestCase):
+    # Shaped after bora_data_driver::fmt_tier_block's markers -- the
+    # same strings effectiveness.py regexes for.
+    FULL = ("=== Data for Mal ===\n"
+            "=== Data for Dna ===\n"
+            "=== Data for Dlp ===\n"
+            "######## Filesize data for Mal ########\n"
+            "######## Filesize data for Dlp ########\n"
+            "#### END EFFECTIVENESS REPORT ####\n")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.path = os.path.join(self.tmp.name, "eval_effective.txt")
+
+    def _write(self, text):
+        with open(self.path, "w") as f:
+            f.write(text)
+
+    def test_complete_and_fresh_passes(self):
+        self._write(self.FULL)
+        self.assertIsNone(effective_missing_success(self.path, 0))
+
+    def test_absent_report(self):
+        self.assertIn("no report",
+                      effective_missing_success(self.path, 0))
+
+    def test_stale_report_from_a_prior_run(self):
+        self._write(self.FULL)
+        os.utime(self.path, (1, 1))
+        self.assertIn("stale",
+                      effective_missing_success(self.path, time.time()))
+
+    def test_missing_dataset_section(self):
+        self._write(self.FULL.replace("Data for Dna", "x"))
+        self.assertIn("Dna", effective_missing_success(self.path, 0))
+
+    def test_missing_filesize_group(self):
+        """Fig 9b's Dlp re-buckets are load-bearing, not decoration."""
+        self._write(self.FULL.replace("Filesize data for Dlp", "x"))
+        self.assertIn("Filesize data for Dlp",
+                      effective_missing_success(self.path, 0))
+
+    def test_truncated_before_end_banner(self):
+        self._write(self.FULL.replace("END EFFECTIVENESS", "x"))
+        self.assertIn("END banner",
+                      effective_missing_success(self.path, 0))
+
+
+class RunLeafEffectiveTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, sub in (("JOB_LOG_DIR", "logs"),
+                           ("FAILED_TGZ_DIR", "failed_tgz"),
+                           ("LOGS_DIR", "job_logs"),
+                           ("RAW_DATA_ROOT", "raw_data")):
+            p = mock.patch.object(_MOD, name,
+                                   os.path.join(self.tmp.name, sub))
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+
+    def _run(self, mode, rc, report):
+        """Stand-in bora_cli, as the lkup twin: echoes panic-looking
+        text into run.log, then writes `report` to args[2]."""
+        ctx = JobHandle("effective", mode)
+        seen = {}
+
+        def fake(c, name, args, env, log_name="run"):
+            seen["args"] = args
+            with open(c.log_path(log_name), "w") as f:
+                f.write("thread 'main' panicked at echoed.rs:1:1:\n")
+            if report is not None:
+                with open(args[2], "w") as f:
+                    f.write(report)
+            return rc
+
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            return ctx, seen, run_leaf_effective(mode, ctx)
+
+    def test_dry_perc_and_full_perc(self):
+        _, seen, res = self._run("dry", 0,
+                                  EffectiveMissingSuccessTest.FULL)
+        self.assertEqual(seen["args"][:2],
+                         ["effective", str(EFFECTIVE_DRY_PERC)])
+        self.assertEqual(res.rc, 0)
+        _, seen, res = self._run("full", 0,
+                                  EffectiveMissingSuccessTest.FULL)
+        self.assertEqual(seen["args"][:2], ["effective", "100"])
+        self.assertFalse(res.failed)
+
+    def test_places_as_eval_effective_txt_in_any_server(self):
+        with mock.patch.object(_MOD, "place_raw_data",
+                                return_value="/x") as pl:
+            _, _, res = self._run("full", 0,
+                                   EffectiveMissingSuccessTest.FULL)
+        self.assertEqual(res.rc, 0)
+        self.assertEqual(pl.call_args.args[1], "eval_effective.txt")
+        self.assertFalse(pl.call_args.kwargs["server_specific"])
+
+    def test_echoed_report_text_cannot_fail_the_leaf(self):
+        """The collector println!s the report; sig names are arbitrary
+        text, so the fail scan must not vote (b_fail_scan=False)."""
+        _, _, res = self._run("full", 0,
+                               EffectiveMissingSuccessTest.FULL)
+        self.assertFalse(res.failed)
+
+    def test_truncated_report_fails_and_places_nothing(self):
+        with mock.patch.object(_MOD, "place_raw_data") as pl:
+            ctx, _, res = self._run("dry", 0, "half a report\n")
+        self.assertEqual(res.rc, 6)
+        self.assertTrue(res.failed)
+        pl.assert_not_called()
+        self.assertTrue(any("effective:" in n for n in ctx._notes))
+
+
 class RunLeafScaleDlpTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -4840,8 +5102,16 @@ class RunFigsTest(unittest.TestCase):
             for c in run.call_args_list[1:]:
                 self.assertEqual(c.args[0][0], "pdflatex")
                 self.assertEqual(c.kwargs["cwd"], RUN_DATA_DIR)
-            copy2.assert_called_once_with(
-                os.path.join(RUN_DATA_DIR, "list_figures.pdf"), PDF_PATH)
+            # two copies: the corpus.tgz staging, then the PDF placement
+            self.assertEqual(copy2.call_count, 2)
+            self.assertEqual(
+                copy2.call_args_list[0].args,
+                (CORPUS_TGZ_SRC,
+                 raw_data_path("corpus.tgz", server_specific=False)))
+            self.assertEqual(
+                copy2.call_args_list[1].args,
+                (os.path.join(RUN_DATA_DIR, "list_figures.pdf"),
+                 PDF_PATH))
 
     def test_runall_failure_is_nonfatal(self):
         with mock.patch("subprocess.run") as run, \
@@ -4862,6 +5132,106 @@ class RunFigsTest(unittest.TestCase):
             rc = run_figs()
             self.assertEqual(rc, 1)
             copy2.assert_not_called()
+
+
+class StageCorpusTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src = os.path.join(self.tmp.name, "corpus.tgz")
+        for name, val in (("CORPUS_TGZ_SRC", self.src),
+                           ("RAW_DATA_ROOT",
+                            os.path.join(self.tmp.name, "raw"))):
+            p = mock.patch.object(_MOD, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_stages_into_any_server(self):
+        """The tracked manifest lands where datasets.py reads it."""
+        with open(self.src, "w") as f:
+            f.write("tgz-bytes")
+        self.assertTrue(stage_corpus_tgz())
+        dest = os.path.join(self.tmp.name, "raw", "any_server",
+                            "corpus.tgz")
+        self.assertEqual(open(dest).read(), "tgz-bytes")
+
+    def test_missing_source_warns_not_raises(self):
+        self.assertFalse(stage_corpus_tgz())
+
+
+class RunCleanTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        # roots must sit under REPO/data/paper_data for the guard
+        repo = self.tmp.name
+        self.raw = os.path.join(repo, "data", "paper_data", "run_data",
+                                "data", "raw_data")
+        self.pdf = os.path.join(repo, "data", "paper_data", "pdf")
+        for name, val in (("REPO", repo), ("RAW_DATA_ROOT", self.raw),
+                           ("PDF_DIR", self.pdf)):
+            p = mock.patch.object(_MOD, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _seed(self):
+        for d, files in (
+                ("any_server", [".gitkeep", "corpus.tgz"]),
+                ("jet1tb", [".gitkeep", "full_dna.tgz"]),
+                ("jet1tb/extracted", ["inner.log"]),
+                ("failed_tgz", [".gitkeep", "b.tgz"])):
+            os.makedirs(os.path.join(self.raw, d), exist_ok=True)
+            for fn in files:
+                open(os.path.join(self.raw, d, fn), "w").write("x")
+        os.makedirs(self.pdf)
+        for fn in (".gitkeep", ".gitignore", "list_figures.pdf"):
+            open(os.path.join(self.pdf, fn), "w").write("x")
+
+    def test_wipes_data_keeps_tracked_markers(self):
+        """Generated files go; .gitkeep/.gitignore and their dirs stay,
+        so `git status` stays clean after a wipe."""
+        self._seed()
+        self.assertEqual(run_clean(), 0)
+        kept = []
+        for root in (self.raw, self.pdf):
+            for dp, _dirs, fns in os.walk(root):
+                kept += [os.path.join(dp, f) for f in fns]
+        self.assertEqual(
+            sorted(os.path.basename(f) for f in kept),
+            [".gitignore", ".gitkeep", ".gitkeep", ".gitkeep",
+             ".gitkeep"])
+        # a subdir with no tracked marker is pruned entirely
+        self.assertFalse(
+            os.path.isdir(os.path.join(self.raw, "jet1tb",
+                                        "extracted")))
+        self.assertTrue(os.path.isdir(os.path.join(self.raw,
+                                                    "jet1tb")))
+
+    def test_absent_roots_are_skipped(self):
+        self.assertEqual(run_clean(), 0)
+
+    def test_guard_refuses_roots_outside_paper_data(self):
+        """A mispatched root must die loudly, never delete."""
+        with mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                                os.path.join(self.tmp.name, "els")):
+            with self.assertRaises(AssertionError):
+                run_clean()
+
+
+class VmaTargetTest(unittest.TestCase):
+    def test_target_covers_measured_full_dna_need(self):
+        """full_dna's Rust preflight measured est 21,518,560 on
+        2026-08-14; a floor below that re-breaks the leaf."""
+        self.assertGreaterEqual(VMA_TARGET, 21_518_560)
+
+
+class CleanTopResolutionTest(unittest.TestCase):
+    def test_clean_needs_no_items_and_sits_at_5(self):
+        """clean resolves top-only, and holds menu slot 5 by request."""
+        self.assertEqual(resolve_plan("clean", None),
+                          ResolvedPlan("clean", None, []))
+        self.assertEqual([k for k, _ in TOP_CHOICES].index("clean") + 1,
+                         5)
 
 
 class DryCostRollupTest(unittest.TestCase):
@@ -5357,8 +5727,10 @@ class ResolvePlanTest(unittest.TestCase):
             resolve_plan("dry_run", None)
 
     def test_bad_item_rejected(self):
+        # derived, not literal: "9" became a VALID index when the
+        # effective leaf was appended (2026-08-14)
         with self.assertRaises(SystemExit):
-            resolve_plan("dry_run", "9")
+            resolve_plan("dry_run", str(len(_LEAF_KEYS) + 1))
         with self.assertRaises(SystemExit):
             resolve_plan("dry_run", "bogus_key")
 
@@ -5571,15 +5943,16 @@ class EndToEndWiringTest(unittest.TestCase):
             self.addCleanup(p.stop)
         os.makedirs(os.path.join(self.tmp.name, "job_logs"))
 
-        specs = dict(JOB_SPECS)
-        for key in ("lkup", "zombie", "reef", "dlp", "scale_dlp",
-                     "dna", "clam", "scale_clam"):
-            specs[key] = JobSpec(key, key, stub_leaf(key, "Stage 2"))
+        # Stub EVERY key, derived from JOB_SPECS -- an explicit list
+        # here went stale when the effective leaf was added, and the
+        # test cargo-ran the REAL leaf (2026-08-14).
+        specs = {key: JobSpec(key, key, stub_leaf(key, "Stage 2"))
+                 for key in JOB_SPECS}
         p = mock.patch.object(_MOD, "JOB_SPECS", specs)
         p.start()
         self.addCleanup(p.stop)
 
-    def test_full_8_leaf_plan_runs_end_to_end(self):
+    def test_full_leaf_plan_runs_end_to_end(self):
         with mock.patch("sys.argv",
                          ["prog", "--run", "dry_run", "--items", "A"]), \
              mock.patch.object(_MOD, "_preflight", return_value=0) as pf, \

@@ -2,9 +2,10 @@
 //! functions. Backend of scripts/PAPER_DATA.py -- run that
 //! driver instead; direct invocation is for debugging only.
 
-use zkregplus::bora_data_driver::{collect_lookup_stats_adv,
-	collect_scale_clamav_neo, collect_scale_dlp_neo, full_clamav_neo,
-	full_dlp_neo, full_dna_neo, parse_args, Cmd, USAGE};
+use zkregplus::bora_data_driver::{collect_assess_tier_data_adv,
+	collect_lookup_stats_adv, collect_scale_clamav_neo,
+	collect_scale_dlp_neo, full_clamav_neo, full_dlp_neo,
+	full_dna_neo, parse_args, Cmd, USAGE};
 
 fn main() {
 	let args: Vec<String> = std::env::args().skip(1).collect();
@@ -15,6 +16,8 @@ fn main() {
 	match parse_args(&args) {
 		Cmd::Lkup { perc, dest_path } =>
 			collect_lookup_stats_adv(perc, &dest_path),
+		Cmd::Effective { perc, dest_path } =>
+			collect_assess_tier_data_adv(perc, &dest_path),
 		Cmd::FullDlp { perc_db, perc_samples, num_circs, num_jobs,
 			numa_num, part_id, b_dry_run, b_ladder_only } => {
 			full_dlp_neo(perc_db, perc_samples, num_circs, num_jobs,
