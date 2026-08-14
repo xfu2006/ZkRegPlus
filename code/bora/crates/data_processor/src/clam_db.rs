@@ -2293,9 +2293,13 @@ impl <F:PrimeField> ClamavDB<F>{
 		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "acdfa_crit");
 		Self::add_acdfa_to_lkup(&mut lkup, &dfa_crit_igc, CRIT_IGC_INIT, &map_crit_pat_igc, &sig_to_id);
 		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "acdfa_crit_igc");
-		Self::add_range_to_lkup(&mut lkup, F::from(CHAR), (0,16));
+		// both ranges EXCLUDE their base (16 / 2^range2_bit): an
+		// admitted base digit would make base-B packings non-unique
+		// (a limb can carry B while the next one borrows 1).
+		Self::add_range_to_lkup(&mut lkup, F::from(CHAR), (0,15));
 		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "range_table1");
-		Self::add_range_to_lkup(&mut lkup, F::from(RANGE2), (0,1<<read_global_config().range2_bit));
+		Self::add_range_to_lkup(&mut lkup, F::from(RANGE2),
+			(0,(1<<read_global_config().range2_bit)-1));
 		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "range_table2");
 		Self::add_bundle_subsig_to_lkup(&mut lkup, &sig_to_id, &bundle_subsig, false)?;
 		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "bundle_subsig");
@@ -2724,6 +2728,39 @@ mod tests_clam_db{
 		db2.print_summary(&mut vlog);
 		assert!(db2.vec_sigs.len()==3, "ERROR reading file vec_sigs: {:?}",
 			db.vec_sigs);
+	}
+
+	/// S117: range tables must exclude their base (B for RANGE2, 16
+	/// for CHAR) -- an inclusive endpoint makes base-B splits
+	/// non-unique (a limb can carry B while the next borrows 1).
+	#[test]
+	fn test_s117_range_tables_exclusive(){
+		let cfg = default_clamav_cfg();
+		let sig_file = format!(
+			"{}/data/src_sig/clamav/debug/debug.ldb", proj_root());
+		let dfa = format!(
+			"{}/data/src_sig/clamav/debug/debug_needs_dfa.txt",
+			proj_root());
+		let ised = format!(
+			"{}/data/src_sig/clamav/debug/debug_needs_ised.txt",
+			proj_root());
+		let igc = format!(
+			"{}/data/src_sig/clamav/debug/debug_needs_ised_igc.txt",
+			proj_root());
+		let mut vlog = vec![];
+		let db = ClamavDB::<Fr>::build_db(&sig_file, &dfa, &ised,
+			&igc, &cfg, &mut vlog).expect("build db err");
+		let b = Fr::from(1u64 << read_global_config().range2_bit);
+		let (frg2, fchar) = (Fr::from(crate::clam_db::RANGE2),
+			Fr::from(crate::clam_db::CHAR));
+		assert!(!db.lkup.vals.contains(&(frg2, b)),
+			"RANGE2 admits its base B: split not unique");
+		assert!(db.lkup.vals.contains(&(frg2, b - Fr::from(1u32))),
+			"RANGE2 must keep B-1 (max sentinel)");
+		assert!(!db.lkup.vals.contains(&(fchar, Fr::from(16u32))),
+			"CHAR admits 16: base-16 split not unique");
+		assert!(db.lkup.vals.contains(&(fchar, Fr::from(15u32))),
+			"CHAR must keep 15 (max nibble)");
 	}
 
 	/// M1a build_db integration: F1 forward / F2 backward anchors +

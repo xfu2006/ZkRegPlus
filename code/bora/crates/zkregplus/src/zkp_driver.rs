@@ -2066,19 +2066,16 @@ where
 	log_perf(0, log_level, &format!("ZIP driver step 1: build DB."), &mut gt1);
 
 	//2. load the files as vec of words
-	let mut max_total_word_len = 0;
-	//one entry per job: that job's summed packed word length. MAX sizes
-	//capacity (it must fit the biggest job), MIN sizes the lkup share
-	//(coverage is achieved by the fewest-step job). See cover_word_n.
+	//one entry per job: that job's summed packed word length. The MIN
+	//sizes the lkup share AND its coverage guard -- coverage is achieved
+	//per job, so the fewest-step job binds (see cover_word_n). No MAX is
+	//kept here: the capacity axis is probed from `words` below.
 	let mut job_word_lens: Vec<usize> = vec![];
 	let mut jobs = vec![];
 	let mut all_vdata: Vec<FailDischargeRecord> = vec![];
 	for list_file_to_scan in list_files_to_scan{
 		let (vec_words, vec_word_info, vec_word_fnames, vdata) = load_files::<CF1<C1>>(job_id, &list_file_to_scan, &db, &cfg, b_write_cache, cache_dir, chunk_len);
 		let total_word_len:usize = vec_words.iter().map(|w| w.len()).sum();
-		if total_word_len > max_total_word_len{
-			max_total_word_len = total_word_len;
-		}
 		job_word_lens.push(total_word_len);
 		all_vdata.extend(vdata);
 		jobs.push(FoldPotJob{
@@ -2242,7 +2239,8 @@ where
 				let top = ladder.len() - 1;
 				let res = crate::determine_config::probe_catching_with_rung(|| {
 					let vec_circs = build_circs_adv_aggr::<CF1<C1>,C1,CS1>(
-						&poseidon_config, max_total_word_len, chunk_len,
+						//lkup-coverage word len (min job), NOT cap max
+						&poseidon_config, cover_n, chunk_len,
 						lkup_len, rcd, &caps, b_check_lkup);
 					if read_global_config().b_dryrun_after_capcheck {
 						log(0, log_level, &format!("=== M8 DRYRUN: \

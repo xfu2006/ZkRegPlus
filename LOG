@@ -31106,6 +31106,9 @@ Goal 5. more soundness errors
 		-> continue to test
 		-> find waste of RAM in key replication -> measure it
 		-> do trunction of key to save RAM and test it.
+	[c] S117 issue: range problem
+		-> includes an extra element
+
 
 
 

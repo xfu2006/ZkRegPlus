@@ -3238,8 +3238,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			si_tag_base::<F>(cid) - F::from(RANGE2));
 		let pins: [(FpVar<F>, fn(&QmVars<F>) -> &Vec<FpVar<F>>); 1] = [
 			(tc(ID_ENCODED_PREV_ENCODED), |v| &v.si_enc_prev)];
-		// A: base of encode_cols. The RANGE2 bound each limb now
-		// carries is exactly this base, so the split below is the
+		// A: base of encode_cols. The RANGE2 bound keeps each limb
+		// strictly below this base, so the split below is the
 		// unique base-B representation of enc.
 		let b = F::from(1u64 << read_global_config().range2_bit);
 		let c_b4 = new_const_var(&cs, b * b * b * b);
@@ -3297,10 +3297,12 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			//      gives step == that encode's stored step. So
 			//      step is a CHECKED DB FACT, not prover advice
 			//      and not merely bounded like the other limbs.
-			//  (b) each limb carries a const RANGE2 si, so each is
-			//      < B. A base-B representation with every digit
-			//      < B is UNIQUE, so the limbs can only be the DB's
-			//      own subsig/step/pat/rg_start/rg_end.
+			//  (b) each limb carries a const RANGE2 si, and the
+			//      RANGE2 table EXCLUDES its base (clam_db emits
+			//      0..=B-1), so each limb is < B. A base-B
+			//      representation with every digit < B is UNIQUE,
+			//      so the limbs can only be the DB's own
+			//      subsig/step/pat/rg_start/rg_end.
 			// step is thus bound TWICE -- as the DB value in (a)
 			// and as the B^3 limb in (b) -- and the two agree
 			// because the DB's encode packs its own step into that
