@@ -748,12 +748,26 @@ STALL_S = 4 * 3600
 
 EVIDENCE_PIDS = 12   # per-pid evidence lines in SUMMARY.log; rest in the dump
 
+# "panicked", never bare "panic".  A Rust panic always prints
+# "panicked at"; the bare token only ever matched source text, and on
+# 2026-08-14 it failed a zombie leaf that had passed (rc 0, 24/24 ok)
+# on one rustc warning quoting `use std::{.., panic, ..}` from circ.
 FAIL_RE = re.compile(
-    r"panic|panicked|SIGABRT|Killed|out of memory|cannot allocate|"
+    r"panicked|SIGABRT|Killed|out of memory|cannot allocate|"
     r"CapErr|FATAL|error\[|VERIFICATION FAILED|SPLIT VERIFY: FAIL")
 
 # advisory lines that legitimately contain failure keywords
 ADVISORY_RE = re.compile(r"CAVEAT:|WARN big job")
+
+# A rustc/cargo diagnostic quoting the source it is complaining about:
+# "32 | use std::..." or the "   |    ^^^" underline beneath it.  That
+# text is the compiler's INPUT, not its verdict, so a keyword inside it
+# proves nothing -- and every leaf that shells out to cargo puts these
+# in run.log.  Narrower than dropping "panic" alone: it also covers a
+# warning that happens to quote a line containing CapErr or FATAL.
+# A real diagnostic is still caught by its own "error[Ennnn]" header,
+# which carries no gutter.
+ECHO_RE = re.compile(r"^\s*(?:\d+\s*)?\|")
 
 
 @dataclass
@@ -1016,7 +1030,8 @@ class JobHandle:
                 with open(s, errors="replace") as f:
                     for ln in f:
                         if FAIL_RE.search(ln) \
-                                and not ADVISORY_RE.search(ln):
+                                and not ADVISORY_RE.search(ln) \
+                                and not ECHO_RE.match(ln):
                             lines.append(ln.rstrip("\n"))
         return lines
 
@@ -4511,6 +4526,25 @@ class JobHandleLogHygieneTest(unittest.TestCase):
         with open(r, "w") as f:
             f.write("thread 'main' panicked at x.rs\n")
         self.assertEqual(h._fail_lines(), [])
+
+    def test_compiler_source_echo_is_not_a_failure(self):
+        """The 2026-08-14 false FAIL: a rustc warning quoting circ's
+        `use std::{.., panic, ..}` failed a leaf that had passed."""
+        h = JobHandle("k", "dry")
+        with open(h.log_path("run"), "w") as f:
+            f.write("32 | use std::{fmt::Write, panic, path::PathBuf};\n")
+            f.write("   |     ^^^^^ CapErr in quoted source\n")
+            f.write("warning: unused import: `std::panic`\n")
+        self.assertEqual(h._fail_lines(), [])
+
+    def test_real_failures_still_scan(self):
+        """The narrowed FAIL_RE still catches a genuine panic, and a
+        real rustc error, whose header carries no gutter."""
+        h = JobHandle("k", "dry")
+        with open(h.log_path("run"), "w") as f:
+            f.write("thread 'main' panicked at src/x.rs:1:1:\n")
+            f.write("error[E0308]: mismatched types\n")
+        self.assertEqual(len(h._fail_lines()), 2)
 
 
 class _WatchProbe:

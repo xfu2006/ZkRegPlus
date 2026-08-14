@@ -101,16 +101,34 @@ BINEXEC_TGT = "binexec_merged128k"
 # toolchain install  (Rust 1.76 + system build deps)
 #
 # Brings a bare Ubuntu 24 instance to a buildable state: apt build deps
-# (incl. lld, required by the fused-ld link), p7zip, pip+gdown, and the
-# rustup-managed 1.76.0 toolchain pinned by ./rust-toolchain.  Idempotent;
-# needs sudo for apt.
+# (incl. lld, required by the fused-ld link), p7zip, the texlive subset
+# PAPER_DATA.py's figs item needs, pip+gdown, and the rustup-managed
+# 1.76.0 toolchain pinned by ./rust-toolchain.  Idempotent; needs sudo
+# for apt.
 # =====================================================================
 
 APT_PACKAGES = [
     "build-essential", "lld", "pkg-config", "libssl-dev",
     "curl", "git", "p7zip-full", "python3-pip",
+    # PAPER_DATA.py's "figs" item compiles list_figures.tex with
+    # pdflatex (run_figs, twice for refs).  Unlike the zombie deps this
+    # is NOT gated on a dataset: figs is a top-level menu item, so every
+    # install can reach it.  The split is MEASURED with kpsewhich +
+    # dpkg -S, not guessed; the CM fonts the PDF embeds come from
+    # texlive-base, which texlive-latex-base already depends on.
+    "texlive-latex-base",         # pdflatex, geometry, amsmath, hyperref
+    "texlive-latex-recommended",  # booktabs
+    "texlive-pictures",           # tikz, pgfplots
 ]
 RUST_VERSION = "1.76.0"
+
+# The .sty files list_figures.tex loads.  texlive-latex-recommended and
+# texlive-pictures ship no binary, so `which` cannot see them and only
+# kpsewhich answers -- the same trap have_header() covers for the -dev
+# packages.  A package added above without a probe here is dead code:
+# ensure_toolchain() skips the apt step whenever its probe says present.
+LATEX_STYS = ("geometry.sty", "booktabs.sty", "amsmath.sty",
+              "tikz.sty", "pgfplots.sty", "hyperref.sty")
 
 # ---- zombie (NSDI'24 baseline) build prerequisites ------------------
 # Kept OUT of APT_PACKAGES / install_rust deliberately: these are needed
@@ -249,9 +267,26 @@ def install_toolchain(with_zombie=False):
 
 
 # True if every binary the apt packages provide is already on PATH.
+# True if every LATEX_STYS file is on the TeX search path.  kpsewhich
+# prints one path per file it finds and nothing for the rest, so the
+# line count is the test; it lives in texlive-binaries, which arrives
+# with texlive-latex-base, hence the which() guard for a bare box.
+def have_latex_stys():
+    if shutil.which("kpsewhich") is None:
+        return False
+    try:
+        p = subprocess.run(["kpsewhich"] + list(LATEX_STYS),
+                           capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return len(p.stdout.split()) >= len(LATEX_STYS)
+
+
 def apt_tools_present():
-    need = ("ld.lld", "7za", "cc", "pkg-config", "git", "curl")
-    return all(shutil.which(b) is not None for b in need)
+    need = ("ld.lld", "7za", "cc", "pkg-config", "git", "curl",
+            "pdflatex")
+    return (all(shutil.which(b) is not None for b in need)
+            and have_latex_stys())
 
 
 # True if <header> compiles.  Same probe download_zombie.py:have_header
