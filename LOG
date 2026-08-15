@@ -31156,8 +31156,7 @@ Goal 1. correct bib
 	[b] T919
 
 Goal 2. SMALL SERVER
-	[a] full_dlp (512gb server) -> reset 7:40am
-		->!!! ??? CHECK 10:30AM ??? !!!
+	[a] full_dlp (512gb server) -> reset 3:30PM
   # ladder breakdown (~3-4 h)
   grep -E "determine_config_aggr:|capped qm walk|v5\[dlp\]|tune\[dlp\]" /tmp/bora/CURRENT_JOB.log
 
@@ -31172,7 +31171,7 @@ Goal 2. BIG SERVER
 	[b] dry-run (4:15am -> 6:10am): 2 hrs
 	[c] full dna run (6:15am)->  fails at around 12:15pm! 
 		note that small_data_par full snark did not fail!
-	[d]
+	[d] -> debug run started 3:20pm -> wait til about 6:30pm to check.
 
 
 

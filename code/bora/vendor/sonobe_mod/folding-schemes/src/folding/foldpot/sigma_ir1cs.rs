@@ -20,7 +20,7 @@ macro_rules! lock_unwrap {
 		that failed_sigs is a subset of discharged_sigs (or the samples
 		are discharged).
 */
-use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, emit_stdout, LOG6,LOG7}, timer::Timer as GTimer};
+use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, emit_stdout, LOG1,LOG6,LOG7}, timer::Timer as GTimer}; //DEBUG USE 69801: +LOG1
 use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs, POW_LE_BITS, alloc_le_bits};
 use crate::folding::foldpot::utils::gadget_sat_check;
 use serde::{Serialize,Deserialize};
@@ -3775,7 +3775,11 @@ where 	C: CurveGroup<ScalarField=F>,
 	) -> Result<Vec<FpVar<F>>, SynthesisError> {
 		let b_debug = B_DEBUG; //set to false in production mode
 		let b_show_sigs = false; //set to false in production mode
-		let log_level = LOG6;
+		//DEBUG USE 69801: ZKR_STEP_BRACKETS surfaces the per-section
+		//"gen_step_cs step N" brackets so a decider p1s7 UNSAT row
+		//maps to its step-circuit gadget.
+		let log_level = if std::env::var("ZKR_STEP_BRACKETS").is_ok()
+			{LOG1} else {LOG6};
 		//NOTE: cs.is_satisfied() can cause * stack overflow *
 		//if constraints are not constructed carefully.
 		//sometimes if a constraint has lc (linear combinations) too deep,

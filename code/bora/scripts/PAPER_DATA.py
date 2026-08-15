@@ -1573,6 +1573,12 @@ DNA_DEBUG_ENV = {
     "ZKR_MAIN_SNARK_PROBE": "1",  # pass-vs-from_nova diff + self-verify
     "ZKR_LKUP_PROBE": "1",        # lkup dummy-slot zero audit
     "ZKR_STOP_AFTER_MAIN": "1",   # exit(0) before the CyclePair phase
+    "ZKR_STEP_BRACKETS": "1",     # per-gadget step-circ row brackets
+    # In-fold step-circuit SAT check, LAST step only (pre-increment
+    # i, so 328 steps -> i=327; inert on shorter runs). All-steps
+    # (FROM=0) costs ~+9h at full shape -- opt-in by hand only.
+    "ZKR_GADGET_CHECK": "1",
+    "ZKR_GADGET_FROM": "327",
 }
 
 # Lines worth echoing back as the diagnosis: the 69801 probe prints
@@ -1599,9 +1605,23 @@ def _dna_debug_diagnose(lines):
     (verdict, detail_lines): verdict is one short CLASS-tagged line."""
     unsat = [l for l in lines if "GADGET-UNSAT" in l]
     if unsat:
+        detail = list(unsat)
+        # p1s7 is the folded-step-circuit check: first-bad minus the
+        # p1s6 cumulative count is the ROW WITHIN THE STEP CIRCUIT,
+        # which the ZKR_STEP_BRACKETS "gen_step_cs step N" lines
+        # bracket per gadget.
+        m = re.search(r"@decider::p1s7 first-bad=(\d+)", unsat[0])
+        if m:
+            for l in lines:
+                m6 = re.search(r"@decider::p1s6 \((\d+) cons\)", l)
+                if m6:
+                    row = int(m.group(1)) - int(m6.group(1))
+                    detail.insert(0, "step-circuit row = %d (map via "
+                                  "gen_step_cs brackets)" % row)
+                    break
         return ("CLASS A (UNSAT): decider constraint system rejected "
                 "the honest witness -- %s" % unsat[0].strip(),
-                unsat)
+                detail)
     bad_hash = [l for l in lines
                 if "69801.1" in l and "eq=false" in l]
     if bad_hash:
@@ -1682,15 +1702,27 @@ def run_dna_debug(mode):
     ctx = JobHandle("dna_debug", mode)
     env = neo_env()
     env.update(DNA_DEBUG_ENV)
-    ctx.note("mode=dna_debug(%s) probes=%s" % (
-        mode, ",".join(sorted(DNA_DEBUG_ENV))))
+    # dry mode: 1% DB x 2% sample but NON-light -- the tuner still
+    # converges to the full statement width (measured: cs1e 34.63M vs
+    # full 34.66M, share 2539 both), so 7 fold steps exercise the
+    # SAME full-width decider incl steps 8/9/10 in a fraction of the
+    # wall. Step count differs, so the last-step in-fold check index
+    # follows the mode (pre-increment i: 7 steps -> 6, 328 -> 327).
+    if mode == "dry":
+        argv = ["full_dna", "1", "2", "1", "1", "1", "0", "0", "0"]
+        env["ZKR_GADGET_FROM"] = "6"
+    else:
+        argv = dna_argv(mode)
+    ctx.note("mode=dna_debug(%s) probes=%s gadget_from=%s" % (
+        mode, ",".join(sorted(DNA_DEBUG_ENV)),
+        env.get("ZKR_GADGET_FROM")))
     lp = ctx.log_path("run")
     done_ev = threading.Event()
     watcher = threading.Thread(target=_dna_debug_watch,
                                args=(lp, done_ev), daemon=True)
     watcher.start()
     try:
-        rc = run_rust_example(ctx, "bora_cli", dna_argv(mode), env)
+        rc = run_rust_example(ctx, "bora_cli", argv, env)
     finally:
         done_ev.set()
     watcher.join(timeout=2)
@@ -1708,12 +1740,21 @@ def run_dna_debug(mode):
         rc = rc or 6
     ctx.note("verdict: %s" % verdict)
     res = ctx.finish(rc, b_fail_scan=False)
-    _dna_debug_alert("FINISHED rc=%d wall=%ds -- %s" % (
-        res.rc, int(res.wall_s), verdict), detail)
+    # ALWAYS pack a bundle: on a green debug run the probe lines ARE
+    # the analysis artifact, and finish() only packs on failure.
+    tgz = res.triage_tgz
+    if tgz is None:
+        try:
+            tgz = ctx._pack_bundle(res.rc, res.wall_s, [])
+        except Exception as e:
+            log("dna_debug: bundle pack failed: %s" % e)
+    _dna_debug_alert("FINISHED rc=%d wall=%ds -- %s | bundle: %s" % (
+        res.rc, int(res.wall_s), verdict, tgz), detail)
     log("dna_debug: rc=%d wall=%ds probe_lines=%d log=%s" % (
         res.rc, int(res.wall_s), len(lines), lp))
     log("dna_debug: VERDICT: %s" % verdict)
-    log("dna_debug: verdict file: %s" % DNA_DEBUG_VERDICT)
+    log("dna_debug: verdict file: %s  bundle: %s" % (
+        DNA_DEBUG_VERDICT, tgz))
     return 1 if res.failed else 0
 
 
@@ -2263,9 +2304,10 @@ TOP_CHOICES = [
     # 69801 debug probes (2026-08-15): appended LAST so items 1-6 keep
     # their numbers.  Both arm the decider instrumentation and stop
     # after the main snark (no CyclePair phase).
-    ("dna_debug", "dna DEBUG probes (dry shape, local diagnosis)"),
-    ("dna_debug_full", "dna DEBUG probes (FULL shape, stops after "
-                       "main snark)"),
+    ("dna_debug", "dna DEBUG probes (small fold, FULL-WIDTH non-light "
+                  "decider, ~1.5h)"),
+    ("dna_debug_full", "dna DEBUG probes (FULL shape 328 steps, stops "
+                       "after main snark, ~5h)"),
 ]
 
 LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))

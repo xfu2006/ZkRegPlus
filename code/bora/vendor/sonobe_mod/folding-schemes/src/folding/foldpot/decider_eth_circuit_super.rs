@@ -46,7 +46,7 @@ use crate::folding::{
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
 		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs,
-			gadget_sat_check},
+			gadget_sat_check}, //DEBUG USE 69801: +gadget_sat_check
 		container_config::ColEle,
 	},
 };
@@ -758,7 +758,7 @@ where
 			>>();
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		gadget_sat_check(&cs, "decider::p1s1");
+		gadget_sat_check(&cs, "decider::p1s1"); //DEBUG USE 69801
 		if B_DEBUG3 {check_cs(&cs, "phase1 step 1.0");}
 
 		//2. generate Var version of pp_hash, z_0, z_i
@@ -790,7 +790,7 @@ where
         })?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		gadget_sat_check(&cs, "decider::p1s2");
+		gadget_sat_check(&cs, "decider::p1s2"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2.0");}
 
 		//3. compute the KZG challenge in circuit
@@ -811,10 +811,18 @@ where
 		all_w.append(&mut all_e);
 		all_w.push(r_all_w);
 		let len_all_w_e = all_w.len();
+		//DEBUG USE 69801.8: all_w_e layout so a step-4 UNSAT row maps
+		//to a W (witness) vs E (error) region of a specific circuit.
+		if std::env::var("ZKR_MAIN_SNARK_PROBE").is_ok(){
+			let lens: Vec<(usize,usize)> = W_i1.vec_wit.iter()
+				.map(|w| (w.W.len(), w.E.len())).collect();
+			println!("DEBUG USE 69801.8: all_w_e layout: per-circ \
+(W,E) lens {:?}, total {}", lens, len_all_w_e);
+		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
 			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		gadget_sat_check(&cs, "decider::p1s3");
+		gadget_sat_check(&cs, "decider::p1s3"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2");}
 
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
@@ -822,7 +830,7 @@ where
         let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		gadget_sat_check(&cs, "decider::p1s4");
+		gadget_sat_check(&cs, "decider::p1s4"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 3");}
 
         //4. u_i.cmE==cm(0), u_i.u==1
@@ -884,7 +892,7 @@ where
         (u_i.x[0]).enforce_equal(&is_basecase.select(&u_i1_x_base, &u_i_x)?)?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		gadget_sat_check(&cs, "decider::p1s5");
+		gadget_sat_check(&cs, "decider::p1s5"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 5");}
 
 		//6. Added check z_i is well-formed (and in-particular) its
@@ -986,7 +994,7 @@ where
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
-		gadget_sat_check(&cs, "decider::p1s6");
+		gadget_sat_check(&cs, "decider::p1s6"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 6");}
 
 
@@ -1004,7 +1012,7 @@ where
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
-		gadget_sat_check(&cs, "decider::p1s7");
+		gadget_sat_check(&cs, "decider::p1s7"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 7");}
 
 		//7b. S103: bind the INACTIVE accumulator slots. Step 7 above
@@ -1060,7 +1068,7 @@ where
 			//the active slot's rows are the vacuous ones.
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 7b: S103 bind inactive slots, {} slots swept. INCREASED r1cs: {}", n_circ, cs.num_constraints()-c1), &mut t1);
 			c1 = cs.num_constraints();
-			gadget_sat_check(&cs, "decider::p1s7b");
+			gadget_sat_check(&cs, "decider::p1s7b"); //DEBUG USE 69801
 		}
 
 		//S107: bind the LAST step's absorbed cmF limbs (z_i[2..6])
@@ -1072,6 +1080,7 @@ where
 		for k in 0..4{
 			u_cmf_limbs[k].enforce_equal(&z_i[2+k])?;
 		}
+		gadget_sat_check(&cs, "decider::p1s7c_s107_cmF"); //DEBUG USE 69801
 
         //#[cfg(feature = "light-test")]
         //println!("[WARNING]: Running with the 'light-test' feature, skipping the big part of the DeciderEthCircuit.\n           Only for testing purposes.");
@@ -1107,6 +1116,7 @@ where
 				cmT.clone(),
 			)?;
 			let r_Fr = Boolean::le_bits_to_fp_var(&r_bits)?;
+			gadget_sat_check(&cs, "decider::p1s8a_challenge"); //DEBUG USE 69801
 			let mut Ui_pci = U_i.vec_inst[0].clone(); 
 			let mut expected_Ui1_pci = U_i1.vec_inst[0].clone();
 			for i in 0..n_circ{//this generate FIXED constraints
@@ -1123,6 +1133,7 @@ where
 				Ui_pci = b_sel.select(&U_i.vec_inst[i], &Ui_pci)?;
 				expected_Ui1_pci = b_sel.select(&U_i1.vec_inst[i], &expected_Ui1_pci)?;
 			}
+			gadget_sat_check(&cs, "decider::p1s8b_slot_sel"); //DEBUG USE 69801
 			// the expensive one: 6MB R1CS
 			let Ui1_pci = NIFSGadgetFoldPot::<C1>
 				::fold_committed_instance_full(
@@ -1134,7 +1145,7 @@ where
 			Ui1_pci.enforce_equal(&expected_Ui1_pci)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
-			gadget_sat_check(&cs, "decider::p1s8");
+			gadget_sat_check(&cs, "decider::p1s8"); //DEBUG USE 69801
 
 			//8. Verify cyclefold instance
 			//(1) u_i.x[1] = cf_U_i.hash()
@@ -1154,6 +1165,7 @@ where
             })?;
             let (cf_u_i_x, _) = cf_U_i.clone().hash(&sponge, pp_hash.clone())?;
             (u_i.x[1]).enforce_equal(&cf_u_i_x)?;
+			gadget_sat_check(&cs, "decider::p1s9a_cf_hash"); //DEBUG USE 69801
 
             //9. check Pedersen commitments of cf_U_i.{cmE, cmW}
             let H2 = GC2::new_constant(cs.clone(), 
@@ -1170,12 +1182,13 @@ where
             )?;
 			
             cf_U_i.cmE.enforce_equal(&computed_cmE)?;
+			gadget_sat_check(&cs, "decider::p1s9b_cmE"); //DEBUG USE 69801
             let computed_cmW =
                 PedersenGadget::<C2, GC2>::commit(H2, G, cf_W_i_W_bits?, cf_W_i.rW.to_bits_le()?)?;
             cf_U_i.cmW.enforce_equal(&computed_cmW)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
-			gadget_sat_check(&cs, "decider::p1s9");
+			gadget_sat_check(&cs, "decider::p1s9"); //DEBUG USE 69801
 
 
 			//10. check cyclefold witness satisfy its r1cs
@@ -1188,7 +1201,7 @@ where
 				cf_W_i.E, cf_U_i.u.clone(), cf_z_U)?;
 
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 10: check cp_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
-			gadget_sat_check(&cs, "decider::p1s10");
+			gadget_sat_check(&cs, "decider::p1s10"); //DEBUG USE 69801
         }
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
@@ -1227,7 +1240,7 @@ where
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
 		let _last_c1 = c1; //just to disable the warning on c1.
-		gadget_sat_check(&cs, "decider::p1done");
+		gadget_sat_check(&cs, "decider::p1done"); //DEBUG USE 69801
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: COMPLETED. TOTAL all_w_e: {}, r1cs: {}, RAM: {} GB.", len_all_w_e, cs.num_constraints()-c0, get_mem_usage()), &mut t1);
 			Ok( res )
 	}
