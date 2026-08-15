@@ -45,7 +45,8 @@ use crate::folding::{
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
-		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs},
+		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs,
+			gadget_sat_check},
 		container_config::ColEle,
 	},
 };
@@ -757,6 +758,7 @@ where
 			>>();
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 1: generae r1cs_var. INCREASSED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		gadget_sat_check(&cs, "decider::p1s1");
 		if B_DEBUG3 {check_cs(&cs, "phase1 step 1.0");}
 
 		//2. generate Var version of pp_hash, z_0, z_i
@@ -788,6 +790,7 @@ where
         })?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		gadget_sat_check(&cs, "decider::p1s2");
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2.0");}
 
 		//3. compute the KZG challenge in circuit
@@ -811,6 +814,7 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
 			all_w.len(), cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		gadget_sat_check(&cs, "decider::p1s3");
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2");}
 
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
@@ -818,6 +822,7 @@ where
         let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		gadget_sat_check(&cs, "decider::p1s4");
 		if B_DEBUG3{check_cs(&cs, "phase1 step 3");}
 
         //4. u_i.cmE==cm(0), u_i.u==1
@@ -879,6 +884,7 @@ where
         (u_i.x[0]).enforce_equal(&is_basecase.select(&u_i1_x_base, &u_i_x)?)?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 5: Enforce u_i standard and hash. INCREASED r1cs: {}.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		gadget_sat_check(&cs, "decider::p1s5");
 		if B_DEBUG3{check_cs(&cs, "phase1 step 5");}
 
 		//6. Added check z_i is well-formed (and in-particular) its
@@ -980,6 +986,7 @@ where
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
+		gadget_sat_check(&cs, "decider::p1s6");
 		if B_DEBUG3{check_cs(&cs, "phase1 step 6");}
 
 
@@ -997,6 +1004,7 @@ where
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
+		gadget_sat_check(&cs, "decider::p1s7");
 		if B_DEBUG3{check_cs(&cs, "phase1 step 7");}
 
 		//7b. S103: bind the INACTIVE accumulator slots. Step 7 above
@@ -1052,6 +1060,7 @@ where
 			//the active slot's rows are the vacuous ones.
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 7b: S103 bind inactive slots, {} slots swept. INCREASED r1cs: {}", n_circ, cs.num_constraints()-c1), &mut t1);
 			c1 = cs.num_constraints();
+			gadget_sat_check(&cs, "decider::p1s7b");
 		}
 
 		//S107: bind the LAST step's absorbed cmF limbs (z_i[2..6])
@@ -1125,6 +1134,7 @@ where
 			Ui1_pci.enforce_equal(&expected_Ui1_pci)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 8: Verify U_i1 is folded U_i and u_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
+			gadget_sat_check(&cs, "decider::p1s8");
 
 			//8. Verify cyclefold instance
 			//(1) u_i.x[1] = cf_U_i.hash()
@@ -1165,6 +1175,7 @@ where
             cf_U_i.cmW.enforce_equal(&computed_cmW)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
+			gadget_sat_check(&cs, "decider::p1s9");
 
 
 			//10. check cyclefold witness satisfy its r1cs
@@ -1177,6 +1188,7 @@ where
 				cf_W_i.E, cf_U_i.u.clone(), cf_z_U)?;
 
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 10: check cp_W_i satisfies cyclefold instance. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+			gadget_sat_check(&cs, "decider::p1s10");
         }
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
@@ -1215,7 +1227,8 @@ where
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
 		let _last_c1 = c1; //just to disable the warning on c1.
-		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: COMPLETED. TOTAL all_w_e: {}, r1cs: {}, RAM: {} GB.", len_all_w_e, cs.num_constraints()-c0, get_mem_usage()), &mut t1); 
+		gadget_sat_check(&cs, "decider::p1done");
+		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: COMPLETED. TOTAL all_w_e: {}, r1cs: {}, RAM: {} GB.", len_all_w_e, cs.num_constraints()-c0, get_mem_usage()), &mut t1);
 			Ok( res )
 	}
 }
@@ -1884,6 +1897,10 @@ where
 		let res_hash_var = res.hash(&circ1.poseidon_config,
 			cs.clone());
 		let res_hash = res_hash_var.value()?;
+		if std::env::var("ZKR_MAIN_SNARK_PROBE").is_ok(){
+			println!("DEBUG USE 69801.0: from_nova res_hash={}",
+				res_hash);
+		}
 		Ok(Self{circ1, res: res_val, randf, res_hash, job_id})
     }
 
@@ -1956,6 +1973,60 @@ where
 			if phase1_ret.ch.value().is_ok(){
 				let phase1_ret_val = phase1_ret.val();
 				assert!(phase1_ret_val == self.res);
+			}
+		}
+		//DEBUG probe 69801: prove-pass vs from_nova cross-check. The
+		//verifier checks against from_nova's res_hash while the proof
+		//instance is seeded HERE -- a mismatch names the exact field.
+		if std::env::var("ZKR_MAIN_SNARK_PROBE").is_ok()
+			&& mainres_hash.value().is_ok(){
+			let pv = phase1_ret.val();
+			println!("DEBUG USE 69801.1: pass res_hash={} \
+				from_nova={} eq={}", mainres_hash_val,
+				self.res_hash, mainres_hash_val==self.res_hash);
+			if pv == self.res {
+				println!("DEBUG USE 69801.2: phase1_ret == \
+					from_nova res (all fields)");
+			}else{
+				if pv.ch != self.res.ch {println!(
+					"DEBUG USE 69801.3: ch {} vs {}",
+					pv.ch, self.res.ch);}
+				if pv.rc != self.res.rc {println!(
+					"DEBUG USE 69801.3: rc {} vs {}",
+					pv.rc, self.res.rc);}
+				if pv.hash_cmF != self.res.hash_cmF {println!(
+					"DEBUG USE 69801.3: hash_cmF {} vs {}",
+					pv.hash_cmF, self.res.hash_cmF);}
+				if pv.kzg_sum != self.res.kzg_sum {println!(
+					"DEBUG USE 69801.3: kzg_sum {} vs {}",
+					pv.kzg_sum, self.res.kzg_sum);}
+				if pv.final_result != self.res.final_result {println!(
+					"DEBUG USE 69801.3: final_result {} vs {}",
+					pv.final_result, self.res.final_result);}
+				if pv.kzg_all_com_ch != self.res.kzg_all_com_ch {
+					println!("DEBUG USE 69801.3: kzg_all_com_ch \
+						{} vs {}", pv.kzg_all_com_ch,
+						self.res.kzg_all_com_ch);}
+				if pv.eval_w_e != self.res.eval_w_e {println!(
+					"DEBUG USE 69801.3: eval_w_e {} vs {}",
+					pv.eval_w_e, self.res.eval_w_e);}
+				if pv.randf != self.res.randf {println!(
+					"DEBUG USE 69801.3: randf {} vs {}",
+					pv.randf, self.res.randf);}
+				if pv.vec_coms != self.res.vec_coms {println!(
+					"DEBUG USE 69801.3: vec_coms first diff at \
+						{:?}", pv.vec_coms.iter()
+						.zip(self.res.vec_coms.iter())
+						.position(|(a,b)| a!=b));}
+				if pv.u_i != self.res.u_i {println!(
+					"DEBUG USE 69801.3: u_i differs: {:?} vs {:?}",
+					pv.u_i, self.res.u_i);}
+				if pv.u_i1_0_cmE != self.res.u_i1_0_cmE {println!(
+					"DEBUG USE 69801.3: u_i1_0_cmE differs");}
+				if pv.u_i1_0_cmW != self.res.u_i1_0_cmW {println!(
+					"DEBUG USE 69801.3: u_i1_0_cmW differs");}
+				if pv.u_i1_0_cmF != self.res.u_i1_0_cmF {println!(
+					"DEBUG USE 69801.3: u_i1_0_cmF differs");}
 			}
 		}
 		log_perf(self.job_id, log_level, &format!("TwoPhaseCirc build circ1: {} cs.",

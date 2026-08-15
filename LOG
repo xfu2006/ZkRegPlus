@@ -31146,9 +31146,16 @@ Goal 3. continue to test on 512gb server
   grep -E "PROGRESS step" /tmp/bora/CURRENT_JOB.log | tail -2
 
 Sat 08/15/2026
+#####################################
 *Small server: started 08/14 6am
 *Big server: started 08/15 4am
-Goal 1. collect daa (SMALL SERVER)
+#####################################
+
+Goal 1. correct bib
+	[a] T916, T918 done
+	[b] T919
+
+Goal 2. SMALL SERVER
 	[a] full_dlp (512gb server) -> reset 7:40am
 		->!!! ??? CHECK 10:30AM ??? !!!
   # ladder breakdown (~3-4 h)
@@ -31160,13 +31167,13 @@ Goal 1. collect daa (SMALL SERVER)
   # live watch
   tail -f /tmp/bora/CURRENT_JOB.log | grep --line-buffered -E \ "PROGRESS step|capped qm walk|v5\[dlp\]|circ [0-9]+ size:|PERF 1002|KEYS info" 
 
-Goal 2.  full_dna (BIG SERVER) 
+Goal 2. BIG SERVER
 	[a] install data (4am)
 	[b] dry-run (4:15am -> 6:10am): 2 hrs
-	[c] full dna run (6:15am)-> 
+	[c] full dna run (6:15am)->  fails at around 12:15pm! 
+		note that small_data_par full snark did not fail!
+	[d]
 
-Goal 3. correct bib
-	[a]
 
 
 

@@ -3318,7 +3318,15 @@ where
 	  		let rc1 = nova1.zi_part2_inst.rc.clone();
 	  		let randf = C1::ScalarField::rand(&mut rng);
 
-	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {	  			
+	  		//DEBUG probe 69801: ZKR_DECIDER_SAT arms the per-step
+	  		//decider UNSAT checkpoints for from_nova + prove synths
+	  		//(keygen synth is setup-mode and self-skips).
+	  		let b_probe_sat = std::env::var("ZKR_DECIDER_SAT").is_ok();
+	  		if b_probe_sat {
+	  			use crate::folding::foldpot::utils::set_gadget_sat;
+	  			set_gadget_sat(true);
+	  		}
+	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {
 				let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
 	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
 	  			let mainres = main_circ.res.clone();
@@ -3353,6 +3361,24 @@ where
 	  			let snark_proof_main: S::Proof = S::prove(&g16_pk,
 	  				main_circ, &mut rng)
 	  				.map_err(|e| Error::Other(e.to_string())).unwrap();
+
+	  			//DEBUG probe 69801: immediate self-verify against the
+	  			//from_nova public input, before Phase 2 can blur it.
+	  			if std::env::var("ZKR_MAIN_SNARK_PROBE").is_ok(){
+	  				let vres = S::verify(g16_vk,
+	  					&vec![mainres_hash], &snark_proof_main);
+	  				println!("DEBUG USE 69801.7: main snark immediate \
+verify vs from_nova hash: {:?}", vres);
+	  			}
+	  			if b_probe_sat {
+	  				use crate::folding::foldpot::utils::set_gadget_sat;
+	  				set_gadget_sat(false);
+	  			}
+	  			if std::env::var("ZKR_STOP_AFTER_MAIN").is_ok(){
+	  				println!("DEBUG USE 69801.9: ZKR_STOP_AFTER_MAIN \
+set; exit(0) before Phase 2.");
+	  				std::process::exit(0);
+	  			}
 
 	  			let g16_vk_owned: S::VerifyingKey = g16_vk.clone();
 	  			drop(main_read_guard);

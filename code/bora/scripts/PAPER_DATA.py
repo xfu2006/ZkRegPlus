@@ -1566,6 +1566,157 @@ def run_leaf_dna(mode, ctx):
     return ctx.finish(rc, b_fail_scan=False)
 
 
+# 69801 decider-probe env (2026-08-15, "snark main fails" triage).
+# neo_env() scrubs every ZKR_*, so these must be re-added AFTER it.
+DNA_DEBUG_ENV = {
+    "ZKR_DECIDER_SAT": "1",       # per-step decider UNSAT checkpoints
+    "ZKR_MAIN_SNARK_PROBE": "1",  # pass-vs-from_nova diff + self-verify
+    "ZKR_LKUP_PROBE": "1",        # lkup dummy-slot zero audit
+    "ZKR_STOP_AFTER_MAIN": "1",   # exit(0) before the CyclePair phase
+}
+
+# Lines worth echoing back as the diagnosis: the 69801 probe prints
+# plus the armed checkpoint verdicts (utils.rs gadget_sat_check).
+DNA_DEBUG_MARK_RE = re.compile(
+    r"DEBUG USE 69801\.\d+|GADGET-UNSAT|GADGET-SAT")
+
+# ERROR-class markers: any of these mid-run is already a verdict, so
+# the watcher thread alerts on FIRST sight instead of waiting hours
+# for the leaf to finish.
+DNA_DEBUG_ERR_RE = re.compile(
+    r"GADGET-UNSAT"
+    r"|69801\.1: .*eq=false"
+    r"|69801\.6: .*(bad_c1 [1-9]|bad_c2 [1-9])"
+    r"|69801\.7: .*(Ok\(false\)|Err)"
+    r"|VERIFICATION FAILED")
+
+# One-file verdict drop for the operator (tail -F or just cat).
+DNA_DEBUG_VERDICT = "/tmp/bora/DNA_DEBUG_VERDICT.txt"
+
+
+def _dna_debug_diagnose(lines):
+    """Map the probe lines onto the 69801 decision tree. Returns
+    (verdict, detail_lines): verdict is one short CLASS-tagged line."""
+    unsat = [l for l in lines if "GADGET-UNSAT" in l]
+    if unsat:
+        return ("CLASS A (UNSAT): decider constraint system rejected "
+                "the honest witness -- %s" % unsat[0].strip(),
+                unsat)
+    bad_hash = [l for l in lines
+                if "69801.1" in l and "eq=false" in l]
+    if bad_hash:
+        fields = [l for l in lines if "69801.3" in l]
+        return ("CLASS B (pass divergence): prove-pass result != "
+                "from_nova; diverging fields follow", bad_hash + fields)
+    bad_dummy = [l for l in lines if "69801.6" in l and
+                 re.search(r"bad_c1 [1-9]|bad_c2 [1-9]", l)]
+    if bad_dummy:
+        return ("CLASS D (lkup dummies): nonzero dummy col share "
+                "slots violate the ch^(cfg-act) recovery assumption",
+                bad_dummy[:5])
+    bad_ver = [l for l in lines if "69801.7" in l
+               and "Ok(true)" not in l]
+    if bad_ver:
+        return ("CLASS C (key divergence): circuit consistent both "
+                "passes yet the snark does not verify -- keygen vs "
+                "prove synthesis differ", bad_ver)
+    if any("69801.9" in l for l in lines) and \
+       any("69801.7" in l and "Ok(true)" in l for l in lines):
+        return ("GREEN: all checkpoints SAT, passes agree, main "
+                "snark verifies Ok(true) at this shape -- bug did "
+                "NOT reproduce here", [])
+    return ("INCONCLUSIVE: probes missing or run died before the "
+            "decider -- read the log tail", [])
+
+
+def _dna_debug_alert(subject, body_lines):
+    """Push the verdict everywhere a headless operator might look:
+    SUMMARY.log banner, a one-file verdict drop, and best-effort
+    wall(1) to every logged-in tty. Never raises."""
+    try:
+        _summary_line("DNA_DEBUG >>> %s" % subject)
+        for l in body_lines[:10]:
+            _summary_line("DNA_DEBUG     %s" % l.strip())
+        with open(DNA_DEBUG_VERDICT, "a") as f:
+            f.write("[%s] %s\n" % (_ts(), subject))
+            for l in body_lines:
+                f.write("    %s\n" % l.strip())
+        if shutil.which("wall"):
+            msg = "PAPER_DATA dna_debug: %s" % subject[:200]
+            subprocess.run(["wall", msg], timeout=10,
+                           stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL)
+    except Exception as e:
+        log("dna_debug: alert delivery failed: %s" % e)
+
+
+def _dna_debug_watch(log_path, done_ev):
+    """Watcher thread: poll the child's log; on the FIRST error-class
+    marker, alert immediately (the full run is hours -- the operator
+    should not wait for exit to learn the decider rejected)."""
+    seen = 0
+    while not done_ev.wait(10):
+        try:
+            if not os.path.exists(log_path):
+                continue
+            with open(log_path, errors="replace") as f:
+                text = f.read()
+            m = DNA_DEBUG_ERR_RE.search(text, seen)
+            if m:
+                line = text[text.rfind("\n", 0, m.start())+1:
+                            text.find("\n", m.end())]
+                _dna_debug_alert(
+                    "ERROR marker mid-run: %s" % line.strip(), [])
+                return  # one mid-run alert; the final one recaps
+            seen = max(0, len(text) - 4096)  # rescan tail overlap
+        except Exception:
+            pass
+
+
+def run_dna_debug(mode):
+    """Menu dna_debug leaf: full_dna with the 69801 decider probes
+    armed; classifies the probe lines (CLASS A-D / GREEN) and alerts
+    via SUMMARY.log + DNA_DEBUG_VERDICT.txt + wall(1) both mid-run on
+    the first ERROR marker and at the end. The Rust side exit(0)s
+    after the main snark, so proof-success markers are NOT expected."""
+    ctx = JobHandle("dna_debug", mode)
+    env = neo_env()
+    env.update(DNA_DEBUG_ENV)
+    ctx.note("mode=dna_debug(%s) probes=%s" % (
+        mode, ",".join(sorted(DNA_DEBUG_ENV))))
+    lp = ctx.log_path("run")
+    done_ev = threading.Event()
+    watcher = threading.Thread(target=_dna_debug_watch,
+                               args=(lp, done_ev), daemon=True)
+    watcher.start()
+    try:
+        rc = run_rust_example(ctx, "bora_cli", dna_argv(mode), env)
+    finally:
+        done_ev.set()
+    watcher.join(timeout=2)
+    lines = []
+    if os.path.exists(lp):
+        for ln in open(lp, errors="replace"):
+            if DNA_DEBUG_MARK_RE.search(ln):
+                lines.append(ln.rstrip())
+    for ln in lines:
+        log(ln)
+    verdict, detail = _dna_debug_diagnose(lines)
+    if not lines:
+        ctx.note("NO 69801 probe markers in the log -- the probed "
+                 "branch never ran (env scrubbed or early failure)")
+        rc = rc or 6
+    ctx.note("verdict: %s" % verdict)
+    res = ctx.finish(rc, b_fail_scan=False)
+    _dna_debug_alert("FINISHED rc=%d wall=%ds -- %s" % (
+        res.rc, int(res.wall_s), verdict), detail)
+    log("dna_debug: rc=%d wall=%ds probe_lines=%d log=%s" % (
+        res.rc, int(res.wall_s), len(lines), lp))
+    log("dna_debug: VERDICT: %s" % verdict)
+    log("dna_debug: verdict file: %s" % DNA_DEBUG_VERDICT)
+    return 1 if res.failed else 0
+
+
 # bora_cli full_clam constants (M104): dry = 0.5% DB (195 sigs of
 # the in-range pool) x 0.1% corpus (deterministic subset = gpg2 +
 # xtables-multi, 843,688 B ~ 106 steps at dry chunk 256), light;
@@ -2109,6 +2260,12 @@ TOP_CHOICES = [
     # clean sits at #5 BY REQUEST (2026-08-14), renumbering figs to #6.
     ("clean", "clean generated data (raw_data/*, pdf/*)"),
     ("figs", "generate list of figures"),
+    # 69801 debug probes (2026-08-15): appended LAST so items 1-6 keep
+    # their numbers.  Both arm the decider instrumentation and stop
+    # after the main snark (no CyclePair phase).
+    ("dna_debug", "dna DEBUG probes (dry shape, local diagnosis)"),
+    ("dna_debug_full", "dna DEBUG probes (FULL shape, stops after "
+                       "main snark)"),
 ]
 
 LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
@@ -2199,7 +2356,8 @@ def _parse_items(items):
     return keys
 
 
-NO_ITEM_TOPS = ("small", "figs", "small_full_snark", "clean")
+NO_ITEM_TOPS = ("small", "figs", "small_full_snark", "clean",
+                "dna_debug", "dna_debug_full")
 
 
 def resolve_plan(run, items):
@@ -2543,6 +2701,25 @@ def main():
         if args.plan_only:
             return 0
         return run_figs()
+
+    if plan.top in ("dna_debug", "dna_debug_full"):
+        if args.plan_only:
+            return 0
+        mode = "dry" if plan.top == "dna_debug" else "full"
+        if mode == "full":
+            # full shape runs for hours -- detach like
+            # small_full_snark; dry stays foreground (minutes).
+            ts = _ts()
+            print("[paper_data %s] detaching into the background "
+                  "(survives logout; no nohup needed)." % ts)
+            print("[paper_data %s]   summary log:    tail -F %s"
+                  % (ts, SUMMARY_LOG))
+            print("[paper_data %s]   current job:    tail -F %s"
+                  % (ts, CURRENT_JOB_LOG))
+            sys.stdout.flush()
+            go_background()
+            install_signal_handlers()
+        return run_dna_debug(mode)
 
     if plan.top == "small_full_snark":
         if args.plan_only:

@@ -3417,6 +3417,28 @@ where 	C: CurveGroup<ScalarField=F>,
 			sum_kzg_eval_lk = if si.act_lookup_share_size.is_zero()
 				{old_sum_kzg_eval_lk} else {sum_kzg_eval_lk};
 
+			//DEBUG probe 69801: audit the circuit's dummy-slot
+			//assumption (col1=col2=0 for i>=act) that its
+			//ch^(cfg-act) recovery at :4388 depends on.
+			if std::env::var("ZKR_LKUP_PROBE").is_ok(){
+				let cfg_lk = self.stmt_config.lookup_share_size;
+				let act_lk = field_to_usize(
+					&si.act_lookup_share_size);
+				let mut n_bad1 = 0usize;
+				let mut n_bad2 = 0usize;
+				let mut first_bad: i64 = -1;
+				for i in act_lk..cfg_lk{
+					if !si.col1_share[i].is_zero(){n_bad1+=1;
+						if first_bad<0 {first_bad=i as i64;}}
+					if !si.col2_share[i].is_zero(){n_bad2+=1;
+						if first_bad<0 {first_bad=i as i64;}}
+				}
+				println!("DEBUG USE 69801.6: wd {} seg {} \
+cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
+					field_to_usize(&si.word_id),
+					field_to_usize(&si.subseg_id),
+					cfg_lk, act_lk, n_bad1, n_bad2, first_bad);
+			}
 
 			//6.3 update sum_kzg_eval_word and also sum_vec_v_i
 			let old_sum_kzg_eval_word = sum_kzg_eval_word.clone();
