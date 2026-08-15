@@ -1289,6 +1289,46 @@ fn dp_partition(rows: &[(UnitVec, usize)], k: usize,
 	ends
 }
 
+// DP input bound: full-width aggr corpora leave 50k+ distinct unit
+// rows and dp_partition is O(k*n^2) -- hours of serial planning.
+// Above this row count the rows are merged on a coarse grid first.
+const DP_ROWS_MAX: usize = 4096;
+// Starting grid: values keep 3+1 significant bits (~12.5% steps);
+// the loop coarsens bit by bit until the rows fit.
+const DP_QUANT_BITS: u32 = 3;
+
+/// Round v UP to the next value with at most bits+1 significant
+/// bits (a ~2^-bits relative log grid); small values stay exact.
+fn quant_up(v: usize, bits: u32) -> usize {
+	let bl = usize::BITS - v.leading_zeros();
+	if bl <= bits + 1 { return v; }
+	let sh = bl - 1 - bits;
+	((v + (1usize << sh) - 1) >> sh) << sh
+}
+
+/// Total-order key of a UnitVec (arrays are Ord): deterministic
+/// sort + exact adjacent-merge, immune to cost ties.
+fn uv_key(u: &UnitVec) -> [usize; 10] {
+	[u.univ, u.pats, u.uniq, u.acc, u.cpu, u.fwd, u.live,
+	 u.active, u.qm[0], u.qm[1]]
+}
+
+/// The vector rounded up onto the bits log grid. ONLY a merge key:
+/// capacities are sized from exact member envelopes, never this.
+fn quant_unit(u: &UnitVec, bits: u32) -> UnitVec {
+	UnitVec {
+		univ: quant_up(u.univ, bits),
+		pats: quant_up(u.pats, bits),
+		uniq: quant_up(u.uniq, bits),
+		acc: quant_up(u.acc, bits),
+		cpu: quant_up(u.cpu, bits),
+		fwd: quant_up(u.fwd, bits),
+		live: quant_up(u.live, bits),
+		active: quant_up(u.active, bits),
+		qm: [quant_up(u.qm[0], bits), quant_up(u.qm[1], bits)],
+	}
+}
+
 /// Sort units by the cost of their OWN one-unit rung, dedup equal
 /// vectors into weighted rows, DP-partition into <= k contiguous
 /// groups. Returns the groups cheapest-first (rows kept, not envelopes,
@@ -1307,6 +1347,49 @@ fn group_units_v5(units: Vec<UnitVec>, p_max: &CapParams, k: usize,
 		match rows.last_mut() {
 			Some((v, w)) if *v == u => *w += 1,
 			_ => rows.push((u, 1)),
+		}
+	}
+	// Bound the DP input (the peel ladder's n_buckets coarsening,
+	// v5-shaped): merge rows that are equal after round-UP onto a
+	// log grid, coarsening until they fit. The grid is ONLY the
+	// merge key -- each atom carries the exact JOIN of its members,
+	// so group envelopes and the shipped rung caps stay exact
+	// maxima of real units; only the DP's boundary choice feels the
+	// grid. Dead code for non-aggr (dna/clam) and for corpora at or
+	// under DP_ROWS_MAX.
+	if b_aggr && rows.len() > DP_ROWS_MAX {
+		let n0 = rows.len();
+		let mut bits = DP_QUANT_BITS + 1;
+		loop {
+			bits -= 1;
+			let mut keyed: Vec<([usize; 10], UnitVec, usize)> =
+				rows.iter().map(|(u, w)| {
+					(uv_key(&quant_unit(u, bits)), u.clone(), *w)
+				}).collect();
+			keyed.sort_by(|a, b| a.0.cmp(&b.0));
+			let mut atoms: Vec<(UnitVec, usize)> = vec![];
+			let mut lastk: Option<[usize; 10]> = None;
+			for (k2, u, w) in keyed {
+				match atoms.last_mut() {
+					Some((v, mw)) if lastk == Some(k2) => {
+						v.join(&u);
+						*mw += w;
+					}
+					_ => {
+						atoms.push((u, w));
+						lastk = Some(k2);
+					}
+				}
+			}
+			if atoms.len() <= DP_ROWS_MAX || bits == 0 {
+				atoms.sort_by_cached_key(|(u, _)|
+					(ucost(u), uv_key(u)));
+				utils::logger::log(0, utils::logger::LOG1,
+					&format!("v5 dp bucketing: rows {} -> {} \
+					(bits {})", n0, atoms.len(), bits));
+				rows = atoms;
+				break;
+			}
 		}
 	}
 	let ends = dp_partition(&rows, k, &ucost);
@@ -2862,6 +2945,55 @@ pub mod tests_bora_data_driver {
 			assert!(e >= prev, "b={}", b);
 			prev = e;
 		}
+	}
+
+	/// quant_up: >= v, within v/8, idempotent, exact for v <= 15 --
+	/// the round-up grid can only over-size and re-rounds to itself.
+	#[test]
+	fn test_quant_up_grid_properties() {
+		for v in 0..100_000usize {
+			let q = quant_up(v, 3);
+			assert!(q >= v && q <= v + (v >> 3), "v={} q={}", v, q);
+			assert_eq!(quant_up(q, 3), q, "v={}", v);
+			if v <= 15 { assert_eq!(q, v); }
+		}
+	}
+
+	/// Over-cap grouping: 6000 distinct rows bucket to <= 4096
+	/// atoms, occupancy is conserved, and envelopes stay EXACT
+	/// maxima of real members (6999, not a grid value).
+	#[test]
+	fn test_group_units_v5_bucketing() {
+		let p_max = CapParams {
+			cp_basis_unique_states: 500, cp_subsigs: 10,
+			cp_avg_pats: 2, subsigs: 10000,
+			avg_pats_per_subsig: 4, avg_active_pats_per_subsig: 4,
+			basis_pats_in_trace: 5000,
+			perc_pats_expansion_rate: 100,
+			prod_pats_expansion: 100000, qm_real_rows: 5000,
+			sigs_sed: 10, perc_comp_subsigs: 0,
+			basis_unique_states: 5000, basis_acc_states: 5000,
+			subsigs_igc: 0, avg_active_pats_per_subsig_igc: 0,
+			basis_pats_in_trace_igc: 0,
+			perc_pats_expansion_rate_igc: 0,
+			prod_pats_expansion_igc: 0, qm_real_rows_igc: 0,
+			basis_acc_states_igc: 0, basis_unique_states_igc: 0,
+			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 9999,
+			max_word_len: 64, acdfa_state_part_bits: 22,
+			levels: vec![],
+		};
+		let units: Vec<UnitVec> = (0..6000).map(|i| UnitVec {
+			fwd: 1000 + i, ..Default::default()
+		}).collect();
+		let grps = group_units_v5(units, &p_max, 4, true);
+		assert!(grps.len() <= 4 && !grps.is_empty());
+		let occ: usize = grps.iter().map(|g| occ_of(g)).sum();
+		assert_eq!(occ, 6000);
+		let atoms: usize = grps.iter().map(|g| g.len()).sum();
+		assert!(atoms <= 4096, "atoms={}", atoms);
+		let max_fwd = grps.iter().map(|g| env_of(g).fwd)
+			.max().unwrap();
+		assert_eq!(max_fwd, 6999); // exact member max, not grid
 	}
 
 	/// Serializes tests that mutate the process-wide GlobalConfig.

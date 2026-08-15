@@ -31135,13 +31135,33 @@ Goal 3. continue to test on 512gb server
 	[a] DONE
 		-> the effectiveness run (dry-run)
 		-> dry-run draw diagram
+		# ssh exouser@149.165.175.32
 	[a] next to test
 		-> scale_dlp (small data 40% better) -> collect later
 			-> problem: tune is too slow
-			-> 
 		-> scale_clam (partial) -> collect later
-		-> full_dlp (partial) -> started 9pm -> 
-		-> full_clam (partial)
+		-> full_dlp (partial) -> started 9pm -> (too slow ladder planning)
+			-> restarted 4am 
+			 # phase now
+  grep -E "PROGRESS step" /tmp/bora/CURRENT_JOB.log | tail -2
+
+Sat 08/15/2026
+Goal 1. collect daa
+	[a] full_dlp (512gb server)
+  # ladder breakdown (~3-4 h)
+  grep -E "determine_config_aggr:|capped qm walk|v5\[dlp\]|tune\[dlp\]" /tmp/bora/CURRENT_JOB.log
+
+  # circuit sizes (~4-5 h; real fold shows n_circs: 4)
+  grep -E "circ [0-9]+ size:|PERF 1002 circ|KEYS info" /tmp/bora/CURRENT_JOB.log
+
+  # live watch
+  tail -f /tmp/bora/CURRENT_JOB.log | grep --line-buffered -E \ "PROGRESS step|capped qm walk|v5\[dlp\]|circ [0-9]+ size:|PERF 1002|KEYS info" 
+
+Goal 2.  full_dna (full-server) [start 4am]
+	[a] install data (4am)
+	[b] dry-run (4:15am -> 6:10am): 2 hrs
+	[c] full dna run (6:15am)->
+
 
 
 
