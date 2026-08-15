@@ -31146,8 +31146,11 @@ Goal 3. continue to test on 512gb server
   grep -E "PROGRESS step" /tmp/bora/CURRENT_JOB.log | tail -2
 
 Sat 08/15/2026
-Goal 1. collect daa
-	[a] full_dlp (512gb server)
+*Small server: started 08/14 6am
+*Big server: started 08/15 4am
+Goal 1. collect daa (SMALL SERVER)
+	[a] full_dlp (512gb server) -> reset 7:40am
+		->!!! ??? CHECK 10:30AM ??? !!!
   # ladder breakdown (~3-4 h)
   grep -E "determine_config_aggr:|capped qm walk|v5\[dlp\]|tune\[dlp\]" /tmp/bora/CURRENT_JOB.log
 
@@ -31157,15 +31160,13 @@ Goal 1. collect daa
   # live watch
   tail -f /tmp/bora/CURRENT_JOB.log | grep --line-buffered -E \ "PROGRESS step|capped qm walk|v5\[dlp\]|circ [0-9]+ size:|PERF 1002|KEYS info" 
 
-Goal 2.  full_dna (full-server) [start 4am]
+Goal 2.  full_dna (BIG SERVER) 
 	[a] install data (4am)
 	[b] dry-run (4:15am -> 6:10am): 2 hrs
-	[c] full dna run (6:15am)->
+	[c] full dna run (6:15am)-> 
 
-
-
-
-
+Goal 3. correct bib
+	[a]
 
 
 
@@ -31179,35 +31180,6 @@ Goal 2.  full_dna (full-server) [start 4am]
 Setting: https://anonymous.4open.science/r/bora_sec27
 	https://github.com/xfu2006/borasub49001
 	(for code anonymous release)
-Goal FINAL1. start data collection on GCP
-	[a] server2 -> full_dna (11:30am->6:45pm: 7.25hr) jetstream2: 5.2 hrs. -> DONE
-	[b] server2 -> full_clam (6:45pm 06/24 W->7:75pm 06/26) -> DONE for now
-		* 49 hrs
-		* but not all batch proof pass, not sure why? (5 jobs success
-			but one job fails and break the other 3)
-		* needs to check. => DO NOT COLLECT MORE UNLESS jetstrea2 not working 
-	[c] server1 -> full_dlp ==> DO NOT COLLECT UNLESS jetstream2 not working 
-	[d] server2:
-		eval_reef (7:55pm 06/26 -> 11:30pm 06/26: 4hrs) => DONE 
-		eval_zombie (10:00AM 06/27 -> 04:24 0629AM: 44hrs) => DONE.  
-Goal FINAL2. start data collection on Jetstream 
-	[a] small 
-		[a1] scalaliblity for dlp (11:00pm 06/28 -> 
-	[b] large: -> (IP: 149.165.170.106)
-		[b0] full_dna => DONE 07/04
-		[b1] full_dlp ==> STARTED 5:00pm 07/11 ==> 07/16 (5 days) 
-		[b2] full_clam => DONE/ok 07/03 (but still need another run) - 18 hrs
-		[b3] reef_eval > aleady got 06/24 => DONE
-		[b4] zombie_eval (11:00pm 06/28 -> restarted 12:00pm 06/29 OOM system
-				dead), unfortunately it's restarted
-				12:15pm 06/28 --> [killed too many failed at 2000 level]
-					-> killed 2:54pm, had to lower concurrent nodes.
-				3:04pm 06/29 --> 11:00pm 06/29 (8 hrs) => killed.
-				11:00pm -> 7:00AM (8 hrs) still FAIL! cancelled, adjust algo
-				8:00am 06/30 ->  10:13am 06/30: failed again, now improve
-					the failure handling and re-wrun.
-				10:30am 06/30 -> 8:30am 07/02 (45 hrs). => DONE
-
 
 
 

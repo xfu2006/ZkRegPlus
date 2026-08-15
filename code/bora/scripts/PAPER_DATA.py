@@ -11,6 +11,7 @@
 
 import argparse
 import datetime
+import fcntl
 import glob
 import importlib.util
 import io
@@ -733,6 +734,91 @@ SUMMARY_LOG = "/tmp/bora/SUMMARY.log"
 JOB_LOG_DIR = "/tmp/bora/logs"
 LOGS_DIR = os.path.join(REPO, "data", "cache", "logs")
 FAILED_TGZ_DIR = os.path.join(RAW_DATA_ROOT, "failed_tgz")
+
+# ---- single-instance run lock ----------------------------------------
+#
+# Two PAPER_DATA.py on one box are mutually destructive regardless of
+# any cache wipe: the second truncates the first's SUMMARY.log, repoints
+# CURRENT_JOB.log, rmtree()s FLAG_DIR (releasing the first run's part2
+# decider gate early -> overlapping RAM peaks), and its per-job logs
+# land in the first run's mtime-scoped fail scan.  One flock at startup
+# removes all four, and makes clear_db_cache() safe as a byproduct.
+
+RUN_LOCK = "/tmp/bora/PAPER_DATA.lock"
+
+# The lock fd, held open for the invocation's whole life.  None means
+# this process does not hold the lock -- which is also what keeps the
+# unit suite (it never acquires) off the real data/cache.
+_run_lock_fd = None
+
+
+def acquire_run_lock():
+    """One PAPER_DATA.py per box: flock(RUN_LOCK), kernel-released on
+    any death so it can never go stale.  go_background()'s double fork
+    inherits the fd (it closes nothing); cargo children do not (Popen
+    close_fds).  Returns None on success, else the holder's info line."""
+    global _run_lock_fd
+    # Already ours: flock treats two fds on one file independently even
+    # within a process, so a re-entrant call would refuse ITSELF.  Real
+    # runs call main() once; the unit suite calls it many times.
+    if _run_lock_fd is not None:
+        return None
+    os.makedirs(os.path.dirname(RUN_LOCK), exist_ok=True)
+    fd = os.open(RUN_LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        holder = os.read(fd, 256).decode(errors="replace").strip()
+        os.close(fd)
+        return holder or "unknown holder"
+    os.ftruncate(fd, 0)
+    os.write(fd, ("pid %d since %s\n" % (
+        os.getpid(), datetime.datetime.now())).encode())
+    _run_lock_fd = fd
+    return None
+
+
+# ---- data/cache wipe before a full leaf ------------------------------
+
+# Every DB cache lands here: clam_db.rs:2434/2479/2567 build each
+# save/load/exists path as <proj_root>/data/cache/<dir_name>, for the
+# neo dirs (<name>_neo_p*) and the legacy ones (full_data, dlp_corpus_
+# aggr, ...) alike.
+CACHE_DIR = os.path.join(REPO, "data", "cache")
+
+# Never wiped: logs/ is LOGS_DIR, where the Rust per-job logs land
+# (logger.rs:127) and where every leaf's fail scan reads (A2017);
+# main/ is ensured-present by INSTALL.py and never repopulated by it.
+CACHE_KEEP = {"logs", "main"}
+
+
+def clear_db_cache():
+    """Best-effort wipe of data/cache before a full leaf, so a run
+    reclaims the previous DB copies BEFORE writing its own (clam writes
+    ~17GB per NUMA part).  Safe: neo always rebuilds its cache
+    (build_or_load read=false), and every other consumer falls back to
+    rebuild+save on a missing one (clam_db.rs:2596-2606).  NOT protected
+    against runs launched outside PAPER_DATA.py (bare cargo test).
+    Returns warning lines instead of raising -- a half-wipe must not
+    fail the leaf, and rebuild semantics tolerate partial deletion."""
+    warns = []
+    if not os.path.isdir(CACHE_DIR):
+        return warns
+    for name in sorted(os.listdir(CACHE_DIR)):
+        if name in CACHE_KEEP:
+            continue
+        p = os.path.join(CACHE_DIR, name)
+        try:
+            # data/cache holds plain files (run_complete.sentinel,
+            # to_remove.pl) and, on server boxes, symlinks (numa_probe);
+            # rmtree raises on both.
+            if os.path.islink(p) or not os.path.isdir(p):
+                os.unlink(p)
+            else:
+                shutil.rmtree(p)
+        except OSError as e:
+            warns.append("clear_db_cache: %s: %s" % (name, e))
+    return warns
 
 RSS_POLL_S = 10   # peak-RSS sampling interval, matches _wait_stagger's
 
@@ -1870,6 +1956,15 @@ class Sequencer:
         # as an uncaught traceback either.
         ctx = None
         try:
+            # Full leaves only, and only under the run lock: the wipe's
+            # whole safety argument IS the single-instance invariant,
+            # and requiring the lock also keeps the unit suite -- which
+            # drives this with mode="full" and never locks -- off the
+            # real data/cache (A2017).  Before JobHandle so its
+            # LOGS_DIR snapshot sees the post-wipe state.
+            if mode == "full" and _run_lock_fd is not None:
+                for w in clear_db_cache():
+                    _summary_line("       %s" % w)
             ctx = JobHandle(leaf_key, mode)
             return spec.run_fn(mode, ctx)
         except Exception:
@@ -2421,7 +2516,17 @@ def main():
     # parent, before go_background(), so exactly one truncation per
     # invocation and no daemon race.  NOT at module scope -- the unit
     # suite imports this module and would wipe a live operator run.
+    # The lock goes BEFORE reset_summary_log: a refused invocation must
+    # not truncate the live run's SUMMARY.log.  It is also past
+    # interactive_select() (a Ctrl-C at the menu takes no lock) and
+    # before go_background(), so the refusal reaches the operator's tty.
     if not args.plan_only:
+        holder = acquire_run_lock()
+        if holder is not None:
+            print("REFUSED: another PAPER_DATA.py is running on this "
+                  "box (%s).  Concurrent runs share /tmp/bora and "
+                  "data/cache; wait for it or kill it first." % holder)
+            return 7
         reset_summary_log(plan.top)
 
     if plan.top == "small":
@@ -2507,6 +2612,9 @@ _TEST_REDIRECTS = {
     "LOGS_DIR": "job_logs",
     "JOB_LOG_DIR": "jobs",
     "FAILED_TGZ_DIR": "failed_tgz",
+    # so the suite never contends with a LIVE run's lock (its main()
+    # tests would otherwise be refused, rc 7) nor leaves one behind.
+    "RUN_LOCK": "run.lock",
 }
 
 
@@ -5628,6 +5736,164 @@ class SequencerRunTest(unittest.TestCase):
         self.assertIn("START  b", text)
         self.assertIn("SKIP   c", text)
         self.assertNotIn("START  c", text)
+
+
+class RunLockTest(unittest.TestCase):
+    """acquire_run_lock: one holder at a time, and never stale (flock
+    treats two fds on one file independently, even same-process)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        patches = [
+            mock.patch.object(_MOD, "RUN_LOCK",
+                               os.path.join(self.tmp.name, "run.lock")),
+            mock.patch.object(_MOD, "_run_lock_fd", None),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.addCleanup(self._close_fd)
+
+    def _close_fd(self):
+        if _MOD._run_lock_fd is not None:
+            os.close(_MOD._run_lock_fd)
+
+    def test_first_acquire_succeeds_and_records_pid(self):
+        """A free lock is granted and stamped with the holder's pid."""
+        self.assertIsNone(acquire_run_lock())
+        self.assertIsNotNone(_MOD._run_lock_fd)
+        with open(_MOD.RUN_LOCK) as f:
+            self.assertIn("pid %d" % os.getpid(), f.read())
+
+    def test_acquire_refused_while_another_holds_it(self):
+        """A lock held elsewhere is refused, naming that holder."""
+        # an independent fd == another invocation, as far as flock cares
+        other = os.open(_MOD.RUN_LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+        self.addCleanup(os.close, other)
+        fcntl.flock(other, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.write(other, b"pid 424242 since earlier\n")
+        holder = acquire_run_lock()
+        self.assertIsNotNone(holder)
+        self.assertIn("424242", holder)
+        self.assertIsNone(_MOD._run_lock_fd)
+
+    def test_reacquire_by_same_process_is_idempotent(self):
+        """Our own held lock is not refused to us (main() re-entry)."""
+        self.assertIsNone(acquire_run_lock())
+        held = _MOD._run_lock_fd
+        self.assertIsNone(acquire_run_lock())
+        self.assertEqual(_MOD._run_lock_fd, held)
+
+    def test_lock_freed_when_holder_fd_closes(self):
+        """Closing the fd (as process death does) frees the lock."""
+        self.assertIsNone(acquire_run_lock())
+        os.close(_MOD._run_lock_fd)
+        _MOD._run_lock_fd = None
+        self.assertIsNone(acquire_run_lock())
+
+
+class ClearDbCacheTest(unittest.TestCase):
+    """clear_db_cache: wipes DB dirs, keeps logs/ and main/, and never
+    raises on the file/symlink entries data/cache legitimately holds."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = os.path.join(self.tmp.name, "cache")
+        p = mock.patch.object(_MOD, "CACHE_DIR", self.cache)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _seed(self):
+        for d in ("dlp_neo_p0", "clam_neo_p1", "full_data", "logs",
+                   "main"):
+            os.makedirs(os.path.join(self.cache, d))
+        open(os.path.join(self.cache, "logs", "log_job_0.txt"),
+              "w").close()
+        open(os.path.join(self.cache, "run_complete.sentinel"),
+              "w").close()
+        outside = os.path.join(self.tmp.name, "elsewhere")
+        os.makedirs(outside)
+        open(os.path.join(outside, "keepme"), "w").close()
+        os.symlink(outside, os.path.join(self.cache, "numa_probe"))
+        return outside
+
+    def test_wipes_db_dirs_and_keeps_logs_and_main(self):
+        """The DB caches go; LOGS_DIR and main/ survive intact."""
+        self._seed()
+        self.assertEqual(clear_db_cache(), [])
+        left = sorted(os.listdir(self.cache))
+        self.assertEqual(left, ["logs", "main"])
+        self.assertTrue(os.path.isfile(
+            os.path.join(self.cache, "logs", "log_job_0.txt")))
+
+    def test_symlink_unlinked_not_followed(self):
+        """A symlink entry is removed, its target left untouched."""
+        outside = self._seed()
+        clear_db_cache()
+        self.assertFalse(
+            os.path.lexists(os.path.join(self.cache, "numa_probe")))
+        self.assertTrue(os.path.isfile(
+            os.path.join(outside, "keepme")))
+
+    def test_missing_cache_dir_is_a_noop(self):
+        """No data/cache yet (fresh checkout) is not an error."""
+        self.assertEqual(clear_db_cache(), [])
+
+    def test_undeletable_entry_warns_and_continues(self):
+        """One unremovable entry yields a warning, not an exception,
+        and the other entries are still wiped."""
+        self._seed()
+        with mock.patch.object(_MOD.shutil, "rmtree",
+                                side_effect=OSError("busy")):
+            warns = clear_db_cache()
+        self.assertTrue(any("full_data" in w for w in warns))
+        self.assertTrue(os.path.isdir(
+            os.path.join(self.cache, "dlp_neo_p0")))
+        self.assertFalse(os.path.exists(
+            os.path.join(self.cache, "run_complete.sentinel")))
+
+
+class LeafWipeGateTest(unittest.TestCase):
+    """_run_one_leaf wipes only for a full leaf AND only while this
+    process holds the run lock (which the unit suite never does)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.cache = os.path.join(self.tmp.name, "cache")
+        os.makedirs(os.path.join(self.cache, "dlp_neo_p0"))
+        patches = [
+            mock.patch.object(_MOD, "CACHE_DIR", self.cache),
+            mock.patch.object(_MOD, "SUMMARY_LOG",
+                               os.path.join(self.tmp.name, "SUMMARY.log")),
+            mock.patch.object(_MOD, "JOB_LOG_DIR",
+                               os.path.join(self.tmp.name, "logs")),
+            _sandbox_aborted(),
+        ]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _run(self, mode, lock_fd):
+        specs = {"a": JobSpec("a", "a", lambda m, c: _leaf_result(False))}
+        with mock.patch.object(_MOD, "JOB_SPECS", specs), \
+             mock.patch.object(_MOD, "_run_lock_fd", lock_fd):
+            Sequencer(_FakePlan("full_run", mode, ["a"])).run()
+        return os.path.isdir(os.path.join(self.cache, "dlp_neo_p0"))
+
+    def test_full_leaf_under_lock_wipes(self):
+        """The intended case: full mode, lock held -> cache cleared."""
+        self.assertFalse(self._run("full", 3))
+
+    def test_full_leaf_without_lock_does_not_wipe(self):
+        """No lock (the unit suite's own state) -> cache untouched."""
+        self.assertTrue(self._run("full", None))
+
+    def test_dry_leaf_under_lock_does_not_wipe(self):
+        """Dry runs share the box's caches and must never wipe them."""
+        self.assertTrue(self._run("dry", 3))
 
 
 class SequencerRunFnExceptionTest(unittest.TestCase):
