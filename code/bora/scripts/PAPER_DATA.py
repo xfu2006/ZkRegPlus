@@ -2748,19 +2748,21 @@ def main():
         if args.plan_only:
             return 0
         mode = "dry" if plan.top == "dna_debug" else "full"
-        if mode == "full":
-            # full shape runs for hours -- detach like
-            # small_full_snark; dry stays foreground (minutes).
-            ts = _ts()
-            print("[paper_data %s] detaching into the background "
-                  "(survives logout; no nohup needed)." % ts)
-            print("[paper_data %s]   summary log:    tail -F %s"
-                  % (ts, SUMMARY_LOG))
-            print("[paper_data %s]   current job:    tail -F %s"
-                  % (ts, CURRENT_JOB_LOG))
-            sys.stdout.flush()
-            go_background()
-            install_signal_handlers()
+        # Both modes detach like small_full_snark: the leaf dumps
+        # everything to SUMMARY.log / DNA_DEBUG_VERDICT.txt / the
+        # bundle tgz, so no terminal needs to stay attached.
+        ts = _ts()
+        print("[paper_data %s] detaching into the background "
+              "(survives logout; no nohup needed)." % ts)
+        print("[paper_data %s]   summary log:    tail -F %s"
+              % (ts, SUMMARY_LOG))
+        print("[paper_data %s]   current job:    tail -F %s"
+              % (ts, CURRENT_JOB_LOG))
+        print("[paper_data %s]   verdict file:   %s"
+              % (ts, DNA_DEBUG_VERDICT))
+        sys.stdout.flush()
+        go_background()
+        install_signal_handlers()
         return run_dna_debug(mode)
 
     if plan.top == "small_full_snark":
