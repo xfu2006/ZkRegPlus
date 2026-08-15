@@ -1378,10 +1378,118 @@ fn qm_walk_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	out
 }
 
+// Capped qm walk (full-width aggr planning): above this many univ>0
+// units the per-unit walk is the step-5 bottleneck (~8.7 s/unit x
+// ~33k units on full DLP), so the walk shrinks to the binding
+// candidates + measured binders (walk_capped). At or under the cap
+// the exact walk-all and its per-unit P_max tripwire run unchanged,
+// keeping dry and small leaves bit-identical.
+const QM_WALK_ALL_MAX: usize = 256;
+// Per-proxy top-K for select_binding_candidates (legacy prod K=8;
+// 16 doubles the calibration set for minutes of walk).
+const QM_WALK_TOP_K: usize = 16;
+// Calibration floor: with fewer walked units the ratio is too thin;
+// pad with the largest-universe units.
+const QM_WALK_MIN: usize = 24;
+// Extra walks of the largest ESTIMATES: a rung's qm is its group
+// max, so measuring the top bounds caps estimate inflation at the
+// first un-walked bound.
+const QM_EST_WALK_TOP: usize = 32;
+// Fixed-point scale for the demand/basis ratio (integer, ceiled).
+const QM_EST_SCALE: u128 = 1024;
+
+/// Q_m demand basis of a unit: the ChunkPeaks drivers of T_qm rows
+/// (C/BP/SP rows ~ chain steps ~ active, FP rows ~ trace matches ~
+/// pats, wrap keys ~ obligation subsigs ~ univ). Monotone proxy.
+fn qm_basis(u: &UnitVec) -> usize {
+	u.active + u.pats + u.univ
+}
+
+/// Ceiled demand/basis ratio at QM_EST_SCALE; the max over walked
+/// units is the calibration r_cal.
+fn qm_ratio(qm: usize, basis: usize) -> u128 {
+	let b = basis.max(1) as u128;
+	((qm as u128) * QM_EST_SCALE + b - 1) / b
+}
+
+/// Ceiled bound from a calibrated ratio; with r >= qm_ratio(q, b)
+/// this returns >= q, so estimates only ever over-size.
+fn qm_bound(r: u128, basis: usize) -> usize {
+	((r * (basis as u128) + QM_EST_SCALE - 1) / QM_EST_SCALE)
+		as usize
+}
+
+/// Capped-walk arm of harvest_units: exact-walk the binding
+/// candidates, calibrate r_cal = max qm/basis over them, bound every
+/// un-walked unit, then exact-walk the largest bounds (the likely
+/// rung binders). Bounds only OVER-size, and the fold's per-seg
+/// router promotes on any miss, so a mis-bound can move a seg a rung
+/// but never fail it (the top rung ships P_max verbatim).
+fn walk_capped(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
+	ts: &TuningSet, p_max: &CapParams, units: &mut [UnitVec],
+	need_walk: &[usize]) {
+	use utils::logger::{log, LOG1};
+	let need: HashSet<usize> = need_walk.iter().copied().collect();
+	let mut walk: Vec<usize> = select_binding_candidates(
+		&ts.vdata, QM_WALK_TOP_K).into_iter()
+		.filter(|i| need.contains(i)).collect();
+	if walk.len() < QM_WALK_MIN {
+		let have: HashSet<usize> = walk.iter().copied().collect();
+		let mut rest: Vec<usize> = need_walk.iter().copied()
+			.filter(|i| !have.contains(i)).collect();
+		rest.sort_by_key(|&i| std::cmp::Reverse(units[i].univ));
+		rest.truncate(QM_WALK_MIN - walk.len());
+		walk.extend(rest);
+	}
+	let cal = qm_walk_units(spec, db, ts, p_max, &walk);
+	let cal_set: HashSet<usize> = cal.keys().copied().collect();
+	for (i, q) in cal {
+		units[i].qm = [q[0].need(), q[1].need()];
+	}
+	let mut r_cal = [0u128; 2];
+	for &i in &cal_set {
+		let b = qm_basis(&units[i]);
+		for a in 0..2 {
+			r_cal[a] = r_cal[a].max(qm_ratio(units[i].qm[a], b));
+		}
+	}
+	// the v4 reducer clamps at p_max downstream; capping here only
+	// keeps the logged bounds honest.
+	let cap = [p_max.qm_real_rows, p_max.qm_real_rows_igc];
+	let mut est: Vec<usize> = need_walk.iter().copied()
+		.filter(|i| !cal_set.contains(i)).collect();
+	for &i in &est {
+		let b = qm_basis(&units[i]);
+		for a in 0..2 {
+			units[i].qm[a] = qm_bound(r_cal[a], b).min(cap[a]);
+		}
+	}
+	est.sort_by_key(|&i| std::cmp::Reverse(
+		units[i].qm[0].max(units[i].qm[1])));
+	est.truncate(QM_EST_WALK_TOP);
+	let top = qm_walk_units(spec, db, ts, p_max, &est);
+	let n_top = top.len();
+	for (i, q) in top {
+		units[i].qm = [q[0].need(), q[1].need()];
+	}
+	// spread report: cs-arm max/median over the calibration set;
+	// >>1 means the basis is loose -- raise QM_WALK_TOP_K /
+	// QM_EST_WALK_TOP before trusting the rung split.
+	let mut rs: Vec<u128> = cal_set.iter().map(|&i|
+		qm_ratio(units[i].qm[0], qm_basis(&units[i]))).collect();
+	rs.sort_unstable();
+	let med = rs.get(rs.len() / 2).copied().unwrap_or(1).max(1);
+	log(0, LOG1, &format!("v5[{}] capped qm walk: {} cal + {} \
+		binder walks of {} units, r_cal/{}=[{},{}], cs max/med={}",
+		spec.name, cal_set.len(), n_top, need_walk.len(),
+		QM_EST_SCALE, r_cal[0], r_cal[1], r_cal[0] / med));
+}
+
 /// Harvest every unit's demand vector: ChunkPeaks scalars + the NEEDS
 /// universe (both already computed by the tuning discharge), plus the
 /// qm walk. b_walk_all=false screens the walk to units with a nonzero
-/// universe (aggr: no obligation -> empty SED store -> empty Q_m).
+/// universe (aggr: no obligation -> empty SED store -> empty Q_m);
+/// past QM_WALK_ALL_MAX such units the walk is capped (walk_capped).
 fn harvest_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	ts: &TuningSet, p_max: &CapParams, b_walk_all: bool)
 	-> Vec<UnitVec> {
@@ -1402,6 +1510,10 @@ fn harvest_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	}).collect();
 	let need_walk: Vec<usize> = (0..units.len())
 		.filter(|&i| b_walk_all || units[i].univ > 0).collect();
+	if !b_walk_all && need_walk.len() > QM_WALK_ALL_MAX {
+		walk_capped(spec, db, ts, p_max, &mut units, &need_walk);
+		return units;
+	}
 	let qm = qm_walk_units(spec, db, ts, p_max, &need_walk);
 	for (i, q) in qm {
 		units[i].qm = [q[0].need(), q[1].need()];
@@ -2727,6 +2839,30 @@ pub mod tests_bora_data_driver {
 	use std::sync::atomic::{AtomicUsize, Ordering};
 
 	static COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+	/// qm_bound(qm_ratio(q,b), b) >= q for every pair: a walked
+	/// unit always satisfies its own calibrated bound.
+	#[test]
+	fn test_qm_bound_covers_calibration() {
+		for &(q, b) in &[(0usize, 0usize), (1, 1), (2, 3), (7, 3),
+			(1700, 4161), (4160, 1), (123457, 999)] {
+			assert!(qm_bound(qm_ratio(q, b), b) >= q,
+				"q={} b={}", q, b);
+		}
+	}
+
+	/// qm_bound is monotone in basis at fixed ratio: a heavier unit
+	/// never gets a smaller bound, so binder ranking is stable.
+	#[test]
+	fn test_qm_bound_monotone_in_basis() {
+		let r = qm_ratio(1700, 300);
+		let mut prev = 0usize;
+		for b in 0..2000usize {
+			let e = qm_bound(r, b);
+			assert!(e >= prev, "b={}", b);
+			prev = e;
+		}
+	}
 
 	/// Serializes tests that mutate the process-wide GlobalConfig.
 	fn cfg_lock() -> std::sync::MutexGuard<'static, ()> {

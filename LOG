@@ -31122,7 +31122,7 @@ Goal 1. quick test on 512gb server first
 		-> dlp full run (started 3:15pm-> restarted 4:28pm
 			-> check 8:15pm?)
 			-> stopped at 7:43pm (only partial run)
-			-> 
+			-> time is roughly the same 
 	[c] add menu items for the missing info
 
 Goal 2. T916 Reference check
@@ -31132,13 +31132,16 @@ Goal 2. T916 Reference check
 	[d] second revision of workflow
 
 Goal 3. continue to test on 512gb server
-	[a] next to test
-		-> scale_dlp
-		-> scale_clam (partial)
-		-> full_dlp (partial)
-		-> full_clam (partial)
+	[a] DONE
 		-> the effectiveness run (dry-run)
 		-> dry-run draw diagram
+	[a] next to test
+		-> scale_dlp (small data 40% better) -> collect later
+			-> problem: tune is too slow
+			-> 
+		-> scale_clam (partial) -> collect later
+		-> full_dlp (partial) -> started 9pm -> 
+		-> full_clam (partial)
 
 
 
