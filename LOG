@@ -31166,6 +31166,35 @@ Goal 2. SMALL SERVER
   # live watch
   tail -f /tmp/bora/CURRENT_JOB.log | grep --line-buffered -E \ "PROGRESS step|capped qm walk|v5\[dlp\]|circ [0-9]+ size:|PERF 1002|KEYS info" 
 
+  # --- analysis script ---------
+   LC_ALL=C grep -a "per-chunk circ sel. Phase 1" /tmp/bora/CURRENT_JOB.log | LC_ALL=C awk '
+  {match($0,/\[job [0-9]+\]/);    j=substr($0,RSTART+5,RLENGTH-6)+0
+   match($0,/word_id: [0-9]+/);   w=substr($0,RSTART+9,RLENGTH-9)+0
+   match($0,/subseg_id: [0-9]+/); b=substr($0,RSTART+11,RLENGTH-11)+0
+   match($0,/pci: [0-9]+/);       p=substr($0,RSTART+5,RLENGTH-5)+0
+   k=j","w","b; if(kk[k]++) next
+   if(w>mx[j])mx[j]=w
+   cnt[j","w","p]++; seen[j]=1}
+  END{
+   print "per-job progress (max word_id seen):"
+   pb=""
+   for(j=0;j<8;j++){ if(j in seen){ printf "  job %d: word %d\n",j,mx[j]
+       pb=pb (pb==""?"":" ") (mx[j]-1) } else pb=pb (pb==""?"":" ") "-1" }
+   minW=1000000000
+   for(j in seen) if(mx[j]-1<minW) minW=mx[j]-1
+   for(k in cnt){split(k,a,",")
+     if(a[2]+0 < mx[a[1]+0]){ n[a[3]]+=cnt[k]; t+=cnt[k] }}
+   if(t==0){print "no completed words yet -- rerun in a few minutes"; exit}
+   c[0]=1898; c[1]=4287; c[2]=12954; c[3]=31128; s=0
+   printf "pooled steps over completed words: %d  (min common prefix word_id <= %d)\n",t,minW
+   for(p=0;p<4;p++){printf "  pci%d = %6.2f%%   n=%d\n",p,100*n[p]/t,n[p]+0; s+=n[p]/t*c[p]}
+   ref=2934; if(minW<200)ref=2888; else if(minW<650)ref=3005
+   r=s/ref
+   v=(r<=0.95)?"GREEN":((r>=1.15)?"RED":"WAIT-AND-RERUN")
+   printf "neo wcost = %.0f ms   legacy ref = %d ms   RATIO = %.2f -> %s\n",s,ref,r,v
+   printf "projected fold wall ~= %.2f days (5.05 x RATIO)\n",5.05*r
+   printf "PASTE BACK for the exact legacy check: %s\n",pb }'
+ # -----------------------------------------------
 Goal 2. BIG SERVER
 	[a] install data (4am)
 	[b] dry-run (4:15am -> 6:10am): 2 hrs
