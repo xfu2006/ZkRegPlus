@@ -31193,20 +31193,27 @@ Goal 1. DEBUG
 		-> started again 6:00am ===> check 7:30 AM (1.5 hr) 
 	[b] fix again 8:30AM -> !!! check 10am or 12:30pm !!!
 		-> make a double check 12:30pm
-	--
 	[c] if it's working run full dna run to collect data
+		-> the bug is removed
+	[e] restart the dna_full neo run to collect data.
+		RESTARTED 1:22PM 
+		===> CHECK 7:00PM today!!!!!!
 		
-
 Goal 2. try to improve neo speed phase 1
 	[a] measure speed
 	[b] design
 	[c] collect the data and do the design again
 	[d] started again: 10:45AM try to check 1PM about the speed
-		=> check 1PM -> the bug is removed
-	[e] restart the dna_full neo run to collect data.
+		=> check 3PM  (still 3.x slower phase 1 than legacy)
+		=> 
 		
 
+--- DATA ----
+*** LARGE SERVER ***
+[1] full_dna 
 
+*** SMALL SERVER ***
+[1]
 
 
 
