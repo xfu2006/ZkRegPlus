@@ -31182,6 +31182,9 @@ Goal 2. BIG SERVER
 		-> 9:00pm (crash now) ->  about 4 hours to crash
 
 Sunday 08/16/2026
+Goal 1. found it
+	[a] do the merge
+
 Goal 1. DEBUG 
 	[a] -> debug local might be related to recent decider related change
 		-> restarted 10:20pm --> EXPECT around 2:30AM to check 
@@ -31189,12 +31192,19 @@ Goal 1. DEBUG
 		-> started: 3:40AM ===> check 5:15 (1.5 hr)
 		-> started again 6:00am ===> check 7:30 AM (1.5 hr) 
 	[b] fix again 8:30AM -> !!! check 10am or 12:30pm !!!
+		-> make a double check 12:30pm
+	--
+	[c] if it's working run full dna run to collect data
+		
 
 Goal 2. try to improve neo speed phase 1
 	[a] measure speed
 	[b] design
 	[c] collect the data and do the design again
-	[d]
+	[d] started again: 10:45AM try to check 1PM about the speed
+		=> check 1PM -> the bug is removed
+	[e] restart the dna_full neo run to collect data.
+		
 
 
 

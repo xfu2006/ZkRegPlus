@@ -1174,11 +1174,53 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 					.collect::<Vec<Arc<ClamavSig>>>();
 				(sigs, infos.clone())
 			} else {
+				// expect() takes its message BY VALUE, so the format!
+				// allocated a String for EVERY DB sig on the SUCCESS
+				// path (38,875 sigs on ClamAV, 27,500 on DNA).
+				// vec_sed_sigs is a HashSet difference collected to a
+				// Vec (clamav.rs:3620/3902) -- deduped but UNSORTED, so
+				// `contains` is a linear scan. Output is IDENTICAL:
+				// order comes from vec_sigs[0], the predicate is pure
+				// set membership, and vec_sed_sigs_info is untouched,
+				// so collect_subsig_ids' positional zip is preserved.
+				let t0 = std::time::Instant::now(); //DEBUG USE 69120.4
+				let sed_set: std::collections::HashSet<usize> =
+					word_info.vec_sed_sigs.iter().cloned().collect();
 				let sigs = bundle_cs.vec_sigs[0].iter().filter(|s|{
 					let id = sig_to_id.get(&s.name)
-						.expect(&format!("can't find sig: {}", s.name));
-					word_info.vec_sed_sigs.contains(id)
+						.unwrap_or_else(|| panic!(
+							"can't find sig: {}", s.name));
+					sed_set.contains(id)
 				}).map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
+				let us = t0.elapsed().as_micros();
+				// R4 oracle: re-derive with the linear scan and assert
+				// the selection is identical. Release-inert.
+				if B_DEBUG || cfg!(debug_assertions) {
+					let old = bundle_cs.vec_sigs[0].iter()
+						.filter(|s|{
+							let id = sig_to_id.get(&s.name).unwrap();
+							word_info.vec_sed_sigs.contains(id)
+						}).map(|s| s.clone())
+						.collect::<Vec<Arc<ClamavSig>>>();
+					assert!(sigs.len() == old.len()
+						&& sigs.iter().zip(old.iter())
+							.all(|(a, b)| Arc::ptr_eq(a, b)),
+						"R4: sed sig filter diverged");
+				}
+				//DEBUG USE 69120.3: one-shot sizing probe, remove with
+				//the other 69120 sites once the Pass-1 speed item
+				//closes.
+				static PROBE_69120C: std::sync::atomic::AtomicUsize =
+					std::sync::atomic::AtomicUsize::new(0);
+				if PROBE_69120C.load(
+					std::sync::atomic::Ordering::Relaxed) < 4 {
+					PROBE_69120C.fetch_add(1,
+						std::sync::atomic::Ordering::Relaxed);
+					println!("DEBUG USE 69120.3: sed_filter \
+db_sigs={} sed_sigs={} out={} us={}",
+						bundle_cs.vec_sigs[0].len(),
+						word_info.vec_sed_sigs.len(), sigs.len(), us);
+				}
 				(sigs, word_info.vec_sed_sigs_info.clone())
 			};
 
