@@ -55,7 +55,7 @@ use folding_schemes::{
 	Error,
 	folding::foldpot::{
 		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo},
-		//circuits_super::field_to_usize,
+		circuits_super::field_to_usize,
 		container_config::{ContainerConfig},
 	}
 };
@@ -819,17 +819,48 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		//exclude empty-chain subsigs: they can never reach LAST_STEP
 		//-> never in failed_acc, and compute_sig's
 		//from_subsig_store_item underflows on num==0.
-		let uni = |st: &SubsigStepStore| -> Vec<F> {
-			st.subsig_ids.iter().filter(|u| st.subsig_to_steps
-				.get(u).map_or(false, |it|
-					!it.vec_pm_bounds.is_empty()))
-				.map(|u| F::from(*u as u32)).collect::<Vec<F>>()
+		// The SDE obligation set = the members of `inp` whose chain
+		// is non-empty. Building it by scanning the whole subsig
+		// universe is O(|universe|) per call; testing each member of
+		// `inp` is O(|inp|). The output is IDENTICAL: subsig_ids is
+		// unique (clam_db::add asserts) and sorted (finalize), and
+		// inp is deduped+sorted (collect_subsig_ids), so both walks
+		// emit the same set in ascending order.
+		//DEBUG USE 69120.1: one-shot sizing probe, remove with the
+		//other 69120 sites once the Pass-1 speed item closes.
+		static PROBE_69120: std::sync::atomic::AtomicUsize =
+			std::sync::atomic::AtomicUsize::new(0);
+		let has_chain = |st: &SubsigStepStore, s: &F| -> bool {
+			st.subsig_to_steps.get(&field_to_usize(s))
+				.map_or(false, |it| !it.vec_pm_bounds.is_empty())
 		};
 		let needs = |st: &SubsigStepStore, inp: &Vec<F>| -> Vec<F> {
-			let set: std::collections::HashSet<F> =
-				inp.iter().cloned().collect();
-			uni(st).into_iter().filter(|s| set.contains(s))
-				.collect::<Vec<F>>()
+			let t0 = std::time::Instant::now(); //DEBUG USE 69120.2
+			let out: Vec<F> = inp.iter()
+				.filter(|s| has_chain(st, *s)).cloned().collect();
+			// R4 oracle: re-derive the old universe scan and assert
+			// the routing input is bit-identical. Release-inert.
+			if B_DEBUG || cfg!(debug_assertions) {
+				let set: std::collections::HashSet<F> =
+					inp.iter().cloned().collect();
+				let old: Vec<F> = st.subsig_ids.iter()
+					.filter(|u| st.subsig_to_steps.get(u)
+						.map_or(false, |it|
+							!it.vec_pm_bounds.is_empty()))
+					.map(|u| F::from(*u as u32))
+					.filter(|s| set.contains(s))
+					.collect::<Vec<F>>();
+				assert_eq!(out, old, "R4: needs() diverged");
+			}
+			//DEBUG USE 69120.1
+			let n = PROBE_69120.fetch_add(1,
+				std::sync::atomic::Ordering::Relaxed);
+			if n < 4 {
+				println!("DEBUG USE 69120.1: univ={} inp={} out={} \
+					us={}", st.subsig_ids.len(), inp.len(),
+					out.len(), t0.elapsed().as_micros());
+			}
+			out
 		};
 		let cs_subsigs_cs = if use_neo {
 			needs(subsig_step_store_cs, &subsigs_inp_cs)
