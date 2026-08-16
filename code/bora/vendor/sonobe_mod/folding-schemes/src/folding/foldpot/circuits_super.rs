@@ -36,7 +36,7 @@ use crate::folding::foldpot::{
 	sigma_ir1cs::{SigmaIR1CS,ZiPartTwoInst,LookupTableTwoCol,CyclePairInput,CyclePairInputVar,GadgetMapper},
 	mod_super::{CommittedInstanceFoldPotSuper},
 	cyclepair::{CyclePairCommittedInstanceVar,CyclePairChallengeGadget, NIFSFullGadgetCyclePair,cp_io_len},
-	utils::{B_DEBUG},
+	utils::{B_DEBUG, gadget_sat_on},
 	
 };
 use super::{CommittedInstanceFoldPot, FOLDPOT_CF_N_POINTS};
@@ -430,10 +430,24 @@ where
 		let log_level = LOG5;
 		let mut gt1 = GTimer::new();
 		let (mut nc, mut nv) = (cs.num_constraints(), cs.num_witness_variables());
+		// DEBUG USE 69801.10: wrapper row census -- cumulative totals at
+		// each sub-step boundary, printed only where the SAT brackets
+		// fire (armed + matrix-building synthesis), so a decider
+		// first-bad row maps to a sub-gadget. Remove by tag 69801.
+		let census = |label: &str, cs: &ConstraintSystemRef<CF1<C1>>| {
+			if gadget_sat_on() && !cs.is_in_setup_mode()
+				&& cs.should_construct_matrices() {
+				emit_stdout(format!(
+					"DEBUG USE 69801.10: wrap {}: nc_tot={} nv_tot={}",
+					label, cs.num_constraints(),
+					cs.num_witness_variables()));
+			}
+		};
+		census("start", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs: START: cs: {}, vars: {}",
 				cs.num_constraints(),
-				cs.num_witness_variables()), 
+				cs.num_witness_variables()),
 		&mut gt1);
 
 		//1. retrieve pp_hash, i, z_0, and z_i as Var (witness)
@@ -454,6 +468,7 @@ where
                 .z_i
                 .unwrap_or(vec![CF1::<C1>::zero(); self.F.state_len()]))
         })?;
+		census("s1", &cs);
 		log_perf(self.job_id, log_level, &format!(
 				"-- circuit_super gen_cs step 1: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -476,6 +491,7 @@ where
 			let csat = cs.is_satisfied();
 			if csat.is_ok(){ assert!(csat.unwrap(), "step 2 of circuitsuper"); }
 		}
+		census("s2", &cs);
 		log_perf(self.job_id, log_level,&format!(
 				"-- circuit_super gen_cs step 2: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -490,6 +506,7 @@ where
  		let (witness, wit_cfg, z_i1_part2) = 
   			self.F.gen_witness(&stmt, &self.zi_part2_inst.clone().unwrap(),
 				pre_cmF);
+		census("s3_0_genwit", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 3.0 generate wit: cs: {}, vars: {}",
 			cs.num_constraints() - nc,
@@ -499,6 +516,7 @@ where
 		nv = cs.num_witness_variables();
 
   		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
+		census("s3_1_tovec", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: {}, vars: {}, wtns_vec: {}",
 			cs.num_constraints() - nc,
@@ -533,6 +551,7 @@ where
         let z_i1 = self.F
                  .generate_step_constraints(cs.clone(), i_usize, z_in, wtns_vec)?;
 
+		census("s3_2_stepcs", &cs);
 		log_perf(self.job_id, log_level,&format!( 
 			"-- circuit_super gen_cs step 3.2: gen_step_cs cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -577,6 +596,7 @@ where
 			}
 		}
 
+		census("s3_4_Ui_alloc", &cs);
 		log_perf(self.job_id, log_level,&format!( 
 			"-- circuit_super gen_cs step 3.4 others: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -625,6 +645,7 @@ where
 				assert!(csat.unwrap(), "step 4 of circuitsuper"); 
 			}
 		}
+		census("s4_hint_allocs", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 4: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -667,6 +688,7 @@ where
 				assert!(csat.unwrap(), "step 6 of circuitsuper"); 
 			}
 		}
+		census("s5_uix_hashes", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 5: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -703,6 +725,7 @@ where
 			u_cmf_limbs[k].conditional_enforce_equal(
 				&z_i[2+k], &not_base)?;
 		}
+		census("s6_s107_cmf", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 6: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -727,6 +750,7 @@ where
             bits.resize(C1::BaseField::MODULUS_BIT_SIZE as usize, Boolean::FALSE);
             NonNativeUintVar::from(&bits)
         };
+		census("s7_fs_chal", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 7: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -768,6 +792,7 @@ where
 				else{ vec![new_x_0, new_x_1]},
 			cmE: U_i1_cmE.clone(), cmW: U_i1_cmW.clone(), cmF: U_i1_cmF.clone()
 		};
+		census("s8_fold_sel", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 8: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -844,6 +869,7 @@ where
 			let x_value = x.value()?;
 			assert!(expect_x == x_value);
 		}
+		census("s9_out_hash_x", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 9: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -1055,6 +1081,7 @@ where
 		if B_DEBUG {
 			assert!(exp_cf_x.value()?==cf_x.value()?, "exp_cf_x error");
 		}
+		census("s11_cyclefold", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 11: cs: {}, vars: {}",
 				cs.num_constraints() - nc,
@@ -1138,6 +1165,7 @@ where
 				assert!(cs.is_satisfied().unwrap());
 			}
 		}
+		census("s12_tail", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 12: cs: {}, vars: {}",
 				cs.num_constraints() - nc,

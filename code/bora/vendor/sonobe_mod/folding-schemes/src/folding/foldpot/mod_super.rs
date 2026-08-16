@@ -61,6 +61,30 @@ use crate::{
 		utils::{set_gadget_sat, gadget_sat_check}
 	}
 };
+// DEBUG USE 69801.12 helper: first row in [lo, hi) violating
+// Az*Bz == u*Cz + E for the given z (col 0 = u, then x, then W).
+// E shorter than hi reads 0. Rayon over rows. Remove by tag 69801.
+fn probe_first_bad_row<F: PrimeField>(r1cs: &R1CS<F>, z: &[F], u: F,
+	e: &[F], lo: usize, hi: usize) -> Option<usize> {
+	use rayon::iter::{IntoParallelIterator, ParallelIterator,
+		IndexedParallelIterator};
+	let row = |m: &crate::utils::vec::SparseMatrix<F>, r: usize| -> F {
+		m.coeffs[r].iter().map(|(v, c)| *v * z[*c]).sum()
+	};
+	let hi = hi.min(r1cs.A.n_rows);
+	if lo >= hi { return None; }
+	if z.len() != r1cs.A.n_cols {
+		// a probe must never abort the run: report as row usize::MAX
+		emit_stdout(format!("DEBUG USE 69801.12: z len {} != n_cols \
+			{} -- eval skipped", z.len(), r1cs.A.n_cols));
+		return Some(usize::MAX);
+	}
+	(lo..hi).into_par_iter().find_first(|&r| {
+		let e_r = if r < e.len() { e[r] } else { F::zero() };
+		row(&r1cs.A, r) * row(&r1cs.B, r) != u * row(&r1cs.C, r) + e_r
+	})
+}
+
 // utility function for compute step cmF
 /// `job_id`: The ID of the job being processed.
 pub fn compute_step_hc_cmF_adv<
@@ -1498,7 +1522,68 @@ where
 			Some(self.U_i.x_2.unwrap() + r_Fr * self.u_i.x[2])
 		};
 		log_perf(self.job_id, log_level, &format!("prove_step: Step 2. fold_inst. inst size: {}", self.W_i.vec_wit[j_pci].W.len()), &mut gt2);
-			
+
+		// DEBUG USE 69801.11/.12/.13: per-step native probes, armed by
+		// ZKR_GADGET_CHECK (dna_debug runs only; prod is unaffected).
+		// .11 matrix dims once; .13 the S107 pairing z_i[2..6] vs the
+		// native limbs of u_i.cmF; .12 row residuals of the TAIL rows
+		// (wrapper region) for the fresh instance (strict, u=1) and
+		// the just-folded accumulator (relaxed) -- full sweep every 32
+		// steps. Remove by tag 69801.
+		if std::env::var("ZKR_GADGET_CHECK").is_ok() {
+			let i_us = field_to_usize(&self.i);
+			let r1 = &self.r1cs[j_pci];
+			let n_rows = r1.A.n_rows;
+			if i_us == 0 {
+				let nnz = |m: &crate::utils::vec::SparseMatrix<
+					C1::ScalarField>| m.coeffs.iter()
+					.map(|r| r.len()).sum::<usize>();
+				emit_stdout(format!("DEBUG USE 69801.11: fold-side \
+					r1cs[{}]: rows={} cols={} l={} nnz_abc={}/{}/{}",
+					j_pci, n_rows, r1.A.n_cols, r1.l, nnz(&r1.A),
+					nnz(&r1.B), nnz(&r1.C)));
+			}
+			if i_us > 0 {
+				let limbs = AbsorbNonNative::<C1::ScalarField>
+					::to_native_sponge_field_elements_as_vec(
+						&self.u_i.cmF);
+				let b_eq = limbs.len() == 4 && self.z_i.len() >= 6
+					&& (0..4).all(|k| limbs[k] == self.z_i[2 + k]);
+				if !b_eq {
+					emit_stdout(format!("DEBUG USE 69801.13: i={} \
+						S107 pair BAD: z_tail={:?} limbs={:?}",
+						i_us, &self.z_i[2..], limbs));
+				} else if i_us % 32 == 0 {
+					emit_stdout(format!(
+						"DEBUG USE 69801.13: i={} S107 pair ok",
+						i_us));
+				}
+			}
+			let (lo, sweep) = if i_us % 32 == 0 { (0usize, "full") }
+				else { (n_rows.saturating_sub(131072), "tail") };
+			// fresh instance: strict R1CS (u=1; E should be zero)
+			let z_f: Vec<C1::ScalarField> =
+				[vec![C1::ScalarField::one()], self.u_i.x.clone(),
+				 self.w_i.W.clone()].concat();
+			let bad_f = probe_first_bad_row(r1, &z_f,
+				C1::ScalarField::one(), &self.w_i.E, lo, n_rows);
+			// folded accumulator: relaxed R1CS
+			let uj = &U_i1.vec_inst[j_pci];
+			let wj = &W_i1.vec_wit[j_pci];
+			let z_a: Vec<C1::ScalarField> =
+				[vec![uj.u], uj.x.clone(), wj.W.clone()].concat();
+			let bad_a = probe_first_bad_row(r1, &z_a, uj.u, &wj.E,
+				lo, n_rows);
+			if bad_f.is_some() || bad_a.is_some() || i_us % 32 == 0 {
+				emit_stdout(format!("DEBUG USE 69801.12: i={} j={} \
+					{} rows [{}..{}): fresh_bad={:?} acc_bad={:?} \
+					u_i.u_is_1={} fresh_E_zero={}",
+					i_us, j_pci, sweep, lo, n_rows, bad_f, bad_a,
+					self.u_i.u == C1::ScalarField::one(),
+					self.w_i.E.iter().all(|e| e.is_zero())));
+			}
+		}
+
         //6. folded instance output (public input, x) for generating
 		// r1cs of the augmented F circuit.
 		// Different from Nova, we add pc_i

@@ -46,7 +46,7 @@ use crate::folding::{
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var, hash_var},
 		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs,
-			gadget_sat_check}, //DEBUG USE 69801: +gadget_sat_check
+			gadget_sat_check, gadget_sat_on}, //DEBUG USE 69801: +gadget_sat_check +.11 gate
 		container_config::ColEle,
 	},
 };
@@ -748,6 +748,20 @@ where
 		let c0 = cs.num_constraints();
 		let _pc_i_val = field_to_usize(&self.pc_i); //for fold
 		let _pc_i1_val = field_to_usize(&self.pc_i1); //for compute next (j)
+		// DEBUG USE 69801.11: decider-side matrix dims -- compare with
+		// the fold-side .11 line to rule matrix drift in or out.
+		// Remove by tag 69801.
+		if gadget_sat_on() {
+			for (ii, r1) in self.r1cs.iter().enumerate() {
+				let nnz = |m: &crate::utils::vec::SparseMatrix<
+					C1::ScalarField>| m.coeffs.iter()
+					.map(|r| r.len()).sum::<usize>();
+				emit_stdout(format!("DEBUG USE 69801.11: decider-side \
+					r1cs[{}]: rows={} cols={} l={} nnz_abc={}/{}/{}",
+					ii, r1.A.n_rows, r1.A.n_cols, r1.l, nnz(&r1.A),
+					nnz(&r1.B), nnz(&r1.C)));
+			}
+		}
 		let pc_i_var = FpVar::new_witness(cs.clone(),  || Ok(self.pc_i))?;
         let vec_r1cs = self.r1cs.iter().map(|r1cs|
             R1CSVar::<C1::ScalarField, CF1<C1>, FpVar<CF1<C1>>>
