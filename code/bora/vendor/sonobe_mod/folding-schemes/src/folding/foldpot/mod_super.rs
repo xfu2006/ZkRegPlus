@@ -1934,6 +1934,84 @@ where
 			self.size_F[j_pci1], self.start_F[j_pci1]); //j1 is `pc_{i+1}`
 
         self.u_i = self.w_i.commit::<CS1, H>(&self.cs_pp[j_pci1], x_i1)?;
+
+		// DEBUG USE 69801.14: compare the native cmF preimage
+		// (cmf_witness_vec of THIS step's wtns) against the witness
+		// slice W[start_F..start_F+size_F] that self.u_i.cmF just
+		// committed. An element diff here is the exact cause of a
+		// .13 pair BAD at the next step. Armed by ZKR_GADGET_CHECK
+		// (dna_debug runs only). Remove by tag 69801.
+		if std::env::var("ZKR_GADGET_CHECK").is_ok() {
+			let i_us = field_to_usize(&self.i) - 1; //pre-increment i
+			let pre = wtns_config.stmt_cfg
+				.cmf_witness_vec(&wtns.statement, &wtns.msg1);
+			let sf = self.start_F[j_pci1];
+			let zf = self.size_F[j_pci1];
+			let sl = &self.w_i.W[sf..sf + zf];
+			let n_cmp = pre.len().min(zf);
+			let diffs: Vec<usize> = (0..n_cmp)
+				.filter(|&k| pre[k] != sl[k]).collect();
+			let pre_tail_nz = (n_cmp..pre.len())
+				.filter(|&k| !pre[k].is_zero()).count();
+			let sl_tail_nz = (n_cmp..zf)
+				.filter(|&k| !sl[k].is_zero()).count();
+			let limbs = AbsorbNonNative::<C1::ScalarField>
+				::to_native_sponge_field_elements_as_vec(
+					&self.u_i.cmF);
+			let b_cm = limbs.len() == 4 && self.z_i.len() >= 6
+				&& (0..4).all(|k| limbs[k] == self.z_i[2 + k]);
+			if i_us <= 1 {
+				let sc = &wtns_config.stmt_cfg;
+				emit_stdout(format!("DEBUG USE 69801.14: layout \
+					pre_len={} size_F={} start_F={} W_len={} \
+					idx_inp={} idx_oup={} idx_word={} idx_data={} \
+					idx_si={} idx_c1={} idx_c2={} idx_m={} \
+					idx_fail={} idx_dis={} idx_mtbl={} \
+					si_inp={:?} si_oup={:?} si_data={:?}",
+					pre.len(), zf, sf, self.w_i.W.len(),
+					sc.idx_inp, sc.idx_oup, sc.idx_word_subseg,
+					sc.idx_data, sc.idx_subtable_id,
+					sc.idx_col1_share, sc.idx_col2_share,
+					sc.idx_m_share, sc.idx_failed_sigs,
+					sc.idx_discharged_sigs, sc.idx_mtbl_sigs,
+					sc.si_inp_info, sc.si_oup_info,
+					sc.si_data_info));
+			}
+			if !diffs.is_empty() || !b_cm
+				|| pre_tail_nz > 0 || sl_tail_nz > 0 {
+				let mut det = String::new();
+				for &k in diffs.iter().take(4) {
+					det.push_str(&format!(
+						" [k={} pre={:?} slice={:?}]",
+						k, pre[k], sl[k]));
+				}
+				emit_stdout(format!("DEBUG USE 69801.14: i={} \
+					n_diff={} first8={:?} pre_tail_nz={} \
+					sl_tail_nz={} cm_pair_ok={} z_tail={:?} \
+					u_cmF_limbs={:?} details:{}",
+					i_us, diffs.len(),
+					&diffs[..diffs.len().min(8)],
+					pre_tail_nz, sl_tail_nz, b_cm,
+					&self.z_i[2..6], limbs, det));
+			}
+			// blind branch: slice matches the preimage yet the pin
+			// pair is BAD -> the two commit calls themselves
+			// diverge. Recommit pre under the FOLD key to see
+			// which of the three points is the odd one out.
+			if diffs.is_empty() && !b_cm {
+				let zero = C1::ScalarField::zero();
+				if let Ok(cm2) = CS1::commit(
+					&self.cs_pp[j_pci1], &pre, &zero) {
+					let l2 = AbsorbNonNative::<C1::ScalarField>
+						::to_native_sponge_field_elements_as_vec(
+							&cm2);
+					emit_stdout(format!("DEBUG USE 69801.14: i={} \
+						recommit pre under fold key: limbs={:?}",
+						i_us, l2));
+				}
+			}
+		}
+
         self.W_i = W_i1;
         self.U_i = U_i1;
 		self.pc_i = C1::ScalarField::from(j_pci1 as u32);
