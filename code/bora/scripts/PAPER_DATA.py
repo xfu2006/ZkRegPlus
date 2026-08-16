@@ -712,6 +712,26 @@ def place_raw_data(src, dest_name, server_specific=True):
     return dest
 
 
+def safe_pack_dump(ctx, base, logs, rc):
+    """Place <base>.tgz for ANY outcome (R1): the .tgz is the run's
+    full stdout/stderr log, so it belongs in the paper folder however
+    the run ended.  A pack failure is noted, never raised, so a
+    crashed run still gets its triage bundle."""
+    try:
+        return pack_full_dump(base, logs, ctx._ts)
+    except Exception as e:
+        # A raise mid-build leaves <base>*.tgz.tmp behind.  The stale
+        # dump is unlinked only AFTER every .tmp is built, so the
+        # previous dump is intact on this path either way.
+        for t in glob.glob(raw_data_path(base + "*.tgz.tmp")):
+            try:
+                os.unlink(t)
+            except OSError:
+                pass
+        ctx.note("dump not placed (rc=%s): %s" % (rc, e))
+        return []
+
+
 def stale_artifact(path, t0):
     """Reason when path is missing or older than t0 -- a leftover from
     an EARLIER run that this child never rewrote, which would otherwise
@@ -1148,6 +1168,12 @@ class JobHandle:
             for rp in self.reports:
                 if rp and os.path.isfile(rp):
                     t.add(rp, arcname=os.path.basename(rp))
+            # R3: the paper-data dump rides along, so ONE bundle
+            # carries every artifact of a failed run.
+            for dp in self.raw_data:
+                if dp and os.path.isfile(dp):
+                    t.add(dp, arcname="raw_data/"
+                           + os.path.basename(dp))
         return tgz
 
     def finish(self, rc, b_fail_scan=True):
@@ -1504,9 +1530,14 @@ def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs, name,
         if missing:
             ctx.note("success markers missing: %s" % missing)
             rc = 6
-    if rc == 0:
-        for dest in pack_full_dump(base, logs, ctx._ts):
-            ctx.raw_data.append(dest)
+    # R1: the .tgz IS this run's full stdout/stderr log, so it is
+    # placed for EVERY outcome -- pass, fail, crash, ladder
+    # divergence, or a run that stopped at step 100 of 3000.  Whether
+    # the run SUCCEEDED is a separate question, answered by rc and the
+    # fail scan, which alone drive the failed_tgz bundle and the
+    # FAILURE report.  (D1: canonical name, no backup, so a failed run
+    # DOES overwrite the last good dump.)
+    ctx.raw_data.extend(safe_pack_dump(ctx, base, logs, rc))
     return ctx.finish(rc, b_fail_scan=b_fail_scan)
 
 
@@ -1556,9 +1587,8 @@ def run_leaf_dna(mode, ctx):
         if missing:
             ctx.note("success markers missing: %s" % missing)
             rc = 6
-    if rc == 0:
-        for dest in pack_full_dump("full_dna", logs, ctx._ts):
-            ctx.raw_data.append(dest)
+    # R1: placed for every outcome -- see run_leaf_full_neo.
+    ctx.raw_data.extend(safe_pack_dump(ctx, "full_dna", logs, rc))
     # b_fail_scan=False (D103 pattern): the NON-AGGR tuner prints its
     # caught CapErr probe panics into the run log, so FAIL_RE would
     # counterfeit a FAIL on every successful run. Verdict = rc + the
@@ -2590,9 +2620,10 @@ def _wipe_generated(root):
                 continue
             p = os.path.join(dirpath, fn)
             try:
-                b += os.lstat(p).st_size
+                sz = os.lstat(p).st_size
                 os.unlink(p)
                 n += 1
+                b += sz      # only what was actually removed
             except OSError as e:
                 log("clean: cannot remove %s (%s)" % (p, e))
         if dirpath != root:
@@ -2603,17 +2634,47 @@ def _wipe_generated(root):
     return n, b
 
 
+CLEAN_PROMPTS = 5      # R4: how many confirmations menu #5 demands
+
+
+def _confirm_clean(ask=input):
+    """R4: five confirmations, announced up front.  Returns 0 to
+    proceed, non-zero to abort.  `ask` is injected for testing."""
+    if not sys.stdin.isatty():
+        log("clean: not a TTY -- refusing (needs %d confirmations)"
+            % CLEAN_PROMPTS)
+        return 7
+    log("clean: this DELETES all generated run data under %s and %s."
+        % (RAW_DATA_ROOT, PDF_DIR))
+    log("clean: you will be asked to confirm %d times; the last one "
+        "requires typing DELETE." % CLEAN_PROMPTS)
+    for k in range(1, CLEAN_PROMPTS + 1):
+        want = "DELETE" if k == CLEAN_PROMPTS else "yes"
+        got = ask("clean: confirm %d/%d -- type %s: "
+                   % (k, CLEAN_PROMPTS, want)).strip()
+        if got != want:
+            log("clean: aborted at prompt %d/%d" % (k, CLEAN_PROMPTS))
+            return 1
+    return 0
+
+
 def run_clean():
     """Menu item #5: delete the PROJECT's generated run data -- every
     file under raw_data/ (jet1tb, any_server, failed_tgz, ...) and
     pdf/, keeping the git-tracked marker files and their dirs.  Both
-    roots derive from REPO, so the paper tree cannot be touched."""
+    roots derive from REPO, so the paper tree cannot be touched.
+    R4: five confirmations are required before anything is removed."""
     total_n, total_b = 0, 0
+    # hard guard FIRST, before the user is prompted: only the
+    # project's data/paper_data subtree is ever wiped -- a bad edit
+    # upstream must fail loudly here.
     for root in (RAW_DATA_ROOT, PDF_DIR):
-        # hard guard: only the project's data/paper_data subtree is
-        # ever wiped -- a bad edit upstream must fail loudly here.
         assert root.startswith(
             os.path.join(REPO, "data", "paper_data") + os.sep), root
+    rc = _confirm_clean()
+    if rc:
+        return rc
+    for root in (RAW_DATA_ROOT, PDF_DIR):
         if not os.path.isdir(root):
             log("clean: %s absent -- skipped" % root)
             continue
@@ -3561,6 +3622,51 @@ class PackFullDumpTest(unittest.TestCase):
             os.path.join(dest_dir, "full_dlp.tgz.tmp")))
 
 
+class SafePackDumpTest(unittest.TestCase):
+    """R1's wrapper: never raises, so a crashed run keeps its bundle."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                               os.path.join(self.tmp.name, "raw"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.ctx = mock.Mock()
+        self.ctx._ts = "20260810_000000"
+
+    def test_success_passes_dests_through(self):
+        """A working pack returns its dests and notes nothing."""
+        with mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/a.tgz"]) as pk:
+            out = safe_pack_dump(self.ctx, "full_dlp", ["/l/r.log"], 0)
+        self.assertEqual(out, ["/d/a.tgz"])
+        pk.assert_called_once_with("full_dlp", ["/l/r.log"],
+                                    "20260810_000000")
+        self.ctx.note.assert_not_called()
+
+    def test_missing_log_is_noted_not_raised(self):
+        """A real pack of a non-existent log returns [] and notes."""
+        out = safe_pack_dump(self.ctx, "full_dlp",
+                              [os.path.join(self.tmp.name, "gone.log")],
+                              3)
+        self.assertEqual(out, [])
+        self.ctx.note.assert_called_once()
+        self.assertIn("rc=3", self.ctx.note.call_args[0][0])
+
+    def test_partial_tmp_is_cleaned_up(self):
+        """A raise mid-build leaves no *.tgz.tmp behind."""
+        dest_dir = os.path.dirname(raw_data_path("full_dlp.tgz"))
+        os.makedirs(dest_dir, exist_ok=True)
+        stray = os.path.join(dest_dir, "full_dlp.part1.tgz.tmp")
+        open(stray, "w").close()
+        with mock.patch.object(_MOD, "pack_full_dump",
+                                side_effect=OSError("boom")):
+            out = safe_pack_dump(self.ctx, "full_dlp", ["/l/r.log"], 9)
+        self.assertEqual(out, [])
+        self.assertFalse(os.path.exists(stray))
+
+
 class LaddersDivergeTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -3646,7 +3752,9 @@ class RunLeafDlpTest(unittest.TestCase):
             "20260810_000000")
         self.assertEqual(self.ctx.raw_data, ["/d/p1", "/d/p2"])
 
-    def test_nonzero_rc_never_packs(self):
+    def test_nonzero_rc_still_packs(self):
+        """R1: a failed spawn keeps rc=3 AND still places the dump --
+        the .tgz is the run log, not a success artifact."""
         with mock.patch.object(_MOD, "resolve_process_model",
                                 return_value=ProcessModel(1, [None])), \
              mock.patch.object(_MOD, "neo_env", return_value={}), \
@@ -3655,7 +3763,8 @@ class RunLeafDlpTest(unittest.TestCase):
              mock.patch.object(_MOD, "pack_full_dump") as pk:
             rc = run_leaf_dlp("dry", self.ctx)
         self.assertEqual(rc, 3)
-        pk.assert_not_called()
+        pk.assert_called_once_with("full_dlp", ["/lp/run.log"],
+                                    "20260810_000000")
 
     def test_dlp_verdicts_scan_free(self):
         """DLP must NOT fail-scan: its own self-cover CapErr prints
@@ -3672,7 +3781,9 @@ class RunLeafDlpTest(unittest.TestCase):
             run_leaf_dlp("full", self.ctx)
         self.ctx.finish.assert_called_once_with(0, b_fail_scan=False)
 
-    def test_ladder_divergence_fails_no_pack(self):
+    def test_ladder_divergence_still_packs(self):
+        """R1: divergence keeps rc=5 and the note, but the log is
+        still placed -- rc, not the dump, reports the failure."""
         model = ProcessModel(2, ["0-3", "4-7"])
         with mock.patch.object(_MOD, "resolve_process_model",
                                 return_value=model), \
@@ -3684,10 +3795,11 @@ class RunLeafDlpTest(unittest.TestCase):
              mock.patch.object(_MOD, "pack_full_dump") as pk:
             rc = run_leaf_dlp("dry", self.ctx)
         self.assertEqual(rc, 5)
-        pk.assert_not_called()
+        pk.assert_called_once()
         self.ctx.note.assert_called_once()
 
-    def test_missing_success_markers_fail_no_pack(self):
+    def test_missing_success_markers_still_packs(self):
+        """R1: rc=6 with the note, and the dump is placed anyway."""
         with mock.patch.object(_MOD, "resolve_process_model",
                                 return_value=ProcessModel(1, [None])), \
              mock.patch.object(_MOD, "neo_env", return_value={}), \
@@ -3699,7 +3811,8 @@ class RunLeafDlpTest(unittest.TestCase):
             rc = run_leaf_dlp("dry", self.ctx)
         self.assertEqual(rc, 6)
         ms.assert_called_once_with(["/lp/run.log"], 2)
-        pk.assert_not_called()
+        pk.assert_called_once_with("full_dlp", ["/lp/run.log"],
+                                    "20260810_000000")
         self.ctx.note.assert_called_once()
 
 
@@ -3830,19 +3943,21 @@ class RunLeafDnaTest(unittest.TestCase):
         self.assertEqual(dna_argv("full"),
             ["full_dna", "100", "100", "1", "1", "1", "0", "0", "0"])
 
-    def test_nonzero_rc_never_packs(self):
-        """A failed spawn skips both the marker check and packing."""
+    def test_nonzero_rc_still_packs(self):
+        """R1: a failed spawn skips the marker check but still places
+        the dump -- the .tgz is the run log, not a success artifact."""
         with mock.patch.object(_MOD, "neo_env", return_value={}), \
              mock.patch.object(_MOD, "run_rust_example",
                                 return_value=3), \
              mock.patch.object(_MOD, "pack_full_dump") as pk:
             rc = run_leaf_dna("dry", self.ctx)
         self.assertEqual(rc, 3)
-        pk.assert_not_called()
+        pk.assert_called_once_with("full_dna", ["/lp/run.log"],
+                                    "20260810_000000")
 
-    def test_missing_success_markers_fail_no_pack(self):
-        """rc=6 and no pack when the positive fold/verify markers
-        are absent from the run log."""
+    def test_missing_success_markers_still_packs(self):
+        """R1: rc=6 and the note when the positive markers are absent,
+        and the dump is placed anyway."""
         with mock.patch.object(_MOD, "neo_env", return_value={}), \
              mock.patch.object(_MOD, "run_rust_example",
                                 return_value=0), \
@@ -3851,7 +3966,8 @@ class RunLeafDnaTest(unittest.TestCase):
              mock.patch.object(_MOD, "pack_full_dump") as pk:
             rc = run_leaf_dna("dry", self.ctx)
         self.assertEqual(rc, 6)
-        pk.assert_not_called()
+        pk.assert_called_once_with("full_dna", ["/lp/run.log"],
+                                    "20260810_000000")
         self.ctx.note.assert_called_once()
 
 
@@ -3909,7 +4025,7 @@ class RunLeafClamavTest(unittest.TestCase):
             rc = run_leaf_clamav("full", self.ctx)
         self.assertEqual(rc, 5)
         ld.assert_called_once_with("clam")
-        pk.assert_not_called()
+        pk.assert_called_once()      # R1: placed despite rc=5
 
 
 class RunExternalPythonTest(unittest.TestCase):
@@ -5111,6 +5227,43 @@ class JobHandleFinishTest(unittest.TestCase):
         self.assertEqual(result.raw_data_written, ["/x/out.dat"])
 
 
+class BundleCarriesDumpTest(unittest.TestCase):
+    """R3: a failed leaf's triage bundle also holds the paper dump."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, sub in (("JOB_LOG_DIR", "jobs"),
+                           ("LOGS_DIR", "job_logs"),
+                           ("FAILED_TGZ_DIR", "failed_tgz")):
+            p = mock.patch.object(_MOD, name,
+                                   os.path.join(self.tmp.name, sub))
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_bundle_lists_the_placed_dump(self):
+        """The dump appears under raw_data/ inside the BUNDLE tgz."""
+        dump = os.path.join(self.tmp.name, "full_dlp.tgz")
+        with open(dump, "w") as f:
+            f.write("dump bytes\n")
+        h = JobHandle("dlp", "dry")
+        h.raw_data.append(dump)
+        res = h.finish(3)
+        self.assertTrue(res.failed)
+        with tarfile.open(res.triage_tgz) as t:
+            names = t.getnames()
+        self.assertIn("raw_data/full_dlp.tgz", names)
+
+    def test_absent_dump_is_skipped_not_fatal(self):
+        """A raw_data entry that no longer exists is ignored."""
+        h = JobHandle("dlp", "dry")
+        h.raw_data.append("/nope/full_dlp.tgz")
+        res = h.finish(3)
+        with tarfile.open(res.triage_tgz) as t:
+            names = t.getnames()
+        self.assertNotIn("raw_data/full_dlp.tgz", names)
+
+
 class JobHandleLogHygieneTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -5575,7 +5728,8 @@ class RunCleanTest(unittest.TestCase):
         """Generated files go; .gitkeep/.gitignore and their dirs stay,
         so `git status` stays clean after a wipe."""
         self._seed()
-        self.assertEqual(run_clean(), 0)
+        with mock.patch.object(_MOD, "_confirm_clean", return_value=0):
+            self.assertEqual(run_clean(), 0)
         kept = []
         for root in (self.raw, self.pdf):
             for dp, _dirs, fns in os.walk(root):
@@ -5592,14 +5746,98 @@ class RunCleanTest(unittest.TestCase):
                                                     "jet1tb")))
 
     def test_absent_roots_are_skipped(self):
-        self.assertEqual(run_clean(), 0)
+        with mock.patch.object(_MOD, "_confirm_clean", return_value=0):
+            self.assertEqual(run_clean(), 0)
 
     def test_guard_refuses_roots_outside_paper_data(self):
-        """A mispatched root must die loudly, never delete."""
+        """A mispatched root must die loudly, never delete -- and
+        before the R4 prompts, so _confirm_clean is never reached."""
         with mock.patch.object(_MOD, "RAW_DATA_ROOT",
-                                os.path.join(self.tmp.name, "els")):
+                                os.path.join(self.tmp.name, "els")), \
+             mock.patch.object(_MOD, "_confirm_clean") as cf:
             with self.assertRaises(AssertionError):
                 run_clean()
+        cf.assert_not_called()
+
+
+class CleanGateTest(unittest.TestCase):
+    """R4: menu #5 announces 5 prompts and needs all of them."""
+
+    def _ask(self, answers):
+        it = iter(answers)
+        return lambda _p: next(it)
+
+    def test_five_yes_then_delete_proceeds(self):
+        """All 5 answers correct -> 0, and the count is announced."""
+        said = []
+        with mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(_MOD, "log", side_effect=said.append):
+            rc = _confirm_clean(self._ask(
+                ["yes", "yes", "yes", "yes", "DELETE"]))
+        self.assertEqual(rc, 0)
+        self.assertTrue(any("confirm 5 times" in s for s in said))
+
+    def test_a_no_midway_aborts(self):
+        """A wrong answer at prompt 3 stops the run at prompt 3."""
+        said = []
+        with mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(_MOD, "log", side_effect=said.append):
+            rc = _confirm_clean(self._ask(["yes", "yes", "no"]))
+        self.assertEqual(rc, 1)
+        self.assertTrue(any("aborted at prompt 3/5" in s for s in said))
+
+    def test_last_prompt_demands_the_word_delete(self):
+        """"yes" at prompt 5 is not enough -- it must be DELETE."""
+        with mock.patch.object(sys.stdin, "isatty", return_value=True), \
+             mock.patch.object(_MOD, "log"):
+            rc = _confirm_clean(self._ask(
+                ["yes", "yes", "yes", "yes", "yes"]))
+        self.assertEqual(rc, 1)
+
+    def test_non_tty_refuses_and_wipes_nothing(self):
+        """Unattended (cron, pipe) run_clean returns 7, deletes none."""
+        with mock.patch.object(sys.stdin, "isatty", return_value=False), \
+             mock.patch.object(_MOD, "log"), \
+             mock.patch.object(_MOD, "_wipe_generated") as wp:
+            rc = run_clean()
+        self.assertEqual(rc, 7)
+        wp.assert_not_called()
+
+
+class VerifyReportScannerTest(unittest.TestCase):
+    """The new Rust report tokens must not move any leaf verdict."""
+
+    LINES = [
+        "[job 0] LOG1: VERIFY-FLAGS batch1[self]: qa=1 fs=0 kzg=1 "
+        "verdict=REJECT",
+        "[job 0] LOG1: VERIFY-SKIP batch2[self]: part 1 REJECT -- "
+        "part 2 not evaluated",
+        "[job 0] LOG1: VERIFY-FLAGS batch2[final]: c1=1 c2=1 c3=1 "
+        "c4=1 c5=1 mh=7 n_pub=40 verdict=PASS",
+        "[job 0] LOG1: VERIFY-FLAGS ind[final] i=3: idx=1 veval=1 "
+        "vcom=1 keval=1 kzg=1 verdict=PASS",
+    ]
+
+    def test_matches_no_scanner(self):
+        """None of the four scanners keys on the new tokens."""
+        for ln in self.LINES:
+            for name in ("FAIL_RE", "ADVISORY_RE", "VERIFY_FAIL_RE",
+                          "DNA_DEBUG_ERR_RE"):
+                self.assertIsNone(getattr(_MOD, name).search(ln),
+                                   "%s matched %r" % (name, ln))
+
+    def test_does_not_counterfeit_the_verify_markers(self):
+        """VERIFY-FLAGS must not pass for the real success marker."""
+        for ln in self.LINES:
+            self.assertIsNone(VERIFY_IND_RE.search(ln))
+            self.assertIsNone(FOLD_OK_RE.search(ln))
+
+    def test_the_real_failure_line_still_matches(self):
+        """The untouched driver ERR line still drives both scanners."""
+        real = ("[job 0] ERR: Job 0 BATCH PROOF VERIFICATION FAILED "
+                "(verify_batch returned false); continuing other jobs.")
+        self.assertIsNotNone(VERIFY_FAIL_RE.search(real))
+        self.assertIsNotNone(FAIL_RE.search(real))
 
 
 class VmaTargetTest(unittest.TestCase):

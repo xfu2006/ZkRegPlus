@@ -1674,11 +1674,12 @@ where
 			        &rand_inp);			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None, None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
-				false, None, None)); //note part2 of the proof will be checked later
+				false, None, Some(job_id), "self")); //note part2 checked later
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_individual_prf);
-			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, &batch_proof, &ind_prf);
+			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, &batch_proof, &ind_prf,
+				Some(job_id), "self");
 			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
 		}else{
@@ -2170,11 +2171,12 @@ where
 			assert!(BatchProcessor::<E,LK,S,CS1E,H>::verify_batch(vk, 
 				None, None, None,None,
 				&global_claim, &batch_proof, &self.poseidon_config, 
-				false,None,None)); //note part2 of the proof will be checked lateri
+				false,None,Some(job_id), "self")); //note part2 checked later
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_ind_proof);
-			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, &batch_proof, &ind_prf);
+			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, &batch_proof, &ind_prf,
+				Some(job_id), "self");
 			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
 		}else{
@@ -3593,6 +3595,7 @@ set; exit(0) before Phase 2.");
 		true, //now full verification
 		opt_kzg_sum1,
 		Some(job_id), //route each sub-check FAIL to this job's log
+		"final", //distinguish from the prover's own self-check
 	);
 	if !ok_batch {
 		//count it as well as log it: the no-abort policy above means a
@@ -3614,7 +3617,9 @@ set; exit(0) before Phase 2.");
 		idx_individual_prf,
 		&ind_claim,
 		&batch_prf,
-		&ind_prf);
+		&ind_prf,
+		Some(job_id),
+		"final");
 	if !ok_ind {
 		//see the ok_batch site: counted so a test can fail on it.
 		utils::consts::record_verify_fail();

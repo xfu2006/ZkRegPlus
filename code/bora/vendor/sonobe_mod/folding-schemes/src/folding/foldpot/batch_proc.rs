@@ -729,9 +729,18 @@ where
 		claim: &IndividualClaim<E>,
 		batch_proof: &BatchProof<E,S>,
 		ind_proof: &IndividualProof<E>,
+		log_tag: Option<usize>, //Some(job_id): route report lines to that
+			//job's log; None keeps the legacy shared-stdout behaviour
+		ctx: &'static str, //call-site tag, "self" (prover self-check) or
+			//"final" (post-fold verification), so ONE job log tells them apart
 		)->bool{
 		//1. verify the generated challenges
-		assert!(i==claim.i);	
+		assert!(i==claim.i);
+		// lvl: ERR for a failed sub-check, LOG1 for the always-on flags.
+		let emit = |lvl: usize, m: String| match log_tag {
+			Some(jid) => log(jid, lvl, &m),
+			None => emit_stdout(m),
+		};
 		let mut sponge= PoseidonSponge::<E::ScalarField> 
 			::new(&vkey.poseidon_config);
 		let mut arr_fe:Vec<F> = vec![];
@@ -761,29 +770,46 @@ where
 		//vec_r[i] + ch*vec_v[i] at omega^i, so that is the value the
 		//opening must report.
 		let newcm = batch_proof.vcom_vec_r + batch_proof.vcom_vec_v.mul(ch);
-		let idx_pt = match veccom::omega_pow_idx::<E::ScalarField>(
-			vkey.vec_dom_size, i) {
-			Ok(p) => p,
-			Err(_) => return false,
+		//R2: evaluate EVERY sub-check, then AND them -- the returned
+		//value is the same predicate the early returns computed.
+		//b_vcom is the only one needing idx_pt, so None => false
+		//reproduces the old `Err(_) => return false` exactly.
+		let opt_idx = veccom::omega_pow_idx::<E::ScalarField>(
+			vkey.vec_dom_size, i).ok();
+		let b_idx = opt_idx.is_some();
+		let b_vcom_eval = ind_proof.vcom_prf.eval == r_i + ch * v_i;
+		let b_vcom = match opt_idx {
+			Some(p) => VecCom::<'a,E>::verify_with_challenge(&vkey.vec,
+				p, &newcm, &ind_proof.vcom_prf).is_ok(),
+			None => false,
 		};
-		if ind_proof.vcom_prf.eval != r_i + ch * v_i {
-			return false;
-		}
-		let bres = VecCom::<'a,E>::verify_with_challenge(&vkey.vec,
-			idx_pt, &newcm, &ind_proof.vcom_prf);
-		if !bres.is_ok() {
-			return false;
-		}
 
 		//3. verify the kzg commitment, and bind its opened value to v_i.
 		//S102/F3: without this the check only proves the word
 		//commitment opens to SOME value at r_i, not that it is v_i.
-		if ind_proof.kzg_prf.eval != v_i {
-			return false;
-		}
-		let bres = KZG::<'a,E>::verify_with_challenge(&vkey.kzg, r_i,
-			&claim.kzg_word, &ind_proof.kzg_prf);
-		bres.is_ok()
+		let b_kzg_eval = ind_proof.kzg_prf.eval == v_i;
+		let b_kzg = KZG::<'a,E>::verify_with_challenge(&vkey.kzg, r_i,
+			&claim.kzg_word, &ind_proof.kzg_prf).is_ok();
+
+		//4. report all five flags, then the detail of each red one.
+		let ok = b_idx && b_vcom_eval && b_vcom && b_kzg_eval && b_kzg;
+		emit(LOG1, format!("VERIFY-FLAGS ind[{}] i={}: idx={} \
+			veval={} vcom={} keval={} kzg={} verdict={}", ctx, i,
+			b_idx as u8, b_vcom_eval as u8, b_vcom as u8,
+			b_kzg_eval as u8, b_kzg as u8,
+			if ok {"PASS"} else {"REJECT"}));
+		if !b_idx {emit(ERR, format!("ind[{}] i={}: omega^i failed, \
+			dom_size={}", ctx, i, vkey.vec_dom_size));}
+		if !b_vcom_eval {emit(ERR, format!("ind[{}] i={}: vcom eval \
+			got={} want={} (r_i={} ch={} v_i={})", ctx, i,
+			ind_proof.vcom_prf.eval, r_i + ch * v_i, r_i, ch, v_i));}
+		if !b_vcom {emit(ERR, format!("ind[{}] i={}: vcom pairing \
+			fails", ctx, i));}
+		if !b_kzg_eval {emit(ERR, format!("ind[{}] i={}: kzg eval \
+			got={} want={}", ctx, i, ind_proof.kzg_prf.eval, v_i));}
+		if !b_kzg {emit(ERR, format!("ind[{}] i={}: kzg pairing \
+			fails, r_i={}", ctx, i, r_i));}
+		ok
 	}
 
 	/// generate the global proof.
@@ -942,15 +968,15 @@ where
 		opt_kzg_sum1: Option<F>, //optional kzg_sum1
 		log_tag: Option<usize>, //Some(job_id): route sub-check FAILs to the
 			//per-job log so a concurrent N-way batch attributes them per share
+		ctx: &'static str, //call-site tag, "self" (prover self-check) or
+			//"final" (post-fold verification), so ONE job log tells them apart
 		)->bool{
 		//0. build rand input for generate Fiat-Shamir randoms
-		// Internal flag (replaces the B_DEBUG gate): set true to print which
-		// sub-check returned false during batch verification.
-		let b_debug = true;
-		// route each sub-check FAIL to the per-job log when a job id is given
+		// route each report line to the per-job log when a job id is given
 		// (bisect_job3.py N-way batch), else to shared stdout as before.
-		let emit_fail = |m: String| match log_tag {
-			Some(jid) => log(jid, ERR, &m),
+		// lvl: ERR for a failed sub-check, LOG1 for the always-on flags.
+		let emit = |lvl: usize, m: String| match log_tag {
+			Some(jid) => log(jid, lvl, &m),
 			None => emit_stdout(m),
 		};
 		let rand_inp = SnarkRandInput::<E>{
@@ -968,13 +994,8 @@ where
 		//1. check the qa_nizkProof
 		let x = vec![prf.kzg_vec_r.clone(), prf.vcom_vec_r.clone(),
 			prf.kzg_vec_v.clone(), prf.vcom_vec_v.clone()];
-		let bres = verify_qa_nizk::<E>(&x, &prf.prf_qa_nizk, 
-			&vkey.vk_qa_nizk);	
-		if !bres {
-			if b_debug {emit_fail(
-				"qa_nizk verif fails".to_string());}
-			return false;
-		}
+		let b_qa = verify_qa_nizk::<E>(&x, &prf.prf_qa_nizk,
+			&vkey.vk_qa_nizk);
 
 		//2. verify the aggregated kzg proof 
 		let coms = vec![
@@ -986,22 +1007,36 @@ where
 				prf.kzg_vec_v.clone()
 		];
 		let (ch, rc) = rand_inp.gen_challenge();
-		if ch!=prf.ch || rc!=prf.rc {
-			if b_debug {emit_fail(
-				"fs challenge (ch/rc) mismatch".to_string());}
-			return false;
-		}
+		let b_fs = ch==prf.ch && rc==prf.rc;
 		let mut com_all = E::G1::zero();
 		let mut factor = E::ScalarField::one();
 		for i in 0..coms.len(){
 			com_all = com_all + coms[i].mul(factor);
 			factor = factor * rc;
 		}
-		let res = KZG::<E>::verify_with_challenge(&vkey.kzg,
-			ch, &com_all, &prf.agg_kzg_prf);
-		if !res.is_ok() {
-			if b_debug {emit_fail(
-				"kzg verif fails".to_string());}
+		let b_kzg = KZG::<E>::verify_with_challenge(&vkey.kzg,
+			ch, &com_all, &prf.agg_kzg_prf).is_ok();
+
+		//R2: report ALL of part 1 before returning, so one red
+		//sub-check no longer hides the other two.
+		let part1_ok = b_qa && b_fs && b_kzg;
+		emit(LOG1, format!("VERIFY-FLAGS batch1[{}]: qa={} fs={} \
+			kzg={} verdict={}", ctx, b_qa as u8, b_fs as u8,
+			b_kzg as u8, if part1_ok {"PASS"} else {"REJECT"}));
+		if !b_qa {emit(ERR, "qa_nizk verif fails".to_string());}
+		if !b_fs {emit(ERR, format!("fs challenge (ch/rc) mismatch: \
+			ch_exp={} ch_got={} rc_exp={} rc_got={}",
+			ch, prf.ch, rc, prf.rc));}
+		if !b_kzg {emit(ERR, format!("kzg verif fails: n_coms={} \
+			eval={}", coms.len(), prf.agg_kzg_prf.eval));}
+		if !part1_ok {
+			//part 2 opens ~18 Options with .expect(); today's early
+			//return makes those states unreachable, so keep the gate
+			//and say why part 2 carries no flags.
+			if b_check_part2 {
+				emit(LOG1, format!("VERIFY-SKIP batch2[{}]: part 1 \
+					REJECT -- part 2 not evaluated", ctx));
+			}
 			return false;
 		}
 
@@ -1019,7 +1054,7 @@ where
 				*prf.kzg_all_com_ch1.as_ref().expect("com_ch1 empty"),
 				&prf.kzg_all_com1.expect("kzg1 empty"),
 				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty")).is_ok();
-			if !c1 {emit_fail("cs1e kzg_all_ocm1 verif fails".to_string());}
+			if !c1 {emit(ERR, "cs1e kzg_all_ocm1 verif fails".to_string());}
 
 			//2. check kzg_all_com2
 			let c2 = CS1E::verify_with_challenge(
@@ -1027,7 +1062,7 @@ where
 				*prf.kzg_all_com_ch2.as_ref().expect("com_ch2 empty"),
 				&prf.kzg_all_com2.expect("kzg2 empty"),
 				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty")).is_ok();
-			if !c2 {emit_fail("cs1e kzg_all_com2 res2 fails".to_string());}
+			if !c2 {emit(ERR, "cs1e kzg_all_com2 res2 fails".to_string());}
 
 			//3. check qa_nizk_prf2
 			let vec_x = vec![
@@ -1040,7 +1075,7 @@ where
 				&prf.qa_nizk_prf2.clone().unwrap(),
 				&nova2_qa_nizk_vkey.expect("qanizk vkey empty")
 			);
-			if !c3 {emit_fail("qanizk2 fails".to_string());}
+			if !c3 {emit(ERR, "qanizk2 fails".to_string());}
 
 			//4. check the snark proof
 			let kzg_sum1 = if opt_kzg_sum1.is_some(){
@@ -1059,7 +1094,7 @@ where
 					.expect("snark main empty")
 			);
 			let c4 = snark_v_main.is_ok() && snark_v_main.unwrap().clone();
-			if !c4 {emit_fail("snark main fails.".to_string());}
+			if !c4 {emit(ERR, "snark main fails.".to_string());}
 
 			//4.2 verify te cpcirc snark proof
 			let snark_inp = CircPubInput{
@@ -1089,18 +1124,30 @@ where
 
 			};
 			let public_input: Vec<F> = snark_inp.to_vec().expect("to_vec err");
-			// (counterpart to driver.rs 60100.3.1 assemble-side).
-			for (k, v) in public_input.iter().enumerate() {
-			}
         	let snark_v_cp= S::verify(
 				&snark_vk_cp.expect("snark vkey empty!"),
 				&public_input,
 				&prf.snark_proof_cp.as_ref().clone().expect("snark pf empty"));
 					//.map_err(|e| Error::Other(e.to_string())).unwrap();
 			let c5 = snark_v_cp.is_ok() && snark_v_cp.unwrap().clone();
-			if !c5 {emit_fail("snark_v_cp fails.".to_string());}
+			if !c5 {emit(ERR, "snark_v_cp fails.".to_string());}
+			//R5: the rebuilt public inputs are the only evidence for a
+			//cp-snark rejection (counterpart to driver.rs 60100.3.1
+			//assemble-side); dump them on failure only.
+			if !c5 {
+				for (k, v) in public_input.iter().enumerate() {
+					emit(ERR, format!("snark_v_cp pubin[{}] = {}",
+						k, v));
+				}
+			}
 
-			if !(c1 && c2 && c3 && c4 && c5) { return false; }
+			let part2_ok = c1 && c2 && c3 && c4 && c5;
+			emit(LOG1, format!("VERIFY-FLAGS batch2[{}]: c1={} c2={} \
+				c3={} c4={} c5={} mh={} n_pub={} verdict={}", ctx,
+				c1 as u8, c2 as u8, c3 as u8, c4 as u8, c5 as u8,
+				mh, public_input.len(),
+				if part2_ok {"PASS"} else {"REJECT"}));
+			if !part2_ok { return false; }
 		}
 
 		true
@@ -1174,11 +1221,12 @@ mod tests_batch_proc {
 		};
 
 		let (batch_proof, _rand_inp2) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false> ::prove_batch(&pk, &snark_inp, &words, lkup, &partial_input); 
-		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None, None));
+		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None, None,
+			"test"));
 		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
 			&snark_inp, &words, &ind_claims[i], i);
 		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,
-			&ind_claims[i], &batch_proof, &ind_prf);
+			&ind_claims[i], &batch_proof, &ind_prf, None, "test");
 		assert!(res, "verify indidivudal proof failed");
    }
 
@@ -1275,7 +1323,7 @@ mod tests_batch_proc {
 				vcom_prf, v_i: v_fake, kzg_prf: kzg_prf.clone()};
 			let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
 				Groth16<Bn254>,CS1E,false>::verify_individual(
-				&vk, i, &claim_fake, &batch_proof, &ind_prf);
+				&vk, i, &claim_fake, &batch_proof, &ind_prf, None, "test");
 			assert!(!res,
 				"forged word ACCEPTED (opened at {}): F2/F3 not binding",
 				name);
