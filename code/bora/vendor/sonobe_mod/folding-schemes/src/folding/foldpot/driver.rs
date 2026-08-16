@@ -2064,6 +2064,33 @@ where
 			//so we can use it to cut prove_step time to avoid computing
 		let mut hash_cmF= C1::ScalarField::zero();
 
+		// DEBUG USE 69801.15: pass2-vs-pass3 statement comparison,
+		// armed by ZKR_GADGET_CHECK (dna_debug runs only; prod is
+		// unaffected). .15.1 chunk-hash mismatch (all steps),
+		// .15.2 exact element diff (first PROBE15_FULL_CAP steps),
+		// .15.3 ok heartbeat, .15.4 pass-2 double-build check
+		// (extra gate ZKR_PROBE15_DOUBLE -- keep OFF on the clean
+		// server run, it re-runs advice+statement generation),
+		// .15.5 extra-info overwrite delta. Remove by tag 69801.
+		let b_probe15 = std::env::var("ZKR_GADGET_CHECK").is_ok();
+		let b_probe15_dbl =
+			std::env::var("ZKR_PROBE15_DOUBLE").is_ok();
+		const PROBE15_FULL_CAP: usize = 40;
+		const PROBE15_CHUNK: usize = 4096;
+		let mut probe15_hashes: Vec<Vec<u64>> = vec![];
+		let mut probe15_full: Vec<Vec<C1::ScalarField>> = vec![];
+		let probe15_hash = |v: &[C1::ScalarField]| -> Vec<u64> {
+			use std::hash::{Hash, Hasher};
+			v.chunks(PROBE15_CHUNK).map(|ch| {
+				let mut h = std::collections::hash_map
+					::DefaultHasher::new();
+				for e in ch {
+					e.into_bigint().as_ref().hash(&mut h);
+				}
+				h.finish()
+			}).collect()
+		};
+
 		for word in &words{
 			if _word_cap > 0 && word_id > _word_cap {
 				break;
@@ -2094,6 +2121,11 @@ where
 				let wi_owned = Self::with_chunk_halo(word_info,
 					&remaining, m_halo);
 				let wi_ref = wi_owned.as_ref().unwrap_or(word_info);
+				// DEBUG USE 69801.15.4: keep the pre-call advice arc
+				// so the double-build below re-runs from the same
+				// prev state. Remove by tag 69801.
+				let p15_prev_adv = if b_probe15_dbl
+					{prev_adv.clone()} else {None};
 				//3.2 generate the adice again
 				let res = lock_unwrap!(circ.get_mapper())
 					.gen_nd_advice(&frag, wi_ref, prev_adv, subseg_id - 1, job_id);
@@ -2108,6 +2140,52 @@ where
 				let mut stmt = stmt_res.unwrap();
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass2. gen statement"), &mut gt_p2);
 				stmt.update_lookup(start,start+share_size, &self.lkup, &m_map);
+				// DEBUG USE 69801.15: record the pass-2 statement
+				// digest (full vec for early steps); optional
+				// double-build determinism check. Remove by 69801.
+				if b_probe15 {
+					let v2 = stmt.to_vec();
+					probe15_hashes.push(probe15_hash(&v2));
+					if idx < PROBE15_FULL_CAP {
+						probe15_full.push(v2.clone());
+					}
+					if b_probe15_dbl {
+						let r2 = lock_unwrap!(circ.get_mapper())
+							.gen_nd_advice(&frag, wi_ref,
+							p15_prev_adv, subseg_id - 1, job_id);
+						let adv2 = r2.expect("p15 re-advice fails");
+						let s2 = lock_unwrap!(circ.get_mapper())
+							.build_statement(&frag, &prev_stmt,
+							self.lkup.clone(), ei, adv2,
+							share_size, false, job_id);
+						let mut s2 = s2.expect("p15 re-stmt fails");
+						s2.update_lookup(start, start + share_size,
+							&self.lkup, &m_map);
+						let v2b = s2.to_vec();
+						let nd = v2.iter().zip(v2b.iter())
+							.filter(|(a, b)| a != b).count();
+						if nd > 0 {
+							let mut det = String::new();
+							let mut shown = 0usize;
+							for (k, (a, b)) in v2.iter()
+								.zip(v2b.iter()).enumerate() {
+								if a != b && shown < 4 {
+									det.push_str(&format!(
+										" [{} {} {}]", k, a, b));
+									shown += 1;
+								}
+							}
+							emit_stdout(format!(
+								"DEBUG USE 69801.15.4: idx={} \
+								rebuild n_diff={} det:{}",
+								idx, nd, det));
+						} else if idx % 32 == 0 {
+							emit_stdout(format!(
+								"DEBUG USE 69801.15.4: idx={} \
+								rebuild ok", idx));
+						}
+					}
+				}
 				start += share_size;
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 2. update lkup, share_size: {}", share_size), &mut gt_p2);
 
@@ -2123,8 +2201,53 @@ where
 				vec_grp_cmF.push(res.1);
 				log_perf(job_id, log_level+2, &format!("PERF 1009 -- Pass 2. compute cmF. "), &mut gt_p2);
 
-				//3.5 update 
+				//3.5 update
 				let ea = stmt.to_extra_info();
+				// DEBUG USE 69801.15.5: which extra-info fields the
+				// overwrite changes (pass-2 built from the OLD row,
+				// pass-3 will build from the NEW). Remove by 69801.
+				if b_probe15 {
+					let o = &vea[idx];
+					let pairs = [
+						("pc_i", o.pc_i, ea.pc_i),
+						("pc_i1", o.pc_i1, ea.pc_i1),
+						("total_words", o.total_words,
+							ea.total_words),
+						("subseg_id", o.subseg_id, ea.subseg_id),
+						("total_word_len", o.total_word_len,
+							ea.total_word_len),
+						("word_id", o.word_id, ea.word_id),
+						("n_circ", o.n_circ, ea.n_circ),
+						("total_word_segs", o.total_word_segs,
+							ea.total_word_segs),
+						("act_word_subseg_size",
+							o.act_word_subseg_size,
+							ea.act_word_subseg_size),
+						("batch_r", o.batch_r, ea.batch_r),
+						("batch_v", o.batch_v, ea.batch_v),
+						("r_all_words", o.r_all_words,
+							ea.r_all_words),
+						("r_kzg_len", o.r_kzg_len, ea.r_kzg_len),
+						("r_vec_r", o.r_vec_r, ea.r_vec_r),
+						("r_vec_v", o.r_vec_v, ea.r_vec_v),
+						("r_word_i", o.r_word_i, ea.r_word_i),
+						("accumulated_word_len",
+							o.accumulated_word_len,
+							ea.accumulated_word_len),
+					];
+					let mut det = String::new();
+					for (n, a, b) in pairs.iter() {
+						if a != b {
+							det.push_str(&format!(
+								" {}:{}->{}", n, a, b));
+						}
+					}
+					if !det.is_empty() {
+						emit_stdout(format!(
+							"DEBUG USE 69801.15.5: idx={} \
+							ei overwrite delta:{}", idx, det));
+					}
+				}
 				vea[idx] = ea; //UPDATE.
 				prev_stmt = Some(stmt);
 				idx += 1;
@@ -2289,6 +2412,57 @@ where
 
 				stmt.update_lookup(_start,_start+share_size, &self.lkup, &m_map);
 				_start += share_size;
+				// DEBUG USE 69801.15: compare the pass-3 statement
+				// against the pass-2 digest; exact element diff for
+				// the early steps. Remove by tag 69801.
+				if b_probe15 && idx < probe15_hashes.len() {
+					let v3 = stmt.to_vec();
+					let h3 = probe15_hash(&v3);
+					let h2 = &probe15_hashes[idx];
+					let bad: Vec<usize> = h2.iter().zip(h3.iter())
+						.enumerate().filter(|(_, (a, b))| a != b)
+						.map(|(k, _)| k).collect();
+					if !bad.is_empty() {
+						let n_show = bad.len().min(8);
+						emit_stdout(format!(
+							"DEBUG USE 69801.15.1: idx={} pass2!=\
+							pass3: bad_chunks={} of {} first={:?} \
+							elem_starts={:?}",
+							idx, bad.len(), h2.len(),
+							&bad[..n_show],
+							bad[..n_show].iter().map(|c|
+								c * PROBE15_CHUNK)
+								.collect::<Vec<usize>>()));
+						if idx < probe15_full.len() {
+							let v2 = &probe15_full[idx];
+							let mut first: Vec<usize> = vec![];
+							let mut det = String::new();
+							let mut nd = 0usize;
+							let n = v2.len().min(v3.len());
+							for k in 0..n {
+								if v2[k] != v3[k] {
+									if first.len() < 8 {
+										first.push(k);
+									}
+									if nd < 4 {
+										det.push_str(&format!(
+											" [{} {} {}]",
+											k, v2[k], v3[k]));
+									}
+									nd += 1;
+								}
+							}
+							emit_stdout(format!(
+								"DEBUG USE 69801.15.2: idx={} \
+								n_diff={} first8={:?} det:{}",
+								idx, nd, first, det));
+						}
+					} else if idx % 32 == 0 {
+						emit_stdout(format!(
+							"DEBUG USE 69801.15.3: idx={} \
+							pass2==pass3 ok", idx));
+					}
+				}
 				log_perf(job_id, log_level+1, &format!("PERF 1009: -- Pass 3. update lkup: share size: {}", share_size), &mut gt_fold);
 
 				//2.2. prove step
