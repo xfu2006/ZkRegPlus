@@ -508,6 +508,9 @@ impl <F: PrimeField + ColEle> GetSigAdvice<F>{
 		}
 		let mut sigs_to_merge = hashset_sigs_to_merge.iter().map(|x| x.clone())
 			.collect::<Vec<F>>();
+		//canonical order: cmF precompute (pass 2) and fold (pass 3)
+		//must build identical statements; HashSet order is random.
+		sigs_to_merge.sort();
 		let sigs_to_include = vec_sig_id_no_crit_pat.iter().map(|x| 
 			F::from(*x as u64)).collect::<HashSet<F>>();
 		assert!(sigs_to_include.is_disjoint(&hashset_sigs_to_merge));
