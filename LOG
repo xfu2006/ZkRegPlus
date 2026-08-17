@@ -31210,7 +31210,9 @@ Goal 2. try to improve neo speed phase 1
 		==> check 6:15pm still not working!
 		==> 6:45pm restarts
 		====> check 10:30PM (on 512GB) still no good.
-		===> check 2:40am and 3:25am 
+		#################################
+		===> check 2:40am and 3:30am 
+		#################################
 		
 
 Goal 3. Full clam
@@ -31218,12 +31220,14 @@ Goal 3. Full clam
 	[b] analyze
 	[c] new debug run 9:33pm + 25 min -> 9:55pm
 	[d] failed again! 10:09pm!
-	[e]
+	[e] started again 11:45pm
+	[f] check 4:00AM -> TUNER TOO SLOW! killed it.
+	[g]
 
 --- DATA ----
 *** LARGE SERVER ***
 [1] full_dna -> DONE
-[2] full_clam (9:33pm 08/16) -> 
+[2] full_clam (11:45pm 08/16) -> 
 
 *** SMALL SERVER ***
 [1]

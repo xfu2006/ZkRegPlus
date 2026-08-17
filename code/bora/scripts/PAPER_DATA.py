@@ -2338,6 +2338,12 @@ TOP_CHOICES = [
                   "decider, ~1.5h)"),
     ("dna_debug_full", "dna DEBUG probes (FULL shape 328 steps, stops "
                        "after main snark, ~5h)"),
+    # small_full_dlp (2026-08-17): appended LAST so items 1-8 keep
+    # their numbers.  Deliberately NOT a JOB_SPECS leaf -- a leaf would
+    # be reachable from `full_run --items all`, and this entry must
+    # never alter a full_run.  It writes nothing into raw_data/.
+    ("small_full_dlp", "small_full_dlp (ENTIRE dlp DB, ~5% corpus + "
+                       "hard core, FOLD COST ONLY, ~8.5h/~230GB)"),
 ]
 
 LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
@@ -2429,7 +2435,7 @@ def _parse_items(items):
 
 
 NO_ITEM_TOPS = ("small", "figs", "small_full_snark", "clean",
-                "dna_debug", "dna_debug_full")
+                "dna_debug", "dna_debug_full", "small_full_dlp")
 
 
 def resolve_plan(run, items):
@@ -2596,6 +2602,63 @@ def run_small_full_snark():
             % res.triage_tgz)
         return 1
     log("small_full_snark: report -> %s" % SMALL_SNARK_REPORT)
+    return 0
+
+
+# =====================================================================
+# Layer A -- small_full_dlp (last menu item: DLP fold cost on a small
+# corpus with the FULL database)
+# =====================================================================
+
+# Isolation from full_run, by construction (2026-08-17):
+#   * not in JOB_SPECS/LEAF_CHOICES/DRY_COST, so `--items all` and
+#     `--items dlp` cannot reach it;
+#   * SMALL_DLP's own db_cache_dir ("dlp_small_neo"), so the tuned
+#     ladder.json / warmstart_caps.json never land where full_dlp
+#     reads them (T308: a shared warmstart poisons the next cold
+#     start);
+#   * no safe_pack_dump / place_raw_data call, so raw_data/ -- and the
+#     paper's full_dlp.part*.tgz in particular -- is untouched.
+#
+# argv, positionally identical to full_dlp's 8-arg tail:
+#   perc_db=100      the ENTIRE DLP database (the point: real ladder)
+#   perc_samples=100 the corpus list IS already the ~5% sample, so
+#                    sampling again would re-open the missing-top-rung
+#                    hole SMALL_DLP exists to close
+#   num_circs=4      k_max=4, production's 4-rung ladder
+#   num_jobs=8       matches production; drop to 4 if fold RAM bites
+#   numa_num=1 part_id=0   one process on a 1-socket box
+#   dry=0            full width: chunk_len 64, range2_bit 25
+#   ladder_only=0    fold for real
+SMALL_DLP_JOBS = "8"
+SMALL_DLP_ARGS = ["small_full_dlp", "100", "100", "4", SMALL_DLP_JOBS,
+                  "1", "0", "0", "0"]
+
+
+def run_small_full_dlp():
+    """Last menu item: fold the ~5%-plus-hard-core DLP corpus against
+    the entire DLP database and stop before the decider, to price fold
+    cost per step at production circuit width."""
+    ctx = JobHandle("small_dlp", "full")
+    ctx.note("mode=small_full_dlp (single proc; entire DB, pre-cut "
+             "corpus, b_folding_only=true -> no snark)")
+    run_log = ctx.log_path("run")
+    rc = run_rust_example(ctx, "bora_cli", SMALL_DLP_ARGS, neo_env())
+    res = ctx.finish(rc)
+    # After finish(): the trailer must stay invisible to the fail scan,
+    # and res is where peak_rss_gb / wall_s become final.
+    append_run_trailer(run_log, res)
+    _summary_line("%-4s   small_full_dlp rc=%s wall=%ds "
+                  "peak_rss=%.1fGB idle=%ds/%ds" % (
+                      "FAIL" if res.failed else "OK", res.rc,
+                      int(res.wall_s), res.peak_rss_gb,
+                      int(res.peak_idle_s), STALL_S))
+    log("small_full_dlp: peak RSS and wall clock -> %s"
+        % CURRENT_JOB_LOG)
+    if res.failed:
+        log("small_full_dlp: FAILED -- triage: %s" % res.triage_tgz)
+        return 1
+    log("small_full_dlp: ladder + fold stats -> %s" % run_log)
     return 0
 
 
@@ -2845,6 +2908,23 @@ def main():
         go_background()
         install_signal_handlers()
         return run_small_full_snark()
+
+    if plan.top == "small_full_dlp":
+        if args.plan_only:
+            return 0
+        # Hours long and single-process, so it detaches exactly like
+        # small_full_snark: one CURRENT_JOB.log, no part2.
+        ts = _ts()
+        print("[paper_data %s] detaching into the background "
+              "(survives logout; no nohup needed)." % ts)
+        print("[paper_data %s]   summary log:    tail -F %s"
+              % (ts, SUMMARY_LOG))
+        print("[paper_data %s]   current job:    tail -F %s"
+              % (ts, CURRENT_JOB_LOG))
+        sys.stdout.flush()
+        go_background()
+        install_signal_handlers()
+        return run_small_full_dlp()
 
     if args.plan_only:
         return 0
@@ -6572,7 +6652,10 @@ class InteractiveSelectTest(unittest.TestCase):
         self.assertEqual(plan.top, "small")
 
     def test_invalid_top_choice_rejected(self):
-        with mock.patch("builtins.input", side_effect=["9"]):
+        """One past the last menu slot exits.  Derived, not hard-coded:
+        a literal went stale the moment a top was appended."""
+        past_end = str(len(TOP_CHOICES) + 1)
+        with mock.patch("builtins.input", side_effect=[past_end]):
             with self.assertRaises(SystemExit):
                 interactive_select()
 

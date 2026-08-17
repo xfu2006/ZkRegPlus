@@ -36,6 +36,14 @@ RE_ITER = re.compile(r"determine_config_non_aggr iter")
 # still equal to 319 means the new binary is not the one running.
 RE_SEED = re.compile(r"NEO SUBSIG SEED: demand cs=(\d+) igc=(\d+)")
 OLD_DEMAND_CS = 319
+# CP seed sanity. The exact seed prints need = 1 + max_w(sed+dfa+ised);
+# the killed crawl already proved clam needs > 26, so need <= 26 means
+# the old proxy seed (or a wrong formula) is running.
+RE_CP_SEED = re.compile(r"NEO CP SEED: no_crit_pat=(\d+) need=(\d+)")
+CP_NEED_MIN = 27
+# any cp::subsigs bump = the crawl is back = the exact seed under-shot
+# (formula refuted for some word). Zero expected.
+RE_CP_BUMP = re.compile(r'bumped \[\("cp::subsigs')
 # the true abort marker (tuner hands an unmappable CapErr to the
 # driver and the whole job dies rc=101)
 RE_FATAL = re.compile(r"unmapped CapErr")
@@ -154,6 +162,31 @@ def main():
                   "the unfiltered count is live" % OLD_DEMAND_CS)
     else:
         print("INFO: no NEO SUBSIG SEED line yet")
+
+    # 4b. CP seed sanity: the exact seed must clear the crawl-proven
+    # demand, and no cp::subsigs CapErr may ever fire again.
+    m = RE_CP_SEED.search(text)
+    if m:
+        nc, need = int(m.group(1)), int(m.group(2))
+        print("INFO: NEO CP SEED no_crit_pat=%d need=%d" % (nc, need))
+        if need < CP_NEED_MIN:
+            print("FAIL: CP seed need=%d < %d (the killed crawl proved "
+                  ">26) -- old proxy seed or wrong formula running"
+                  % (need, CP_NEED_MIN))
+            fail = True
+        else:
+            print("PASS: CP seed need=%d >= %d (exact seed live)"
+                  % (need, CP_NEED_MIN))
+    else:
+        print("INFO: no NEO CP SEED need= line yet (old-format line or "
+              "pre-seed phase)")
+    n_cpbump = len(RE_CP_BUMP.findall(text))
+    if n_cpbump == 0:
+        print("PASS: 0 cp::subsigs bumps (crawl gone)")
+    else:
+        print("FAIL: %d cp::subsigs bump(s) -- the exact seed "
+              "under-shot; save the log for the session" % n_cpbump)
+        fail = True
 
     # 5. later-stage markers, informational
     n_conv = len(RE_CONV.findall(text))

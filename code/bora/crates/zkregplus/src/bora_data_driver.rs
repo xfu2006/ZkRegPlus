@@ -436,6 +436,10 @@ pub struct DatasetSpec {
 	/// Scale-round floors + seed override (legacy scale's low
 	/// "Option A" profile). None = scale keeps the full-run values.
 	pub(crate) scale_tune: Option<ScaleTune>,
+	/// Fold cost only: skip the decider even on a proving part.
+	/// false for every paper dataset (their part topology decides);
+	/// true only for SMALL_DLP, whose whole point is fold timing.
+	pub(crate) b_fold_only: bool,
 }
 
 /// DLP: legacy full_dlp()'s exact run configuration (zkp_driver's
@@ -495,6 +499,57 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	hand_seed: None,
 	log_level: utils::logger::LOG3,
 	scale_tune: None,
+	b_fold_only: false,
+};
+
+/// small_full_dlp: DLP's config verbatim except the corpus and the
+/// cache dir -- ENTIRE DB (perc_db 100), ~5% of the samples UNION a
+/// hard core that pins the 4-rung ladder, and fold cost only.
+///
+/// Why a separate const rather than `full_dlp <perc_samples>`: the
+/// sampler (subset()) draws uniformly, so a 5% draw would miss the
+/// known over-cap files and collapse the ladder to 3 rungs, losing
+/// circ3 -- the rung that sets cs1e, decider size and peak RAM. The
+/// list is pre-cut instead (scripts/debug/gen_small_full_dlp_list.py)
+/// and folded whole at perc_samples 100, so no sampler runs at all.
+///
+/// db_cache_dir MUST differ from DLP's: the tuned ladder.json and
+/// warmstart_caps.json are corpus-shaped, and sharing the dir would
+/// poison the next full_dlp cold start (T308, d483cdfe).
+pub const SMALL_DLP: DatasetSpec = DatasetSpec {
+	name: "dlp_small",
+	config_dir: DLP.config_dir,
+	sig_file: DLP.sig_file,
+	master_sources:
+		&["data/paper_data/dlp/cfg/jobs/small_full_dlp_list.txt"],
+	// no scale sweep: this const is never routed to collect_scale_*.
+	scale_sources: &[],
+	db_cache_dir: "dlp_small_neo",
+	chunk_len: DLP.chunk_len,
+	dry_chunk_len: DLP.dry_chunk_len,
+	range2_bit: DLP.range2_bit,
+	dry_range2_bit: DLP.dry_range2_bit,
+	dry_scale_perc: DLP.dry_scale_perc,
+	fanout_cap: DLP.fanout_cap,
+	min_pm_word_len: DLP.min_pm_word_len,
+	b_aggressive: DLP.b_aggressive,
+	b_check_lkup: DLP.b_check_lkup,
+	vec_decrease_level: DLP.vec_decrease_level,
+	n_par_snark: DLP.n_par_snark,
+	n_par_snark_cp: DLP.n_par_snark_cp,
+	n_par_batch_claim: DLP.n_par_batch_claim,
+	min_subsigs: DLP.min_subsigs,
+	min_basis_unique_states: DLP.min_basis_unique_states,
+	min_basis_acc_states: DLP.min_basis_acc_states,
+	min_basis_pats_in_trace: DLP.min_basis_pats_in_trace,
+	min_avg_pats_per_subsig: DLP.min_avg_pats_per_subsig,
+	min_dfa_sigs: DLP.min_dfa_sigs,
+	min_dfa_subsigs: DLP.min_dfa_subsigs,
+	hand_seed: None,
+	log_level: DLP.log_level,
+	scale_tune: None,
+	// the point of the run: fold timing, no Groth16.
+	b_fold_only: true,
 };
 
 /// DNA: legacy full_dna()'s exact run configuration (zkp_driver.rs
@@ -577,6 +632,7 @@ pub const DNA: DatasetSpec = DatasetSpec {
 	}),
 	log_level: utils::logger::LOG3,
 	scale_tune: None,
+	b_fold_only: false,
 };
 
 /// CLAM: legacy PRODUCTION full_clamav()'s exact run configuration
@@ -715,6 +771,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 			levels: Vec::new(),
 		},
 	}),
+	b_fold_only: false,
 };
 
 /// Config dir for a run: the real one when nothing is thinned, else the
@@ -1763,13 +1820,13 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 				"bora_data_driver: determine_config_non_aggr: {}", e));
 		// ladder floors from the CONVERGED caps: the tuner's own write
 		// is reverted by its FloorGuard, and the fold's decreased_copy
-		// must see the same flat axis (:1788-1802). Needs the DB, so
-		// it cannot move to fold (build_and_tune drops the DB).
-		let cp_floor = db.vec_sigs_no_critical_pat.len() + 1;
+		// must see the same flat axis (:1788-1802). CP's floor follows
+		// the converged value too: its last-chunk failed-sig demand is
+		// a bound every word's plan must clear (flat axis, like SED's).
 		let mut g = get_global_config();
 		g.min_subsigs = new.subsigs;
 		g.min_subsigs_igc = new.subsigs_igc;
-		g.min_cp_subsigs = cp_floor.min(new.cp_subsigs);
+		g.min_cp_subsigs = new.cp_subsigs;
 		drop(g);
 		// T9901 v5: measured level targets replace the ratio descent
 		// (consumed by build_circs_adv via CapParams.levels).
@@ -2256,6 +2313,14 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	let spec = &effective_spec(spec, b_dry_run);
 	let role = part_role(part_id, numa_num, num_jobs);
 	apply_spec_config(spec, b_dry_run, &role);
+	if spec.b_fold_only {
+		// AFTER apply_spec_config, which derives b_folding_only from
+		// the part topology. Mirrors the scale runner's override
+		// below. b_light_test is deliberately LEFT at false so the
+		// folded circuits keep production width -- the run measures
+		// fold cost, so its step circuits must be the real ones.
+		get_global_config().b_folding_only = true;
+	}
 	let pd = reset_part_dir(spec, part_id);
 	let proot = utils::os::proj_root();
 	let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
@@ -2288,6 +2353,18 @@ pub fn full_dlp_neo(perc_db: f64, perc_samples: f64,
 	part_id: usize, b_dry_run: bool, b_ladder_only: bool)
 	-> Vec<CapParams> {
 	run_neo(&DLP, perc_db, perc_samples, num_circs, num_jobs,
+		numa_num, part_id, b_dry_run, b_ladder_only)
+}
+
+/// DLP fold-cost run: run_neo over SMALL_DLP (entire DB, pre-cut ~5%
+/// corpus, no decider). Callers pass perc_samples 100 -- the list is
+/// already the sample, so sampling it again would re-open the
+/// missing-top-rung hole SMALL_DLP exists to close.
+pub fn small_full_dlp_neo(perc_db: f64, perc_samples: f64,
+	num_circs: usize, num_jobs: usize, numa_num: usize,
+	part_id: usize, b_dry_run: bool, b_ladder_only: bool)
+	-> Vec<CapParams> {
+	run_neo(&SMALL_DLP, perc_db, perc_samples, num_circs, num_jobs,
 		numa_num, part_id, b_dry_run, b_ladder_only)
 }
 
@@ -2769,6 +2846,9 @@ pub const USAGE: &str = "bora_cli: backend of \
 	   (dry=1 also drops the hab22 cover check)\n \
 	 full_dna <same 8 args as full_dlp>\n \
 	 full_clam <same 8 args as full_dlp>\n \
+	 small_full_dlp <same 8 args as full_dlp>\n \
+	   (entire DB, pre-cut ~5% corpus, fold cost only -- no snark;\n \
+	    pass perc_samples=100, the list IS the sample)\n \
 	 scale_dlp <corpus_idx> <c1,c2,...> <dry 0|1>\n \
 	 scale_clam <corpus_idx> <c1,c2,...> <dry 0|1>";
 
@@ -2784,6 +2864,9 @@ pub enum Cmd {
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_dry_run: bool, b_ladder_only: bool },
 	FullClam { perc_db: f64, perc_samples: f64, num_circs: usize,
+		num_jobs: usize, numa_num: usize, part_id: usize,
+		b_dry_run: bool, b_ladder_only: bool },
+	SmallFullDlp { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_dry_run: bool, b_ladder_only: bool },
 	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize>,
@@ -2889,6 +2972,14 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				numa_num, part_id, b_dry_run, b_ladder_only) =
 				parse_full8(args, "full_clam");
 			Cmd::FullClam { perc_db, perc_samples, num_circs,
+				num_jobs, numa_num, part_id, b_dry_run,
+				b_ladder_only }
+		}
+		Some("small_full_dlp") => {
+			let (perc_db, perc_samples, num_circs, num_jobs,
+				numa_num, part_id, b_dry_run, b_ladder_only) =
+				parse_full8(args, "small_full_dlp");
+			Cmd::SmallFullDlp { perc_db, perc_samples, num_circs,
 				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only }
 		}

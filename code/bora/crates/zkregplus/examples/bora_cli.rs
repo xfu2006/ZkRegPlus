@@ -5,7 +5,7 @@
 use zkregplus::bora_data_driver::{collect_assess_tier_data_adv,
 	collect_lookup_stats_adv, collect_scale_clamav_neo,
 	collect_scale_dlp_neo, full_clamav_neo, full_dlp_neo,
-	full_dna_neo, parse_args, Cmd, USAGE};
+	full_dna_neo, parse_args, small_full_dlp_neo, Cmd, USAGE};
 
 fn main() {
 	let args: Vec<String> = std::env::args().skip(1).collect();
@@ -31,6 +31,13 @@ fn main() {
 		Cmd::FullClam { perc_db, perc_samples, num_circs, num_jobs,
 			numa_num, part_id, b_dry_run, b_ladder_only } => {
 			full_clamav_neo(perc_db, perc_samples, num_circs,
+				num_jobs, numa_num, part_id, b_dry_run,
+				b_ladder_only);
+		}
+		Cmd::SmallFullDlp { perc_db, perc_samples, num_circs,
+			num_jobs, numa_num, part_id, b_dry_run,
+			b_ladder_only } => {
+			small_full_dlp_neo(perc_db, perc_samples, num_circs,
 				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only);
 		}

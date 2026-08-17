@@ -991,6 +991,16 @@ fn neo_dfa_subsig_demand(infos: &[WordInfo]) -> usize {
 		.map(|i| i.subsig_ids.len()).sum::<usize>()).max().unwrap_or(0)
 }
 
+/// Exact CP failed-sig (slen) seed: the last-chunk oup = set_sigs_crit
+/// (sed/dfa/ised partition it; no-crit sigs are already inside) + 1
+/// dummy. Floored at no_crit+1 for dummy-pad-only samples.
+fn neo_cp_seed(no_crit_len: usize, infos: &[WordInfo]) -> usize {
+	let word_max = infos.iter().map(|wi| wi.vec_sed_sigs.len()
+		+ wi.vec_dfa_sigs.len() + wi.vec_ised_sigs.len())
+		.max().unwrap_or(0);
+	(word_max + 1).max(no_crit_len + 1)
+}
+
 /// determine_config (non-aggressive): same loop as the aggressive variant but
 /// builds the full cs/igc/dfa ladder via build_circs_adv. CapErr bumps route
 /// to cs or igc fields by the b_igc suffix. Returns the confirmed-lowest base
@@ -1078,20 +1088,25 @@ where C: CurveGroup<ScalarField=F>,
 		// than the hand-tune, with framework logup (capacity-slot driven, not
 		// data driven) as the bulk of the gap. Seed both DOWN here.
 
-		// CP: exact and DB-static. Subsigs with no critical pattern can never
-		// discharge in CP, so EVERY word hands all of them to SED -- there is
-		// no per-word variation to probe for. This is the value cp_mapper.rs's
-		// ctor assert itself recommends; that assert is bare (not a CapErr), so
-		// an under-seed would panic unparseably -- hence exact, not a ratchet.
-		// Any per-word excess is still caught by the cp::subsigs CapErr.
-		let cp_need = db.vec_sigs_no_critical_pat.len() + 1;
+		// CP: exact per word. The sigs gadget's failed-sig accumulator
+		// (oup, sigs.rs:529-575) ends a word at |set_sigs_crit| + 1
+		// dummy, and vec_sed/dfa/ised_sigs partition set_sigs_crit
+		// exactly -- which already CONTAINS the no-crit-pat sigs
+		// (clamav.rs:3241), so no separate term for them. Seeding only
+		// no_crit (the old proxy) omitted every crit-fired sig and made
+		// the tuner crawl one cp::subsigs CapErr per ~30-min round.
+		// The ratchet stays as backstop for words outside the sample.
+		let cp_need = neo_cp_seed(
+			db.vec_sigs_no_critical_pat.len(), sample_word_infos);
 		let n_cp = cp_need.min(p.cp_subsigs);
-		log(0, LOG1, &format!("NEO CP SEED: no_crit_pat={} -> cp_subsigs \
-			{}->{}", cp_need - 1, p.cp_subsigs, n_cp));
+		log(0, LOG1, &format!("NEO CP SEED: no_crit_pat={} need={} -> \
+			cp_subsigs {}->{}", db.vec_sigs_no_critical_pat.len(),
+			cp_need, p.cp_subsigs, n_cp));
 		p.cp_subsigs = n_cp;
-		// pin CP's ladder floor to the SAME DB-static bound: it is a per-word
-		// invariant, so no rung may fall below it. CP has its own floor because
-		// CpCapacity.subsigs otherwise shares min_subsigs with the SED arm.
+		// pin CP's ladder floor to the seed: the last-chunk demand is a
+		// bound EVERY word's plan must clear, so no rung may fall below
+		// it. CP has its own floor because CpCapacity.subsigs otherwise
+		// shares min_subsigs with the SED arm.
 		get_global_config().min_cp_subsigs = n_cp;
 
 		// DFA: per-word VARYING (v_subsig_ids from vec_dfa_sigs_info), so
@@ -1269,7 +1284,7 @@ where C: CurveGroup<ScalarField=F>,
 					return Err(format!(
 						"CapErr with no bump applied: {:?}", errs));
 				}
-				// NEO: keep the subsigs axis FLAT after a bump. The seed
+				// NEO: keep the subsigs axes FLAT after a bump. The seed
 				// above pinned each arm's ladder floor to its OWN demand,
 				// but a later CapErr raises only the BASE -- and
 				// neo_subsig_demand models the SED obligation set, NOT
@@ -1278,11 +1293,15 @@ where C: CurveGroup<ScalarField=F>,
 				// below it ((2*9/16).max(1) = 1) and re-raises the same
 				// CapErr forever, which apply_caperr_bumps then reports as
 				// "no bump applied". Re-pin so every rung moves with the
-				// base. Scoped: _floor_guard restores on exit.
+				// base. CP's demand is per-word too, so a cp::subsigs
+				// bump (a word outside the seed's model) must lift every
+				// rung the same way. Scoped: _floor_guard restores on
+				// exit.
 				if b_use_neo {
 					let mut c = get_global_config();
 					c.min_subsigs = p.subsigs;
 					c.min_subsigs_igc = p.subsigs_igc;
+					c.min_cp_subsigs = p.cp_subsigs;
 				}
 				log(0, LOG1, &format!("determine_config_non_aggr iter {}: \
 					round {} ms, bumped {:?}", iter, t_round.ms(), errs));
@@ -1819,16 +1838,17 @@ where
 				// tuner's own write is scoped to its call (FloorGuard), and the
 				// fold's decreased_copy must see the same flat axis the probe
 				// converged against or a lower rung drops below demand.
-				// CP's floor is its OWN DB-static bound, not `new.cp_subsigs`:
-				// a cp::subsigs bump raises the top rung, but the invariant
-				// every rung must clear stays the no-critical-pattern count.
+				// CP's floor follows the CONVERGED value too: the last-chunk
+				// failed-sig demand (crit-fired + no-crit list) is a bound
+				// every word's plan must clear, so the CP axis is flat like
+				// SED's. (The old no-crit-only floor let lower rungs drop
+				// below real demand.)
 				// DFA laddering is legitimate, so min_dfa_subsigs is untouched.
 				if b_use_neo {
-					let cp_floor = db.vec_sigs_no_critical_pat.len() + 1;
 					let mut c = get_global_config();
 					c.min_subsigs = new.subsigs;
 					c.min_subsigs_igc = new.subsigs_igc;
-					c.min_cp_subsigs = cp_floor.min(new.cp_subsigs);
+					c.min_cp_subsigs = new.cp_subsigs;
 				}
 				log(0, log_level, &format!(
 					"DETERMINE_CONFIG: folding with converged caps: {:?}", new));
@@ -2423,7 +2443,8 @@ pub mod tests_zkp_driver{
 	use ark_groth16::Groth16;
 	use folding_schemes::{commitment::{pedersen::Pedersen, kzg::KZG}};
 	use crate::zkp_driver::{zkp_driver, zkp_driver_adv,
-		zkp_driver_adv_aggr, WordInfo, DcMode, T309_LAST_BUMP_RUNG};
+		zkp_driver_adv_aggr, WordInfo, DcMode, T309_LAST_BUMP_RUNG,
+		neo_cp_seed};
 	use crate::circs::{
 		cp_mapper::{CpCapacity},
 		sed_mapper::{SedCapacity},
@@ -9058,6 +9079,29 @@ range2_bit={}", ds, b, nu, rb);
 		let _fin_ge_real_2 = estimator_validate_aggr("dlp_sample2", cd, sg,
 			"jobs/binexec_sample2.dat", 25, 64, 100, ca,
 			"data/paper_data/dlp/cfg/config/full_dlp/dlp_config_C2.json");
+	}
+
+	/// neo_cp_seed = max over words of the crit-set partition size + 1
+	/// dummy, floored at no_crit+1 (dummy-pad-only sample).
+	#[test]
+	fn test_neo_cp_seed_exact_and_floor() {
+		let wi = |s: usize, d: usize, i: usize| WordInfo {
+			vec_sed_sigs: vec![1; s], vec_dfa_sigs: vec![1; d],
+			vec_ised_sigs: vec![1; i], vec_sed_sigs_info: vec![],
+			vec_ised_sigs_info: vec![], vec_dfa_sigs_info: vec![],
+			file_nibble_len: 0, halo_nibbles: vec![],
+			failed_c_all_segs: vec![], failed_c_info_all_segs: vec![],
+		};
+		// toy walk (S1,S2 fired + S4 no-crit): heaviest word has
+		// |sed|+|dfa|+|ised| = 3 -> slen 4; second word can't lower it.
+		assert_eq!(neo_cp_seed(1, &[wi(2, 0, 1), wi(1, 0, 0)]), 4);
+		// dummy-pad-only sample: oup still carries the no-crit list.
+		assert_eq!(neo_cp_seed(8, &[wi(0, 0, 0)]), 9);
+		// empty sample degenerates to the 1-slot dummy.
+		assert_eq!(neo_cp_seed(0, &[]), 1);
+		// dna shape: no_crit=0, heaviest word 17 -> 18 (= the value
+		// the old tuner needed 16 CapErr rounds to crawl to).
+		assert_eq!(neo_cp_seed(0, &[wi(9, 5, 3)]), 18);
 	}
 
 	/// M0 flag-off regression gate. Runs small_data non-aggressive with
