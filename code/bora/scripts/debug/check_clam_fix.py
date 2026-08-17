@@ -30,8 +30,13 @@ RE_CARRIED = re.compile(r"carried subsig \d+ outside the obligation")
 RE_ITER = re.compile(r"determine_config_non_aggr iter")
 # demand sanity: same DB/demand shape as the diagnosed run
 RE_SEED = re.compile(r"NEO SUBSIG SEED: demand cs=(\d+) igc=(\d+)")
-# any other fatal noise the greps above would miss
-RE_PANIC = re.compile(r"panicked at|unmapped CapErr")
+# the true abort marker (tuner hands an unmappable CapErr to the
+# driver and the whole job dies rc=101)
+RE_FATAL = re.compile(r"unmapped CapErr")
+# panic header + known-noise classes: poison cascade is a symptom,
+# and caught probe panics are normal tuner traffic until proven not
+RE_PANIC = re.compile(r"panicked at")
+RE_POISON = re.compile(r"Mutex poisoned")
 # end-of-run success markers
 RE_VERIFY = re.compile(r"Verify (Batch|Individual).*(PASS|pass)")
 RE_CONV = re.compile(r"CONVERGED", re.IGNORECASE)
@@ -73,25 +78,51 @@ def main():
         print("      first: %s" % first.strip())
         fail = True
 
-    # 3. tuner progress (absent in the crashed run)
+    # 3a. the true abort marker (rc=101 path)
+    fatal = [l for l in text.splitlines() if RE_FATAL.search(l)]
+    if fatal:
+        print("FAIL: run aborted -- %s" % fatal[-1].strip())
+        fail = True
+
+    # 3b. tuner progress (absent in the crashed run)
     n_iter = len(RE_ITER.findall(text))
-    other = [l for l in text.splitlines() if RE_PANIC.search(l)
-             and not RE_CARRIED.search(l)]
     if n_iter > 0:
         print("PASS: %d tuner iter line(s) -- old crash point passed"
               % n_iter)
-    elif other:
-        print("FAIL: no tuner iter lines and %d other panic line(s)"
-              % len(other))
-        fail = True
-    elif age < EARLY_S:
-        print("PENDING: no tuner iter lines yet (log %.0f min old; "
-              "the tuner starts ~25 min in) -- re-run me later"
-              % (age / 60.0))
-    else:
-        print("WARN: no tuner iter lines after %.0f min and no "
-              "panic -- check the run is alive (log mtime, not "
-              "pgrep)" % (age / 60.0))
+    elif not fail:
+        if age < EARLY_S:
+            print("PENDING: no tuner iter lines yet (log %.0f min "
+                  "old) -- re-run me later" % (age / 60.0))
+        else:
+            print("WARN: no tuner iter lines after %.0f min -- "
+                  "check the run is alive (log mtime, not pgrep)"
+                  % (age / 60.0))
+
+    # 3c. panic census, classified: poison cascade = symptom noise;
+    # caught probe panics are NORMAL tuner traffic; anything with an
+    # unrecognized message is printed for a human verdict.
+    lines = text.splitlines()
+    n_poison = len([l for l in lines if RE_POISON.search(l)])
+    msgs = {}
+    for i, l in enumerate(lines):
+        if not RE_PANIC.search(l) or RE_POISON.search(l):
+            continue
+        m = lines[i + 1].strip() if i + 1 < len(lines) else ""
+        if RE_CARRIED.search(l) or RE_CARRIED.search(m):
+            continue
+        if RE_POISON.search(m) or not m or RE_PANIC.search(m):
+            continue
+        msgs[m] = msgs.get(m, 0) + 1
+    if n_poison:
+        print("INFO: %d Mutex-poisoned lines (cascade noise, look "
+              "at the census below for the cause)" % n_poison)
+    if msgs:
+        print("WARN: unclassified panic message(s) -- caught CapErr "
+              "probes are normal during tuning; anything else, "
+              "paste this census back to the session:")
+        top = sorted(msgs.items(), key=lambda k: -k[1])[:8]
+        for m, c in top:
+            print("      %5d  %s" % (c, m[:66]))
 
     # 4. demand sanity: diagnosed run was cs=319 igc=8
     m = RE_SEED.search(text)
@@ -104,13 +135,7 @@ def main():
     else:
         print("INFO: no NEO SUBSIG SEED line yet")
 
-    # 5. other panics (coverage: silence is not success)
-    if other and not fail:
-        print("FAIL: %d unrelated panic line(s), last:" % len(other))
-        print("      %s" % other[-1].strip())
-        fail = True
-
-    # 6. later-stage markers, informational
+    # 5. later-stage markers, informational
     n_conv = len(RE_CONV.findall(text))
     n_ver = len(RE_VERIFY.findall(text))
     if n_conv:

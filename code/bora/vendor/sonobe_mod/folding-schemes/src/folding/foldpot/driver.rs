@@ -1940,9 +1940,10 @@ halo_us={} ok_us={} fail_us={}",
 		let num_words = vec_word_fnames.len();
 		// DEBUG/diagnostic: optional per-job word cap. 0 = unlimited.
 		let _word_cap = read_global_config().word_cap_per_job;
-		// aggressive-only: read once for the per-chunk LOG3 selection
-		// log inside the segment loop (non-aggr path stays unchanged).
-		let _b_aggr_log = read_global_config()
+		// aggressive-only: read once. Gates the per-chunk LOG3
+		// selection log AND the S5 advice reuse below (the non-aggr
+		// path keeps its recompute arm, byte-identical).
+		let b_aggr = read_global_config()
 			.clamav_cfg.b_aggressive_sde_for_rep;
 		for (word, word_fname) in iter_words.zip(vec_word_fnames.iter()){
 			if _word_cap > 0 && word_id > _word_cap {
@@ -1962,12 +1963,20 @@ halo_us={} ok_us={} fail_us={}",
 			// Route through per-job-cloned `p_layered` to avoid
 			// shared mapper Mutex contention (was driver1.layered_circs
 			// before). See plan_nd_advice_new_pll above.
-			let (steps, vec_len, vec_pci, _vec_cap_req, _advice) =
+			// S5 (aggr): save the router's advice (one word's worth,
+			// <= ~160 Arcs) so the loop below reuses it instead of
+			// recomputing it per segment.
+			let (steps, vec_len, vec_pci, _vec_cap_req, vec_adv) =
 				Self::plan_nd_advice_new_pll(
-					p_layered, job_id, log_level+2, false,
+					p_layered, job_id, log_level+2, b_aggr,
 					&word, word_info, word_fname).map_err(|e| {
 					e
 				})?;
+			if b_aggr {
+				assert!(vec_adv.len() == steps,
+					"S5: saved advice {} != steps {}",
+					vec_adv.len(), steps);
+			}
 			log_perf(job_id, log_level+2, &format!("PERF 1008: {} - Pass 1: START decide circ alloc for word_id: {}, fname: {}, word_len: {}. ", phase_name, word_id, word_fname, format_bytes(total_word_len*31)), &mut gt2);
 			for i in 0..steps{
 				//2.1 set up params
@@ -1981,7 +1990,7 @@ halo_us={} ok_us={} fail_us={}",
 				// LOG3 per-chunk circ selection (aggressive only):
 				// one line per segment, real post-bump pci. fname
 				// gives the per-file attribution cost.txt lacks.
-				if _b_aggr_log {
+				if b_aggr {
 					log(job_id, LOG3, &format!("PERF 1001: per-chunk circ sel. {} word_id: {}, subseg_id: {}, fname: {}, pci: {}, seg_len: {}", phase_name, word_id, subseg_id, word_fname, pc_i1, act_len));
 				}
 				acc_wd_len += act_len;
@@ -2033,12 +2042,34 @@ halo_us={} ok_us={} fail_us={}",
 				//DEBUG USE 69120.8: halo span ends, advice span starts.
 				let bh_us = t_bh.elapsed().as_micros() as usize;
 				let t_adv = std::time::Instant::now();
-				let res = lock_unwrap!(circ.get_mapper())
-					.gen_nd_advice(&frag, wi_ref, prev_adv, subseg_id - 1, job_id);
+				//S5 (aggr): reuse the advice the per-seg router
+				//generated at this rung -- same frag, halo, seg_id
+				//and prev chain -- instead of recomputing it.
+				//ZKR_S5_ORACLE=1 recomputes and requires a byte-
+				//identical statement (checked after build below).
+				static S5_ORACLE: std::sync::OnceLock<bool> =
+					std::sync::OnceLock::new();
+				let b_orc = b_aggr && *S5_ORACLE.get_or_init(||
+					std::env::var("ZKR_S5_ORACLE")
+						.map(|v| v == "1").unwrap_or(false));
+				let mut orc_adv = None;
+				let cur_adv = if b_aggr {
+					if b_orc {
+						orc_adv = Some(lock_unwrap!(
+							circ.get_mapper()).gen_nd_advice(
+							&frag, wi_ref, prev_adv.clone(),
+							subseg_id - 1, job_id).unwrap());
+					}
+					vec_adv[i].clone()
+				} else {
+					let res = lock_unwrap!(circ.get_mapper())
+						.gen_nd_advice(&frag, wi_ref, prev_adv,
+							subseg_id - 1, job_id);
+					assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, at layer {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, pc_i1, res);
+					res.unwrap()
+				};
 				//DEBUG USE 69120.8: advice span ends.
 				let adv_us = t_adv.elapsed().as_micros() as usize;
-				assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, at layer {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, pc_i1, res);
-				let cur_adv = res.unwrap();
 
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. gen_advice."), &mut gt3);
 				let t_stmt = std::time::Instant::now(); //DEBUG USE 69120.8
@@ -2054,6 +2085,18 @@ halo_us={} ok_us={} fail_us={}",
 				prev_adv = Some(cur_adv);
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. build stmt."), &mut gt3);
 				let stmt = stmt_res.unwrap();
+				if let Some(oa) = orc_adv {
+					//S5 oracle: identical statement from the
+					//recomputed advice, or abort.
+					let s2 = lock_unwrap!(circ.get_mapper())
+						.build_statement(&frag, &prev_stmt,
+							self.lkup.clone(), &ei, oa,
+							lk_share_size, false, 0)
+						.unwrap();
+					assert!(stmt.to_vec() == s2.to_vec(),
+						"S5 oracle diverged: word {} seg {}",
+						word_fname, subseg_id);
+				}
 				let t_lk = std::time::Instant::now(); //DEBUG USE 69120.8
 				//T703a: virtual slots counted with the SAME
 				//evaluator gen_witness uses (never disagree).

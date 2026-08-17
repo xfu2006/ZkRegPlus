@@ -31218,11 +31218,13 @@ Goal 3. Full clam
 	[a] crashed about 0.5 hr!
 	[b] analyze
 	[c] new debug run 9:33pm + 25 min -> 9:55pm
+	[d] failed again! 10:09pm!
+	[e]
 
 --- DATA ----
 *** LARGE SERVER ***
 [1] full_dna -> DONE
-[2] full_clam (8:00pm 08/16) -> 
+[2] full_clam (9:33pm 08/16) -> 
 
 *** SMALL SERVER ***
 [1]
