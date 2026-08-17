@@ -3217,7 +3217,7 @@ def _v101_cargo(ctx, st, env, run_log, dlog):
     # NOTHING exits 0 -- a false green, exactly the trap recorded in
     # small_data_par_lkup_coverage_red -- so every filter carries a
     # floor and the count is re-read out of the log.
-    for filt, need, extra in (("test_v101_", 4, []),
+    for filt, need, extra in (("test_v101_", 8, []),
                               ("test_m104_parse_clam", 1, []),
                               ("fingerprint_", 1,
                                ["--test-threads=1"])):

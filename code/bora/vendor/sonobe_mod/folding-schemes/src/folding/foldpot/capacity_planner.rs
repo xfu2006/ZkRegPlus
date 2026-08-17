@@ -184,6 +184,81 @@ where
         })
     }
 
+    /// V101 C3: TUNER-ONLY probe. Like capacity_probe_collect, but it
+    /// asks the ONE question the tuner needs -- "does this word fit at
+    /// the WIDEST rung?" -- instead of hunting for the cheapest rung.
+    ///
+    /// Sound because (a) build_circs_adv reverses its ladder, so the
+    /// widest rung IS max_layer_id, and (b) failures at narrower rungs
+    /// are already swallowed by bin_search_best_layer -- the only
+    /// CapErrs that ever reach a caller come from probes at
+    /// max_layer_id. So this surfaces exactly the errors plan_nd_advice
+    /// would, with ONE full-word walk instead of the 2-5 the rung
+    /// search costs (measured 5.03x on the 2026-08-17 clam run).
+    ///
+    /// It KEEPS find_working_layer_for_wd's mid-word slice probe
+    /// (:254-267), which also propagates and which the fold still
+    /// performs; that slice is one chunk, not one walk.
+    pub fn capacity_probe_collect_top(&self, words: &[Vec<CF1<C1>>],
+        word_infos: &[WordInfo], n_threads: usize)
+        -> Vec<Option<Vec<(String, usize)>>>
+    where FC: CloneDeep + Send + Sync, LK: Send + Sync, GM: Send + Sync {
+        use rayon::prelude::*;
+        let pool = rayon::ThreadPoolBuilder::new()
+            .num_threads(n_threads.max(1)).build().expect("rayon pool");
+        let top = self.layered_circs.len() - 1;
+        let max_wlen = lock_unwrap!(self.layered_circs[0][0].get_mapper())
+            .max_word_len();
+        let long_bar = 1024 * 1024 / 31 * 4; // driver.rs:250, "4MB"
+        pool.install(|| {
+            (0..words.len()).into_par_iter().map_init(
+                || CapacityPlanner::<C1, FC, LK, GM, H>::new(
+                    self.layered_circs.iter().map(|l|
+                        l.iter().map(|c| c.clone_deep_self()).collect())
+                        .collect()),
+                |planner, i| {
+                    let r = std::panic::catch_unwind(
+                        std::panic::AssertUnwindSafe(|| {
+                        let w = &words[i];
+                        let wi = &word_infos[i];
+                        let n = w.len();
+                        // the mid-word slice, framed exactly as
+                        // find_working_layer_for_wd does (:254-257)
+                        if n >= 4 * max_wlen && n <= long_bar {
+                            let seg = w[n / 2..n / 2 + max_wlen].to_vec();
+                            if let Err(e) = planner
+                                .gen_nd_advice_at_layer(0, top, LOG2,
+                                    false, &seg, wi) {
+                                return Some(Self::cap_or_other(e));
+                            }
+                        }
+                        match planner.gen_nd_advice_at_layer(0, top,
+                            LOG2, false, w, wi) {
+                            Ok(_) => None,
+                            Err(e) => Some(Self::cap_or_other(e)),
+                        }
+                    }));
+                    r.unwrap_or_else(|e| {
+                        let msg = e.downcast_ref::<&str>()
+                            .map(|s| s.to_string())
+                            .or_else(|| e.downcast_ref::<String>().cloned())
+                            .unwrap_or_else(|| "unknown".to_string());
+                        Some(vec![(format!("panic in probe word {}: {}",
+                            i, msg), 0)])
+                    })
+                }
+            ).collect()
+        })
+    }
+
+    /// Error -> the (name, required) shape capacity_probe_collect uses.
+    fn cap_or_other(e: Error) -> Vec<(String, usize)> {
+        match e {
+            Error::CapErr(v) => v,
+            other => vec![(format!("non-cap: {:?}", other), 0)],
+        }
+    }
+
     // ==================================================================
     // M2: copied planning methods (driver.rs b_fast=false path).
     // ==================================================================

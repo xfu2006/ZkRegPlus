@@ -1932,6 +1932,13 @@ fn b_v101_seed_only() -> bool {
 	*B.get_or_init(|| std::env::var("ZKR_V101_SEED_ONLY").is_ok())
 }
 
+/// V101 C3 gate: base-rung-only probing, ON by default. Set
+/// ZKR_V101_NO_C3 to restore plan_nd_advice's full rung search.
+fn b_v101_c3() -> bool {
+	static B: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+	*B.get_or_init(|| std::env::var("ZKR_V101_NO_C3").is_err())
+}
+
 /// Per-arm, per-word chain weights for the Q_m row estimator.
 struct ChainW {
 	/// |inp|: seeded subsig count. EXACT, not a bound -- one seed row
@@ -2233,8 +2240,17 @@ fn determine_config_non_aggr_v2(db: Arc<ClamavDB<Fr>>,
 				n_circs, false);
 			let planner = CapacityPlanner::<C1, FC<Fr, C1, CS1>,
 				LK<Fr>, GM<Fr>, false>::new(layered);
-			Ok(planner.capacity_probe_collect(&sub_w, &sub_i,
-				n_threads))
+			// V101 C3: the tuner only needs "does this word fit at
+			// the WIDEST rung"; plan_nd_advice's rung search costs
+			// 2-5 full-word walks per round for an answer the
+			// tuner discards. Set ZKR_V101_NO_C3 to fall back.
+			Ok(if b_v101_c3() {
+				planner.capacity_probe_collect_top(&sub_w, &sub_i,
+					n_threads)
+			} else {
+				planner.capacity_probe_collect(&sub_w, &sub_i,
+					n_threads)
+			})
 		})?;
 		let results = match probe {
 			Ok(r) => r,
@@ -5619,6 +5635,92 @@ pub mod tests_bora_data_driver {
 			assert!(s.max(f).max(1) >= 1);
 		}
 		assert_eq!(0usize.max(0usize).max(1), 1, "0 seed must clamp");
+	}
+
+	/// V101 R2: tighten_from_gauge must land the cap ON the measured
+	/// peak, and must NEVER write 0 (0 = dense fallback).
+	#[test]
+	fn test_v101_tighten_lands_on_gauge() {
+		let _g = cfg_lock();
+		let mut p = CLAM.hand_seed.clone().unwrap();
+		p.qm_real_rows = 41208;      // a loose seed
+		p.qm_real_rows_igc = 1904;
+		utils::consts::reset_sat();
+		// two emissions; the gauge keeps the PEAK, which is what
+		// M3/P3 says the cap may be lowered to.
+		utils::consts::QM_REAL_SAT[0].record(12345, 41208);
+		utils::consts::QM_REAL_SAT[0].record(36860, 41208);
+		utils::consts::QM_REAL_SAT[1].record(1904, 1904);
+		v101_tighten_from_gauge(&mut p);
+		assert_eq!(p.qm_real_rows, 36860, "must land on the peak");
+		assert_eq!(p.qm_real_rows_igc, 1904);
+		// an arm that never emitted leaves the cap ALONE, never 0.
+		utils::consts::reset_sat();
+		let (was, was_i) = (p.qm_real_rows, p.qm_real_rows_igc);
+		v101_tighten_from_gauge(&mut p);
+		assert_eq!((p.qm_real_rows, p.qm_real_rows_igc),
+			(was, was_i), "empty gauge must not zero the cap");
+	}
+
+	/// V101 R1: the seed is an UPPER BOUND, so a bigger corpus can
+	/// only raise it, and apply_caperr_bumps is strict-max -- an
+	/// under-seed is always recoverable, never silently accepted.
+	#[test]
+	fn test_v101_caperr_bump_is_monotone() {
+		let mut p = CLAM.hand_seed.clone().unwrap();
+		p.qm_real_rows = 100;
+		let (ch, un) = apply_caperr_bumps(&mut p, false,
+			&[("dis_adv::neo_qm_real, b_igc: false".into(), 36860)]);
+		assert!(ch && un.is_empty());
+		assert_eq!(p.qm_real_rows, 36860, "bump raises to demand");
+		// a LOWER demand must NOT shrink the cap: the ratchet is
+		// max-semantics, which is what makes subset re-probing sound.
+		let (ch2, _) = apply_caperr_bumps(&mut p, false,
+			&[("dis_adv::neo_qm_real, b_igc: false".into(), 5509)]);
+		assert!(!ch2 && p.qm_real_rows == 36860, "must not shrink");
+	}
+
+	/// V101 R1/C4: the dfa seed must clear the gadget's dummy-entry
+	/// rule (dfa_adv.rs:546-550 needs subsigs > flattened count).
+	#[test]
+	fn test_v101_dfa_seed_clears_dummy() {
+		// the measured 2026-08-17 clam case: demand 7, need 8.
+		for (d_dfa, knob, want) in [(7usize, 8usize, 8usize),
+			(0, 8, 3), (2, 8, 3), (20, 8, 8), (7, 5, 5)] {
+			let got = (d_dfa + 1).max(3).max(1).min(knob);
+			assert_eq!(got, want, "d_dfa {} knob {}", d_dfa, knob);
+			if knob > d_dfa {
+				assert!(got > d_dfa,
+					"seed {} must EXCEED the flattened count {}",
+					got, d_dfa);
+			}
+		}
+	}
+
+	/// V101 R6: the two subcommands differ ONLY in b_tune_v2, so an
+	/// A/B needs no rebuild and no argv change.
+	#[test]
+	fn test_v101_ab_switch_is_the_only_difference() {
+		let a = parse_args(&argv(&["full_clam", "100", "15", "2",
+			"1", "1", "0", "0", "1"]));
+		let b = parse_args(&argv(&["full_clam_v2", "100", "15", "2",
+			"1", "1", "0", "0", "1"]));
+		match (a, b) {
+			(Cmd::FullClam { perc_db: p1, perc_samples: s1,
+				num_circs: c1, num_jobs: j1, numa_num: n1,
+				part_id: i1, b_dry_run: d1, b_ladder_only: l1,
+				b_tune_v2: v1 },
+			 Cmd::FullClam { perc_db: p2, perc_samples: s2,
+				num_circs: c2, num_jobs: j2, numa_num: n2,
+				part_id: i2, b_dry_run: d2, b_ladder_only: l2,
+				b_tune_v2: v2 }) => {
+				assert_eq!((p1, s1, c1, j1, n1, i1, d1, l1),
+					(p2, s2, c2, j2, n2, i2, d2, l2),
+					"every arg but the tuner flag must match");
+				assert!(!v1 && v2, "only b_tune_v2 differs");
+			}
+			_ => panic!("both must parse to FullClam"),
+		}
 	}
 
 	/// M104: full_clam parses through the shared parse_full8;

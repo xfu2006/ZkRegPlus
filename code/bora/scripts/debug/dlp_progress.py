@@ -180,6 +180,13 @@ LEG_STMT_MS = 60.0      # PERF 1009 "gen stmt"
 LEG_LKUP_MS = 0.699     # PERF 1009 "update lkup: share size"
 LEG_STEP_WALL_MS = 3140.7   # step-7 wall per step, the ETA term
 LEG_UNACCOUNTED_MS = 3.7    # wall minus the four spans
+# the per-step terms that do NOT vary with rung: charged flat to every
+# step of both arms, so they shift no share, only the totals.
+FLAT_MS = LEG_STMT_MS + LEG_LKUP_MS + LEG_UNACCOUNTED_MS
+# measured spans per rung before they outrank the fitted price.  Low
+# enough to switch over early, high enough that one slow step cannot
+# swing a rung's whole share.
+MEAS_MIN = 30
 
 # prove_step by ROUTED rung, ms: (n, mean, median, p90), low rung
 # first.  Outer PERF 1009 span, joined to the rung via circ sel.
@@ -1456,8 +1463,14 @@ def show_routing(run, mix):
 			"'per-chunk circ sel' lines)")
 		return
 	pct = [100.0 * c / tot for c in mix]
-	print("routing    : %s chunks routed over completed words"
-		% com(tot))
+	# the completeness term matters: a mix over 200 chunks prints
+	# exactly like the final one over 926,900, and only the second is
+	# safe to price the fold with.
+	all_c = run.total_steps()
+	print("routing    : %s chunks routed over completed words "
+		"(%.1f%% of ~%s)"
+		% (com(tot), min(100.0, 100.0 * tot / max(all_c, 1)),
+			com(all_c)))
 	print("  %-6s %-11s %-11s %s" % ("rung", "measured", "legacy", "n"))
 	for i in range(4):
 		print("  %-6d %-11s %-11s %s"
@@ -1468,6 +1481,98 @@ def show_routing(run, mix):
 	print("             mean rung %.3f vs %.3f legacy -- %s"
 		% (mean, lmean, "LOWER-SKEWED (the neo win)" if mean < lmean
 			else "NOT lower-skewed; check before trusting the fold"))
+
+
+def rung_step_ms(lad, r, outer, adv):
+	"""(ms one fold step costs on 1-based rung r, True if MEASURED).
+	Measured spans win once a rung has MEAS_MIN of them; before that
+	the legacy affine fit prices the rung from its column count."""
+	n, mnp, _md = outer.get(r - 1, (0, 0.0, 0.0))
+	if n >= MEAS_MIN:
+		na, mna, _mda = adv.get(r - 1, (0, 0.0, 0.0))
+		return (mnp + (mna if na else LEG_ADV_RUNG[r - 1][0])
+			+ FLAT_MS, True)
+	if not LEG_FIT or r not in lad:
+		return None
+	slope, fixed, _res = LEG_FIT
+	return (slope * lad[r][0] + fixed + LEG_ADV_RUNG[r - 1][0]
+		+ FLAT_MS, False)
+
+
+def show_breakdown(run, mix, got):
+	"""Where the fold's hours actually GO: chunk share vs COST share
+	per rung.  Both inputs go final when phase 1 ends -- ~8 h before
+	phase 3 prints anything, since cmF is LOG4-silent -- so this is the
+	earliest honest read on the fold."""
+	print("-" * 72)
+	tot = float(sum(mix))
+	if not got:
+		print("BREAKDOWN  : PENDING -- needs the ladder (no preprocess "
+			"block yet)")
+		return
+	if tot <= 0:
+		print("BREAKDOWN  : PENDING -- needs routing (no completed "
+			"words yet)")
+		return
+	outer = run.merged("outer")
+	adv = run.merged("adv")
+	done = run.step_wall(2)[0] is not None
+	all_c = run.total_steps()
+	print("BREAKDOWN  : %s -- %s chunks routed%s"
+		% ("FINAL (phase 1 done)" if done else "PARTIAL", com(int(tot)),
+			"" if done else ", %.1f%% of ~%s"
+			% (min(100.0, 100.0 * tot / max(all_c, 1)), com(all_c))))
+	# ms[r] is what ONE step on rung r costs; cost[r] weights it by the
+	# chunks that route there, which is the only thing hours care about.
+	ms, meas, cost = {}, {}, {}
+	for r in range(1, 5):
+		v = rung_step_ms(got, r, outer, adv)
+		if v:
+			ms[r], meas[r] = v
+			cost[r] = v[0] * mix[r - 1]
+	csum = sum(cost.values())
+	lms = [LEG_PROVE_RUNG[i][1] + LEG_ADV_RUNG[i][0] + FLAT_MS
+		for i in range(4)]
+	lcost = [lms[i] * LEG_MIX[i] for i in range(4)]
+	lsum = sum(lcost)
+	print("  %-5s %-8s %-11s %-6s %-9s %-7s %-7s %s"
+		% ("rung", "chunks", "cols", "x", "ms/step", "cost%",
+			"legacy%", "x"))
+	for r in range(1, 5):
+		c = got.get(r, (None, None))[0]
+		lc = LEG_LADDER[r][0]
+		sh = 100.0 * cost[r] / csum if r in cost and csum else None
+		lsh = 100.0 * lcost[r - 1] / lsum
+		print("  %-5d %-8s %-11s %-6s %-9s %-7s %-7s %s"
+			% (r, "%.2f%%" % (100.0 * mix[r - 1] / tot), com(c),
+				"%.3f" % (c / float(lc)) if c else "-",
+				"%.0f%s" % (ms[r], "*" if meas[r] else "")
+					if r in ms else "-",
+				"%.1f" % sh if sh is not None else "-",
+				"%.1f" % lsh,
+				"%.2f" % (sh / lsh) if sh and lsh else "-"))
+	if any(meas.values()):
+		print("             * = MEASURED prove+advice; the rest priced "
+			"by the legacy fit")
+	# a rung carrying chunks but missing from the ladder would silently
+	# drop its hours out of the mean, so refuse to print one.
+	if [r for r in range(1, 5) if mix[r - 1] > 0 and r not in ms]:
+		print("             mean step UNPRICED -- a routed rung has no "
+			"ladder entry")
+		return
+	tail_c = 100.0 * (mix[2] + mix[3]) / tot
+	tail_k = 100.0 * (cost.get(3, 0.0) + cost.get(4, 0.0)) / csum
+	print("  tail 3+4   %.2f%% of chunks -> %.1f%% of cost  (legacy "
+		"%.2f%% -> %.1f%%)"
+		% (tail_c, tail_k, LEG_MIX[2] + LEG_MIX[3],
+			100.0 * (lcost[2] + lcost[3]) / lsum))
+	mean = csum / tot
+	print("  mean step  %.1f ms vs legacy %.1f = %.3fx"
+		% (mean, LEG_STEP_WALL_MS, mean / LEG_STEP_WALL_MS))
+	p3 = mean * run.steps_per_job() / 1000.0
+	print("  => PHASE 3 ~= %s per job vs legacy %s = %.3fx%s"
+		% (hm(p3), hm(LEG_STEP[7][0]), p3 / LEG_STEP[7][0],
+			"" if done else "   [PARTIAL]"))
 
 
 def show_phase1(run, bank):
@@ -2114,6 +2219,7 @@ def main():
 	gate, short = show_gate(run)
 	got = show_circuits(run, mix)
 	show_routing(run, mix)
+	show_breakdown(run, mix, got)
 	show_phase1(run, bank)
 	show_phase2(run)
 	show_phase3(run, mix, got, bank)
