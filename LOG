@@ -31198,8 +31198,10 @@ Goal 1. DEBUG
 		-> the bug is removed
 	[e] restart the dna_full neo run to collect data.
 		RESTARTED 1:22PM 
-		===> CHECK 7:00PM today!!!!!!
-		=> WORKING
+		===> CHECK 7:00PM today => crashed 8:00am
+	[f] restarted and small fix: 8:50am
+		---> recheck 11:00am
+
 		
 Goal 2. try to improve neo speed phase 1
 	[a] measure speed
@@ -31214,9 +31216,6 @@ Goal 2. try to improve neo speed phase 1
 		===> check 2:40am and 3:30am 
 	[e] started small_full_dlp
 		[a] 5:25am
-		########################	
-		check 8:00am!
-		########################	
 
 Goal 3. Full clam
 	[a] crashed about 0.5 hr!
@@ -31226,9 +31225,7 @@ Goal 3. Full clam
 	[e] started again 11:45pm
 	[f] check 4:00AM -> TUNER TOO SLOW! killed it.
 	[g] started 5:15AM
-	##############################
-	check 7am and 8:00am!
-	##############################
+	[h] check 11:00am! -> still NOT finished!
 
 
 --- DATA ----
