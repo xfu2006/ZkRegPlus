@@ -955,7 +955,8 @@ where C: CurveGroup<ScalarField=F>,
 /// Mirrors sed_mapper's non-aggressive derivation: whole-word sigs (the
 /// aggressive failed_c per-segment branch does not apply) then
 /// collect_subsig_ids, unfiltered. Per-word constant: ignores seg_id.
-fn neo_subsig_demand<F,C,CS>(db: &ClamavDB<F>, infos: &[WordInfo],
+pub(crate) fn neo_subsig_demand<F,C,CS>(db: &ClamavDB<F>,
+	infos: &[WordInfo],
 	b_igc: bool) -> usize
 where C: CurveGroup<ScalarField=F>, CS: CommitmentScheme<C,false>,
 	  F: PrimeField + Absorb + ColEle,
@@ -986,7 +987,7 @@ where C: CurveGroup<ScalarField=F>, CS: CommitmentScheme<C,false>,
 /// dfa_mapper flattens word_info.vec_dfa_sigs_info into v_subsig_ids and
 /// CapErrs when it exceeds capacity.subsigs, so the demand is just that
 /// flattened length -- a pure function of WordInfo, needing no probe.
-fn neo_dfa_subsig_demand(infos: &[WordInfo]) -> usize {
+pub(crate) fn neo_dfa_subsig_demand(infos: &[WordInfo]) -> usize {
 	infos.iter().map(|wi| wi.vec_dfa_sigs_info.iter()
 		.map(|i| i.subsig_ids.len()).sum::<usize>()).max().unwrap_or(0)
 }
@@ -994,7 +995,8 @@ fn neo_dfa_subsig_demand(infos: &[WordInfo]) -> usize {
 /// Exact CP failed-sig (slen) seed: the last-chunk oup = set_sigs_crit
 /// (sed/dfa/ised partition it; no-crit sigs are already inside) + 1
 /// dummy. Floored at no_crit+1 for dummy-pad-only samples.
-fn neo_cp_seed(no_crit_len: usize, infos: &[WordInfo]) -> usize {
+pub(crate) fn neo_cp_seed(no_crit_len: usize, infos: &[WordInfo])
+	-> usize {
 	let word_max = infos.iter().map(|wi| wi.vec_sed_sigs.len()
 		+ wi.vec_dfa_sigs.len() + wi.vec_ised_sigs.len())
 		.max().unwrap_or(0);

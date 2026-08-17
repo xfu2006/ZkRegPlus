@@ -29,10 +29,11 @@ fn main() {
 				numa_num, part_id, b_dry_run, b_ladder_only);
 		}
 		Cmd::FullClam { perc_db, perc_samples, num_circs, num_jobs,
-			numa_num, part_id, b_dry_run, b_ladder_only } => {
+			numa_num, part_id, b_dry_run, b_ladder_only,
+			b_tune_v2 } => {
 			full_clamav_neo(perc_db, perc_samples, num_circs,
 				num_jobs, numa_num, part_id, b_dry_run,
-				b_ladder_only);
+				b_ladder_only, b_tune_v2);
 		}
 		Cmd::SmallFullDlp { perc_db, perc_samples, num_circs,
 			num_jobs, numa_num, part_id, b_dry_run,

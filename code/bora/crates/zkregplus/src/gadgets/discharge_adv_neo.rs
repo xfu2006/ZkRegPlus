@@ -716,7 +716,6 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		hm_loc: &HashMap<F, Vec<(F, F)>>, info: &SubsigStepStore,
 		default_min_loc: F) -> Result<StepQueueNeo<F>, Error> {
 		let max_val: usize = (1 << read_global_config().range2_bit) - 1;
-		let t_fn = std::time::Instant::now(); //DEBUG USE 69120.5
 		let (zero, one) = (F::zero(), F::one());
 		let f_max = F::from(max_val as u32);
 		let (f_c, f_fp, f_bp) =
@@ -734,7 +733,6 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		let mut w_min = 0usize; //T301 per-group min(dense, windowed)
 		let mut b_hist = [0usize; 5]; // B = 0,1,2,3-4,5+
 		let mut n_grp = 0usize;
-		let t_loop = std::time::Instant::now(); //DEBUG USE 69120.6
 		for subsig in &self.subsigs {
 			let u_subsig = field_to_usize(subsig);
 			let rec = info.subsig_to_steps.get(&u_subsig).expect(
@@ -991,9 +989,6 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			}
 			store_items.insert(*subsig, its);
 		}
-		//DEBUG USE 69120.6: loop-only span; the fn tail (derive_min,
-		//post-pass, PERF 61080) stays serial under Change A.
-		let loop_us = t_loop.elapsed().as_micros() as usize;
 
 		//DEBUG USE 62071.1/.2: T5 sizing verdict for this chunk.
 		//modelA = B==0 groups cost nothing; modelC = they keep 2
@@ -1056,25 +1051,6 @@ B0={} B1={} B2={} B3_4={} B5plus={}", self.b_igc, b_hist[0],
 			rows, n_cap, rows * 1000 / n_cap.max(1)));
 		log(job_id, LOG4,
 			&format!("PERF 61080.3 step_peak={}", peak));
-		//DEBUG USE 69120.5: V0 falsifier -- avg fn time vs the ~690
-		//ms/chunk Pass-1 cost decides if Change A (par subsig loop)
-		//can reach legacy parity. Gate is DLP-only (igc arm skipped
-		//there, so calls == chunks); igc printed for reconciliation.
-		{
-			use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-			static V0_FN_US: AtomicUsize = AtomicUsize::new(0);
-			static V0_LOOP_US: AtomicUsize = AtomicUsize::new(0);
-			static V0_N: AtomicUsize = AtomicUsize::new(0);
-			let fn_us = t_fn.elapsed().as_micros() as usize;
-			let cf = V0_FN_US.fetch_add(fn_us, Relaxed) + fn_us;
-			let cl = V0_LOOP_US.fetch_add(loop_us, Relaxed) + loop_us;
-			let n = V0_N.fetch_add(1, Relaxed) + 1;
-			if n % 64 == 0 {
-				println!("DEBUG USE 69120.5: shared_core igc={} \
-calls={} cum_fn_us={} cum_loop_us={}",
-					self.b_igc, n, cf, cl);
-			}
-		}
 		Ok(res)
 	}
 

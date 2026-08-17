@@ -440,6 +440,10 @@ pub struct DatasetSpec {
 	/// false for every paper dataset (their part topology decides);
 	/// true only for SMALL_DLP, whose whole point is fold timing.
 	pub(crate) b_fold_only: bool,
+	/// V101: route the non-aggressive tuner to tune_neo_non_aggr_v2.
+	/// false in every spec literal; only full_clamav_neo's cloned
+	/// CLAM sets it, from the `full_clam_v2` subcommand.
+	pub(crate) b_tune_v2: bool,
 }
 
 /// DLP: legacy full_dlp()'s exact run configuration (zkp_driver's
@@ -500,6 +504,7 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	log_level: utils::logger::LOG3,
 	scale_tune: None,
 	b_fold_only: false,
+	b_tune_v2: false,
 };
 
 /// small_full_dlp: DLP's config verbatim except the corpus and the
@@ -550,6 +555,7 @@ pub const SMALL_DLP: DatasetSpec = DatasetSpec {
 	scale_tune: None,
 	// the point of the run: fold timing, no Groth16.
 	b_fold_only: true,
+	b_tune_v2: false,
 };
 
 /// DNA: legacy full_dna()'s exact run configuration (zkp_driver.rs
@@ -633,6 +639,7 @@ pub const DNA: DatasetSpec = DatasetSpec {
 	log_level: utils::logger::LOG3,
 	scale_tune: None,
 	b_fold_only: false,
+	b_tune_v2: false,
 };
 
 /// CLAM: legacy PRODUCTION full_clamav()'s exact run configuration
@@ -772,6 +779,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 		},
 	}),
 	b_fold_only: false,
+	b_tune_v2: false,
 };
 
 /// Config dir for a run: the real one when nothing is thinned, else the
@@ -1853,6 +1861,10 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 	} else {
 		assert_eq!(spec.vec_decrease_level.len(), num_circs - 1,
 			"bora_data_driver: vec_decrease_level len != num_circs-1");
+		// V101: the whole switch. Flag off => v1 byte-identical.
+		if spec.b_tune_v2 {
+			return tune_neo_non_aggr_v2(spec, db, ts, num_circs);
+		}
 		// seed = the dataset's hand caps, warm-started low so the
 		// probe converges to the true minimum (:1728-1748).
 		let mut p0 = spec.hand_seed.clone().unwrap_or_else(|| panic!(
@@ -1901,6 +1913,472 @@ fn tune(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
 		}
 		vec![new]
 	}
+}
+
+// =====================================================================
+// V101 -- v2 of the NEO NON-AGGRESSIVE capacity tuner.
+// Design: ~/tmp/bora/new_design_tune.txt (REV 5), implementation notes
+// ~/tmp/bora/new_impl_tune.txt. Three moves: collect-probe instead of
+// first-Err (M1), a COMPUTED qm_real seed instead of the literal 2
+// (M2), and a post-pass tighten straight off the QM_REAL_SAT gauge
+// instead of four binary searches (M3).
+// =====================================================================
+
+/// V101 seed-only dry fire (T6/F1): log the seed, then panic. A panic,
+/// not an early return -- it leaves no ladder.json a fold could take
+/// for a real config. Inert unless ZKR_V101_SEED_ONLY is set.
+fn b_v101_seed_only() -> bool {
+	static B: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+	*B.get_or_init(|| std::env::var("ZKR_V101_SEED_ONLY").is_ok())
+}
+
+/// Per-arm, per-word chain weights for the Q_m row estimator.
+struct ChainW {
+	/// |inp|: seeded subsig count. EXACT, not a bound -- one seed row
+	/// each (discharge_adv_neo.rs:1943-1945).
+	n_inp: usize,
+	/// Slots whose fz == 0, i.e. always frozen, i.e. carry <= 1 row.
+	n_fz0: usize,
+	/// w[state] = SUM over pats output at `state` of K[pat].
+	w: Vec<usize>,
+	/// w1[state] = same, but only over slots with fz != 0 (the ones
+	/// whose carry is unbounded and must accumulate across chunks).
+	w1: Vec<usize>,
+}
+
+/// Chain weights for one word's seeded subsig set on one arm.
+/// pat ids in the store are acdfa ids PLUS ONE (clam_db.rs:1755-1773);
+/// acdfa.outputs holds RAW ids, hence the `+ 1` on lookup.
+fn v101_chain_w(inp: &[Fr], store: &data_processor::type_def
+	::SubsigStepStore, acdfa: &data_processor::hex_acdfa::HexACDFA)
+	-> ChainW {
+	use folding_schemes::folding::foldpot::circuits_super
+		::field_to_usize;
+	let max_val: usize = (1 << read_global_config().range2_bit) - 1;
+	let mut k: HashMap<usize, usize> = HashMap::new();
+	let mut k1: HashMap<usize, usize> = HashMap::new();
+	let mut n_fz0 = 0usize;
+	for s in inp.iter() {
+		let u = field_to_usize(s);
+		// empty-chain count-constraint subsigs ride as step-0
+		// passengers: zero slots, nothing to add. Absent is the same.
+		let rec = match store.subsig_to_steps.get(&u) {
+			Some(r) => r, None => continue };
+		// NOT reversed for is_backward: backward subsigs exist only in
+		// AGGRESSIVE mode (discharge_adv_neo.rs:705-714), and reversal
+		// preserves the pat multiset anyway.
+		let pm = &rec.vec_pm_bounds;
+		let kk = pm.len();
+		for i in 0..kk {
+			// slot (s, step = i+1) uses pm[i].0 and carries fz[i].
+			// fz_from_pm_bounds (:1187-1198) leaves fz[i] = 0 exactly
+			// when step i+1 is last or the NEXT step's rg_end is max.
+			let sing = i + 1 >= kk || (pm[i + 1].1).1 == max_val;
+			let pat = pm[i].0;
+			*k.entry(pat).or_insert(0) += 1;
+			if sing { n_fz0 += 1; }
+			else { *k1.entry(pat).or_insert(0) += 1; }
+		}
+	}
+	let n_acc = acdfa.num_acc_states;
+	let (mut w, mut w1) = (vec![0usize; n_acc], vec![0usize; n_acc]);
+	for st in 0..n_acc {
+		if let Some(outs) = acdfa.outputs.get(&st) {
+			for praw in outs.iter() {
+				let p = praw + 1;
+				w[st] += k.get(&p).copied().unwrap_or(0);
+				w1[st] += k1.get(&p).copied().unwrap_or(0);
+			}
+		}
+	}
+	ChainW { n_inp: inp.len(), n_fz0, w, w1 }
+}
+
+/// Max est(k) for one word/arm: one streaming AC-DFA walk of the
+/// PADDED word, plus the misaligned mid-slice the planner also probes.
+fn v101_walk_word(padded: &[Fr], chunk_len: usize, cw: &ChainW,
+	acdfa: &data_processor::hex_acdfa::HexACDFA) -> (usize, bool) {
+	use folding_schemes::folding::foldpot::circuits_super
+		::field_to_usize;
+	use utils::data::one_packed_to_nibbles;
+	let n_acc = acdfa.num_acc_states;
+	if n_acc == 0 || cw.n_inp == 0 { return (cw.n_inp, false); }
+	let base = cw.n_inp + cw.n_fz0;
+	let n_ch = padded.len() / chunk_len;
+	let (mut st, mut acc1, mut best) = (acdfa.init_state, 0usize, 0usize);
+	for c in 0..n_ch {
+		let (mut cell, mut cell1) = (0usize, 0usize);
+		for e in padded[c * chunk_len..(c + 1) * chunk_len].iter() {
+			for ch in one_packed_to_nibbles::<Fr>(e) {
+				st = acdfa.trans[&st][field_to_usize(&ch)];
+				if st < n_acc { cell += cw.w[st]; cell1 += cw.w1[st]; }
+			}
+		}
+		best = best.max(base + cell + acc1);
+		acc1 += cell1;
+	}
+	// I1: find_working_layer_for_wd also probes word[n/2 .. n/2+mw] at
+	// max_layer with `?` (capacity_planner.rs:254-267). That slice runs
+	// as seg_id 0 -- DFA init state, EMPTY carry (sed_mapper.rs:1152)
+	// -- and its RAW midpoint is chunk-aligned only when the padded
+	// chunk count is even. 187 of clam's 1209 words are misaligned.
+	let mut b_mid = false;
+	if padded.len() >= 2 * chunk_len {
+		let off = padded.len() / 2;
+		let (mut s2, mut cell) = (acdfa.init_state, 0usize);
+		for e in padded[off..off + chunk_len].iter() {
+			for ch in one_packed_to_nibbles::<Fr>(e) {
+				s2 = acdfa.trans[&s2][field_to_usize(&ch)];
+				if s2 < n_acc { cell += cw.w[s2]; }
+			}
+		}
+		let em = base + cell;          // no carry: the slice has none
+		if em > best { best = em; b_mid = true; }
+	}
+	(best, b_mid)
+}
+
+/// The word's seeded sig set, derived EXACTLY as neo_subsig_demand
+/// does (zkp_driver.rs:967-976) so the two can never drift. None =
+/// the word is skipped there too.
+fn v101_word_sigs(db: &ClamavDB<Fr>, wi: &WordInfo)
+	-> Option<Vec<Arc<data_processor::type_def::ClamavSig>>> {
+	if wi.vec_sed_sigs.is_empty() { return None; }
+	let sigs: Vec<Arc<data_processor::type_def::ClamavSig>> =
+		db.bundle_subsig.vec_sigs[0].iter()
+		.filter(|s| db.sig_to_id.get(&s.name)
+			.map_or(false, |id| wi.vec_sed_sigs.contains(id)))
+		.cloned().collect();
+	if sigs.len() != wi.vec_sed_sigs_info.len() { return None; }
+	Some(sigs)
+}
+
+/// Sound upper bound on max_k n_real per arm (design sec 3), over the
+/// whole tuning set. Returns (cs, igc, mid_hits, skipped).
+fn neo_qm_real_seed(db: &Arc<ClamavDB<Fr>>, ts: &TuningSet,
+	chunk_len: usize) -> (usize, usize, usize, usize) {
+	use rayon::prelude::*;
+	use crate::circs::sed_mapper::SedAdvice;
+	let per: Vec<(usize, usize, usize, usize)> = (0..ts.words.len())
+		.into_par_iter().map(|i| {
+		let wi = &ts.infos[i];
+		let sigs = match v101_word_sigs(db, wi) {
+			Some(v) => v, None => return (0, 0, 0, 1) };
+		let padded = utils::data::pad_word_to_multiple::<Fr>(
+			&ts.words[i], chunk_len);
+		let mut out = [0usize; 2];
+		let mut mid = 0usize;
+		for (arm, b_igc) in [(0usize, false), (1usize, true)] {
+			let bundle = if b_igc { &db.bundle_subsig_igc }
+				else { &db.bundle_subsig };
+			let acdfa = &bundle.vec_acdfa[0];
+			let store = &bundle.vec_subsig_step_stores[0];
+			let inp = SedAdvice::<Fr>::collect_subsig_ids(&sigs,
+				&wi.vec_sed_sigs_info, &db.sig_to_id, b_igc, acdfa);
+			let cw = v101_chain_w(&inp, store, acdfa);
+			let (e, b_mid) =
+				v101_walk_word(&padded, chunk_len, &cw, acdfa);
+			out[arm] = e;
+			if b_mid { mid += 1; }
+		}
+		(out[0], out[1], mid, 0)
+	}).collect();
+	per.into_iter().fold((0, 0, 0, 0), |a, b|
+		(a.0.max(b.0), a.1.max(b.1), a.2 + b.2, a.3 + b.3))
+}
+
+/// perc_comp_subsigs from the gadget's OWN back-solve. MUST run AFTER
+/// subsigs / subsigs_igc are final -- they are the denominator.
+fn neo_scc_perc_seed(db: &Arc<ClamavDB<Fr>>, infos: &[WordInfo],
+	subsigs: usize, subsigs_igc: usize) -> usize {
+	use rayon::prelude::*;
+	use folding_schemes::folding::foldpot::circuits_super
+		::field_to_usize;
+	use crate::circs::sed_mapper::SedAdvice;
+	use data_processor::type_def::SubSigType;
+	let len_max = (0..infos.len()).into_par_iter().map(|i| {
+		let wi = &infos[i];
+		let sigs = match v101_word_sigs(db, wi) {
+			Some(v) => v, None => return 0usize };
+		let mut len = 0usize;
+		for b_igc in [false, true] {
+			let bundle = if b_igc { &db.bundle_subsig_igc }
+				else { &db.bundle_subsig };
+			let acdfa = &bundle.vec_acdfa[0];
+			let store = &bundle.vec_subsig_info_stores[0];
+			let inp = SedAdvice::<Fr>::collect_subsig_ids(&sigs,
+				&wi.vec_sed_sigs_info, &db.sig_to_id, b_igc, acdfa);
+			for s in inp.iter() {
+				if let Some(r) = store.subsig_to_rec
+					.get(&field_to_usize(s)) {
+					if r.subsig_type
+						== SubSigType::SubsigCountConstraint as u8 {
+						// +1 = the max_val sentinel vec_comps pushes
+						// (compute_sig_adv.rs:970).
+						len += r.component_subsigs.len() + 1;
+					}
+				}
+			}
+		}
+		len
+	}).max().unwrap_or(0);
+	let den = (subsigs + subsigs_igc).max(1);
+	// invert get_scc_prf_size (compute_sig_adv.rs:2769-2773); the +1
+	// makes the integer division self-consistent (design S2).
+	// Floored at min_perc_comp_subsigs because decreased_copy floors
+	// every LOWER rung there (sed_mapper.rs:284/:298) -- a base below
+	// its own ladder floor is the trap design 3.5 names.
+	((len_max + 1) * 100 / den + 1)
+		.max(read_global_config().min_perc_comp_subsigs)
+}
+
+/// M3: lower qm_real_rows to the pass's measured corpus max. No
+/// re-probe needed (design P3). NEVER writes 0 -- that is the dense
+/// fallback (discharge_adv_neo.rs:1829-1837).
+fn v101_tighten_from_gauge(p: &mut CapParams) {
+	let pk_cs = utils::consts::QM_REAL_SAT[0].get().0;
+	let pk_igc = utils::consts::QM_REAL_SAT[1].get().0;
+	if pk_cs > 0 { p.qm_real_rows = pk_cs; }
+	if pk_igc > 0 { p.qm_real_rows_igc = pk_igc; }
+}
+
+/// Restores the three subsigs ladder floors on EVERY exit, exactly as
+/// determine_config_non_aggr's own guard does (zkp_driver.rs:1036-48).
+struct V101FloorGuard(usize, usize, usize);
+impl Drop for V101FloorGuard {
+	fn drop(&mut self) {
+		let mut c = get_global_config();
+		c.min_subsigs = self.0;
+		c.min_subsigs_igc = self.1;
+		c.min_cp_subsigs = self.2;
+	}
+}
+
+/// Re-pin the three ladder floors after a bump, as v1 does at
+/// zkp_driver.rs:1300-1305: a bump raises only the BASE, and a stale
+/// floor lets decreased_copy drop a lower rung back under it forever.
+fn v101_repin(p: &CapParams) {
+	let mut c = get_global_config();
+	c.min_subsigs = p.subsigs;
+	c.min_subsigs_igc = p.subsigs_igc;
+	c.min_cp_subsigs = p.cp_subsigs;
+}
+
+/// v2 of determine_config_non_aggr: collect-probe over the failing
+/// subset, then ONE full-corpus receipt, then tighten off the gauge.
+/// Returns only from the full-corpus clean branch (design P1).
+fn determine_config_non_aggr_v2(db: Arc<ClamavDB<Fr>>,
+	sample_words: &Vec<Vec<Fr>>, sample_word_infos: &Vec<WordInfo>,
+	mut p: CapParams, chunk_len: usize, lkup_len: usize,
+	total_word_n: usize, vec_decrease_level: &Vec<usize>,
+	n_circs: usize, max_iters: usize, n_threads: usize)
+	-> Result<CapParams, String> {
+	use crate::zkp_driver::{neo_cp_seed, neo_dfa_subsig_demand,
+		neo_subsig_demand};
+	let poseidon = poseidon_canonical_config::<Fr>();
+	let _fg = {
+		let c = read_global_config();
+		V101FloorGuard(c.min_subsigs, c.min_subsigs_igc,
+			c.min_cp_subsigs)
+	};
+	let padded: Vec<Vec<Fr>> = sample_words.iter()
+		.map(|w| utils::data::pad_word_to_multiple::<Fr>(w, chunk_len))
+		.collect();
+	// exact seeds, the SAME three v1 helpers, the SAME ceilings.
+	// NOTE the directions: subsigs/cp/dfa take .min(knob) -- those are
+	// CEILINGS on a computed demand. qm_real/perc_comp take .max(floor)
+	// -- those are FLOORS. Mixing them under-caps (design 3.5).
+	let d_cs = neo_subsig_demand::<Fr, C1, CS1>(&db,
+		sample_word_infos, false);
+	let d_igc = neo_subsig_demand::<Fr, C1, CS1>(&db,
+		sample_word_infos, true);
+	p.subsigs = (d_cs + 1).min(p.subsigs);
+	p.subsigs_igc = (d_igc + 1).min(p.subsigs_igc);
+	let cp_need = neo_cp_seed(db.vec_sigs_no_critical_pat.len(),
+		sample_word_infos);
+	p.cp_subsigs = cp_need.min(p.cp_subsigs);
+	// +1 = the MANDATED dummy entry. dfa_adv.rs:546-548 CapErrs on
+	// `n <= info_ts.len()` and reports info_ts.len() + 1, with
+	// :550 asserting `n - info_ts.len() > 0`. v1 omits the +1 and
+	// pays one full bump round for it (measured: the 2026-08-17
+	// clam run seeded 7, then bumped dfa_adv::subsigs -> 8 after a
+	// 141-min round). v1 is left alone; only v2 gets this.
+	let d_dfa = neo_dfa_subsig_demand(sample_word_infos);
+	p.dfa_subsigs = (d_dfa + 1)
+		.max(read_global_config().min_dfa_subsigs)
+		.max(1).min(p.dfa_subsigs);
+	v101_repin(&p);
+	p.perc_comp_subsigs = neo_scc_perc_seed(&db, sample_word_infos,
+		p.subsigs, p.subsigs_igc);
+	utils::logger::log(0, utils::logger::LOG1, &format!(
+		"V2 SEED BLOCK: subsigs {} igc {} cp {} dfa {} perc_comp {}",
+		p.subsigs, p.subsigs_igc, p.cp_subsigs, p.dfa_subsigs,
+		p.perc_comp_subsigs));
+
+	let mut pending: Vec<usize> = (0..padded.len()).collect();
+	let mut t_all = utils::timer::Timer::new();
+	for iter in 0..max_iters {
+		let mut t_round = utils::timer::Timer::new();
+		utils::consts::reset_sat();
+		let sub_w: Vec<Vec<Fr>> = pending.iter()
+			.map(|&i| padded[i].clone()).collect();
+		let sub_i: Vec<WordInfo> = pending.iter()
+			.map(|&i| sample_word_infos[i].clone()).collect();
+		let probe = probe_catching(|| {
+			let (cp, sed, dfa, cp_i, sed_i) =
+				caps_from_params_general(&p);
+			let layered = build_circs_adv::<Fr, C1, CS1>(&poseidon,
+				total_word_n, chunk_len, lkup_len, db.clone(), &cp,
+				&sed, &dfa, &cp_i, &sed_i, vec_decrease_level,
+				n_circs, false);
+			let planner = CapacityPlanner::<C1, FC<Fr, C1, CS1>,
+				LK<Fr>, GM<Fr>, false>::new(layered);
+			Ok(planner.capacity_probe_collect(&sub_w, &sub_i,
+				n_threads))
+		})?;
+		let results = match probe {
+			Ok(r) => r,
+			Err(errs) => {   // construction-time CapErr
+				let (ch, un) = apply_caperr_bumps(&mut p, false, &errs);
+				if !un.is_empty() || !ch {
+					return Err(format!("v2: construction CapErr not \
+						bumpable: {:?}", errs));
+				}
+				v101_repin(&p);
+				utils::logger::log(0, utils::logger::LOG1, &format!(
+					"v2 iter {}: BUILD bump {:?}, round {} ms",
+					iter, errs, t_round.ms()));
+				continue;
+			}
+		};
+		let mut all_errs: Vec<(String, usize)> = vec![];
+		let mut failed: Vec<usize> = vec![];
+		for (k, r) in results.iter().enumerate() {
+			if let Some(errs) = r {
+				failed.push(pending[k]);
+				for (name, req) in errs {
+					if *req == 0 {
+						match parse_caperr_from_panic(name) {
+							Some(v) => all_errs.extend(v),
+							None => return Err(format!(
+								"v2: non-CapErr word {}: {}",
+								pending[k], name)),
+						}
+					} else { all_errs.push((name.clone(), *req)); }
+				}
+			}
+		}
+		t_round.stop();
+		if failed.is_empty() {
+			// P1: a PASS may only be decided by the FULL corpus.
+			if pending.len() == padded.len() {
+				let (q0, q1) = (utils::consts::QM_REAL_SAT[0].get(),
+					utils::consts::QM_REAL_SAT[1].get());
+				v101_tighten_from_gauge(&mut p);
+				t_all.stop();
+				utils::logger::log(0, utils::logger::LOG1, &format!(
+					"V2 CONVERGED @iter {}: qm_real {}/{} (gauge \
+					 {}/{} of {}/{}), subsigs {}, perc_comp {}; \
+					 round {} ms, TOTAL {} ms",
+					iter, p.qm_real_rows, p.qm_real_rows_igc,
+					q0.0, q1.0, q0.1, q1.1, p.subsigs,
+					p.perc_comp_subsigs, t_round.ms(), t_all.ms()));
+				return Ok(p);
+			}
+			pending = (0..padded.len()).collect();
+			utils::logger::log(0, utils::logger::LOG1, &format!(
+				"v2 iter {}: subset clean, promoting to full corpus; \
+				 round {} ms", iter, t_round.ms()));
+			continue;
+		}
+		let (ch, un) = apply_caperr_bumps(&mut p, false, &all_errs);
+		if !un.is_empty() {
+			return Err(format!("v2: unmapped CapErr(s): {:?}", un)); }
+		if !ch {
+			return Err(format!("v2: CapErr with no bump: {:?}",
+				all_errs)); }
+		v101_repin(&p);
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"v2 iter {}: {} of {} words failed, round {} ms, \
+			 bumped {:?}", iter, failed.len(), pending.len(),
+			t_round.ms(), all_errs));
+		pending = failed;
+	}
+	Err(format!("v2: max_iters {} reached without convergence",
+		max_iters))
+}
+
+/// V101 entry point: tune()'s non-aggr branch with the computed
+/// qm_real seed in place of `= 2`, and v2's converge loop.
+fn tune_neo_non_aggr_v2(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
+	ts: &TuningSet, num_circs: usize) -> Vec<CapParams> {
+	use folding_schemes::folding::foldpot::sigma_ir1cs
+		::LookupTableTwoCol as _;
+	assert!(!spec.b_aggressive, "v2 is the non-aggressive tuner");
+	assert!(read_global_config().clamav_cfg.b_use_discharge_neo,
+		"v2: apply_spec_config before tune");
+	// P2's precondition: a nonzero wrap_keys is returned VERBATIM
+	// (discharge_adv_neo.rs:1804) and the proof would not hold.
+	assert_eq!(read_global_config().neo_wrap_keys, 0,
+		"v2: P2 needs neo_wrap_keys == 0");
+	let mut p0 = spec.hand_seed.clone().unwrap_or_else(|| panic!(
+		"bora_data_driver: {} non-aggr needs hand_seed", spec.name));
+	p0.perc_pats_expansion_rate = p0.perc_pats_expansion_rate.min(16);
+	p0.perc_pats_expansion_rate_igc =
+		p0.perc_pats_expansion_rate_igc.min(16);
+	p0.avg_active_pats_per_subsig =
+		p0.avg_active_pats_per_subsig.min(2);
+	p0.avg_active_pats_per_subsig_igc =
+		p0.avg_active_pats_per_subsig_igc.min(2);
+	p0.acdfa_state_part_bits = spec.range2_bit;
+	p0.max_word_len = spec.chunk_len;
+	// M2. Floors ride the hand seed's own qm fields (0 for clam today;
+	// the natural channel for a prior run's measured demand later).
+	let (f_cs, f_igc) = (p0.qm_real_rows, p0.qm_real_rows_igc);
+	let mut t_seed = utils::timer::Timer::new();
+	let (s_cs, s_igc, mid, skipped) =
+		neo_qm_real_seed(db, ts, spec.chunk_len);
+	t_seed.stop();
+	// NEVER 0: 0 is the DENSE fallback, and 0 -> k reads as a RAISE to
+	// apply_caperr_bumps' up() while being a SHRINK in fact.
+	p0.qm_real_rows = s_cs.max(f_cs).max(1);
+	p0.qm_real_rows_igc = s_igc.max(f_igc).max(1);
+	utils::logger::log(0, utils::logger::LOG1, &format!(
+		"V2 QM SEED: cs={} igc={} floors=({},{}) words={} \
+		 mid_hits={} skipped={} elapsed={} ms",
+		p0.qm_real_rows, p0.qm_real_rows_igc, f_cs, f_igc,
+		ts.words.len(), mid, skipped, t_seed.ms()));
+	utils::logger::log(0, utils::logger::LOG1, &format!(
+		"V2 PHASE seed ms={}", t_seed.ms()));
+	if b_v101_seed_only() {
+		panic!("V101 SEED-ONLY DRY FIRE: stop after seed (cs={} \
+			igc={})", p0.qm_real_rows, p0.qm_real_rows_igc);
+	}
+	let max_bin = ts.bin_word_lens.iter().copied().max().unwrap_or(0);
+	let mut t_probe = utils::timer::Timer::new();
+	let new = determine_config_non_aggr_v2(db.clone(), &ts.words,
+		&ts.infos, p0, spec.chunk_len, db.lkup.get_size(), max_bin,
+		&spec.vec_decrease_level.to_vec(), num_circs, 60, 8)
+		.unwrap_or_else(|e| panic!("bora_data_driver: v2: {}", e));
+	t_probe.stop();
+	utils::logger::log(0, utils::logger::LOG1, &format!(
+		"V2 PHASE probe ms={}", t_probe.ms()));
+	{
+		let mut g = get_global_config();
+		g.min_subsigs = new.subsigs;
+		g.min_subsigs_igc = new.subsigs_igc;
+		g.min_cp_subsigs = new.cp_subsigs;
+	}
+	let mut new = new;
+	if num_circs > 1 {
+		let mut t_v5 = utils::timer::Timer::new();
+		new.levels = size_levels_v5_non_aggr(spec, db, ts, &new,
+			num_circs);
+		t_v5.stop();
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"V2 PHASE v5 ms={}", t_v5.ms()));
+	}
+	vec![new]
 }
 
 /// The shared tuning kernel (full x3, scale x2): thin config if asked,
@@ -2442,12 +2920,21 @@ pub fn full_dna_neo(perc_db: f64, perc_samples: f64,
 		numa_num, part_id, b_dry_run, b_ladder_only)
 }
 
-/// ClamAV full run: run_neo over the CLAM const.
+/// ClamAV full run: run_neo over the CLAM const. `b_tune_v2` (the
+/// `full_clam_v2` subcommand) routes the non-aggr tuner to v2 and
+/// gives that arm its OWN plan dir + DB cache, so an A/B pair cannot
+/// wipe each other's ladder.json / meter.json (reset_part_dir, :2388).
 pub fn full_clamav_neo(perc_db: f64, perc_samples: f64,
 	num_circs: usize, num_jobs: usize, numa_num: usize,
-	part_id: usize, b_dry_run: bool, b_ladder_only: bool)
-	-> Vec<CapParams> {
-	run_neo(&CLAM, perc_db, perc_samples, num_circs, num_jobs,
+	part_id: usize, b_dry_run: bool, b_ladder_only: bool,
+	b_tune_v2: bool) -> Vec<CapParams> {
+	let mut spec = CLAM.clone();
+	spec.b_tune_v2 = b_tune_v2;
+	if b_tune_v2 {
+		spec.name = "clam_v2";
+		spec.db_cache_dir = "clam_v2_neo";
+	}
+	run_neo(&spec, perc_db, perc_samples, num_circs, num_jobs,
 		numa_num, part_id, b_dry_run, b_ladder_only)
 }
 
@@ -2910,6 +3397,8 @@ pub const USAGE: &str = "bora_cli: backend of \
 	   (dry=1 also drops the hab22 cover check)\n \
 	 full_dna <same 8 args as full_dlp>\n \
 	 full_clam <same 8 args as full_dlp>\n \
+	 full_clam_v2 <same 8 args as full_clam>\n \
+	   (V101: identical run, v2 non-aggr tuner; own plan dir)\n \
 	 small_full_dlp <same 8 args as full_dlp>\n \
 	   (entire DB, pre-cut ~5% corpus, fold cost only -- no snark;\n \
 	    pass perc_samples=100, the list IS the sample)\n \
@@ -2929,7 +3418,7 @@ pub enum Cmd {
 		b_dry_run: bool, b_ladder_only: bool },
 	FullClam { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
-		b_dry_run: bool, b_ladder_only: bool },
+		b_dry_run: bool, b_ladder_only: bool, b_tune_v2: bool },
 	SmallFullDlp { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_dry_run: bool, b_ladder_only: bool },
@@ -3031,13 +3520,15 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only }
 		}
-		Some("full_clam") => {
+		Some(sub @ ("full_clam" | "full_clam_v2")) => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
 				numa_num, part_id, b_dry_run, b_ladder_only) =
-				parse_full8(args, "full_clam");
+				parse_full8(args, sub);
+			// same 8 args, same data: the ONLY difference is which
+			// tuner runs, so an A/B needs no rebuild (R6).
 			Cmd::FullClam { perc_db, perc_samples, num_circs,
 				num_jobs, numa_num, part_id, b_dry_run,
-				b_ladder_only }
+				b_ladder_only, b_tune_v2: sub.ends_with("_v2") }
 		}
 		Some("small_full_dlp") => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
@@ -5073,6 +5564,63 @@ pub mod tests_bora_data_driver {
 		assert_eq!((sh.range2_bit, sh.chunk_len), (26, 4096));
 	}
 
+	/// V101 P2 precondition: neo_wrap_keys must be 0, else
+	/// wrap_budget returns it VERBATIM and P2's top-K proof fails.
+	#[test]
+	fn test_v101_wrap_keys_zero() {
+		let _g = cfg_lock();
+		apply_spec_config(&CLAM, true, &part_role(0, 1, 1));
+		assert_eq!(read_global_config().neo_wrap_keys, 0,
+			"P2 needs wrap_keys == 0 (discharge_adv_neo.rs:1804)");
+	}
+
+	/// V101 S2: the perc_comp back-solve must be self-consistent --
+	/// the gadget's OWN get_scc_prf_size must clear len_max + 1.
+	#[test]
+	fn test_v101_scc_backsolve_self_consistent() {
+		use crate::gadgets::compute_sig_adv::ComputeSigAdvCapacity;
+		for (len_max, s_cs, s_igc) in [(0usize, 368usize, 2usize),
+			(1, 368, 2), (37, 580, 580), (200, 64, 64),
+			(1000, 580, 2), (7, 3, 1)] {
+			let den = (s_cs + s_igc).max(1);
+			let perc = ((len_max + 1) * 100 / den + 1).max(10);
+			let cap = ComputeSigAdvCapacity { subsigs_cs: s_cs,
+				subsigs_igc: s_igc, sigs: 1, max_nibble_len: 1,
+				basis_pats_in_trace_cs: 1, basis_pats_in_trace_igc: 1,
+				perc_pats_expansion_rate_cs: 1,
+				perc_pats_expansion_rate_igc: 1,
+				perc_comp_subsigs: perc, b_aggressive: false,
+				b_skip_igc: false };
+			assert!(cap.get_scc_prf_size() >= len_max + 1,
+				"back-solve short: len_max {} den {} perc {} -> {}",
+				len_max, den, perc, cap.get_scc_prf_size());
+		}
+	}
+
+	/// V101 R5/R6(a): the switch is off in every spec literal, and the
+	/// v2 clone takes its OWN plan dir + DB cache.
+	#[test]
+	fn test_v101_switch_off_by_default() {
+		assert!(!DLP.b_tune_v2 && !DNA.b_tune_v2
+			&& !CLAM.b_tune_v2 && !SMALL_DLP.b_tune_v2);
+		let mut v2 = CLAM.clone();
+		v2.b_tune_v2 = true;
+		v2.name = "clam_v2";
+		v2.db_cache_dir = "clam_v2_neo";
+		assert_ne!(v2.name, CLAM.name, "arms must not share plan dir");
+		assert_ne!(v2.db_cache_dir, CLAM.db_cache_dir);
+	}
+
+	/// V101: qm_real_rows may NEVER be seeded 0 -- 0 is the dense
+	/// fallback, and 0 -> k reads as a RAISE to up() while shrinking.
+	#[test]
+	fn test_v101_qm_seed_never_zero() {
+		for (s, f) in [(0usize, 0usize), (0, 5), (9, 0), (41208, 0)] {
+			assert!(s.max(f).max(1) >= 1);
+		}
+		assert_eq!(0usize.max(0usize).max(1), 1, "0 seed must clamp");
+	}
+
 	/// M104: full_clam parses through the shared parse_full8;
 	/// scale_clam takes the extra light token.
 	#[test]
@@ -5081,7 +5629,16 @@ pub mod tests_bora_data_driver {
 			"2", "2", "1", "0", "1", "0"])),
 			Cmd::FullClam { perc_db: 0.5, perc_samples: 0.1,
 				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
-				b_dry_run: true, b_ladder_only: false });
+				b_dry_run: true, b_ladder_only: false,
+				b_tune_v2: false });
+		// V101: the _v2 spelling takes the SAME 8 args and differs
+		// only in b_tune_v2 -- that is the A/B switch (R6).
+		assert_eq!(parse_args(&argv(&["full_clam_v2", "0.5", "0.1",
+			"2", "2", "1", "0", "1", "0"])),
+			Cmd::FullClam { perc_db: 0.5, perc_samples: 0.1,
+				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
+				b_dry_run: true, b_ladder_only: false,
+				b_tune_v2: true });
 		assert_eq!(parse_args(&argv(&["scale_clam", "1", "1,300",
 			"1"])),
 			Cmd::ScaleClam { corpus_idx: 1,

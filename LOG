@@ -31226,6 +31226,11 @@ Goal 3. Full clam
 	[f] check 4:00AM -> TUNER TOO SLOW! killed it.
 	[g] started 5:15AM
 	[h] check 11:00am! -> still NOT finished!
+	[i] run 12 hours no completion - > stop it
+		tune TOO SLOW! -> tuner cost is 19 hrs!
+
+Goal 4. full dlp on server
+	[a] started 
 
 
 --- DATA ----

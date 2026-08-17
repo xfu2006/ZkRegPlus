@@ -953,20 +953,6 @@ where
 		let num_segs = if wlen % max_wlen==0{wlen/max_wlen}
 			else {wlen/max_wlen+1};
 		let mut prev_adv = None;
-		//DEBUG USE 69120.7: V1 attribution for part A (per-seg rung
-		//router): halo build vs failed rung tries vs the chosen
-		//rung's advice call. Prints every ZKR_V1_CAD chunks (def 64).
-		use std::sync::atomic::{AtomicUsize, Ordering::Relaxed};
-		static V1_A_HALO_US: AtomicUsize = AtomicUsize::new(0);
-		static V1_A_OK_US: AtomicUsize = AtomicUsize::new(0);
-		static V1_A_FAIL_US: AtomicUsize = AtomicUsize::new(0);
-		static V1_A_TRIES: AtomicUsize = AtomicUsize::new(0);
-		static V1_A_CHUNKS: AtomicUsize = AtomicUsize::new(0);
-		static V1_CAD: std::sync::OnceLock<usize> =
-			std::sync::OnceLock::new();
-		let v1_cad = *V1_CAD.get_or_init(||
-			std::env::var("ZKR_V1_CAD").ok()
-				.and_then(|s| s.parse().ok()).unwrap_or(64));
 		for i in 0..num_segs{
 			let start = i*max_wlen;
 			let end = if (i+1)*max_wlen>wlen {wlen} else {(i+1)*max_wlen};
@@ -994,7 +980,6 @@ where
 					}
 				}
 			}
-			let t_halo = std::time::Instant::now(); //DEBUG USE 69120.7
 			//halo is rung-independent (M = db max span); build once.
 			let m_halo = lock_unwrap!(p_layered[0][0].get_mapper())
 				.get_capacity().halo_nibbles();
@@ -1011,8 +996,6 @@ where
 				wi_owned = wi;
 				&wi_owned
 			} else { word_info };
-			//DEBUG USE 69120.7: halo span ends here.
-			let halo_us = t_halo.elapsed().as_micros() as usize;
 			//bump from cheapest rung until the segment fits. Capacity
 			//overflow can surface as a panic (CapErr is not uniformly
 			//propagated), so catch it and treat as "rung too small",
@@ -1022,7 +1005,6 @@ where
 			for l in 0..=max_layer{
 				let circ = &p_layered[l][0];
 				let cap = lock_unwrap!(circ.get_mapper()).get_capacity();
-				let t_try = std::time::Instant::now(); //DEBUG USE 69120.7
 				let r = std::panic::catch_unwind(
 					std::panic::AssertUnwindSafe(|| {
 					lock_unwrap!(circ.get_mapper()).gen_nd_advice(
@@ -1036,14 +1018,6 @@ where
 					Err(Error::Other(format!(
 						"per-seg rung {} panic: {}", l, msg)))
 				});
-				//DEBUG USE 69120.7: split try cost by outcome.
-				let try_us = t_try.elapsed().as_micros() as usize;
-				if r.is_ok() {
-					V1_A_OK_US.fetch_add(try_us, Relaxed);
-				} else {
-					V1_A_FAIL_US.fetch_add(try_us, Relaxed);
-				}
-				V1_A_TRIES.fetch_add(1, Relaxed);
 				match r{
 					Ok(adv) => {chosen=Some((l, cap.clone(), adv)); break;},
 					Err(e) => {
@@ -1057,17 +1031,6 @@ where
 					Error::NotSupported(
 						"no rung fits segment".to_string()))),
 			};
-			//DEBUG USE 69120.7: per-chunk roll-up + cadence print.
-			V1_A_HALO_US.fetch_add(halo_us, Relaxed);
-			let nc = V1_A_CHUNKS.fetch_add(1, Relaxed) + 1;
-			if nc % v1_cad == 0 {
-				println!("DEBUG USE 69120.7: partA chunks={} tries={} \
-halo_us={} ok_us={} fail_us={}",
-					nc, V1_A_TRIES.load(Relaxed),
-					V1_A_HALO_US.load(Relaxed),
-					V1_A_OK_US.load(Relaxed),
-					V1_A_FAIL_US.load(Relaxed));
-			}
 			vec_pci.push(l);
 			vec_size.push(end-start);
 			vec_cap.push(cap);
@@ -2033,15 +1996,11 @@ halo_us={} ok_us={} fail_us={}",
 				//aggressive forward halo: feed the successor prefix so this
 				//pass back-solves the same caps the per-seg router validated
 				//(else no-halo boundary pats inflate basis_* past the rung).
-				let t_bh = std::time::Instant::now(); //DEBUG USE 69120.8
 				let m_halo = lock_unwrap!(circ.get_mapper())
 					.get_capacity().halo_nibbles();
 				let wi_owned = Self::with_chunk_halo(word_info,
 					&remaining, m_halo);
 				let wi_ref = wi_owned.as_ref().unwrap_or(word_info);
-				//DEBUG USE 69120.8: halo span ends, advice span starts.
-				let bh_us = t_bh.elapsed().as_micros() as usize;
-				let t_adv = std::time::Instant::now();
 				//S5 (aggr): reuse the advice the per-seg router
 				//generated at this rung -- same frag, halo, seg_id
 				//and prev chain -- instead of recomputing it.
@@ -2068,20 +2027,14 @@ halo_us={} ok_us={} fail_us={}",
 					assert!(res.is_ok(), "\n\n===== **** =====\nUNABLE to generate advice for word: {}, segment_id: {}, at layer {}, ERROR: {:#?}\n==============\n", word_fname, subseg_id, pc_i1, res);
 					res.unwrap()
 				};
-				//DEBUG USE 69120.8: advice span ends.
-				let adv_us = t_adv.elapsed().as_micros() as usize;
 
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. gen_advice."), &mut gt3);
-				let t_stmt = std::time::Instant::now(); //DEBUG USE 69120.8
 				let stmt_res = lock_unwrap!(circ.get_mapper()).build_statement(
 					&frag, &prev_stmt, self.lkup.clone(), &ei,
 					//	advice[subseg_id-1].clone(),
 						cur_adv.clone(),
 						lk_share_size, false, 0);
 				assert!(stmt_res.is_ok(), "\n\n === *** === \nUNABLE to generate statement for word id: {}, segment _id: {}, at layer {}, ERR: {:#?}. *** SHOULD IMPROVE the CapErr framework. Exception should be thrown in gen_nd_advice instead of build_stmt ***", word_fname, subseg_id, pc_i1, stmt_res);
-				//DEBUG USE 69120.8: stmt span ends (incl. the is_ok
-				//assert, which is cheap).
-				let stmt_us = t_stmt.elapsed().as_micros() as usize;
 				prev_adv = Some(cur_adv);
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. build stmt."), &mut gt3);
 				let stmt = stmt_res.unwrap();
@@ -2097,7 +2050,6 @@ halo_us={} ok_us={} fail_us={}",
 						"S5 oracle diverged: word {} seg {}",
 						word_fname, subseg_id);
 				}
-				let t_lk = std::time::Instant::now(); //DEBUG USE 69120.8
 				//T703a: virtual slots counted with the SAME
 				//evaluator gen_witness uses (never disagree).
 				let virt_extra = circ
@@ -2107,41 +2059,6 @@ halo_us={} ok_us={} fail_us={}",
 					//for updating couners of lookup
 					//later in PASS2 it generates the m_table for
 					//each lookup for the corresponding lookup shares.
-				//DEBUG USE 69120.8: lkup span ends; roll up + print.
-				{
-					use std::sync::atomic::{AtomicUsize,
-						Ordering::Relaxed};
-					static V1_B_HALO_US: AtomicUsize =
-						AtomicUsize::new(0);
-					static V1_B_ADV_US: AtomicUsize =
-						AtomicUsize::new(0);
-					static V1_B_STMT_US: AtomicUsize =
-						AtomicUsize::new(0);
-					static V1_B_LK_US: AtomicUsize =
-						AtomicUsize::new(0);
-					static V1_B_N: AtomicUsize = AtomicUsize::new(0);
-					static V1_CAD: std::sync::OnceLock<usize> =
-						std::sync::OnceLock::new();
-					let cad = *V1_CAD.get_or_init(||
-						std::env::var("ZKR_V1_CAD").ok()
-							.and_then(|s| s.parse().ok())
-							.unwrap_or(64));
-					let lk_us = t_lk.elapsed().as_micros() as usize;
-					V1_B_HALO_US.fetch_add(bh_us, Relaxed);
-					V1_B_ADV_US.fetch_add(adv_us, Relaxed);
-					V1_B_STMT_US.fetch_add(stmt_us, Relaxed);
-					V1_B_LK_US.fetch_add(lk_us, Relaxed);
-					let n = V1_B_N.fetch_add(1, Relaxed) + 1;
-					if n % cad == 0 {
-						println!("DEBUG USE 69120.8: partB n={} \
-halo_us={} adv_us={} stmt_us={} lkup_us={}",
-							n, V1_B_HALO_US.load(Relaxed),
-							V1_B_ADV_US.load(Relaxed),
-							V1_B_STMT_US.load(Relaxed),
-							V1_B_LK_US.load(Relaxed));
-					}
-				}
-
 
 				//2.5 making updates
 				let ea = stmt.to_extra_info();

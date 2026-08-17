@@ -829,16 +829,11 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		// unique (clam_db::add asserts) and sorted (finalize), and
 		// inp is deduped+sorted (collect_subsig_ids), so both walks
 		// emit the same set in ascending order.
-		//DEBUG USE 69120.1: one-shot sizing probe, remove with the
-		//other 69120 sites once the Pass-1 speed item closes.
-		static PROBE_69120: std::sync::atomic::AtomicUsize =
-			std::sync::atomic::AtomicUsize::new(0);
 		let has_chain = |st: &SubsigStepStore, s: &F| -> bool {
 			st.subsig_to_steps.get(&field_to_usize(s))
 				.map_or(false, |it| !it.vec_pm_bounds.is_empty())
 		};
 		let needs = |st: &SubsigStepStore, inp: &Vec<F>| -> Vec<F> {
-			let t0 = std::time::Instant::now(); //DEBUG USE 69120.2
 			let out: Vec<F> = inp.iter()
 				.filter(|s| has_chain(st, *s)).cloned().collect();
 			// R4 oracle: re-derive the old universe scan and assert
@@ -854,14 +849,6 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 					.filter(|s| set.contains(s))
 					.collect::<Vec<F>>();
 				assert_eq!(out, old, "R4: needs() diverged");
-			}
-			//DEBUG USE 69120.1
-			let n = PROBE_69120.fetch_add(1,
-				std::sync::atomic::Ordering::Relaxed);
-			if n < 4 {
-				println!("DEBUG USE 69120.1: univ={} inp={} out={} \
-					us={}", st.subsig_ids.len(), inp.len(),
-					out.len(), t0.elapsed().as_micros());
 			}
 			out
 		};
@@ -1186,7 +1173,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 				// order comes from vec_sigs[0], the predicate is pure
 				// set membership, and vec_sed_sigs_info is untouched,
 				// so collect_subsig_ids' positional zip is preserved.
-				let t0 = std::time::Instant::now(); //DEBUG USE 69120.4
 				let sed_set: std::collections::HashSet<usize> =
 					word_info.vec_sed_sigs.iter().cloned().collect();
 				let sigs = bundle_cs.vec_sigs[0].iter().filter(|s|{
@@ -1195,7 +1181,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 							"can't find sig: {}", s.name));
 					sed_set.contains(id)
 				}).map(|s| s.clone()).collect::<Vec<Arc<ClamavSig>>>();
-				let us = t0.elapsed().as_micros();
 				// R4 oracle: re-derive with the linear scan and assert
 				// the selection is identical. Release-inert.
 				if B_DEBUG || cfg!(debug_assertions) {
@@ -1209,20 +1194,6 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 						&& sigs.iter().zip(old.iter())
 							.all(|(a, b)| Arc::ptr_eq(a, b)),
 						"R4: sed sig filter diverged");
-				}
-				//DEBUG USE 69120.3: one-shot sizing probe, remove with
-				//the other 69120 sites once the Pass-1 speed item
-				//closes.
-				static PROBE_69120C: std::sync::atomic::AtomicUsize =
-					std::sync::atomic::AtomicUsize::new(0);
-				if PROBE_69120C.load(
-					std::sync::atomic::Ordering::Relaxed) < 4 {
-					PROBE_69120C.fetch_add(1,
-						std::sync::atomic::Ordering::Relaxed);
-					println!("DEBUG USE 69120.3: sed_filter \
-db_sigs={} sed_sigs={} out={} us={}",
-						bundle_cs.vec_sigs[0].len(),
-						word_info.vec_sed_sigs.len(), sigs.len(), us);
 				}
 				(sigs, word_info.vec_sed_sigs_info.clone())
 			};

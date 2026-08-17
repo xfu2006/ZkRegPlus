@@ -396,7 +396,8 @@ def run_external_python(ctx, script, args, env):
     return p.returncode
 
 
-def run_rust_example(ctx, example_name, args, env, log_name="run"):
+def run_rust_example(ctx, example_name, args, env, log_name="run",
+                     max_wall_s=0, max_rss_gb=0):
     """Single-process `cargo run --release --example <name> -- <args>`,
     mirrors run_external_python but for a real bora_cli-style
     binary instead of a cargo test."""
@@ -404,7 +405,8 @@ def run_rust_example(ctx, example_name, args, env, log_name="run"):
     run_log = ctx.log_path(log_name)
     point_current_job(run_log, None)
     p, t = spawn(cmd, env, run_log, ctx.key)
-    ctx.watch(p, run_log)
+    ctx.watch(p, run_log, max_wall_s=max_wall_s,
+              max_rss_gb=max_rss_gb)
     p.wait()
     _join_pump(t)
     return p.returncode
@@ -1031,7 +1033,7 @@ def _stall_kill(p, ctx, pids, log_path, idle, label):
                   % label)
 
 
-def _watch_child(p, log_path, ctx):
+def _watch_child(p, log_path, ctx, max_wall_s=0, max_rss_gb=0):
     """Supervisor thread for one spawned child: tracks peak tree-RSS and
     kills a tree that has made no progress on EITHER axis for STALL_S.
     Progress = any change in (pids, tree cpu, log mtime).  The cpu sum
@@ -1039,6 +1041,12 @@ def _watch_child(p, log_path, ctx):
     key, never a high-water mark: a shrinking tree IS progress."""
     pid, label = p.pid, os.path.basename(log_path)
     key, last, warned = None, time.time(), False
+    # WALL cap, distinct from STALL_S.  STALL_S is a NO-PROGRESS
+    # watchdog; a diverging tuner logs a round every ~2 h at 100 %% CPU,
+    # so it looks perfectly healthy and STALL_S never fires
+    # (max_iters is 60 -> up to ~109 h).  0 = no cap, the default for
+    # every pre-existing caller.
+    t_start = time.time()
     # p.returncode is a plain attribute read: never poll()/wait() here,
     # or this thread reaps the child and every later os.getpgid(p.pid)
     # races pid reuse.  _proc_state covers the child that died while the
@@ -1048,12 +1056,27 @@ def _watch_child(p, log_path, ctx):
         gb = _rss_gb(pids)
         if gb > ctx.peak_rss_gb:
             ctx.peak_rss_gb = gb
+        if max_rss_gb and gb > max_rss_gb:
+            # A kernel OOM takes the whole box down with it; a guarded
+            # kill costs one step.  V101 dec_big only.
+            _summary_line("       %s: RSS CEILING %.0fGB exceeded "
+                          "(%.1fGB) -- killing (OOM-GUARD)"
+                          % (label, max_rss_gb, gb))
+            _stall_kill(p, ctx, pids, log_path, 0, label)
+            return
         now = (tuple(pids), _cpu_s(pids), _log_mtime(log_path))
         idle = time.time() - last
         if idle > ctx.peak_idle_s:
             ctx.peak_idle_s = idle     # the run's own margin vs STALL_S
         if now != key:
             key, last, warned = now, time.time(), False
+        elif max_wall_s and time.time() - t_start >= max_wall_s:
+            _summary_line("       %s: WALL CAP %ds reached -- killing "
+                          "(TIMEOUT, not a failure)"
+                          % (label, max_wall_s))
+            _stall_kill(p, ctx, pids, log_path,
+                        time.time() - t_start, label)
+            return
         elif idle >= STALL_S:
             _stall_kill(p, ctx, pids, log_path, idle, label)
             last, warned = time.time(), False      # re-arm on a survivor
@@ -1105,8 +1128,10 @@ class JobHandle:
     def note(self, line):
         self._notes.append(line)
 
-    def watch(self, p, log_path):
-        t = threading.Thread(target=_watch_child, args=(p, log_path, self),
+    def watch(self, p, log_path, max_wall_s=0, max_rss_gb=0):
+        t = threading.Thread(target=_watch_child,
+                              args=(p, log_path, self, max_wall_s,
+                                    max_rss_gb),
                               daemon=True)
         t.start()
         return t
@@ -2344,6 +2369,13 @@ TOP_CHOICES = [
     # never alter a full_run.  It writes nothing into raw_data/.
     ("small_full_dlp", "small_full_dlp (ENTIRE dlp DB, ~5% corpus + "
                        "hard core, FOLD COST ONLY, ~8.5h/~230GB)"),
+    # V101 (2026-08-17): the whole tuner test suite in ONE unattended
+    # run.  Appended LAST so items 1-9 keep their numbers.  NOT a
+    # JOB_SPECS leaf -- `full_run --items all` must never reach it,
+    # it writes nothing into raw_data/.
+    ("v101", "V101 tuner test suite (all tests, unattended, self-"
+             "sizing to a 08:30 clock; verdict -> "
+             "/tmp/bora/v101/V101_VERDICT.txt)"),
 ]
 
 LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
@@ -2435,7 +2467,8 @@ def _parse_items(items):
 
 
 NO_ITEM_TOPS = ("small", "figs", "small_full_snark", "clean",
-                "dna_debug", "dna_debug_full", "small_full_dlp")
+                "dna_debug", "dna_debug_full", "small_full_dlp",
+                "v101")
 
 
 def resolve_plan(run, items):
@@ -2661,6 +2694,806 @@ def run_small_full_dlp():
     log("small_full_dlp: ladder + fold stats -> %s" % run_log)
     return 0
 
+
+
+
+# =====================================================================
+# Layer A -- V101 tuner test suite (last menu item: every V101 test in
+# one unattended run, self-sizing against a hard clock deadline)
+# =====================================================================
+#
+# Isolation from full_run, by construction (2026-08-17):
+#   * not in JOB_SPECS/LEAF_CHOICES/DRY_COST, so `--items all` cannot
+#     reach it;
+#   * the v2 arm runs under its OWN spec name ("clam_v2") and db cache
+#     ("clam_v2_neo"), so neither arm can wipe the other's plan dir
+#     (bora_data_driver.rs reset_part_dir);
+#   * no safe_pack_dump / place_raw_data call, so raw_data/ -- and the
+#     paper's full_clam.part*.tgz in particular -- is untouched.
+#
+# Everything the suite learns lands in TWO places:
+#   /tmp/bora/v101/<ts>/detail.log   every number + the line it came
+#                                    from (the debug artifact)
+#   /tmp/bora/v101/V101_VERDICT.txt  the succinct report (symlink to
+#                                    the latest run's verdict.txt)
+
+V101_ROOT = "/tmp/bora/v101"
+V101_VERDICT = os.path.join(V101_ROOT, "V101_VERDICT.txt")
+
+# neo_env() scrubs every ZKR_*, so these must be re-added AFTER it
+# (same mechanism as DNA_DEBUG_ENV).
+V101_SEED_ENV = {"ZKR_V101_SEED_ONLY": "1"}
+V101_METER_ENV = {"ZKR_METER_T9901": "1"}
+
+# Hard clock the suite must be finished by: the next local 08:30
+# (18:30 + 14 h).  A CLOCK, not a budget -- a late start degrades the
+# vehicle the picker chooses, never the finish time.
+V101_DEADLINE_HOUR = 8
+V101_DEADLINE_MIN = 30
+
+# Cost-model priors, in the units of the model.  Steps 4 and 5 REPLACE
+# every one of these with a measurement before the picker runs; they
+# exist only so a suite that skipped those steps can still size itself.
+#   t_db      s          DB build, corpus-independent
+#   r_disch   s per MB   discharge_for_tuning
+#   r_probe   s per padded chunk, one probe round (measured anchor:
+#             109 min / 6549 chunks on the reference run)
+#   k5, km    multiples of one probe round for the v5 walk and the
+#             ZKR_METER_T9901 walk; both are SERIAL over words at
+#             n_circs=1 against the probe's 8-thread ~3-walk pass,
+#             so 1/(3/8) = 2.67 is the derivation, 2.5 the prior
+#   r_seed    s per MB   the estimator's own DFA walk
+V101_PRIORS = dict(t_db=180.0, r_disch=2.35, r_probe=1.0,
+                    k5=2.5, km=2.5, r_seed=0.4)
+
+# v1 = 3 convergence rounds + ~7 post-convergence tightening passes
+# (job_v101.txt:215-222); v2 = 1 pass by design.
+V101_V1_PASSES = 10
+V101_V2_PASSES = 1
+
+# (perc_samples, files, MB, padded chunks, derived lkup share) for the
+# deterministic subsets of the clam corpus at chunk_len 4096.  Measured
+# 2026-08-17 by replaying subset()/fixed_perm() over the 8 binexec
+# manifests; production's own share is 129, so perc 20 is the closest
+# vehicle that can fit.  DESCENDING: the picker takes the first fit.
+V101_VEHICLES = [
+    (20, 242, 112.2, 989, 110),
+    (15, 182, 91.6, 800, 135),
+    (10, 121, 48.5, 435, 255),
+    (7, 85, 39.6, 350, 313),
+    (5, 61, 31.3, 275, 395),
+    (3, 37, 20.2, 179, 611),
+    (2, 25, 12.3, 110, 1011),
+]
+
+# The suite's own safety factor on the cost model.  Every coefficient
+# is measured minutes earlier on the SAME box under the SAME load, so
+# 15% is generous rather than tight.
+V101_MODEL_SLACK = 0.85
+
+
+@dataclass
+class V101Step:
+    """One row of the suite.  `parse` pulls that step's numbers out of
+    its own log; `needs_v2` steps are skipped when the binary predates
+    stage 2."""
+    key: str
+    label: str
+    argv: list          # bora_cli argv, or [] for a cargo step
+    env: dict           # ZKR_* re-added AFTER neo_env()
+    cap_s: int          # per-step wall cap; 0 = use the deadline
+    needs_v2: bool
+    kind: str = "bora"  # "bora" | "cargo" | "calc"
+    # D5 guards, dec_big only.  min_avail_gb is a PRECONDITION checked
+    # at launch; max_rss_gb is a live ceiling the watchdog enforces.
+    min_avail_gb: float = 0.0
+    max_rss_gb: float = 0.0
+
+
+@dataclass
+class V101Res:
+    key: str
+    status: str = "PENDING"   # OK FAIL TIMEOUT SKIP
+    why: str = ""
+    wall_s: float = 0.0
+    rss_gb: float = 0.0
+    nums: dict = None         # parsed numbers, verbatim into detail.log
+
+
+def _v101_now():
+    return time.time()
+
+
+def _v101_mem_avail_gb():
+    """MemAvailable in GB, 0.0 if unreadable.  Used as a PRECONDITION
+    for dec_big: a production-width clam decider is priced at hundreds
+    of GB (small_full_snark measured 433 GiB and aborted mid-decider
+    once at 512 GB), so it must not start on a box that cannot hold
+    it."""
+    try:
+        with open("/proc/meminfo") as f:
+            for line in f:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024.0 * 1024.0)
+    except (OSError, ValueError, IndexError):
+        pass
+    return 0.0
+
+
+def _v101_deadline(t0):
+    """Next local V101_DEADLINE_HOUR:MM at or after t0.  A CLOCK: a
+    late start shrinks the vehicle, it never moves the finish."""
+    lt = time.localtime(t0)
+    d = time.struct_time((lt.tm_year, lt.tm_mon, lt.tm_mday,
+                           V101_DEADLINE_HOUR, V101_DEADLINE_MIN, 0,
+                           0, 0, -1))
+    at = time.mktime(d)
+    if at <= t0:
+        at += 24 * 3600
+    return at
+
+
+def _v101_hm(s):
+    """4271.0 -> '1h11m'; negative and None print as '--'."""
+    if s is None or s < 0:
+        return "--"
+    return "%dh%02dm" % (int(s // 3600), int((s % 3600) // 60))
+
+
+def _v101_grep(path, pat, group=0, last=True):
+    """Last (or first) regex hit in a log.  Returns (value, rawline)
+    so the number and the line it came from both reach detail.log --
+    the suite never prints a number it cannot source."""
+    rx = re.compile(pat)
+    hit = None
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                m = rx.search(line)
+                if m:
+                    hit = (m.group(group), line.rstrip())
+                    if not last:
+                        break
+    except OSError:
+        return (None, "")
+    return hit if hit else (None, "")
+
+
+def _v101_int(path, pat):
+    v, raw = _v101_grep(path, pat, 1)
+    try:
+        return (int(v.replace(",", "")), raw)
+    except (TypeError, ValueError):
+        return (None, raw)
+
+
+def v101_cost(model, veh, passes):
+    """Seconds for ONE arm on `veh` = (perc, files, mb, chunks, share).
+    setup + N probe rounds + the v5 walk + the meter walk.  Both walks
+    are paid by BOTH arms -- that is I5, and it is why the model has
+    k5 and km at all."""
+    _p, _f, mb, chunks, _sh = veh
+    setup = model["t_db"] + model["r_disch"] * mb
+    probe = model["r_probe"] * chunks
+    walks = (model["k5"] + model["km"]) * probe
+    seed = model["r_seed"] * mb if passes == V101_V2_PASSES else 0.0
+    return setup + seed + passes * probe + walks
+
+
+def v101_pick(model, remain_s, log):
+    """Largest vehicle whose A/B pair fits `remain_s` with the model's
+    own slack.  Returns (veh, predicted_s) or (None, None)."""
+    for veh in V101_VEHICLES:
+        c1 = v101_cost(model, veh, V101_V1_PASSES)
+        c2 = v101_cost(model, veh, V101_V2_PASSES)
+        log("picker: perc=%-3d chunks=%-5d v1=%s v2=%s pair=%s "
+            "budget=%s %s" % (veh[0], veh[3], _v101_hm(c1),
+                              _v101_hm(c2), _v101_hm(c1 + c2),
+                              _v101_hm(remain_s * V101_MODEL_SLACK),
+                              "TAKE" if c1 + c2 <= remain_s *
+                              V101_MODEL_SLACK else "skip"))
+        if c1 + c2 <= remain_s * V101_MODEL_SLACK:
+            return veh, c1 + c2
+    return None, None
+
+
+def v101_argv(sub, perc_db, perc_samples, circs, jobs, numa, part,
+               dry, ladder_only):
+    """bora_cli's 8-arg tail.  numa_num=1/part_id=0 is load-bearing on
+    every tuner step: it makes role.b_proves TRUE, hence
+    b_light_test FALSE (bora_data_driver apply_spec_config), i.e.
+    production's PROVING part at full width.  Production's part 0 runs
+    light-test ON; a tuner baseline must not reproduce that."""
+    return [sub, str(perc_db), str(perc_samples), str(circs),
+            str(jobs), str(numa), str(part), dry, ladder_only]
+
+
+def v101_steps():
+    """The suite, in execution order.  Steps 1-5 are fixed and cheap;
+    they MEASURE the cost model.  6-7 are the A/B, sized by the picker.
+    9-11 are the decider checks (D5) -- the only steps that fold and
+    prove, and so the only ones that can see R1's four residual axes."""
+    return [
+        V101Step("build", "cargo build --release + capability probe",
+                 [], {}, 1800, False, kind="cargo"),
+        V101Step("units", "test_v101_ / m104 parse / fingerprint_",
+                 [], {}, 1800, True, kind="cargo"),
+        V101Step("smoke_v1", "dry clam leaf, v1 arm",
+                 v101_argv("full_clam", 0.5, 0.1, 2, 2, 1, 0, "1", "1"),
+                 {}, 900, False),
+        V101Step("smoke_v2", "dry clam leaf, v2 arm",
+                 v101_argv("full_clam_v2", 0.5, 0.1, 2, 2, 1, 0,
+                           "1", "1"), {}, 900, True),
+        V101Step("seed", "F1: full-corpus seed-only dry fire",
+                 v101_argv("full_clam_v2", 100, 100, 2, 8, 1, 0,
+                           "0", "1"), V101_SEED_ENV, 5400, True),
+        V101Step("calib", "v2 receipt @ perc 2 (+ calibrates k5/km)",
+                 v101_argv("full_clam_v2", 100, 2, 2, 1, 1, 0,
+                           "0", "1"), V101_METER_ENV, 3600, True),
+        V101Step("pick", "choose the A/B vehicle", [], {}, 0, False,
+                 kind="calc"),
+        V101Step("ab_v1", "A/B v1 arm", [], V101_METER_ENV, 0, False),
+        V101Step("ab_v2", "A/B v2 arm", [], V101_METER_ENV, 0, True),
+        V101Step("dec_v1", "decider check, v1 ladder (dry leaf, FOLD"
+                 " + Groth16 + verify)",
+                 v101_argv("full_clam", 0.5, 0.1, 2, 2, 1, 0, "1", "0"),
+                 {}, 3600, False),
+        V101Step("dec_v2", "decider check, v2 ladder (dry leaf, FOLD"
+                 " + Groth16 + verify)",
+                 v101_argv("full_clam_v2", 0.5, 0.1, 2, 2, 1, 0,
+                           "1", "0"), {}, 3600, True),
+        V101Step("dec_big", "decider @ PRODUCTION width, perc 2"
+                 " (opportunistic; RAM-guarded)",
+                 v101_argv("full_clam_v2", 100, 2, 2, 1, 1, 0,
+                           "0", "0"), {}, 18000, True,
+                 min_avail_gb=460.0, max_rss_gb=460.0),
+    ]
+
+
+def v101_parse(key, path, res):
+    """Pull this step's numbers out of its own log.  Every entry keeps
+    the RAW LINE beside the value so detail.log can show where each
+    number came from -- the suite never prints an unsourced number."""
+    n = {}
+    def take(name, pat, cast=int):
+        v, raw = _v101_grep(path, pat, 1)
+        if v is not None:
+            try:
+                n[name] = cast(v.replace(",", ""))
+                n[name + "@"] = raw
+            except ValueError:
+                pass
+    if key in ("seed",):
+        take("seed_cs", r"V2 QM SEED: cs=(\d+)")
+        take("seed_igc", r"V2 QM SEED: cs=\d+ igc=(\d+)")
+        take("mid_hits", r"mid_hits=(\d+)")
+        take("skipped", r"skipped=(\d+)")
+        take("seed_ms", r"V2 PHASE seed ms=(\d+)")
+        take("db_ms", r"build DB\. (\d+) ms")
+    if key in ("calib", "ab_v2", "smoke_v2", "dec_v2", "dec_big"):
+        take("v2_iters", r"V2 CONVERGED @iter (\d+)")
+        take("qm_real", r"V2 CONVERGED @iter \d+: qm_real (\d+)")
+        take("qm_real_igc", r"V2 CONVERGED @iter \d+: qm_real \d+/(\d+)")
+        take("probe_ms", r"V2 PHASE probe ms=(\d+)")
+        take("v5_ms", r"V2 PHASE v5 ms=(\d+)")
+        take("seed_ms", r"V2 PHASE seed ms=(\d+)")
+        n["v2_bumps"] = _v101_count(path, r"^.*v2 iter \d+: \d+ of")
+    if key in ("ab_v1", "smoke_v1", "dec_v1"):
+        take("v1_iters", r"determine_config_non_aggr CONVERGED @iter (\d+)")
+        n["v1_bumps"] = _v101_count(path,
+                                     r"determine_config_non_aggr iter \d+:")
+    # gauges + the meter, wherever they appear
+    take("meter_demand_cs", r"qm_real max cs=(\d+)/")
+    take("meter_demand_igc", r"igc=(\d+)/\d+ \(demand/cap_seen\)")
+    take("shipped_qm", r"vs shipped qm_real_rows=(\d+)/")
+    take("caperr_units", r"caperr_units=(\d+)")
+    # The decider's real self-verify markers, confirmed against a
+    # live dec_v2 log 2026-08-17:
+    #   VERIFY-FLAGS batch1[final]: qa=1 fs=1 kzg=1 verdict=PASS
+    #   VERIFY-FLAGS ind[final] i=0: ... verdict=PASS
+    # There is NO "VERIFY_FAILS=" line -- grepping for one made this
+    # gate VACUOUS.  foldpot does not abort on a verify failure
+    # (consts.rs:69-75), so this counter IS the whole gate.
+    n["verify_pass"] = _v101_count(path,
+                                    r"VERIFY-FLAGS.*verdict=PASS")
+    n["verify_fail"] = _v101_count(path,
+                                    r"VERIFY-FLAGS.*verdict=FAIL")
+    res.nums = n
+    return n
+
+
+def _v101_count(path, pat):
+    rx = re.compile(pat)
+    c = 0
+    try:
+        with open(path, errors="replace") as f:
+            for line in f:
+                if rx.search(line):
+                    c += 1
+    except OSError:
+        return 0
+    return c
+
+
+def _v101_keep(run_dir, key, ctx_log):
+    """Copy this step's artifacts out BEFORE the next step's
+    reset_part_dir wipes the plan dir.  Both arms now have their own
+    plan dir (spec name clam / clam_v2), so this is belt-and-braces --
+    but a lost meter.json is a lost A/B, so it stays."""
+    dst = os.path.join(run_dir, key)
+    os.makedirs(dst, exist_ok=True)
+    for pd in ("/tmp/bora/clam_neo_p0", "/tmp/bora/clam_v2_neo_p0"):
+        for name in ("ladder.json", "meter.json"):
+            src = os.path.join(pd, name)
+            if os.path.exists(src):
+                tag = "v2_" if "clam_v2" in pd else ""
+                try:
+                    shutil.copy2(src, os.path.join(dst, tag + name))
+                except OSError:
+                    pass
+    if ctx_log and os.path.exists(ctx_log):
+        try:
+            shutil.copy2(ctx_log, os.path.join(dst, "run.log"))
+        except OSError:
+            pass
+    return dst
+
+
+def run_v101():
+    """Menu item: the whole V101 test suite, unattended, self-sizing
+    against a hard clock deadline, with its own verdict."""
+    t0 = _v101_now()
+    deadline = _v101_deadline(t0)
+    ts = _ts()
+    run_dir = os.path.join(V101_ROOT, ts)
+    os.makedirs(run_dir, exist_ok=True)
+    detail_path = os.path.join(run_dir, "detail.log")
+    detail = open(detail_path, "a", buffering=1)
+
+    def dlog(msg):
+        detail.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), msg))
+
+    def prog(msg):
+        """One line per step, to SUMMARY.log and detail.log, so a
+        `tail -F` shows progress without opening anything else."""
+        dlog(msg)
+        _summary_line("       v101: %s" % msg)
+        log("v101: %s" % msg)
+
+    dlog("V101 suite start; deadline %s (hard clock), run dir %s"
+         % (time.strftime("%Y-%m-%d %H:%M", time.localtime(deadline)),
+            run_dir))
+    model = dict(V101_PRIORS)
+    dlog("cost model priors: %s" % model)
+
+    steps = v101_steps()
+    # Debug hook, read by the PYTHON runner and never passed to a
+    # child: ZKR_V101_ONLY=build,units restricts the run to those step
+    # keys.  Unset = the whole suite.  It exists so run_v101() itself
+    # can be exercised in minutes instead of first executing for real
+    # on a 14 h server slot.
+    only = [x for x in os.environ.get("ZKR_V101_ONLY", "").split(",")
+            if x]
+    results = {s.key: V101Res(s.key) for s in steps}
+    if only:
+        dlog("ZKR_V101_ONLY=%s -- every other step reports NOT-SELECTED"
+             % ",".join(only))
+    have_v2 = True
+    veh = None
+    veh_pred = None
+
+    for st in steps:
+        r = results[st.key]
+        if only and st.key not in only:
+            r.status, r.why = "SKIP", "not selected (ZKR_V101_ONLY)"
+            continue
+        left = deadline - _v101_now()
+        if st.needs_v2 and not have_v2:
+            r.status, r.why = "SKIP", "binary predates stage 2"
+            prog("%-9s SKIP (%s)" % (st.key, r.why))
+            continue
+        cap = st.cap_s if st.cap_s else int(max(60, left - 180))
+        if st.kind != "calc" and left < min(cap, 300) + 120:
+            r.status, r.why = "SKIP", "no time (%s left)" % _v101_hm(left)
+            prog("%-9s SKIP (%s)" % (st.key, r.why))
+            continue
+
+        if st.min_avail_gb:
+            avail = _v101_mem_avail_gb()
+            if avail < st.min_avail_gb:
+                r.status = "SKIP"
+                r.why = ("needs %.0fGB free, box has %.0fGB"
+                         % (st.min_avail_gb, avail))
+                prog("%-9s SKIP (%s)" % (st.key, r.why))
+                continue
+            dlog("%s: MemAvailable %.0fGB >= %.0fGB required; RSS "
+                 "ceiling %.0fGB armed"
+                 % (st.key, avail, st.min_avail_gb, st.max_rss_gb))
+
+        if st.kind == "calc":                      # the picker
+            veh, veh_pred = v101_pick(model, left - 300, dlog)
+            if veh is None:
+                r.status, r.why = "FAIL", "no vehicle fits the deadline"
+                prog("%-9s FAIL (%s)" % (st.key, r.why))
+                continue
+            r.status = "OK"
+            r.nums = {"perc": veh[0], "files": veh[1], "mb": veh[2],
+                      "chunks": veh[3], "share": veh[4],
+                      "pred_s": veh_pred, "model": dict(model)}
+            for k in ("ab_v1", "ab_v2"):
+                sub = "full_clam" if k == "ab_v1" else "full_clam_v2"
+                stx = next(x for x in steps if x.key == k)
+                stx.argv = v101_argv(sub, 100, veh[0], 2, 1, 1, 0,
+                                      "0", "1")
+                passes = (V101_V1_PASSES if k == "ab_v1"
+                          else V101_V2_PASSES)
+                stx.cap_s = int(1.3 * v101_cost(model, veh, passes))
+            prog("%-9s OK   perc=%d (%d files, %d chunks, share %d), "
+                 "pair predicted %s" % (st.key, veh[0], veh[1],
+                                        veh[3], veh[4],
+                                        _v101_hm(veh_pred)))
+            continue
+
+        # ---- spawn ----
+        ctx = JobHandle("v101_%s" % st.key, "full")
+        ctx.note("v101 step %s: %s" % (st.key, st.label))
+        run_log = ctx.log_path("run")
+        t_s = _v101_now()
+        env = dict(neo_env())
+        env.update(st.env)
+        dlog("step %s argv=%s env+=%s cap=%ds"
+             % (st.key, st.argv, sorted(st.env), cap))
+        if st.kind == "cargo":
+            rc = _v101_cargo(ctx, st, env, run_log, dlog)
+        else:
+            rc = run_rust_example(ctx, "bora_cli", st.argv, env,
+                                   max_wall_s=cap,
+                                   max_rss_gb=st.max_rss_gb)
+        # b_fail_scan=False on EVERY step: the non-aggr tuner
+        # prints caught CapErr probe panics into every SUCCESSFUL log
+        # (M103 11.4 -- run_leaf_clamav passes False for the same
+        # reason), so FAIL_RE's "panicked" fires on a healthy run.
+        # The verdict below uses rc plus POSITIVE markers instead,
+        # which is a stronger test than a text scan.
+        res = ctx.finish(rc, b_fail_scan=False)
+        r.wall_s = _v101_now() - t_s
+        r.rss_gb = res.peak_rss_gb
+        v101_parse(st.key, run_log, r)
+        for k, v in sorted((r.nums or {}).items()):
+            if not k.endswith("@"):
+                dlog("  %s.%s = %s   <- %s"
+                     % (st.key, k, v, (r.nums or {}).get(k + "@", "")))
+        _v101_keep(run_dir, st.key, run_log)
+        r.status, r.why = _v101_verdict_step(st, r, res, cap)
+        if st.key == "build" and r.status == "OK":
+            have_v2 = _v101_has_v2(dlog)
+            if not have_v2:
+                dlog("capability probe: full_clam_v2 ABSENT -> every "
+                     "v2 step will be skipped; the v1 baseline still "
+                     "runs")
+        if st.key in ("seed", "calib") and r.status == "OK":
+            _v101_recalibrate(model, st.key, r, veh, dlog)
+        prog("%-9s %-7s %8s %5.1fGB  %s"
+             % (st.key, r.status, _v101_hm(r.wall_s), r.rss_gb,
+                r.why or _v101_headline(st.key, r)))
+        if r.status in ("FAIL", "TIMEOUT") and st.key in (
+                "build", "units", "smoke_v1", "smoke_v2", "seed",
+                "calib"):
+            # a broken v2 must not poison the rest: keep the v1
+            # baseline, drop the v2 arm (design 11.6).
+            if st.needs_v2:
+                have_v2 = False
+                dlog("hard v2 gate %s failed -> v2 steps skipped, v1 "
+                     "baseline continues" % st.key)
+            elif st.key == "build":
+                break
+
+    txt = v101_report(t0, deadline, run_dir, results, veh, model)
+    vpath = os.path.join(run_dir, "verdict.txt")
+    with open(vpath, "w") as f:
+        f.write(txt)
+    _atomic_symlink(vpath, V101_VERDICT)
+    detail.write("\n" + txt)
+    detail.close()
+    print(txt)
+    for line in txt.splitlines():
+        _summary_line("  %s" % line)
+    log("v101: verdict -> %s   detail -> %s" % (V101_VERDICT,
+                                                 detail_path))
+    bad = [k for k, r in results.items()
+           if r.status in ("FAIL", "TIMEOUT")]
+    return 1 if bad else 0
+
+
+def _v101_cargo(ctx, st, env, run_log, dlog):
+    """The two cargo steps.  build = release build of bora_cli; units =
+    the V101 unit filter plus the fingerprint gate, which must run
+    --test-threads=1."""
+    if st.key == "build":
+        cmd = ["cargo", "build", "--release", "--example", "bora_cli"]
+        return _v101_spawn(ctx, cmd, env, run_log, st.cap_s)
+    rc = 0
+    # (filter, minimum tests that MUST run).  A filter that matches
+    # NOTHING exits 0 -- a false green, exactly the trap recorded in
+    # small_data_par_lkup_coverage_red -- so every filter carries a
+    # floor and the count is re-read out of the log.
+    for filt, need, extra in (("test_v101_", 4, []),
+                              ("test_m104_parse_clam", 1, []),
+                              ("fingerprint_", 1,
+                               ["--test-threads=1"])):
+        cmd = ["cargo", "test", "--release", "-p", "zkregplus",
+               "--lib", "--", filt, "--nocapture"] + extra
+        dlog("  units: %s" % " ".join(cmd))
+        rc |= _v101_spawn(ctx, cmd, env, run_log, st.cap_s)
+        n, raw = _v101_grep(run_log, r"(\d+) passed", 1)
+        got = int(n) if n else 0
+        dlog("  units: filter %-22s ran %s (need >= %d)  <- %s"
+             % (filt, got, need, raw))
+        if got < need:
+            dlog("  units: FILTER %s MATCHED %d TESTS -- treating as "
+                 "FAIL (a 0-match filter exits 0)" % (filt, got))
+            rc |= 1
+    return rc
+
+
+def _v101_spawn(ctx, cmd, env, run_log, cap_s):
+    point_current_job(run_log, None)
+    p, t = spawn(cmd, env, run_log, ctx.key)
+    ctx.watch(p, run_log, max_wall_s=cap_s)
+    p.wait()
+    _join_pump(t)
+    return p.returncode
+
+
+def _v101_has_v2(dlog):
+    """One second, right after the build: does this binary know the
+    switch?  Cheaper than discovering it 40 minutes into step 5."""
+    exe = os.path.join(REPO, "target", "release", "examples",
+                        "bora_cli")
+    try:
+        out = subprocess.run([exe, "--help"], capture_output=True,
+                              text=True, timeout=60).stdout
+    except Exception as e:
+        dlog("capability probe failed: %s" % e)
+        return False
+    ok = "full_clam_v2" in out
+    dlog("capability probe: full_clam_v2 %s" % ("present" if ok
+                                                 else "ABSENT"))
+    return ok
+
+
+def _v101_recalibrate(model, key, r, veh, dlog):
+    """Replace priors with what we just measured.  This is the whole
+    reason steps 4 and 5 come before the picker."""
+    n = r.nums or {}
+    old = dict(model)
+    if key == "seed":
+        if n.get("db_ms"):
+            model["t_db"] = n["db_ms"] / 1000.0
+        # everything else in that step is DB + discharge + seed walk
+        if n.get("seed_ms") is not None:
+            model["r_seed"] = n["seed_ms"] / 1000.0 / 765.5
+            disch = r.wall_s - model["t_db"] - n["seed_ms"] / 1000.0
+            if disch > 0:
+                model["r_disch"] = disch / 765.5
+    if key == "calib":
+        chunks = 110.0            # the perc-2 vehicle, V101_VEHICLES
+        pr = n.get("probe_ms")
+        if pr:
+            model["r_probe"] = (pr / 1000.0) / chunks
+        if n.get("v5_ms") and pr:
+            model["k5"] = max(0.2, (n["v5_ms"] / float(pr)))
+        # the meter walk is the tail of the step that neither phase
+        # line covers; attribute it as km
+        acc = sum(n.get(k, 0) for k in ("seed_ms", "probe_ms", "v5_ms"))
+        rest = r.wall_s - acc / 1000.0 - model["t_db"] \
+            - model["r_disch"] * 12.3
+        if pr and rest > 0:
+            model["km"] = max(0.2, rest / (pr / 1000.0))
+    dlog("recalibrate after %s: %s -> %s" % (key, old, model))
+
+
+def _v101_verdict_step(st, r, res, cap):
+    """OK / FAIL / TIMEOUT for one step, plus the reason.  The seed
+    step PANICS by design (the dry fire stops after logging), so its
+    nonzero rc and its panic marker are expected, not a failure."""
+    n = r.nums or {}
+    if r.wall_s >= cap * 0.98:
+        return "TIMEOUT", "hit the %s wall cap" % _v101_hm(cap)
+    if st.key == "seed":
+        # the dry fire PANICS by design after logging, so rc != 0 is
+        # expected here; the seed line is the whole verdict.
+        if n.get("seed_cs"):
+            return "OK", ""
+        return "FAIL", "no V2 QM SEED line"
+    if res.rc != 0:
+        return "FAIL", "rc=%s (%s)" % (res.rc, res.triage_tgz)
+    # POSITIVE markers: a tuner step must show that it converged, a
+    # decider step that it folded.  Absence is a failure even at rc 0
+    # -- foldpot does not abort on a self-verify failure, it reaches
+    # only the log while cargo still prints ok (consts.rs:69-75).
+    if st.key in ("smoke_v2", "calib", "ab_v2") \
+            and n.get("v2_iters") is None:
+        return "FAIL", "no V2 CONVERGED line"
+    if st.key in ("smoke_v1", "ab_v1") and n.get("v1_iters") is None:
+        return "FAIL", "no determine_config_non_aggr CONVERGED line"
+    # foldpot does NOT abort on a self-verify failure -- it reaches
+    # only the log while cargo still prints ok (consts.rs:69-75), so a
+    # decider step must read the COUNTER, never the exit code.
+    if st.key.startswith("dec_"):
+        if n.get("verify_fail"):
+            return "FAIL", "%d VERIFY-FLAGS verdict=FAIL" \
+                % n["verify_fail"]
+        # POSITIVE: no PASS marker at all means the fold never
+        # reached the verify, which is a failure, not a pass.
+        if not n.get("verify_pass"):
+            return "FAIL", "no VERIFY-FLAGS verdict=PASS marker"
+    return "OK", ""
+
+
+def _v101_headline(key, r):
+    n = r.nums or {}
+    if key == "seed":
+        return "cs=%s igc=%s mid_hits=%s skipped=%s" % (
+            n.get("seed_cs"), n.get("seed_igc"), n.get("mid_hits"),
+            n.get("skipped"))
+    if key in ("calib", "ab_v2", "smoke_v2", "dec_v2", "dec_big"):
+        return "v2 iters=%s bumps=%s qm_real=%s" % (
+            n.get("v2_iters"), n.get("v2_bumps"), n.get("qm_real"))
+    if key.startswith("dec_"):
+        return "verify PASS=%s FAIL=%s  %s" % (
+            n.get("verify_pass"), n.get("verify_fail"),
+            ("v2 iters=%s" % n.get("v2_iters")) if key == "dec_v2"
+            else ("v1 conv@%s" % n.get("v1_iters")))
+    if key in ("ab_v1", "smoke_v1", "dec_v1"):
+        return "v1 conv@%s bumps=%s" % (n.get("v1_iters"),
+                                         n.get("v1_bumps"))
+    return ""
+
+
+def _fx(cond, ev):
+    """A falsifier row: PASS/FAIL, or N/A when it could not be
+    computed.  A metric that could not be computed prints its reason;
+    it NEVER prints as a zero."""
+    if cond is None:
+        return ("N/A", ev)
+    return ("PASS" if cond else "FAIL", ev)
+
+
+def v101_report(t0, deadline, run_dir, results, veh, model):
+    """The verdict.  Every claim carries its number; no adjectives.
+    Shaped so a Claude Code session can decide PASS/FAIL from this
+    text alone and only open detail.log when something is red."""
+    R = results
+    g = lambda k, f, d=None: ((R[k].nums or {}).get(f, d)
+                              if k in R else d)
+    wall = _v101_now() - t0
+    L = []
+    A = L.append
+    A("=" * 66)
+    A("V101 SUITE VERDICT   %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    A("wall %s   deadline %s (hard clock)   margin %s"
+      % (_v101_hm(wall),
+         time.strftime("%H:%M", time.localtime(deadline)),
+         _v101_hm(deadline - _v101_now())))
+    if veh:
+        A("vehicle perc_samples=%d  %d files  %.1fMB  %d chunks  "
+          "share %d (production 129)"
+          % (veh[0], veh[1], veh[2], veh[3], veh[4]))
+    A("model  t_db=%.0fs r_disch=%.2fs/MB r_probe=%.3fs/chunk "
+      "k5=%.2f km=%.2f" % (model["t_db"], model["r_disch"],
+                            model["r_probe"], model["k5"], model["km"]))
+    A("")
+    A("STEPS                                 status     wall    RSS")
+    for k, r in R.items():
+        A("  %-11s %-22s %-8s %7s %5.1fGB %s"
+          % (k, "", r.status, _v101_hm(r.wall_s), r.rss_gb,
+             (r.why or _v101_headline(k, r))[:40]))
+    A("")
+
+    # ---- falsifiers ----
+    seed_cs = g("seed", "seed_cs")
+    v2_bumps = g("ab_v2", "v2_bumps", g("calib", "v2_bumps"))
+    v1_iters = g("ab_v1", "v1_iters")
+    v1_bumps = g("ab_v1", "v1_bumps")
+    demand = g("ab_v2", "meter_demand_cs", g("calib",
+                                              "meter_demand_cs"))
+    shipped = g("ab_v2", "shipped_qm", g("calib", "shipped_qm"))
+    mid = g("seed", "mid_hits")
+    skipped = g("seed", "skipped")
+    seed_ms = g("seed", "seed_ms")
+    v5_ms = g("ab_v2", "v5_ms")
+    pr_ms = g("ab_v2", "probe_ms")
+    caperr = g("ab_v2", "caperr_units", g("calib", "caperr_units"))
+
+    rows = [
+        ("F1 seed >= 36,860 (proven demand)",
+         _fx(None if seed_cs is None else seed_cs >= 36860,
+             "seed_cs=%s" % seed_cs)),
+        ("F2 est >= truth, every unit",
+         _fx(None if (seed_cs is None or demand is None)
+             else seed_cs >= demand,
+             "seed_cs=%s vs meter max demand=%s" % (seed_cs, demand))),
+        ("F3 zero v2 bump rounds",
+         _fx(None if v2_bumps is None else v2_bumps == 0,
+             "v2 bump rounds=%s" % v2_bumps)),
+        ("F5 shipped qm == measured max",
+         _fx(None if (shipped is None or demand is None)
+             else shipped >= demand and shipped <= demand + 1,
+             "shipped=%s measured max=%s" % (shipped, demand))),
+        ("F6 seed wall < 5 min",
+         _fx(None if seed_ms is None else seed_ms < 300000,
+             "seed walk=%.1fs" % ((seed_ms or 0) / 1000.0))),
+        ("F7 mid_hits > 0 (I1 branch alive)",
+         _fx(None if mid is None else mid > 0, "mid_hits=%s" % mid)),
+        ("F8 skipped words == 0",
+         _fx(None if skipped is None else skipped == 0,
+             "skipped=%s" % skipped)),
+        ("F9 v5 walk vs probe phase",
+         _fx(None if (v5_ms is None or pr_ms is None) else True,
+             "v5=%.0fs probe=%.0fs%s"
+             % ((v5_ms or 0) / 1000.0, (pr_ms or 0) / 1000.0,
+                "  <- V102 if v5 dominates"
+                if (v5_ms or 0) > (pr_ms or 0) else ""))),
+    ]
+    A("FALSIFIERS                            verdict  evidence")
+    for name, (verd, ev) in rows:
+        A("  %-36s %-7s  %s" % (name, verd, ev))
+    A("")
+
+    # ---- requirements ----
+    dec = [k for k in ("dec_v1", "dec_v2", "dec_big")
+           if k in R and R[k].status == "OK"]
+    A("REQUIREMENTS")
+    A("  %-36s %-7s  %s" % ("R1 never under-cap",
+        "PASS" if (R.get("ab_v2") and R["ab_v2"].status == "OK"
+                   and (caperr in (0, None))) else "N/A",
+        "full-corpus receipt; caperr_units=%s; decider steps ok: %s"
+        % (caperr, ",".join(dec) or "none")))
+    A("  %-36s %-7s  %s" % ("R2 no waste", 
+        "PASS" if (shipped is not None and demand is not None
+                   and shipped <= demand + 1) else "N/A",
+        "qm_real_rows=%s vs measured max demand=%s" % (shipped,
+                                                        demand)))
+    ratio = None
+    if v1_iters is not None and v2_bumps is not None:
+        v1p = (v1_bumps or 0) + 1
+        ratio = "%d -> %d rounds" % (v1p, (v2_bumps or 0) + 1)
+    A("  %-36s %-7s  %s" % ("R3 fast", "PASS" if ratio else "N/A",
+                             ratio or "A/B incomplete"))
+    A("  %-36s %-7s  %s" % ("R5 v1 unchanged",
+        "PASS" if (R.get("units") and R["units"].status == "OK")
+        else "N/A", "fingerprint_ + m104 parse gate"))
+    A("")
+
+    # ---- headline ----
+    A("HEADLINE")
+    w1, w2 = (R["ab_v1"].wall_s if "ab_v1" in R else 0,
+              R["ab_v2"].wall_s if "ab_v2" in R else 0)
+    if w1 and w2:
+        A("  tune wall  v1 %s -> v2 %s  = %.2fx   at perc_samples=%s"
+          % (_v101_hm(w1), _v101_hm(w2), w1 / max(w2, 1e-9),
+             veh[0] if veh else "?"))
+    A("  NOT MEASURED: full-corpus v1 (~18-19h, never observed to "
+      "complete).")
+    A("  Subset wall does NOT transfer; round COUNTS and caps do.")
+    A("")
+    fails = [k for k, r in R.items() if r.status in ("FAIL",
+                                                      "TIMEOUT")]
+    skips = [k for k, r in R.items() if r.status == "SKIP"]
+    A("DECIDE")
+    if fails:
+        A("  BLOCKED BY: %s   -> %s/detail.log"
+          % (", ".join(fails), run_dir))
+    else:
+        A("  ALL RUN STEPS PASS -> stage 3 complete; propose the "
+          "commit.")
+    if skips:
+        A("  SKIPPED: %s" % ", ".join(
+            "%s (%s)" % (k, R[k].why) for k in skips))
+    A("  detail: %s/detail.log" % run_dir)
+    A("=" * 66)
+    return "\n".join(L)
 
 # =====================================================================
 # Layer A -- clean (menu #5) + figs (menu #6)
@@ -2908,6 +3741,25 @@ def main():
         go_background()
         install_signal_handlers()
         return run_small_full_snark()
+
+    if plan.top == "v101":
+        if args.plan_only:
+            return 0
+        # Hours long, single process at a time, and the whole point is
+        # that nobody watches it: detach like small_full_dlp.
+        ts = _ts()
+        print("[paper_data %s] detaching into the background "
+              "(survives logout; no nohup needed)." % ts)
+        print("[paper_data %s]   summary log:    tail -F %s"
+              % (ts, SUMMARY_LOG))
+        print("[paper_data %s]   current job:    tail -F %s"
+              % (ts, CURRENT_JOB_LOG))
+        print("[paper_data %s]   verdict:        %s"
+              % (ts, V101_VERDICT))
+        sys.stdout.flush()
+        go_background()
+        install_signal_handlers()
+        return run_v101()
 
     if plan.top == "small_full_dlp":
         if args.plan_only:
@@ -5639,7 +6491,9 @@ class JobHandleWatchTest(unittest.TestCase):
         with mock.patch.object(_MOD, "_watch_child") as fake_watch:
             t = ctx.watch(p, "/tmp/run.log")
             t.join(timeout=1)
-        fake_watch.assert_called_once_with(p, "/tmp/run.log", ctx)
+        # args 4-5 are V101's max_wall_s / max_rss_gb; 0 = no cap,
+        # which is what every pre-existing caller passes.
+        fake_watch.assert_called_once_with(p, "/tmp/run.log", ctx, 0, 0)
 
 
 class EnsureVmaTest(unittest.TestCase):
