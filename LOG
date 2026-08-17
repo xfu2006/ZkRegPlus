@@ -31198,6 +31198,7 @@ Goal 1. DEBUG
 	[e] restart the dna_full neo run to collect data.
 		RESTARTED 1:22PM 
 		===> CHECK 7:00PM today!!!!!!
+		=> WORKING
 		
 Goal 2. try to improve neo speed phase 1
 	[a] measure speed
@@ -31207,12 +31208,20 @@ Goal 2. try to improve neo speed phase 1
 		=> check 3PM  (still 3.x slower phase 1 than legacy)
 		=>  new impl/proe started 4:09pm
 		==> check 6:15pm still not working!
-		==> 
+		==> 6:45pm restarts
+		***************************
+		====> check 12:15AM!!! (on 512GB)
+		***************************
 		
+
+Goal 3. Full clam
+	[a] crashed about 0.5 hr!
+	[b] analyze
 
 --- DATA ----
 *** LARGE SERVER ***
-[1] full_dna 
+[1] full_dna -> DONE
+[2] full_clam (8:00pm 08/16) -> 
 
 *** SMALL SERVER ***
 [1]

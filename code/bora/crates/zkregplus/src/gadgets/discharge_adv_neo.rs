@@ -11048,6 +11048,76 @@ mod tests_neo_nonaggr_oracle {
 	}
 }
 
+// M102 clam-crash regression: the seg-0 init queue must seed only
+// CHAIN subsigs (sed_mapper's chain_only contract vs is_uni).
+#[cfg(test)]
+mod tests_neo_seg0_seed {
+	use super::*;
+	use super::tests_neo_m4::fixture_capacity;
+	use super::tests_neo_m5::{a18_store, mk_pat_loc};
+	use ark_bn254::Fr;
+	use data_processor::type_def::{SubsigStepStore,
+		SubsigStepStoreItem};
+
+	fn f(x: u32) -> Fr { Fr::from(x) }
+
+	//a18 store + subsig 2 as an empty-chain composite (the clam
+	//production shape: chain subsig + count subsig in one demand).
+	fn store_with_composite() -> SubsigStepStore {
+		let mut info = a18_store();
+		info.subsig_ids.push(2);
+		info.subsig_to_steps.insert(2, SubsigStepStoreItem {
+			subsig_id: 2, igc: false, vec_pm_bounds: vec![],
+			is_backward: false });
+		info
+	}
+
+	//one pat-1 match so subsig 1's chain can advance a step.
+	fn pl() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(1, vec![6]);
+		m
+	}
+
+	//init queue seeded from `subsigs`, through the mapper's
+	//production roundtrip (to_vec -> parse_from).
+	fn init_queue(subsigs: &Vec<Fr>, info: &SubsigStepStore)
+	-> StepQueue<Fr> {
+		let cap = fixture_capacity();
+		let raw = DischargeAdvAdvice::<Fr>
+			::gen_empty_steps_queue_serialized(false, subsigs,
+				info, 0, &cap).to_vec(info).unwrap();
+		StepQueue::parse_from(&raw, StepQueueType::ResSmall,
+			&cap, false)
+	}
+
+	/// seg-0 contract FIXED: the chain-only init seed (what
+	/// sed_mapper now passes) runs new_nonaggr cleanly.
+	#[test]
+	fn test_seg0_chain_only_init_passes() {
+		let info = store_with_composite();
+		let inp = vec![f(1), f(2)]; //demand: chain + composite
+		let q = init_queue(&vec![f(1)], &info); //chain-only
+		let r = DischargeAdvNeoAdvice::<Fr>::new_nonaggr(false,
+			1, &mk_pat_loc(&pl()), &inp, 0, &info,
+			&fixture_capacity(), &q, f(80), 0);
+		assert!(r.is_ok());
+	}
+
+	/// seg-0 contract BROKEN (the pre-fix mapper build): an
+	/// unfiltered init seed panics at the obligation-seed assert.
+	#[test]
+	#[should_panic(expected = "outside the obligation seed")]
+	fn test_seg0_unfiltered_init_panics() {
+		let info = store_with_composite();
+		let inp = vec![f(1), f(2)];
+		let q = init_queue(&inp, &info); //unfiltered = the bug
+		let _ = DischargeAdvNeoAdvice::<Fr>::new_nonaggr(false,
+			1, &mk_pat_loc(&pl()), &inp, 0, &info,
+			&fixture_capacity(), &q, f(80), 0);
+	}
+}
+
 // NOTE_NEW8_ADAPTED (P3 R6: non-aggressive tier-2 end-to-end + verdict parity).
 #[cfg(test)]
 mod tests_neo_nonaggr_h {
