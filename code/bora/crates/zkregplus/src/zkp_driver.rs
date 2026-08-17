@@ -953,9 +953,8 @@ where C: CurveGroup<ScalarField=F>,
 /// non-aggressive neo seeds its step queue from, so it is the true floor for
 /// capacity.subsigs -- derivable up front from (db, WordInfo) with no probe.
 /// Mirrors sed_mapper's non-aggressive derivation: whole-word sigs (the
-/// aggressive failed_c per-segment branch does not apply), collect_subsig_ids,
-/// then the neo `needs` filter (drop empty-chain subsigs, which can never
-/// reach LAST_STEP). Per-word constant: that branch ignores seg_id.
+/// aggressive failed_c per-segment branch does not apply) then
+/// collect_subsig_ids, unfiltered. Per-word constant: ignores seg_id.
 fn neo_subsig_demand<F,C,CS>(db: &ClamavDB<F>, infos: &[WordInfo],
 	b_igc: bool) -> usize
 where C: CurveGroup<ScalarField=F>, CS: CommitmentScheme<C,false>,
@@ -964,8 +963,6 @@ where C: CurveGroup<ScalarField=F>, CS: CommitmentScheme<C,false>,
 	let bundle_cs = &db.bundle_subsig;
 	let acdfa = if b_igc { &db.bundle_subsig_igc.vec_acdfa[0] }
 		else { &bundle_cs.vec_acdfa[0] };
-	let store = if b_igc { &db.bundle_subsig_igc.vec_subsig_step_stores[0] }
-		else { &bundle_cs.vec_subsig_step_stores[0] };
 	let mut max_n = 0usize;
 	for wi in infos.iter() {
 		if wi.vec_sed_sigs.is_empty() { continue; } // dummy pad word
@@ -977,14 +974,10 @@ where C: CurveGroup<ScalarField=F>, CS: CommitmentScheme<C,false>,
 		if sigs.len() != wi.vec_sed_sigs_info.len() { continue; } // 1-1 or skip
 		let inp = crate::circs::sed_mapper::SedAdvice::<F>::collect_subsig_ids(
 			&sigs, &wi.vec_sed_sigs_info, &db.sig_to_id, b_igc, acdfa);
-		// neo seeds only non-empty-chain subsigs (sed_mapper's `needs`).
-		let n = inp.iter().filter(|s| {
-			let u = folding_schemes::folding::foldpot::circuits_super
-				::field_to_usize(*s);
-			store.subsig_to_steps.get(&u)
-				.map_or(false, |it| !it.vec_pm_bounds.is_empty())
-		}).count();
-		max_n = max_n.max(n);
+		// non-aggr neo seeds the FULL demand: empty-chain count
+		// subsigs ride the queue as step-0 passengers and
+		// compute_sig's DNF walk needs their verdict.
+		max_n = max_n.max(inp.len());
 	}
 	max_n
 }

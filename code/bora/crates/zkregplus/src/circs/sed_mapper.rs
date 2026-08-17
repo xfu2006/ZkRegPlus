@@ -813,12 +813,15 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			};
 			c
 		};
-		// Neo (BOTH modes): compute_sig evaluates the SDE obligation
-		// set = inp filtered to non-empty-chain, matching the
-		// discharge seed (q_c / seed-pin tie). Legacy unchanged.
-		//exclude empty-chain subsigs: they can never reach LAST_STEP
-		//-> never in failed_acc, and compute_sig's
-		//from_subsig_store_item underflows on num==0.
+		// Neo AGGRESSIVE ONLY: compute_sig evaluates the SDE
+		// obligation set = inp filtered to non-empty-chain.
+		//exclude empty-chain subsigs: on that arm they are never in
+		//failed_acc, and gen_eval_subsig_by_acc's
+		//from_subsig_store_item underflows on num==0. Both facts are
+		//aggressive-only (compute_sig_adv.rs:375, :576, :678).
+		//NON-AGGRESSIVE and legacy take the full demand: there the
+		//verdict flows through q_c, an empty chain IS LAST_STEP at
+		//step 0, and the DNF walk needs every subsig of a covered sig.
 		// The SDE obligation set = the members of `inp` whose chain
 		// is non-empty. Building it by scanning the whole subsig
 		// universe is O(|universe|) per call; testing each member of
@@ -862,10 +865,10 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			}
 			out
 		};
-		let cs_subsigs_cs = if use_neo {
+		let cs_subsigs_cs = if use_neo && b_aggr {
 			needs(subsig_step_store_cs, &subsigs_inp_cs)
 		} else { subsigs_inp_cs.clone() };
-		let cs_subsigs_igc = if use_neo {
+		let cs_subsigs_igc = if use_neo && b_aggr {
 			needs(subsig_step_store_igc, &subsigs_inp_igc)
 		} else { subsigs_inp_igc.clone() };
 		let compute_sig_adv_advice = ComputeSigAdvAdvice::<F>::new(
@@ -1281,29 +1284,10 @@ failed_c_segs={} failed_c_total={}", seg_id,
 				word_info.vec_sed_sigs.len(),
 				word_info.failed_c_all_segs.len(), n_fc);
 		}
-		//neo non-aggr: seed the seg-0 init queue with CHAIN subsigs
-		//only, matching new_nonaggr's is_uni seed (the q_c seed-pin
-		//tie). Empty-chain ids (composite/count subsigs) have no
-		//chain to walk and are covered by CP-absence instead.
-		//Legacy and aggressive keep the unfiltered legacy build.
-		let b_neo_nonaggr = read_global_config().clamav_cfg
-			.b_use_discharge_neo
-			&& !self.capacity.cs.da_capacity().b_aggressive;
-		//st: DB-static chain store; inp: the word's demand set.
-		//Identity outside the neo non-aggr arm.
-		let chain_only = |st: &SubsigStepStore, inp: &Vec<F>| -> Vec<F> {
-			if !b_neo_nonaggr { return inp.clone(); }
-			inp.iter().filter(|s| st.subsig_to_steps
-				.get(&field_to_usize(*s))
-				.map_or(false, |it| !it.vec_pm_bounds.is_empty()))
-				.cloned().collect()
-		};
-		let init_subsigs_cs = chain_only(subsig_step_store_cs,
-			&inp_subsigs_cs);
 		let init_steps_queue_cs = DischargeAdvAdvice
 			::gen_empty_steps_queue_serialized(
 				false, //b_igc = false
-				&init_subsigs_cs,
+				&inp_subsigs_cs,
 				&subsig_step_store_cs,
 				pm_fsm_id_cs,
 				&self.capacity.cs.da_capacity()
@@ -1360,13 +1344,10 @@ failed_c_segs={} failed_c_total={}", seg_id,
 			// init_loc_cs above).
 			let init_loc_igc = if m_aggr>0 {F::from((m_aggr+1) as u64)}
 				else {F::one()};
-			//same chain-only init seed as the cs arm above
-			let init_subsigs_igc = chain_only(subsig_step_store_igc,
-				&inp_subsigs_igc);
 			let init_steps_queue_igc = DischargeAdvAdvice
 				::gen_empty_steps_queue_serialized(
 					true, //b_igc
-					&init_subsigs_igc,
+					&inp_subsigs_igc,
 					&subsig_step_store_igc,
 					pm_fsm_id_igc,
 					&self.capacity.igc.da_capacity()

@@ -24,12 +24,18 @@ STALE_S = 2 * 3600
 # the crash fired ~1469 s in; before that "no iter lines" = early.
 EARLY_S = 35 * 60
 
-# the fixed assert (crash signature), count must be 0
+# crash 1 (seed side): carried queue entry not in the obligation seed
 RE_CARRIED = re.compile(r"carried subsig \d+ outside the obligation")
+# crash 2 (compute_sig side): the DNF walk could not find a subsig's
+# verdict because compute_sig's list had dropped it. Both must be 0.
+RE_MISSING = re.compile(r"cannot find subsig_id: \d+")
 # tuner progress line: present = the old crash point was passed
 RE_ITER = re.compile(r"determine_config_non_aggr iter")
-# demand sanity: same DB/demand shape as the diagnosed run
+# demand sanity. The fix makes neo_subsig_demand count the FULL demand
+# instead of chain-only, so cs must RISE above the diagnosed 319; a cs
+# still equal to 319 means the new binary is not the one running.
 RE_SEED = re.compile(r"NEO SUBSIG SEED: demand cs=(\d+) igc=(\d+)")
+OLD_DEMAND_CS = 319
 # the true abort marker (tuner hands an unmappable CapErr to the
 # driver and the whole job dies rc=101)
 RE_FATAL = re.compile(r"unmapped CapErr")
@@ -76,6 +82,15 @@ def main():
         print("FAIL: %d 'carried subsig' panics -- fix refuted, "
               "keep the failed_tgz bundle" % n_carried)
         print("      first: %s" % first.strip())
+        fail = True
+
+    # 2b. crash 2: the compute_sig DNF walk (was 325 hits)
+    n_missing = len(RE_MISSING.findall(text))
+    if n_missing == 0:
+        print("PASS: 0 'cannot find subsig_id' panics (was 325)")
+    else:
+        print("FAIL: %d 'cannot find subsig_id' panics -- compute_sig "
+              "still missing a subsig verdict" % n_missing)
         fail = True
 
     # 3a. the true abort marker (rc=101 path)
@@ -127,11 +142,16 @@ def main():
     # 4. demand sanity: diagnosed run was cs=319 igc=8
     m = RE_SEED.search(text)
     if m:
-        cs, igc = m.group(1), m.group(2)
-        tag = "" if (cs, igc) == ("319", "8") else \
-            "  (differs from the diagnosed 319/8 -- different DB?)"
-        print("INFO: NEO SUBSIG SEED demand cs=%s igc=%s%s"
-              % (cs, igc, tag))
+        cs, igc = int(m.group(1)), int(m.group(2))
+        print("INFO: NEO SUBSIG SEED demand cs=%d igc=%d" % (cs, igc))
+        if cs == OLD_DEMAND_CS:
+            print("FAIL: demand cs is still %d (chain-only). The fix "
+                  "makes it count the FULL demand, so this binary is "
+                  "the OLD one -- rebuild/redeploy." % OLD_DEMAND_CS)
+            fail = True
+        else:
+            print("PASS: demand cs rose above the chain-only %d, so "
+                  "the unfiltered count is live" % OLD_DEMAND_CS)
     else:
         print("INFO: no NEO SUBSIG SEED line yet")
 

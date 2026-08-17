@@ -2156,9 +2156,10 @@ C={} FP={} BP={} SP={} unset={} wrap={} real={} fp_share_of_real={}%",
 			let num = info.subsig_to_steps.get(&u).unwrap()
 				.vec_pm_bounds.len();
 			// 8_A: empty-chain (seed-only) subsigs never "complete" --
-			// their step-0 seed is not a terminal. Excluding them
-			// matches compute_sig's inp_subsigs filter (empty-chain
-			// dropped), keeping the acc membership logup balanced.
+			// their step-0 seed is not a terminal. The circuit side
+			// excludes them with the same predicate ((1 - is_step0),
+			// see assert_verdict_aggr), so the acc membership logup
+			// stays balanced. This acc feed is aggressive-only.
 			num > 0 && field_to_usize(&t.step[i]) == num
 		};
 		let mut acc: Vec<F> = vec![];
@@ -6813,19 +6814,17 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let stmt_container = Container::<F>::new(sname);
 		// NewP3: seed this fold's SDE obligation set (inp_subsigs =
 		// the failed-CP subsigs from DischargeInfo), NOT the DB
-		// universe: cost is O(capacity), not O(DB). Mirrors
-		// new_aggr's seed; unseeded subsigs are CP-absence covered
-		// (legacy architecture). Chunk-0's public q_i anchors the
-		// set in-circuit (assert_qm_union's b_seed logup).
-		let is_uni = |u: usize| subsig_store_info.subsig_to_steps
-			.get(&u).map_or(false, |it| !it.vec_pm_bounds.is_empty());
-		// filtered to non-empty-chain (mirrors new_aggr and
-		// compute_sig's empty-chain drop, so the seed-pin sets stay
-		// equal); empty-chain ids are meta/count-constraint subsigs
-		// with no FSM chain to walk, covered by CP-absence instead.
+		// universe: cost is O(capacity), not O(DB). Chunk-0's public
+		// q_i anchors the set in-circuit (assert_qm_union's b_seed
+		// logup).
+		// UNFILTERED, the legacy shape: empty-chain ids (count
+		// constraints) ride as inert step-0 passengers. to_container
+		// tags them LAST_STEP (num_steps == step == 0) so eval reads
+		// Maybe and compute_sig's counter resolves them. Filtering
+		// here desynced this seed from compute_sig's DNF walk.
+		// new_aggr keeps its filter: that arm reads acc_out, not q_c.
 		let mut seed_subsigs = inp_subsigs.iter()
 			.filter(|s| !s.is_zero())
-			.filter(|s| is_uni(field_to_usize(*s)))
 			.cloned().collect::<Vec<F>>();
 		seed_subsigs.sort();
 		seed_subsigs.dedup();
@@ -6881,10 +6880,13 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 			else { "discharge_adv_stmt_cs" };
 		let stmt_container = Container::<F>::new(sname);
 		// 8_C: seed this chunk's NEEDS set -- nonzero inp_subsigs,
-		// filtered to non-empty-chain (mirrors compute_sig's
-		// empty-chain drop, so the seed-pin sets stay equal). Cold
-		// subsigs are covered by CP-absence (legacy architecture);
-		// the wf run lemma forces full chains for every seeded one.
+		// filtered to non-empty-chain (this arm's compute_sig path,
+		// gen_eval_subsig_by_acc, drops them too, so the seed-pin
+		// sets stay equal). new_nonaggr does NOT filter: it reads
+		// q_c, where an empty chain is a valid step-0 passenger.
+		// Cold subsigs are covered by CP-absence (legacy
+		// architecture); the wf run lemma forces full chains for
+		// every seeded one.
 		let is_uni = |u: usize| subsig_store_info.subsig_to_steps
 			.get(&u).map_or(false, |it| !it.vec_pm_bounds.is_empty());
 		let mut seed_subsigs = inp_subsigs.iter()
@@ -11048,8 +11050,10 @@ mod tests_neo_nonaggr_oracle {
 	}
 }
 
-// M102 clam-crash regression: the seg-0 init queue must seed only
-// CHAIN subsigs (sed_mapper's chain_only contract vs is_uni).
+// M102 clam-crash regression, SEED SIDE ONLY: the obligation seed is
+// the FULL demand, so an empty-chain (count-constraint) subsig in the
+// init queue is accepted. The compute_sig side is covered end-to-end
+// by the p4 non-aggr neo cell, not here.
 #[cfg(test)]
 mod tests_neo_seg0_seed {
 	use super::*;
@@ -11079,11 +11083,21 @@ mod tests_neo_seg0_seed {
 		m
 	}
 
+	//capacity covering the FULL demand (chain + composite). The
+	//miniature of neo_subsig_demand's unfiltered count: the seed is
+	//now every demand subsig, so subsigs must cover them all.
+	fn cap_full() -> DischargeAdvCapacity {
+		let mut c = fixture_capacity();
+		c.subsigs = 2;
+		c.universe_subsigs = 2;
+		c
+	}
+
 	//init queue seeded from `subsigs`, through the mapper's
 	//production roundtrip (to_vec -> parse_from).
 	fn init_queue(subsigs: &Vec<Fr>, info: &SubsigStepStore)
 	-> StepQueue<Fr> {
-		let cap = fixture_capacity();
+		let cap = cap_full();
 		let raw = DischargeAdvAdvice::<Fr>
 			::gen_empty_steps_queue_serialized(false, subsigs,
 				info, 0, &cap).to_vec(info).unwrap();
@@ -11091,30 +11105,50 @@ mod tests_neo_seg0_seed {
 			&cap, false)
 	}
 
-	/// seg-0 contract FIXED: the chain-only init seed (what
-	/// sed_mapper now passes) runs new_nonaggr cleanly.
+	/// A carried queue that is a strict SUBSET of the obligation
+	/// seed is accepted (the queue may lag the seed).
 	#[test]
-	fn test_seg0_chain_only_init_passes() {
+	fn test_seg0_carried_subset_of_seed_passes() {
 		let info = store_with_composite();
 		let inp = vec![f(1), f(2)]; //demand: chain + composite
-		let q = init_queue(&vec![f(1)], &info); //chain-only
+		let q = init_queue(&vec![f(1)], &info); //chain only
 		let r = DischargeAdvNeoAdvice::<Fr>::new_nonaggr(false,
 			1, &mk_pat_loc(&pl()), &inp, 0, &info,
-			&fixture_capacity(), &q, f(80), 0);
-		assert!(r.is_ok());
+			&cap_full(), &q, f(80), 0);
+		assert!(r.is_ok(), "subset carry must be accepted: {:?}",
+			r.err());
 	}
 
-	/// seg-0 contract BROKEN (the pre-fix mapper build): an
-	/// unfiltered init seed panics at the obligation-seed assert.
+	/// seg-0 contract: the unfiltered init seed (legacy shape, what
+	/// sed_mapper passes) is accepted, composite included.
 	#[test]
-	#[should_panic(expected = "outside the obligation seed")]
-	fn test_seg0_unfiltered_init_panics() {
+	fn test_seg0_unfiltered_init_passes() {
 		let info = store_with_composite();
 		let inp = vec![f(1), f(2)];
-		let q = init_queue(&inp, &info); //unfiltered = the bug
-		let _ = DischargeAdvNeoAdvice::<Fr>::new_nonaggr(false,
+		let q = init_queue(&inp, &info); //unfiltered = legacy shape
+		let r = DischargeAdvNeoAdvice::<Fr>::new_nonaggr(false,
 			1, &mk_pat_loc(&pl()), &inp, 0, &info,
-			&fixture_capacity(), &q, f(80), 0);
+			&cap_full(), &q, f(80), 0);
+		assert!(r.is_ok(), "composite in the seed must be accepted: \
+{:?}", r.err());
+	}
+
+	/// The seed is the FULL demand: an undersized capacity (chain
+	/// count only) now CapErrs instead of silently dropping it.
+	#[test]
+	fn test_seg0_undersized_capacity_caperrs() {
+		let info = store_with_composite();
+		let inp = vec![f(1), f(2)];
+		let q = init_queue(&vec![f(1)], &info);
+		let r = DischargeAdvNeoAdvice::<Fr>::new_nonaggr(false,
+			1, &mk_pat_loc(&pl()), &inp, 0, &info,
+			&fixture_capacity(), &q, f(80), 0); //subsigs = 1
+		match r.err() {
+			Some(Error::CapErr(v)) => assert!(
+				v[0].0.contains("neo_subsig_slots") && v[0].1 == 2,
+				"wrong CapErr: {:?}", v),
+			other => panic!("expected CapErr, got {:?}", other),
+		}
 	}
 }
 
