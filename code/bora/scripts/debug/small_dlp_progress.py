@@ -282,7 +282,7 @@ def show_gate(lines):
 	return ok, hist
 
 
-def show_ladder(lines, ref, hist):
+def show_ladder(lines, ref, hist, cnt):
 	"""Measured circ sizes against the neo full_dlp reference."""
 	blocks, pending = ladder_blocks(lines)
 	blk = prod_ladder(blocks)
@@ -316,14 +316,23 @@ def show_ladder(lines, ref, hist):
 		print("             waiting on circ %s"
 			% ",".join(str(i) for i in miss))
 		return
-	show_fidelity(got, ref, hist)
+	show_fidelity(got, ref, hist, cnt)
 
 
-def show_fidelity(got, ref, hist):
+def show_fidelity(got, ref, hist, cnt):
 	"""Occupancy-weighted cols, this run vs the reference ladder.  Per-
-	rung ratios mislead: rung 1 carries ~75% of chunks, so weighting by
-	the histogram is what says whether total fold cost is comparable."""
+	rung ratios mislead: one rung carries most chunks, so the weighting
+	is what says whether total fold cost is comparable.  Weights come
+	from the MEASURED routing when the log has it -- the tuner's
+	prediction is a different distribution and gives a different
+	answer (1.13x predicted vs 1.35x measured on the 08-17 run)."""
 	idx = sorted(set(got) & set(ref))
+	src = "measured routing"
+	hist = list(hist)
+	if sum(cnt) > 0:
+		hist = list(cnt)
+	else:
+		src = "tuner prediction"
 	if not idx or len(hist) < len(idx):
 		return
 	w = [hist[i - 1] for i in idx]
@@ -334,8 +343,8 @@ def show_fidelity(got, ref, hist):
 	b = sum(ref[i][0] * n / tot for i, n in zip(idx, w))
 	if b <= 0:
 		return
-	print("  weighted   %s vs %s cols  = %.3fx  (weights %s)"
-		% (com(int(a)), com(int(b)), a / b,
+	print("  weighted   %s vs %s cols  = %.3fx  [%s: %s]"
+		% (com(int(a)), com(int(b)), a / b, src,
 			",".join("%.3f" % (n / tot) for n in w)))
 	print("             %s: an average chunk's circuit is %.0f%% %s "
 		"than production's"
@@ -373,10 +382,9 @@ def routed_mix(lines):
 	return cnt, len(jobs)
 
 
-def show_routing(lines, hist):
+def show_routing(hist, cnt):
 	"""Measured rung mix vs the tuner's prediction and vs legacy.  This
 	is the neo thesis: route the bulk of chunks one rung LOWER."""
-	cnt, _ = routed_mix(lines)
 	tot = sum(cnt)
 	if tot == 0:
 		print("routing    : no completed words yet (needs LOG3 "
@@ -472,7 +480,7 @@ def show_rate(target, done, est):
 			% hm((est - done) / max(cpm, 1e-9) * 60.0))
 
 
-def show_pass1(lines, el, target):
+def show_pass1(lines, el, target, n_jobs):
 	"""Pass 1 rate in ms/chunk against the legacy and neo references."""
 	pa = None
 	pb = None
@@ -495,7 +503,6 @@ def show_pass1(lines, el, target):
 				int(m.group(1)), int(m.group(2)))
 	n_words = sum(v[0] for v in per_job.values())
 	n_fields = sum(v[1] for v in per_job.values())
-	_, n_jobs = routed_mix(lines)
 	scale = 1.0
 	if per_job and n_jobs > len(per_job):
 		scale = float(n_jobs) / len(per_job)
@@ -625,11 +632,12 @@ def main():
 	short = show_ratchet(lines)
 	gate, hist = show_gate(lines)
 	print("-" * 68)
-	show_ladder(lines, ref, hist)
+	cnt, n_jobs = routed_mix(lines)
+	show_ladder(lines, ref, hist, cnt)
 	print("-" * 68)
-	show_routing(lines, hist)
+	show_routing(hist, cnt)
 	print("-" * 68)
-	pa, done = show_pass1(lines, el, target)
+	pa, done = show_pass1(lines, el, target, n_jobs)
 	print("-" * 68)
 	steps = show_steps(lines)
 	show_mem(steps)
