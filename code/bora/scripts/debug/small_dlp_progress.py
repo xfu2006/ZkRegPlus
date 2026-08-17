@@ -52,6 +52,15 @@ MY_OFFSET_H = float(os.environ.get("MY_OFFSET_H", "-4"))
 # single-process 8-job topology is heading for the Pass 3 OOM that
 # M101 warns about; the fix is numa_num=2, not a capacity bump.
 MEM_FLOOR_GB = 50
+# MEASURED legacy full_dlp Pass 3 cost per step in ms (M101 doc v7.6):
+# whole step, then its three sub-spans.  prove_step is 94.5% of it, so
+# that is the term neo has to beat.
+LEG_STEP_MS = 3137.0
+LEG_PROVE_MS = 2965.4
+LEG_ADV_MS = 111.0
+LEG_STMT_MS = 60.0
+# legacy per-rung gen_advice medians in ms, low rung first.
+LEG_ADV_RUNG = [50.0, 79.0, 337.0, 2302.5]
 # legacy full_dlp rung mix in percent, low rung first (M101 doc v7.6).
 # neo's thesis is that it routes the bulk of chunks one rung LOWER, so
 # this is the number the measured mix has to beat.
@@ -110,6 +119,18 @@ RE_SEL = re.compile(
 	r"subseg_id: (\d+), fname: .*?, pci: (\d+)")
 # which job emitted a line, for counting how many are actually running.
 RE_JOB = re.compile(r"\[job (\d+)\]")
+# Pass 3 (the fold) sub-span timers.  Each prints at log_level+1, so
+# unlike the Pass 1/2 internals these ARE visible in a LOG3 run.  The
+# trailing value is a GAP timer: it measures the span that just ended.
+RE_P3_ADV = re.compile(
+	r"\[job (\d+)\].*Pass 3\. gen advice for word_id: (\d+), "
+	r"seg_id: (\d+) (\d+) (ns|us|ms)")
+RE_P3_STMT = re.compile(r"\[job (\d+)\].*Pass 3\. gen stmt (\d+) (ns|us|ms)")
+RE_P3_LK = re.compile(
+	r"\[job (\d+)\].*Pass 3\. update lkup: share size: \d+ (\d+) (ns|us|ms)")
+RE_P3_STEP = re.compile(
+	r"\[job (\d+)\].*Pass 3\. prove_step cost for word_id: (\d+), "
+	r"seg_id: (\d+), stmt_len: (\d+) (\d+) (ns|us|ms)")
 
 # the fold steps in order, with the short label each one prints.
 STEP_NAMES = [
@@ -153,17 +174,53 @@ def mem_gb():
 		vals.get("MemAvailable", 0) // 1048576)
 
 
-def show_mem(steps):
+def mem_trend(target):
+	"""(GB/hr change, hours until MEM_FLOOR_GB) from banked samples, or
+	None.  A fold that allocates once and plateaus is fine; one still
+	falling an hour in is the Pass 3 OOM arriving."""
+	_, avail = mem_gb()
+	if not avail:
+		return None
+	path = os.path.join(os.path.dirname(target), STATE_NAME)
+	old = []
+	try:
+		with open(path) as fh:
+			for ln in fh:
+				bits = ln.split()
+				if len(bits) > 2:
+					old.append((float(bits[0]), int(bits[2])))
+	except (IOError, OSError, ValueError):
+		return None
+	now = time.time()
+	old = [s for s in old if now - s[0] >= 300]
+	if not old:
+		return None
+	t0, a0 = old[0]
+	vel = (avail - a0) / ((now - t0) / 3600.0)
+	if vel >= -1.0:
+		return vel, None
+	return vel, max(avail - MEM_FLOOR_GB, 0) / (-vel)
+
+
+def show_mem(steps, target):
 	"""RAM headroom, with the Pass 3 OOM floor once the fold starts."""
 	total, avail = mem_gb()
 	if not total:
 		return
 	line = "memory     : %d / %d GB available" % (avail, total)
-	if 6 in steps and avail < MEM_FLOOR_GB:
-		line += ("  <-- UNDER %d GB FLOOR. This is the single-process "
-			"8-job topology M101 says OOMs in Pass 3; rerun with "
-			"numa_num=2." % MEM_FLOOR_GB)
+	if avail < MEM_FLOOR_GB:
+		line += "  <-- UNDER THE %d GB FLOOR" % MEM_FLOOR_GB
 	print(line)
+	tr = mem_trend(target)
+	if tr and tr[1] is not None:
+		print("             FALLING %.0f GB/hr -- hits the %d GB floor "
+			"in %s" % (-tr[0], MEM_FLOOR_GB, hm(tr[1] * 3600)))
+		print("             if it does not plateau: this is the "
+			"single-process 8-job topology M101 says OOMs in Pass 3; "
+			"the fix is numa_num=2, not a capacity bump")
+	elif tr:
+		print("             stable/rising (%+.0f GB/hr) -- allocation "
+			"has plateaued" % tr[0])
 
 
 def com(n):
@@ -374,12 +431,14 @@ def routed_mix(lines):
 			continue
 		seen.add((j, w, b))
 		hi[j] = max(hi.get(j, 0), w)
-		rows.append((j, w, p))
+		rows.append((j, w, b, p))
 	cnt = [0, 0, 0, 0]
-	for j, w, p in rows:
+	pci = {}
+	for j, w, b, p in rows:
+		pci[(j, w, b)] = p
 		if w < hi[j] and p < 4:
 			cnt[p] += 1
-	return cnt, len(jobs)
+	return cnt, len(jobs), pci
 
 
 def show_routing(hist, cnt):
@@ -413,12 +472,103 @@ def show_routing(hist, cnt):
 		"bash scripts/debug/circ_sel_ratio.sh")
 
 
-def next_check(gate, got, pa, done, steps, el):
+def dur_ms(val, unit):
+	"""A log_perf gap-timer value in ms, whatever unit it printed in."""
+	n = float(val)
+	return n / 1e6 if unit == "ns" else (n / 1e3 if unit == "us" else n)
+
+
+def med(v):
+	"""Median of a list, 0.0 when empty."""
+	if not v:
+		return 0.0
+	v = sorted(v)
+	k = len(v) // 2
+	return v[k] if len(v) % 2 else (v[k - 1] + v[k]) / 2.0
+
+
+def show_fold(lines, pci, got, ref):
+	"""Pass 3 cost per step against the measured legacy full_dlp split,
+	then projected onto the production ladder.  This run's rung 1 is
+	oversized and carries most chunks, so its raw step cost reads high;
+	the projection rescales each rung by ref_cols/this_cols."""
+	adv, stmt, lk = [], [], []
+	prove = {}
+	for ln in lines:
+		m = RE_P3_ADV.search(ln)
+		if m:
+			adv.append((int(m.group(1)), int(m.group(2)),
+				int(m.group(3)), dur_ms(m.group(4), m.group(5))))
+			continue
+		m = RE_P3_STEP.search(ln)
+		if m:
+			key = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+			prove.setdefault(key, dur_ms(m.group(5), m.group(6)))
+			continue
+		m = RE_P3_STMT.search(ln)
+		if m:
+			stmt.append(dur_ms(m.group(2), m.group(3)))
+			continue
+		m = RE_P3_LK.search(ln)
+		if m:
+			lk.append(dur_ms(m.group(2), m.group(3)))
+	if not prove:
+		print("fold cost  : no Pass 3 spans yet (step 7 not started)")
+		return
+	a = [x[3] for x in adv]
+	pv = list(prove.values())
+	tot = med(pv) + med(a) + med(stmt) + med(lk)
+	print("fold cost  : %s steps timed  -- medians in ms/step" % com(len(pv)))
+	print("  %-12s %-10s %-10s %s" % ("span", "neo", "legacy", "x"))
+	for name, v, leg in (("prove_step", pv, LEG_PROVE_MS),
+			("gen advice", a, LEG_ADV_MS),
+			("gen stmt", stmt, LEG_STMT_MS),
+			("update lkup", lk, None)):
+		mv = med(v)
+		print("  %-12s %-10.1f %-10s %s"
+			% (name, mv, "-" if leg is None else "%.1f" % leg,
+				"-" if not leg else "%.2f" % (mv / leg)))
+	print("  %-12s %-10.1f %-10.1f %.2f"
+		% ("TOTAL", tot, LEG_STEP_MS, tot / LEG_STEP_MS))
+	# per-rung prove_step, then the production projection.
+	by = {}
+	for key, ms in prove.items():
+		r = pci.get(key)
+		if r is not None and r < 4:
+			by.setdefault(r, []).append(ms)
+	if not by:
+		return
+	print("  per-rung prove_step (this ladder -> production):")
+	proj = 0.0
+	wt = 0.0
+	for r in sorted(by):
+		mv = med(by[r])
+		sc = 1.0
+		if (r + 1) in got and (r + 1) in ref:
+			sc = float(ref[r + 1][0]) / got[r + 1][0]
+		print("    rung %d  n=%-7s %8.1f ms  x%.2f size -> %8.1f ms"
+			" (legacy adv %.0f)"
+			% (r + 1, com(len(by[r])), mv, sc, mv * sc,
+				LEG_ADV_RUNG[r]))
+		proj += mv * sc * len(by[r])
+		wt += len(by[r])
+	if wt:
+		print("  PRODUCTION prove_step ~= %.1f ms vs legacy %.1f = %.2fx"
+			% (proj / wt, LEG_PROVE_MS, proj / wt / LEG_PROVE_MS))
+		print("             (this run's own is %.2fx; the gap is the "
+			"oversized rung 1, not a real cost)"
+			% (med(pv) / LEG_PROVE_MS))
+
+
+def next_check(gate, got, pa, done, steps, el, ttf):
 	"""(seconds until the next useful look, why).  Keyed to the phase,
 	so a quiet stretch is not checked every ten minutes."""
 	if 7 in steps:
 		return 0, "run is done -- score it"
 	if 6 in steps:
+		if ttf is not None and ttf < 3.0:
+			return max(int(ttf * 1200), 300), ("fold running and RAM "
+				"is falling -- checking well before the floor")
 		return 90 * 60, "fold running; watch RAM and wait for step 7"
 	if pa:
 		if done < MS_TRUST_N:
@@ -432,9 +582,11 @@ def next_check(gate, got, pa, done, steps, el):
 	return 30 * 60, "still tuning; the gate is the next signal"
 
 
-def show_next(gate, got, pa, done, steps, el):
+def show_next(gate, got, pa, done, steps, el, target):
 	"""When to look again, in both clocks."""
-	sec, why = next_check(gate, got, pa, done, steps, el)
+	tr = mem_trend(target)
+	sec, why = next_check(gate, got, pa, done, steps, el,
+		tr[1] if tr else None)
 	if sec <= 0:
 		print("next check : none -- %s" % why)
 		return
@@ -454,15 +606,16 @@ def show_rate(target, done, est):
 		with open(path) as fh:
 			for ln in fh:
 				bits = ln.split()
-				if len(bits) == 2:
-					old.append((float(bits[0]), int(bits[1])))
+				if len(bits) >= 2:
+					old.append((float(bits[0]), int(bits[1]),
+						int(bits[2]) if len(bits) > 2 else None))
 	except (IOError, OSError, ValueError):
 		pass
 	# a count that went backwards means the run restarted; drop those.
 	old = [s for s in old if s[1] <= done and now - s[0] < 30 * 86400]
 	try:
 		with open(path, "a") as fh:
-			fh.write("%d %d\n" % (now, done))
+			fh.write("%d %d %d\n" % (now, done, mem_gb()[1]))
 	except (IOError, OSError):
 		print("             (could not bank a sample in %s)" % path)
 	base = old[0] if old else None
@@ -632,7 +785,7 @@ def main():
 	short = show_ratchet(lines)
 	gate, hist = show_gate(lines)
 	print("-" * 68)
-	cnt, n_jobs = routed_mix(lines)
+	cnt, n_jobs, pci = routed_mix(lines)
 	show_ladder(lines, ref, hist, cnt)
 	print("-" * 68)
 	show_routing(hist, cnt)
@@ -640,10 +793,16 @@ def main():
 	pa, done = show_pass1(lines, el, target, n_jobs)
 	print("-" * 68)
 	steps = show_steps(lines)
-	show_mem(steps)
+	print("-" * 68)
+	blocks0, pending0 = ladder_blocks(lines)
+	blk0 = prod_ladder(blocks0)
+	show_fold(lines, pci, blk0[1] if blk0 else pending0, ref)
+	print("-" * 68)
+	show_mem(steps, target)
 	blocks, pending = ladder_blocks(lines)
 	blk = prod_ladder(blocks)
-	show_next(gate, blk[1] if blk else pending, pa, done, steps, el)
+	show_next(gate, blk[1] if blk else pending, pa, done, steps, el,
+		target)
 	verdict(short, gate, steps, age)
 
 
