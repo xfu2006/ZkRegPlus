@@ -42,8 +42,13 @@ OLD_DEMAND_CS = 319
 RE_CP_SEED = re.compile(r"NEO CP SEED: no_crit_pat=(\d+) need=(\d+)")
 CP_NEED_MIN = 27
 # any cp::subsigs bump = the crawl is back = the exact seed under-shot
-# (formula refuted for some word). Zero expected.
-RE_CP_BUMP = re.compile(r'bumped \[\("cp::subsigs')
+# (formula refuted for some word). Zero expected. The pair may sit
+# ANYWHERE in the bumped vec, so match the pair and gate on the line
+# carrying "bumped [" (an anchored r'bumped \[\("cp::subsigs' gave a
+# FALSE PASS on '[("comp_sig::sigs", 9), ("cp::subsigs", 231)]').
+# Line-gated so a caught probe panic quoting the name is not counted.
+RE_CP_PAIR = re.compile(r'\("cp::subsigs[^"]*",\s*(\d+)\)')
+BUMP_TAG = "bumped ["
 # the true abort marker (tuner hands an unmappable CapErr to the
 # driver and the whole job dies rc=101)
 RE_FATAL = re.compile(r"unmapped CapErr")
@@ -180,12 +185,15 @@ def main():
     else:
         print("INFO: no NEO CP SEED need= line yet (old-format line or "
               "pre-seed phase)")
-    n_cpbump = len(RE_CP_BUMP.findall(text))
-    if n_cpbump == 0:
+    cp_vals = [RE_CP_PAIR.search(l).group(1)
+               for l in text.splitlines()
+               if BUMP_TAG in l and RE_CP_PAIR.search(l)]
+    if not cp_vals:
         print("PASS: 0 cp::subsigs bumps (crawl gone)")
     else:
-        print("FAIL: %d cp::subsigs bump(s) -- the exact seed "
-              "under-shot; save the log for the session" % n_cpbump)
+        print("FAIL: %d cp::subsigs bump(s) -> %s -- the exact seed "
+              "under-shot; save the log for the session"
+              % (len(cp_vals), ",".join(cp_vals)))
         fail = True
 
     # 5. later-stage markers, informational

@@ -29,8 +29,8 @@ use utils::consts::{get_global_config, read_global_config,
 
 use crate::circs::composable_gadget_mapper::CompositeGadgetMapper;
 use crate::determine_config::{apply_caperr_bumps,
-	caps_from_params_aggr, caps_from_params_general, probe_catching,
-	save_ladder, CapParams};
+	caps_from_params_aggr, caps_from_params_general,
+	parse_caperr_from_panic, probe_catching, save_ladder, CapParams};
 use crate::gadgets::word_extract::LEGS;
 use crate::stats_helper::{estimate_config_aggr,
 	estimated_to_capparams_aggr};
@@ -1474,6 +1474,22 @@ fn occ_of(grp: &[(UnitVec, usize)]) -> usize {
 /// own walk pattern (reset -> walk -> read the arm gauges). Walks ONLY
 /// `units`; a failed walk is a loud invariant break (P_max is the
 /// converged fixpoint -- everything must fit it).
+/// Largest `dis_adv::neo_qm_real` demand the last walk could not hold,
+/// 0 when it held everything. Written ONLY on the b_fold_only arm of
+/// qm_walk_units; read + reset by build_ladder_v5_aggr's re-walk.
+static QM_RATCHET: std::sync::atomic::AtomicUsize =
+	std::sync::atomic::AtomicUsize::new(0);
+
+/// The cs-arm qm_real demand a CapErr reports, or None if it is not a
+/// neo_qm_real CapErr. The igc arm is excluded on purpose: DLP skips
+/// it, and the full run ships qm_real_rows_igc at the seed.
+fn qm_real_demand(err_dbg: &str) -> Option<usize> {
+	parse_caperr_from_panic(err_dbg)?.into_iter()
+		.filter(|(n, _)| n.contains("neo_qm_real")
+			&& !n.contains("b_igc: true"))
+		.map(|(_, k)| k).max()
+}
+
 fn qm_walk_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	ts: &TuningSet, p_max: &CapParams, units: &[usize])
 	-> HashMap<usize, [QmNeed; 2]> {
@@ -1504,10 +1520,28 @@ fn qm_walk_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 		let padded =
 			utils::data::pad_word_to_multiple::<Fr>(&ts.words[i], mw);
 		reset_qm_gauges();
-		planner.plan_nd_advice(0, LOG2, false, &padded,
-			&ts.infos[i], "v5").unwrap_or_else(|e| panic!(
-			"v5[{}]: unit {} fails the P_max walk: {:?}",
-			spec.name, i, e));
+		if let Err(e) = planner.plan_nd_advice(0, LOG2, false,
+			&padded, &ts.infos[i], "v5") {
+			// b_fold_only (SMALL_DLP) only. finalize CapErr-converges
+			// qm_real_rows over ITS probe words, but this walk picks a
+			// DIFFERENT unit set (select_binding_candidates), so a
+			// sampled corpus can reach here still holding the low T305
+			// seed of 2. Record the demand the gadget reported and let
+			// build_ladder_v5_aggr raise the ceiling and re-walk --
+			// the same ratchet finalize has, which this walk lacks.
+			// Paper datasets keep the fail-fast panic: their finalize
+			// converges, so for them this arm is unreachable.
+			let dbg = format!("{:?}", e);
+			if spec.b_fold_only {
+				if let Some(n) = qm_real_demand(&dbg) {
+					QM_RATCHET.fetch_max(n,
+						std::sync::atomic::Ordering::Relaxed);
+					continue;
+				}
+			}
+			panic!("v5[{}]: unit {} fails the P_max walk: {}",
+				spec.name, i, dbg);
+		}
 		let mk = |arm: usize| QmNeed {
 			real: QM_REAL_SAT[arm].get().0,
 			tot: QM_SAT[arm].get().0,
@@ -1667,9 +1701,39 @@ fn harvest_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 fn build_ladder_v5_aggr(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	ts: &TuningSet, fixpoint: Vec<CapParams>, num_circs: usize)
 	-> Vec<CapParams> {
-	let p_max = fixpoint.last().expect("v5: empty fixpoint").clone();
+	let mut p_max =
+		fixpoint.last().expect("v5: empty fixpoint").clone();
 	if num_circs <= 1 { return vec![p_max]; }
-	let units = harvest_units(spec, db, ts, &p_max, false);
+	// b_fold_only: give the walk the ratchet finalize has. p_max is a
+	// CEILING (rung_params_from_env: env.qm[0].min(p_max...)), so
+	// raising it lets each rung keep its own MEASURED demand instead
+	// of being clamped to the seed -- the ladder stays corpus-shaped.
+	// The ceiling only rises, so this converges; 3 is a backstop.
+	// Untaken for every paper dataset (b_fold_only false), and the
+	// walk itself never records a demand for them.
+	use std::sync::atomic::Ordering::Relaxed;
+	let units = if spec.b_fold_only {
+		QM_RATCHET.store(0, Relaxed);
+		let mut u = harvest_units(spec, db, ts, &p_max, false);
+		for _ in 0..3 {
+			let need = QM_RATCHET.load(Relaxed);
+			if need <= p_max.qm_real_rows { break; }
+			utils::logger::log(0, utils::logger::LOG1, &format!(
+				"v5[{}]: qm_real_rows {} -> {}, re-walking",
+				spec.name, p_max.qm_real_rows, need));
+			p_max.qm_real_rows = need;
+			QM_RATCHET.store(0, Relaxed);
+			u = harvest_units(spec, db, ts, &p_max, false);
+		}
+		let left = QM_RATCHET.load(Relaxed);
+		assert!(left <= p_max.qm_real_rows,
+			"v5[{}]: qm_real_rows still short after 3 re-walks \
+			 (need {} > ceiling {})", spec.name, left,
+			p_max.qm_real_rows);
+		u
+	} else {
+		harvest_units(spec, db, ts, &p_max, false)
+	};
 	let grps = group_units_v5(units, &p_max, num_circs, true);
 	// size rungs; the LAST group ships P_max verbatim (fixpoint).
 	let (mut lad, mut hist) = (vec![], vec![]);
@@ -4429,6 +4493,26 @@ pub mod tests_bora_data_driver {
 		assert_eq!(SMALL_DLP.b_check_lkup, DLP.b_check_lkup);
 		assert_eq!(SMALL_DLP.fanout_cap, DLP.fanout_cap);
 		assert_eq!(SMALL_DLP.min_pm_word_len, DLP.min_pm_word_len);
+	}
+
+	/// qm_real_demand reads the cs-arm demand out of the walk's own
+	/// CapErr, ignores the igc arm, and ignores unrelated CapErrs.
+	#[test]
+	fn test_qm_real_demand_reads_cs_arm() {
+		// the exact Debug form the 2026-08-17 small_full_dlp run hit
+		let real = "CapErr([(\"dis_adv::neo_qm_real, b_igc: false\", \
+			61274)])";
+		assert_eq!(qm_real_demand(real), Some(61274));
+		// igc arm must NOT ratchet the cs ceiling
+		assert_eq!(qm_real_demand("CapErr([(\"dis_adv::neo_qm_real, \
+			b_igc: true\", 999)])"), None);
+		// an unrelated CapErr leaves the ceiling alone -> panic path
+		assert_eq!(qm_real_demand("CapErr([(\"dis_adv::\
+			prod_pats_expansion, StepFwdPrf b_igc: false\", 70965148)\
+			])"), None);
+		// pick the MAX when several cs-arm entries are reported
+		assert_eq!(qm_real_demand("CapErr([(\"a::neo_qm_real\", 5), \
+			(\"b::neo_qm_real\", 77)])"), Some(77));
 	}
 
 	/// The curated corpus exists, is non-empty, and still carries the
