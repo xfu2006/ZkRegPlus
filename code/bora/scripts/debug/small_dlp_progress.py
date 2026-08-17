@@ -74,6 +74,8 @@ STALL_S = 45 * 60
 # A one-slot list because show_rate banks it before show_fold's caller
 # needs it back.
 FOLD_N = [0]
+# same, for the prove_step ms those steps represent (the cost-based ETA).
+FOLD_MS = [0.0]
 # total Pass 3 steps expected, from Pass 1's denominator.
 FOLD_TOTAL = [0]
 
@@ -178,6 +180,47 @@ def mem_gb():
 		return 0, 0
 	return (vals.get("MemTotal", 0) // 1048576,
 		vals.get("MemAvailable", 0) // 1048576)
+
+
+def fold_cost_ms(by):
+	"""Total prove_step ms represented by the steps done so far."""
+	return sum(med(v) * len(v) for v in by.values())
+
+
+def fold_eta_cost(target, by, cnt, total):
+	"""(fraction of fold CPU done, seconds left) from banked cost, or
+	None.  The fold is front-loaded by circuit size, so a step-count ETA
+	reads long early: the steps still queued are the cheap ones."""
+	if not total or not by or not sum(cnt):
+		return None
+	share = [float(c) / sum(cnt) for c in cnt]
+	rem = 0.0
+	for r in range(4):
+		if r not in by:
+			continue
+		rem += max(share[r] * total - len(by[r]), 0.0) * med(by[r])
+	done = fold_cost_ms(by)
+	if rem <= 0 or done <= 0:
+		return None
+	path = os.path.join(os.path.dirname(target), STATE_NAME)
+	old = []
+	try:
+		with open(path) as fh:
+			for ln in fh:
+				bits = ln.split()
+				if len(bits) > 4:
+					old.append((float(bits[0]), float(bits[4])))
+	except (IOError, OSError, ValueError):
+		return None
+	now = time.time()
+	old = [x for x in old if now - x[0] >= 120 and x[1] < done]
+	if not old:
+		return None
+	t0, c0 = old[0]
+	rate = (done - c0) / (now - t0)
+	if rate <= 0:
+		return None
+	return done / (done + rem), rem / rate
 
 
 def fold_eta(target, total):
@@ -520,23 +563,56 @@ def med(v):
 	return v[k] if len(v) % 2 else (v[k - 1] + v[k]) / 2.0
 
 
-def show_fold(lines, pci, got, ref, target):
+def parse_prove(lines):
+	"""(job, word, seg) -> prove_step ms for every Pass 3 step timed."""
+	prove = {}
+	for ln in lines:
+		m = RE_P3_STEP.search(ln)
+		if m:
+			key = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+			prove.setdefault(key, dur_ms(m.group(5), m.group(6)))
+	return prove
+
+
+def by_rung(prove, pci):
+	"""prove_step ms bucketed by 0-based rung; unrouted steps dropped."""
+	by = {}
+	for key, ms in prove.items():
+		r = pci.get(key)
+		if r is not None and r < 4:
+			by.setdefault(r, []).append(ms)
+	return by
+
+
+def affine_r1(by, got, ref):
+	"""(production rung-1 ms, ms/col, fixed ms) from a rung1->rung2 fit,
+	or None.  prove_step is NOT proportional to cols at the low end -- the
+	fit carries a large intercept, so a linear rescale over-credits it."""
+	if len(by.get(0, [])) < 50 or len(by.get(1, [])) < 20:
+		return None
+	if 1 not in got or 2 not in got or 1 not in ref:
+		return None
+	c1, c2 = float(got[1][0]), float(got[2][0])
+	if c2 <= c1:
+		return None
+	slope = (med(by[1]) - med(by[0])) / (c2 - c1)
+	fixed = med(by[0]) - slope * c1
+	if slope <= 0 or fixed <= 0:
+		return None
+	return slope * ref[1][0] + fixed, slope, fixed
+
+
+def show_fold(lines, prove, by, got, ref, target, cnt):
 	"""Pass 3 cost per step against the measured legacy full_dlp split,
 	then projected onto the production ladder.  This run's rung 1 is
 	oversized and carries most chunks, so its raw step cost reads high;
 	the projection rescales each rung by ref_cols/this_cols."""
 	adv, stmt, lk = [], [], []
-	prove = {}
 	for ln in lines:
 		m = RE_P3_ADV.search(ln)
 		if m:
 			adv.append((int(m.group(1)), int(m.group(2)),
 				int(m.group(3)), dur_ms(m.group(4), m.group(5))))
-			continue
-		m = RE_P3_STEP.search(ln)
-		if m:
-			key = (int(m.group(1)), int(m.group(2)), int(m.group(3)))
-			prove.setdefault(key, dur_ms(m.group(5), m.group(6)))
 			continue
 		m = RE_P3_STMT.search(ln)
 		if m:
@@ -564,42 +640,62 @@ def show_fold(lines, pci, got, ref, target):
 	print("  %-12s %-10.1f %-10.1f %.2f"
 		% ("TOTAL", tot, LEG_STEP_MS, tot / LEG_STEP_MS))
 	# per-rung prove_step, then the production projection.
-	by = {}
-	for key, ms in prove.items():
-		r = pci.get(key)
-		if r is not None and r < 4:
-			by.setdefault(r, []).append(ms)
 	if not by:
 		return
 	print("  per-rung prove_step (this ladder -> production):")
-	proj = 0.0
-	wt = 0.0
+	lin = {}
 	for r in sorted(by):
 		mv = med(by[r])
 		sc = 1.0
 		if (r + 1) in got and (r + 1) in ref:
 			sc = float(ref[r + 1][0]) / got[r + 1][0]
+		lin[r] = mv * sc
 		print("    rung %d  n=%-7s %8.1f ms  x%.2f size -> %8.1f ms"
 			" (legacy adv %.0f)"
 			% (r + 1, com(len(by[r])), mv, sc, mv * sc,
 				LEG_ADV_RUNG[r]))
-		proj += mv * sc * len(by[r])
-		wt += len(by[r])
+	aff = dict(lin)
+	fit = affine_r1(by, got, ref)
+	if fit:
+		aff[0] = fit[0]
+		print("    rung 1 affine   %.5f ms/col + %.0f ms fixed"
+			" -> %8.1f ms" % (fit[1], fit[2], fit[0]))
+	# Weight by the CORPUS routing, not the fold-so-far counts: the fold
+	# is front-loaded by circuit size, so the so-far mix over-weights the
+	# expensive rungs until the run is nearly done.
+	w = ([float(c) for c in cnt] if sum(cnt)
+		else [float(len(by.get(r, []))) for r in range(4)])
+	wsrc = "corpus routing" if sum(cnt) else "fold-so-far mix"
+	rs = [r for r in range(4) if r in lin and w[r] > 0]
+	wt = sum(w[r] for r in rs)
 	if wt:
-		print("  PRODUCTION prove_step ~= %.1f ms vs legacy %.1f = %.2fx"
-			% (proj / wt, LEG_PROVE_MS, proj / wt / LEG_PROVE_MS))
-		print("             (this run's own is %.2fx; the gap is the "
-			"oversized rung 1, not a real cost)"
-			% (med(pv) / LEG_PROVE_MS))
+		lo = sum(w[r] * lin[r] for r in rs) / wt
+		hi = sum(w[r] * aff[r] for r in rs) / wt
+		if lo > hi:
+			lo, hi = hi, lo
+		print("  PRODUCTION prove_step %.1f - %.1f ms vs legacy %.1f"
+			"  = %.2f - %.2fx" % (lo, hi, LEG_PROVE_MS,
+				lo / LEG_PROVE_MS, hi / LEG_PROVE_MS))
+		print("             (linear vs affine rung 1, weighted by %s;"
+			" this run's own is %.2fx)"
+			% (wsrc, med(pv) / LEG_PROVE_MS))
 	if FOLD_TOTAL[0]:
 		pct = 100.0 * len(pv) / FOLD_TOTAL[0]
-		print("  fold done  %s / %s steps (%.1f%%)"
-			% (com(len(pv)), com(FOLD_TOTAL[0]), pct))
+		ce = fold_eta_cost(target, by, cnt, FOLD_TOTAL[0])
+		print("  fold done  %s / %s steps (%.1f%%)%s"
+			% (com(len(pv)), com(FOLD_TOTAL[0]), pct,
+				"" if not ce else ", %.1f%% by CPU cost" % (100 * ce[0])))
 		fe = fold_eta(target, FOLD_TOTAL[0])
+		if ce:
+			# the cost ETA leads: bigger rungs are dispatched first, so
+			# the queue left is cheaper per step than the queue done.
+			print("             ETA %s left, ends %s  (cost-weighted)"
+				% (hm(ce[1]), clocks(time.time() + ce[1])))
 		if fe:
-			print("             %.1f steps/min -> %s left, ends %s"
-				% (fe[0], hm(fe[1]), clocks(time.time() + fe[1])))
-		else:
+			print("             %.1f steps/min -> %s left by step count"
+				" (reads long while size-front-loaded)"
+				% (fe[0], hm(fe[1])))
+		elif not ce:
 			print("             rate: need a 2nd reading for the "
 				"fold ETA")
 
@@ -659,8 +755,8 @@ def show_rate(target, done, est):
 	old = [s for s in old if s[1] <= done and now - s[0] < 30 * 86400]
 	try:
 		with open(path, "a") as fh:
-			fh.write("%d %d %d %d\n"
-				% (now, done, mem_gb()[1], FOLD_N[0]))
+			fh.write("%d %d %d %d %.0f\n"
+				% (now, done, mem_gb()[1], FOLD_N[0], FOLD_MS[0]))
 	except (IOError, OSError):
 		print("             (could not bank a sample in %s)" % path)
 	base = old[0] if old else None
@@ -831,8 +927,11 @@ def main():
 	short = show_ratchet(lines)
 	gate, hist = show_gate(lines)
 	print("-" * 68)
-	FOLD_N[0] = sum(1 for ln in lines if RE_P3_STEP.search(ln))
+	prove0 = parse_prove(lines)
+	FOLD_N[0] = len(prove0)
 	cnt, n_jobs, pci = routed_mix(lines)
+	by0 = by_rung(prove0, pci)
+	FOLD_MS[0] = fold_cost_ms(by0)
 	show_ladder(lines, ref, hist, cnt)
 	print("-" * 68)
 	show_routing(hist, cnt)
@@ -843,8 +942,8 @@ def main():
 	print("-" * 68)
 	blocks0, pending0 = ladder_blocks(lines)
 	blk0 = prod_ladder(blocks0)
-	show_fold(lines, pci, blk0[1] if blk0 else pending0, ref,
-		target)
+	show_fold(lines, prove0, by0, blk0[1] if blk0 else pending0, ref,
+		target, cnt)
 	print("-" * 68)
 	show_mem(steps, target)
 	blocks, pending = ladder_blocks(lines)
