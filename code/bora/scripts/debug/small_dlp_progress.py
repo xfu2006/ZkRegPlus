@@ -36,6 +36,26 @@ EXPECT_RUNGS = 4
 MS_LEGACY = 175.6
 MS_NEO_PRE_S5 = 588.7
 MS_NEO_POST_S5 = 323.2
+# below this many chunks the cumulative ms/chunk average is still
+# climbing steeply (461 at n=10.7k -> 589 at n=66.9k on full_dlp), so
+# comparing it to the references above is meaningless.
+MS_TRUST_N = 10000
+# banked (epoch, chunk count) samples, written beside the log so a
+# second invocation can report a true Pass 1 wall rate.
+STATE_NAME = "small_dlp_progress.state"
+# hours to ADD to this box's clock to get the owner's laptop clock, so
+# every "check again at" is quotable without mental arithmetic.  The
+# server runs UTC; the laptop measured UTC-4 on 2026-08-17.  Override
+# with MY_OFFSET_H=<hours> when travelling or on a different box.
+MY_OFFSET_H = float(os.environ.get("MY_OFFSET_H", "-4"))
+# free memory below this many GB while the fold runs means the
+# single-process 8-job topology is heading for the Pass 3 OOM that
+# M101 warns about; the fix is numa_num=2, not a capacity bump.
+MEM_FLOOR_GB = 50
+# legacy full_dlp rung mix in percent, low rung first (M101 doc v7.6).
+# neo's thesis is that it routes the bulk of chunks one rung LOWER, so
+# this is the number the measured mix has to beat.
+LEG_MIX = [24.65, 70.44, 4.66, 0.24]
 # packed fields per chunk on the DLP/enron corpus (seg_word_len).  Used
 # only to turn step 1's total_word_len into a chunk denominator.
 SEG_WORD_LEN = 64
@@ -83,6 +103,13 @@ RE_SPEED = re.compile(r"mb_speed (\d+) MB/hr")
 RE_RAM = re.compile(r"(?:Total )?RAM: (\d+) GB")
 # run start stamp, from the resolved log's directory name.
 RE_START = re.compile(r"_(\d{8})_(\d{6})")
+# one line per routed chunk (aggressive only, needs LOG3).  pci is the
+# FINAL rung after bumps and is 0-based, unlike PERF 1002's circ index.
+RE_SEL = re.compile(
+	r"\[job (\d+)\].*per-chunk circ sel\..*word_id: (\d+), "
+	r"subseg_id: (\d+), fname: .*?, pci: (\d+)")
+# which job emitted a line, for counting how many are actually running.
+RE_JOB = re.compile(r"\[job (\d+)\]")
 
 # the fold steps in order, with the short label each one prints.
 STEP_NAMES = [
@@ -101,6 +128,42 @@ def hm(sec):
 	"""Seconds as 'Hh MMm'."""
 	sec = int(max(sec, 0))
 	return "%dh %02dm" % (sec // 3600, (sec % 3600) // 60)
+
+
+def clocks(epoch):
+	"""An epoch as 'HH:MM srv / HH:MM you', both clocks side by side."""
+	srv = time.strftime("%H:%M", time.localtime(epoch))
+	mine = time.strftime("%a %H:%M",
+		time.localtime(epoch + MY_OFFSET_H * 3600.0))
+	return "%s srv / %s you" % (srv, mine)
+
+
+def mem_gb():
+	"""(total, available) RAM in GB from /proc/meminfo, or (0, 0)."""
+	vals = {}
+	try:
+		with open("/proc/meminfo") as fh:
+			for ln in fh:
+				bits = ln.split()
+				if len(bits) >= 2:
+					vals[bits[0].rstrip(":")] = int(bits[1])
+	except (IOError, OSError, ValueError):
+		return 0, 0
+	return (vals.get("MemTotal", 0) // 1048576,
+		vals.get("MemAvailable", 0) // 1048576)
+
+
+def show_mem(steps):
+	"""RAM headroom, with the Pass 3 OOM floor once the fold starts."""
+	total, avail = mem_gb()
+	if not total:
+		return
+	line = "memory     : %d / %d GB available" % (avail, total)
+	if 6 in steps and avail < MEM_FLOOR_GB:
+		line += ("  <-- UNDER %d GB FLOOR. This is the single-process "
+			"8-job topology M101 says OOMs in Pass 3; rerun with "
+			"numa_num=2." % MEM_FLOOR_GB)
+	print(line)
 
 
 def com(n):
@@ -204,7 +267,7 @@ def show_gate(lines):
 			% (v5.group(1), v5.group(2), v5.group(3)))
 	if not gate:
 		print("gate       : PENDING -- tuner has not reported yet")
-		return None
+		return None, []
 	rungs = int(gate.group(1))
 	subsigs = int(gate.group(3))
 	ok = rungs >= EXPECT_RUNGS and subsigs == PROD_SUBSIGS
@@ -214,10 +277,12 @@ def show_gate(lines):
 	print("             P_max.subsigs=%d (prod %d)%s"
 		% (subsigs, PROD_SUBSIGS,
 			"" if subsigs == PROD_SUBSIGS else "  <-- MISMATCH"))
-	return ok
+	hist = [int(x) for x in gate.group(2).replace(" ", "").split(",")
+		if x]
+	return ok, hist
 
 
-def show_ladder(lines, ref):
+def show_ladder(lines, ref, hist):
 	"""Measured circ sizes against the neo full_dlp reference."""
 	blocks, pending = ladder_blocks(lines)
 	blk = prod_ladder(blocks)
@@ -250,16 +315,172 @@ def show_ladder(lines, ref):
 	if miss:
 		print("             waiting on circ %s"
 			% ",".join(str(i) for i in miss))
+		return
+	show_fidelity(got, ref, hist)
 
 
-def show_pass1(lines, el):
+def show_fidelity(got, ref, hist):
+	"""Occupancy-weighted cols, this run vs the reference ladder.  Per-
+	rung ratios mislead: rung 1 carries ~75% of chunks, so weighting by
+	the histogram is what says whether total fold cost is comparable."""
+	idx = sorted(set(got) & set(ref))
+	if not idx or len(hist) < len(idx):
+		return
+	w = [hist[i - 1] for i in idx]
+	tot = float(sum(w))
+	if tot <= 0:
+		return
+	a = sum(got[i][0] * n / tot for i, n in zip(idx, w))
+	b = sum(ref[i][0] * n / tot for i, n in zip(idx, w))
+	if b <= 0:
+		return
+	print("  weighted   %s vs %s cols  = %.3fx  (weights %s)"
+		% (com(int(a)), com(int(b)), a / b,
+			",".join("%.3f" % (n / tot) for n in w)))
+	print("             %s: an average chunk's circuit is %.0f%% %s "
+		"than production's"
+		% ("PESSIMISTIC" if a > b else "OPTIMISTIC",
+			abs(100.0 * (a / b - 1.0)),
+			"bigger" if a > b else "smaller"))
+
+
+def routed_mix(lines):
+	"""(counts per pci, n_jobs) over COMPLETED words only.  A word still
+	being emitted would skew the shares, so each job's highest word_id
+	is excluded; (job, word, subseg) is deduped so an appended re-run
+	cannot double-count."""
+	seen = set()
+	hi = {}
+	rows = []
+	jobs = set()
+	for ln in lines:
+		m = RE_JOB.search(ln)
+		if m:
+			jobs.add(int(m.group(1)))
+		m = RE_SEL.search(ln)
+		if not m:
+			continue
+		j, w, b, p = (int(m.group(i)) for i in (1, 2, 3, 4))
+		if (j, w, b) in seen:
+			continue
+		seen.add((j, w, b))
+		hi[j] = max(hi.get(j, 0), w)
+		rows.append((j, w, p))
+	cnt = [0, 0, 0, 0]
+	for j, w, p in rows:
+		if w < hi[j] and p < 4:
+			cnt[p] += 1
+	return cnt, len(jobs)
+
+
+def show_routing(lines, hist):
+	"""Measured rung mix vs the tuner's prediction and vs legacy.  This
+	is the neo thesis: route the bulk of chunks one rung LOWER."""
+	cnt, _ = routed_mix(lines)
+	tot = sum(cnt)
+	if tot == 0:
+		print("routing    : no completed words yet (needs LOG3 "
+			"'per-chunk circ sel' lines)")
+		return
+	mix = [100.0 * c / tot for c in cnt]
+	print("routing    : %s chunks routed over completed words" % com(tot))
+	print("  %-9s %-9s %-9s %-9s %s"
+		% ("rung", "measured", "tuner", "legacy", "n"))
+	for i in range(4):
+		pred = (100.0 * hist[i] / sum(hist)
+			if len(hist) == 4 and sum(hist) else None)
+		print("  %-9d %-9s %-9s %-9s %s"
+			% (i + 1, "%.2f%%" % mix[i],
+				"-" if pred is None else "%.2f%%" % pred,
+				"%.2f%%" % LEG_MIX[i], com(cnt[i])))
+	# Mean rung, not the rungs-1+2 share: both arms put ~95% in 1+2, so
+	# only the mean separates "mostly rung 1" from "mostly rung 2".
+	mean = sum((i + 1) * mix[i] for i in range(4)) / 100.0
+	lmean = sum((i + 1) * LEG_MIX[i] for i in range(4)) / 100.0
+	print("             mean rung %.2f here vs %.2f legacy -- %s"
+		% (mean, lmean,
+			"LOWER-SKEWED (the neo win)" if mean < lmean
+			else "NOT lower-skewed; check before trusting the fold"))
+	print("             for the ms-cost GREEN/RED call run: "
+		"bash scripts/debug/circ_sel_ratio.sh")
+
+
+def next_check(gate, got, pa, done, steps, el):
+	"""(seconds until the next useful look, why).  Keyed to the phase,
+	so a quiet stretch is not checked every ten minutes."""
+	if 7 in steps:
+		return 0, "run is done -- score it"
+	if 6 in steps:
+		return 90 * 60, "fold running; watch RAM and wait for step 7"
+	if pa:
+		if done < MS_TRUST_N:
+			return 30 * 60, ("Pass 1 early; ms/chunk not comparable "
+				"until n>%s" % com(MS_TRUST_N))
+		return 45 * 60, "Pass 1 steady; next milestone is step 6"
+	if got:
+		return 20 * 60, "ladder built; Pass 1 should start shortly"
+	if gate:
+		return 20 * 60, "gate passed; waiting on the circuit build"
+	return 30 * 60, "still tuning; the gate is the next signal"
+
+
+def show_next(gate, got, pa, done, steps, el):
+	"""When to look again, in both clocks."""
+	sec, why = next_check(gate, got, pa, done, steps, el)
+	if sec <= 0:
+		print("next check : none -- %s" % why)
+		return
+	print("next check : in %s, at %s"
+		% (hm(sec), clocks(time.time() + sec)))
+	print("             (%s)" % why)
+
+
+def show_rate(target, done, est):
+	"""True wall rate from a chunk count banked by an earlier run of
+	this script.  Pass 1 starts hours into the run, so the elapsed-based
+	ETA above overstates; this one uses only Pass 1's own interval."""
+	path = os.path.join(os.path.dirname(target), STATE_NAME)
+	now = time.time()
+	old = []
+	try:
+		with open(path) as fh:
+			for ln in fh:
+				bits = ln.split()
+				if len(bits) == 2:
+					old.append((float(bits[0]), int(bits[1])))
+	except (IOError, OSError, ValueError):
+		pass
+	# a count that went backwards means the run restarted; drop those.
+	old = [s for s in old if s[1] <= done and now - s[0] < 30 * 86400]
+	try:
+		with open(path, "a") as fh:
+			fh.write("%d %d\n" % (now, done))
+	except (IOError, OSError):
+		print("             (could not bank a sample in %s)" % path)
+	base = old[0] if old else None
+	if not base or done <= base[1] or now - base[0] < 60:
+		print("             rate: need a 2nd reading -- banked this "
+			"one, run again in ~10 min for a true ETA")
+		return
+	dt = now - base[0]
+	dn = done - base[1]
+	cpm = dn * 60.0 / dt
+	print("             rate: %.1f chunks/min over the last %s "
+		"(%s chunks)" % (cpm, hm(dt), com(dn)))
+	if done < est:
+		print("             ETA : %s for this part, at that rate"
+			% hm((est - done) / max(cpm, 1e-9) * 60.0))
+
+
+def show_pass1(lines, el, target):
 	"""Pass 1 rate in ms/chunk against the legacy and neo references."""
 	pa = None
 	pb = None
-	# summed over every step 1 line: the probe counters are process
-	# statics spanning all parts, so the denominator must be too.
-	n_words = 0
-	n_fields = 0
+	# The probe counters are process statics spanning ALL jobs, so the
+	# denominator must cover all jobs too.  One step 1 line per job, but
+	# jobs stagger, so scale by how many have reported vs how many the
+	# log shows -- otherwise progress reads ~8x too high early on.
+	per_job = {}
 	for ln in lines:
 		m = RE_PA.search(ln)
 		if m:
@@ -269,11 +490,18 @@ def show_pass1(lines, el):
 			pb = [int(g) for g in m.groups()]
 		m = RE_WORDS.search(ln)
 		if m:
-			n_words += int(m.group(1))
-			n_fields += int(m.group(2))
+			j = RE_JOB.search(ln)
+			per_job[j.group(1) if j else len(per_job)] = (
+				int(m.group(1)), int(m.group(2)))
+	n_words = sum(v[0] for v in per_job.values())
+	n_fields = sum(v[1] for v in per_job.values())
+	_, n_jobs = routed_mix(lines)
+	scale = 1.0
+	if per_job and n_jobs > len(per_job):
+		scale = float(n_jobs) / len(per_job)
 	if not pa and not pb:
 		print("Pass 1     : not started (no 69120.7/.8 probe yet)")
-		return
+		return None, 0
 	total_ms = 0.0
 	if pa:
 		n, tries, halo, ok, fail = pa
@@ -299,11 +527,17 @@ def show_pass1(lines, el):
 	print("             (ms/chunk is CPU time summed over workers, "
 		"NOT wall -- the same basis as the 3 references)")
 	done = (pb or pa)[0]
+	if done < MS_TRUST_N:
+		print("             WARN: n=%s is too small to compare. The "
+			"cumulative average DRIFTS UP with n" % com(done))
+		print("             (full_dlp measured 461 ms/chunk at n=10.7k "
+			"-> 589 at n=66.9k). Re-read past n=%s."
+			% com(MS_TRUST_N))
 	if not n_fields:
 		print("  progress %s chunks (no step 1 line yet for a "
 			"denominator)" % com(done))
-		return
-	est = n_fields // SEG_WORD_LEN
+		return pa, done
+	est = int(n_fields * scale) // SEG_WORD_LEN
 	pct = 100.0 * done / max(est, 1)
 	line = "  progress %s / ~%s chunks (%.1f%%)" % (com(done),
 		com(est), pct)
@@ -311,11 +545,15 @@ def show_pass1(lines, el):
 		# elapsed spans the tuner too, so this rate is pessimistic.
 		line += "  ETA <= %s" % hm(el / done * (est - done))
 	print(line)
-	print("             (denominator = summed total_word_len %s / %d "
-		"over %s words)" % (com(n_fields), SEG_WORD_LEN, com(n_words)))
+	show_rate(target, done, est)
+	print("             (denominator = total_word_len %s / %d, from %d "
+		"of %d jobs%s)" % (com(n_fields), SEG_WORD_LEN, len(per_job),
+			n_jobs, "" if scale == 1.0 else " x%.2f extrapolated"
+			% scale))
 	if pct > 105.0:
 		print("             WARN: over 100% -- a part is missing its "
 			"step 1 line, so the denominator is short")
+	return pa, done
 
 
 def show_steps(lines):
@@ -385,13 +623,19 @@ def main():
 	el, age = show_header(target, lines)
 	print("-" * 68)
 	short = show_ratchet(lines)
-	gate = show_gate(lines)
+	gate, hist = show_gate(lines)
 	print("-" * 68)
-	show_ladder(lines, ref)
+	show_ladder(lines, ref, hist)
 	print("-" * 68)
-	show_pass1(lines, el)
+	show_routing(lines, hist)
+	print("-" * 68)
+	pa, done = show_pass1(lines, el, target)
 	print("-" * 68)
 	steps = show_steps(lines)
+	show_mem(steps)
+	blocks, pending = ladder_blocks(lines)
+	blk = prod_ladder(blocks)
+	show_next(gate, blk[1] if blk else pending, pa, done, steps, el)
 	verdict(short, gate, steps, age)
 
 
