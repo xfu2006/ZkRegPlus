@@ -4397,6 +4397,55 @@ pub mod tests_bora_data_driver {
 		parse_args(&argv(&["scale_dlp", "0", "2,987"]));
 	}
 
+	/// small_full_dlp takes full_dlp's 8-arg tail and routes to its
+	/// own Cmd -- never to FullDlp.
+	#[test]
+	fn test_parse_args_small_full_dlp() {
+		let c = parse_args(&argv(&["small_full_dlp", "100", "100",
+			"4", "8", "1", "0", "0", "0"]));
+		assert_eq!(c, Cmd::SmallFullDlp { perc_db: 100.0,
+			perc_samples: 100.0, num_circs: 4, num_jobs: 8,
+			numa_num: 1, part_id: 0, b_dry_run: false,
+			b_ladder_only: false });
+	}
+
+	/// SMALL_DLP folds DLP's shape but is isolated from it: its own
+	/// cache dir and corpus, and fold-only on every paper spec.
+	#[test]
+	fn test_small_dlp_isolated_from_dlp() {
+		// own cache dir: a shared one would let this run's tuned
+		// ladder/warmstart poison full_dlp's next cold start (T308).
+		assert!(SMALL_DLP.db_cache_dir != DLP.db_cache_dir);
+		assert!(SMALL_DLP.master_sources != DLP.master_sources);
+		// fold cost only here, never for a paper dataset.
+		assert!(SMALL_DLP.b_fold_only);
+		assert!(!DLP.b_fold_only && !DNA.b_fold_only
+			&& !CLAM.b_fold_only);
+		// and the fold shape must still be DLP's, or the measured
+		// per-step cost is not comparable to the production run.
+		assert_eq!(SMALL_DLP.chunk_len, DLP.chunk_len);
+		assert_eq!(SMALL_DLP.range2_bit, DLP.range2_bit);
+		assert_eq!(SMALL_DLP.b_aggressive, DLP.b_aggressive);
+		assert_eq!(SMALL_DLP.b_check_lkup, DLP.b_check_lkup);
+		assert_eq!(SMALL_DLP.fanout_cap, DLP.fanout_cap);
+		assert_eq!(SMALL_DLP.min_pm_word_len, DLP.min_pm_word_len);
+	}
+
+	/// The curated corpus exists, is non-empty, and still carries the
+	/// hard core that pins the 4th rung.
+	#[test]
+	fn test_small_dlp_corpus_keeps_hard_core() {
+		let files = read_path_list(SMALL_DLP.master_sources[0]);
+		assert!(files.len() > 20_000,
+			"small_full_dlp corpus only {} files -- regenerate with \
+			 scripts/debug/gen_small_full_dlp_list.py", files.len());
+		// watson-k/e_mail_bin/379 is the worst known word (115M prod
+		// fan-out). Lose it and the ladder can drop to 3 rungs.
+		assert!(files.iter().any(|f|
+			f.ends_with("watson-k/e_mail_bin/379.")),
+			"hard core missing from the small_full_dlp corpus");
+	}
+
 	/// effective parses (perc, dest_path), same shape as lkup.
 	#[test]
 	fn test_parse_args_effective() {
