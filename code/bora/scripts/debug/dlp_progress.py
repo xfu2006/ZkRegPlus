@@ -268,6 +268,13 @@ def _build_tl():
 LEG_TL = _build_tl()
 # index of the decider stage; everything before it is what part1 does.
 DEC_IDX = len(LEG_TL) - 1
+# LEG_TL index of PHASE 1, the first stage neo times itself.  Anything
+# before it is a legacy placeholder, so a comparison made there says
+# nothing about the fold.
+P1_IDX = 5
+# the source string forecast() stamps on a stage neo never times.  Used
+# to decide whether the run has produced ANY number of its own yet.
+LEG_SRC = "legacy (neo does not time it)"
 # mean-job wall WITHOUT the decider, and WITH it.
 LEG_WALL_FOLD = LEG_TL[DEC_IDX][1]
 LEG_WALL_ALL = LEG_TL[DEC_IDX][2]
@@ -1214,8 +1221,8 @@ def forecast(run, mix, got):
 	dec_idx = [x[0] for x in LEG_DEC]
 	for i, (_label, t0, t1, _c) in enumerate(LEG_TL):
 		leg = t1 - t0
-		val, src = leg, "legacy (neo does not time it)"
-		if i == 5:                              # PHASE 1
+		val, src = leg, LEG_SRC
+		if i == P1_IDX:                         # PHASE 1
 			m = run.step_wall(2)[0]
 			if m is not None:
 				val, src = m, "measured"
@@ -1323,6 +1330,11 @@ def show_position(run, el, src):
 		print("             PACE %.3fx -- %s" % (r,
 			"AHEAD of legacy" if r > 1.02 else
 			("BEHIND legacy" if r < 0.98 else "at legacy pace")))
+		if idx < P1_IDX:
+			print("             SETUP ONLY -- neo rebuilds the DB "
+				"cache every run, legacy read")
+			print("             it from cache. This says nothing "
+				"about the fold.")
 		if not PACE_SANE[0] <= r <= PACE_SANE[1]:
 			print("             WARN: that pace is not physical -- the "
 				"ELAPSED clock is wrong,")
@@ -1828,10 +1840,19 @@ def show_forecast(run, fc, el, tot, tot_fold, idx, frac, equiv):
 	# everything neo does NOT time (its own DB load and tuner), which is
 	# exactly the part no marker can measure.
 	raw = (el / spent) if spent > 0 else 1.0
+	# GATED: until the run times a stage of its own, every entry in fc
+	# is a legacy placeholder and `spent` is a guess -- position() hands
+	# back a hardcoded 0.5 for load DB.  Multiplying a 101-hour fold by
+	# a ratio measured inside a DB build neo REBUILDS and legacy read
+	# from cache is not a forecast.  The overrun is real but one-time,
+	# so it is carried additively instead: the remainder runs at legacy
+	# pace and the hours already lost stay lost.
+	anchored = any(s != LEG_SRC for _v, s in fc[:idx + 1])
 	# Clamped: a wrong elapsed clock (no _YYYYmmdd_HHMMSS in the log dir
 	# name, so ctime was used) would otherwise scale the whole remainder
 	# by a factor of 100.  A real run sits within a few percent of 1.
-	drift = min(max(raw, DRIFT_SANE[0]), DRIFT_SANE[1])
+	drift = (min(max(raw, DRIFT_SANE[0]), DRIFT_SANE[1])
+		if anchored else 1.0)
 	left_fold = max(tot_fold - spent, 0.0) * drift
 	left_all = max(tot - spent, 0.0) * drift
 	print("FORECAST")
@@ -1848,7 +1869,12 @@ def show_forecast(run, fc, el, tot, tot_fold, idx, frac, equiv):
 		% (hm(spent), hm(el), raw))
 	print("             (that ratio absorbs neo's UNTIMED DB load and "
 		"tuner)")
-	if abs(raw - drift) > 1e-9:
+	if not anchored:
+		print("             NOT PROPAGATED -- no neo-timed stage yet, "
+			"so the remainder runs")
+		print("             at legacy pace and the %s already lost is "
+			"carried additively" % hm(max(el - spent, 0.0)))
+	elif abs(raw - drift) > 1e-9:
 		print("             CLAMPED to %.2fx for the remainder below "
 			"-- see the elapsed" % drift)
 		print("             warning above; the per-stage table is the "
@@ -1860,8 +1886,16 @@ def show_forecast(run, fc, el, tot, tot_fold, idx, frac, equiv):
 	if el > 0:
 		print("  vs legacy  legacy needed %s to get where neo is now; "
 			"neo took %s" % (hm(equiv), hm(el)))
-		print("             pace %.3fx -> whole run lands near %.3fx "
-			"legacy" % (equiv / el, (el + left_all) / LEG_WALL_ALL))
+		if anchored:
+			print("             pace %.3fx -> whole run lands near "
+				"%.3fx legacy"
+				% (equiv / el, (el + left_all) / LEG_WALL_ALL))
+		else:
+			print("             pace %.3fx is SETUP ONLY; at legacy "
+				"pace from here the run" % (equiv / el))
+			print("             lands near %.3fx legacy -- no fold "
+				"evidence yet either way"
+				% ((el + left_all) / LEG_WALL_ALL))
 	print("             legacy MEASURED 5.05 d part wall + 2h 52m "
 		"decider = 5.17 d")
 
