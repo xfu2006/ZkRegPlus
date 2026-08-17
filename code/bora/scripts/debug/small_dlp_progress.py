@@ -70,6 +70,12 @@ LEG_MIX = [24.65, 70.44, 4.66, 0.24]
 SEG_WORD_LEN = 64
 # a log untouched this long, with no terminal marker, is suspect.
 STALL_S = 45 * 60
+# Pass 3 steps timed so far, filled by show_fold and read by fold_eta.
+# A one-slot list because show_rate banks it before show_fold's caller
+# needs it back.
+FOLD_N = [0]
+# total Pass 3 steps expected, from Pass 1's denominator.
+FOLD_TOTAL = [0]
 
 # ------------------------------------------------------------- regexes
 
@@ -172,6 +178,33 @@ def mem_gb():
 		return 0, 0
 	return (vals.get("MemTotal", 0) // 1048576,
 		vals.get("MemAvailable", 0) // 1048576)
+
+
+def fold_eta(target, total):
+	"""(steps/min, seconds left) for Pass 3 from banked samples, or None.
+	The fold has no wall-clock marker of its own, so its rate can only
+	come from two readings of this script."""
+	if not FOLD_N[0] or not total:
+		return None
+	path = os.path.join(os.path.dirname(target), STATE_NAME)
+	old = []
+	try:
+		with open(path) as fh:
+			for ln in fh:
+				bits = ln.split()
+				if len(bits) > 3:
+					old.append((float(bits[0]), int(bits[3])))
+	except (IOError, OSError, ValueError):
+		return None
+	now = time.time()
+	old = [x for x in old if now - x[0] >= 120 and x[1] < FOLD_N[0]]
+	if not old:
+		return None
+	t0, n0 = old[0]
+	spm = (FOLD_N[0] - n0) * 60.0 / (now - t0)
+	if spm <= 0:
+		return None
+	return spm, max(total - FOLD_N[0], 0) / spm * 60.0
 
 
 def mem_trend(target):
@@ -487,7 +520,7 @@ def med(v):
 	return v[k] if len(v) % 2 else (v[k - 1] + v[k]) / 2.0
 
 
-def show_fold(lines, pci, got, ref):
+def show_fold(lines, pci, got, ref, target):
 	"""Pass 3 cost per step against the measured legacy full_dlp split,
 	then projected onto the production ladder.  This run's rung 1 is
 	oversized and carries most chunks, so its raw step cost reads high;
@@ -558,6 +591,17 @@ def show_fold(lines, pci, got, ref):
 		print("             (this run's own is %.2fx; the gap is the "
 			"oversized rung 1, not a real cost)"
 			% (med(pv) / LEG_PROVE_MS))
+	if FOLD_TOTAL[0]:
+		pct = 100.0 * len(pv) / FOLD_TOTAL[0]
+		print("  fold done  %s / %s steps (%.1f%%)"
+			% (com(len(pv)), com(FOLD_TOTAL[0]), pct))
+		fe = fold_eta(target, FOLD_TOTAL[0])
+		if fe:
+			print("             %.1f steps/min -> %s left, ends %s"
+				% (fe[0], hm(fe[1]), clocks(time.time() + fe[1])))
+		else:
+			print("             rate: need a 2nd reading for the "
+				"fold ETA")
 
 
 def next_check(gate, got, pa, done, steps, el, ttf):
@@ -615,7 +659,8 @@ def show_rate(target, done, est):
 	old = [s for s in old if s[1] <= done and now - s[0] < 30 * 86400]
 	try:
 		with open(path, "a") as fh:
-			fh.write("%d %d %d\n" % (now, done, mem_gb()[1]))
+			fh.write("%d %d %d %d\n"
+				% (now, done, mem_gb()[1], FOLD_N[0]))
 	except (IOError, OSError):
 		print("             (could not bank a sample in %s)" % path)
 	base = old[0] if old else None
@@ -698,6 +743,7 @@ def show_pass1(lines, el, target, n_jobs):
 			"denominator)" % com(done))
 		return pa, done
 	est = int(n_fields * scale) // SEG_WORD_LEN
+	FOLD_TOTAL[0] = est
 	pct = 100.0 * done / max(est, 1)
 	line = "  progress %s / ~%s chunks (%.1f%%)" % (com(done),
 		com(est), pct)
@@ -785,6 +831,7 @@ def main():
 	short = show_ratchet(lines)
 	gate, hist = show_gate(lines)
 	print("-" * 68)
+	FOLD_N[0] = sum(1 for ln in lines if RE_P3_STEP.search(ln))
 	cnt, n_jobs, pci = routed_mix(lines)
 	show_ladder(lines, ref, hist, cnt)
 	print("-" * 68)
@@ -796,7 +843,8 @@ def main():
 	print("-" * 68)
 	blocks0, pending0 = ladder_blocks(lines)
 	blk0 = prod_ladder(blocks0)
-	show_fold(lines, pci, blk0[1] if blk0 else pending0, ref)
+	show_fold(lines, pci, blk0[1] if blk0 else pending0, ref,
+		target)
 	print("-" * 68)
 	show_mem(steps, target)
 	blocks, pending = ladder_blocks(lines)
