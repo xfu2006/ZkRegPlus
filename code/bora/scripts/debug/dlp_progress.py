@@ -1251,23 +1251,29 @@ def pick_inputs(got, mix, v5=None):
 	return NEO_REF_LADDER, "08-16 neo ref", m, ms
 
 
-def project_step_ms(lad, m):
-	"""(ms per fold step, prove_step ms) for a ladder and routing mix,
-	from the legacy affine fit."""
-	if not LEG_FIT or not lad or len(lad) < 4:
+def project_step_ms(lad, m, outer=None, adv=None):
+	"""(ms per fold step, how many rungs were priced from THIS run's
+	spans) for a ladder and routing mix.  Every rung goes through
+	rung_step_ms, so a rung holding MEAS_MIN samples is priced from
+	neo's own spans and only the rest fall back to the legacy fit.
+	The legacy affine law carries a 1604 ms fixed term neo does not
+	pay, so pricing neo by that law alone reads ~1.5x high."""
+	if not lad or len(lad) < 4:
 		return None
-	slope, fixed, _res = LEG_FIT
 	tot = float(sum(m))
 	if tot <= 0:
 		return None
-	pv = sum((slope * lad[i + 1][0] + fixed) * m[i] / tot
-		for i in range(4))
-	# advice re-weighted from the legacy per-rung table; stmt, lkup and
-	# the unaccounted remainder are held flat -- together they are 2% of
-	# a step, so their error cannot move the verdict.
-	pa = sum(LEG_ADV_RUNG[i][0] * m[i] / tot for i in range(4))
-	return (pv + pa + LEG_STMT_MS + LEG_LKUP_MS + LEG_UNACCOUNTED_MS,
-		pv)
+	outer = outer or {}
+	adv = adv or {}
+	acc, n_meas = 0.0, 0
+	for r in range(1, 5):
+		v = rung_step_ms(lad, r, outer, adv)
+		if not v:
+			return None
+		acc += v[0] * m[r - 1] / tot
+		if v[1]:
+			n_meas += 1
+	return acc, n_meas
 
 
 def p1_projection(run):
@@ -1297,21 +1303,27 @@ def p3_projection(run, mix, got):
 	"""(projected phase-3 wall per job in seconds, source, fraction,
 	model value, shape value).
 
-	Two estimators.  The MODEL rescales legacy prove_step onto this
-	run's ladder and routing and is steady from the first step.  The
-	SHAPE estimator divides neo's own seconds-so-far by legacy's seconds
-	at the same fraction; it is exact late but reads high early, because
-	steps are dispatched largest-circuit-first.  Measured: at 3.9% of
-	the legacy fold the model was within 0.2% while the raw spans read
-	15% high, so the model leads until a quarter of the fold is done."""
+	Two estimators.  The MODEL prices each rung from THIS run's spans
+	once MEAS_MIN of them exist and from the legacy affine fit before
+	that, so it is steady from the first step without assuming neo
+	costs what legacy cost per column.  The SHAPE estimator divides
+	neo's own seconds-so-far by legacy's seconds at the same fraction;
+	it is exact late but reads high early, because steps are dispatched
+	largest-circuit-first, so the model leads until a quarter of the
+	fold is done."""
 	steps = run.steps_per_job()
 	span_s, span_n = run.p3_span_s()
 	lad, ls, m, ms = pick_inputs(got, mix, run.v5_hist())
-	pr = project_step_ms(lad, m)
+	pr = project_step_ms(lad, m, run.merged("outer"),
+		run.merged("adv"))
 	model = pr[0] * steps / 1000.0 if pr else None
-	msrc = ("legacy-fitted cost model"
-		if ls == ms == "legacy placeholder"
-		else "legacy fit on %s + %s" % (ls, ms))
+	if pr and pr[1]:
+		msrc = ("neo spans on %d/4 rungs, legacy fit on the rest"
+			% pr[1])
+	elif ls == ms == "legacy placeholder":
+		msrc = "legacy-fitted cost model"
+	else:
+		msrc = "legacy fit on %s + %s" % (ls, ms)
 	shape = None
 	f = 0.0
 	if span_n:
@@ -1884,7 +1896,7 @@ def show_phase3(run, mix, got, bank):
 	if model:
 		print("    model      %s per job = %.3fx legacy%s"
 			% (hm(model), model / LEG_STEP[7][0],
-				"   <-- used" if psrc.startswith("legacy") else ""))
+				"   <-- used" if not psrc.startswith("own") else ""))
 	if shape:
 		span_s = run.p3_span_s()[0]
 		print("    same-point %s per job = %.3fx legacy%s  (%s vs "
