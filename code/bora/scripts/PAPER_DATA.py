@@ -10,6 +10,7 @@
 # ---------------------------------------------------------------------
 
 import argparse
+import contextlib
 import datetime
 import fcntl
 import glob
@@ -1062,6 +1063,7 @@ def _watch_child(p, log_path, ctx, max_wall_s=0, max_rss_gb=0):
             _summary_line("       %s: RSS CEILING %.0fGB exceeded "
                           "(%.1fGB) -- killing (OOM-GUARD)"
                           % (label, max_rss_gb, gb))
+            ctx.rss_ceiling_hit = True
             _stall_kill(p, ctx, pids, log_path, 0, label)
             return
         # WALL CAP -- an UNCONDITIONAL test, deliberately not an elif
@@ -1071,7 +1073,10 @@ def _watch_child(p, log_path, ctx, max_wall_s=0, max_rss_gb=0):
         # process that is ALREADY idle: never on the diverging tuner
         # it exists to bound.  MEASURED 2026-08-17 before the fix:
         # busy child, cap 4 s -> still running at 19 s; idle child,
-        # same cap -> killed at 4.2 s.  Pinned by
+        # same cap -> killed at 4.2 s.  Resolution is one RSS_POLL_S
+        # (10 s), so the kill lands at the next poll after the cap,
+        # not on it -- immaterial at the real caps (>= 900 s).
+        # Pinned by
         # WatchChildTest.test_wall_cap_kills_a_busy_child.
         if max_wall_s and time.time() - t_start >= max_wall_s:
             _summary_line("       %s: WALL CAP %ds reached -- killing "
@@ -1102,6 +1107,9 @@ class JobHandle:
         self.mode = mode
         self.peak_rss_gb = 0.0
         self.peak_idle_s = 0.0    # largest no-progress gap seen vs STALL_S
+        # Set by _watch_child when max_rss_gb fired.  A guarded OOM
+        # kill is a RESOURCE outcome, not a defect in the step.
+        self.rss_ceiling_hit = False
         self.raw_data = []
         self.reports = []
         self._t0 = time.time()
@@ -2145,11 +2153,19 @@ def _ts():
 
 
 def _summary_line(line):
-    """Emit one line to both the console (log()) and SUMMARY.log."""
-    log(line)
-    os.makedirs(os.path.dirname(SUMMARY_LOG), exist_ok=True)
-    with open(SUMMARY_LOG, "a") as f:
-        f.write("[%s] %s\n" % (_ts(), line))
+    """Emit one line to both the console (log()) and SUMMARY.log.
+    NEVER raises: this is called from inside _watch_child and
+    _stall_kill, and a full /tmp there killed the WATCHDOG THREAD --
+    measured, a child outlived its 3 s wall cap by 12 s and counting.
+    Losing a log line is survivable; losing the only thing that can
+    bound a runaway prover is not."""
+    try:
+        log(line)
+        os.makedirs(os.path.dirname(SUMMARY_LOG), exist_ok=True)
+        with open(SUMMARY_LOG, "a") as f:
+            f.write("[%s] %s\n" % (_ts(), line))
+    except OSError:
+        pass
 
 
 def reset_summary_log(top):
@@ -2383,7 +2399,7 @@ TOP_CHOICES = [
     # JOB_SPECS leaf -- `full_run --items all` must never reach it,
     # it writes nothing into raw_data/.
     ("v101", "V101 tuner test suite (all tests, unattended, self-"
-             "sizing to a 12:00 clock; watch "
+             "sizing to a 16 h budget; watch "
              "/tmp/bora/v101/V101_PROGRESS.txt, verdict + "
              "V101_BUNDLE.tgz beside it)"),
 ]
@@ -2709,7 +2725,7 @@ def run_small_full_dlp():
 
 # =====================================================================
 # Layer A -- V101 tuner test suite (last menu item: every V101 test in
-# one unattended run, self-sizing against a hard clock deadline)
+# one unattended run, self-sizing against a fixed run budget)
 # =====================================================================
 #
 # Isolation from full_run, by construction (2026-08-17):
@@ -2750,14 +2766,16 @@ V101_BUNDLE_TAIL_MB = 15.0
 V101_SEED_ENV = {"ZKR_V101_SEED_ONLY": "1"}
 V101_METER_ENV = {"ZKR_METER_T9901": "1"}
 
-# Hard clock the suite must be finished by: the next local 12:00
-# (20:00 + 16 h).  A CLOCK, not a budget -- a late start degrades the
-# vehicle the picker chooses, never the finish time.  Enforced twice:
-# a step is not STARTED without room, and every step's wall cap is
-# clamped to the time left (run_v101), so a fixed cap_s -- dec_big's
-# 5 h in particular -- can no longer overrun the clock.
-V101_DEADLINE_HOUR = 12
-V101_DEADLINE_MIN = 0
+# How long the suite may RUN, as a duration from launch.  A DURATION,
+# not a wall-clock deadline: with a fixed finish time (this was "the
+# next local 12:00"), every hour of slipped start silently bought a
+# smaller A/B vehicle, and a launch after the hour had passed got a
+# whole extra day.  A duration always grants the same budget.
+# Override for a short run with ZKR_V101_HOURS=2.
+# Enforced twice: a step is not STARTED without room, and every
+# step's wall cap is clamped to the time left (run_v101), so a fixed
+# cap_s -- dec_big's 5 h in particular -- cannot overrun the budget.
+V101_RUN_HOURS = 16.0
 
 # Seconds the picker must LEAVE on the clock for the three decider
 # steps that follow the A/B.  dec_v1/dec_v2 measured 7m/8m locally;
@@ -2803,6 +2821,15 @@ V101_V2_PASSES = 1
 # only the fallback for a suite where that step did not run.
 V101_V1_PROBE_MULT = 1.81
 
+# If calib_v1 does not return, price the v1 arm from the v2 arm rate
+# rather than from the analytic model.  Measured shape: r_v1_arm /
+# r_v2_arm ~ 1.87 (v1 pays ~13 non-C3 passes against v2's 1 C3 pass,
+# and both pay the same two walks).  2.0 is the conservative round
+# number.  The analytic fallback over-priced v1 by 3.43x, which
+# collapsed the vehicle from perc 20 to perc 5 and idled 6h40m of
+# budget -- schedule-safe, but the worst scientific outcome available.
+V101_V1_ARM_RATIO = 2.0
+
 # (perc_samples, files, MB, padded chunks, derived lkup share) for the
 # deterministic subsets of the clam corpus at chunk_len 4096.  Measured
 # 2026-08-17 by replaying subset()/fixed_perm() over the 8 binexec
@@ -2845,6 +2872,21 @@ V101_AB_CAP_MULT = 1.6
 # estimate, i.e. 10% MORE than the whole room, which quietly ate the
 # decider reserve.
 V101_MODEL_SLACK = 0.95
+
+# F1b.  The seed is a SOUND UPPER BOUND (bora_data_driver.rs:2063) and
+# M3 tightens it afterwards, so "above the proven max" is its design.
+# The dry leaf measured seed 43 -> tightened 7 = 6.1x on a HEALTHY
+# run, so the advisory line sits above that; the hard stop is the
+# spec's own RAM alarm (impl spec 15, R-2).
+# The ONE place the green sentence is spelled.  run_v101's exit code
+# is derived from it, so the rc and the text can never disagree --
+# they did: `bad` counted only step FAIL/TIMEOUT, so a run whose every
+# step was OK but whose F1 read FAIL (the PRIMARY unsoundness finding)
+# exited 0 under a verdict that said NOT shippable.
+V101_GREEN_MARK = "-> stage 3 complete; propose the commit."
+V101_SEED_LOOSE_X = 8.0
+V101_SEED_RAM_ALARM = 1500000
+V101_QM_PROVEN_MAX = 36860
 
 
 @dataclass
@@ -2898,17 +2940,22 @@ def _v101_mem_avail_gb():
     return 0.0
 
 
+def _v101_run_seconds():
+    """The run budget in seconds.  ZKR_V101_HOURS overrides the
+    default; a malformed or non-positive value falls back to it
+    rather than running forever or finishing instantly."""
+    try:
+        h = float(os.environ.get("ZKR_V101_HOURS", ""))
+    except ValueError:
+        h = 0.0
+    return (h if h > 0 else V101_RUN_HOURS) * 3600.0
+
+
 def _v101_deadline(t0):
-    """Next local V101_DEADLINE_HOUR:MM at or after t0.  A CLOCK: a
-    late start shrinks the vehicle, it never moves the finish."""
-    lt = time.localtime(t0)
-    d = time.struct_time((lt.tm_year, lt.tm_mon, lt.tm_mday,
-                           V101_DEADLINE_HOUR, V101_DEADLINE_MIN, 0,
-                           0, 0, -1))
-    at = time.mktime(d)
-    if at <= t0:
-        at += 24 * 3600
-    return at
+    """Absolute epoch the suite must be finished by = start + budget.
+    Kept absolute so every 'time left' and every cap clamp downstream
+    is unchanged; only where the number COMES FROM has changed."""
+    return t0 + _v101_run_seconds()
 
 
 def _v101_model_line(model):
@@ -2997,6 +3044,10 @@ def v101_cost(model, veh, passes):
     # and both walks -- so none of them has to be modelled, and the
     # v1/v2 asymmetry that C3 introduced cannot be mis-applied.
     arm = model.get("r_v1_arm" if v1 else "r_v2_arm")
+    if arm is None and v1 and model.get("r_v2_arm"):
+        # calib_v1 did not return, but calib did: scale rather than
+        # fall all the way back to the analytic model.
+        arm = model["r_v2_arm"] * V101_V1_ARM_RATIO
     if arm:
         return setup + arm * chunks
     # FALLBACK, only if that step did not run: the analytic model.
@@ -3044,19 +3095,29 @@ def v101_steps():
     9-11 are the decider checks (D5) -- the only steps that fold and
     prove, and so the only ones that can see R1's four residual axes."""
     return [
+        # 3600, not 1800: the wall cap was INERT until the D1 fix,
+        # so this number had never actually bounded anything.  A cold
+        # release build of this workspace can exceed 30 min.
         V101Step("build", "cargo build --release + capability probe",
-                 [], {}, 1800, False, kind="cargo"),
+                 [], {}, 3600, False, kind="cargo"),
+        # 3600, matching `build`: this step runs THREE cargo filters
+        # off one budget and the first of them may recompile
+        # zkregplus in cfg(test) -- a compile `build` does not do.
         V101Step("units", "test_v101_ / m104 parse / fingerprint_",
-                 [], {}, 1800, True, kind="cargo"),
+                 [], {}, 3600, True, kind="cargo"),
         V101Step("smoke_v1", "dry clam leaf, v1 arm",
                  v101_argv("full_clam", 0.5, 0.1, 2, 2, 1, 0, "1", "1"),
                  {}, 900, False),
         V101Step("smoke_v2", "dry clam leaf, v2 arm",
                  v101_argv("full_clam_v2", 0.5, 0.1, 2, 2, 1, 0,
                            "1", "1"), {}, 900, True),
+        # 9000, not 5400: this step carries F1, the primary
+        # falsifier, and at 5400 it had the tightest headroom in the
+        # suite (2.25x over a 40 min local wall, vs 4-20x elsewhere).
+        # A box 2.25x slower lost F1 to a TIMEOUT.
         V101Step("seed", "F1: full-corpus seed-only dry fire",
                  v101_argv("full_clam_v2", 100, 100, 2, 8, 1, 0,
-                           "0", "1"), V101_SEED_ENV, 5400, True),
+                           "0", "1"), V101_SEED_ENV, 9000, True),
         V101Step("calib", "v2 receipt @ perc 2 (+ calibrates k5/km)",
                  v101_argv("full_clam_v2", 100, 2, 2, 1, 1, 0,
                            "0", "1"), V101_METER_ENV, 3600, True),
@@ -3102,11 +3163,21 @@ def v101_parse(key, path, res):
                 n[name + "@"] = raw
             except ValueError:
                 pass
+    if key == "units":
+        # Independent content for R5.  Each of the three cargo
+        # filters prints one "test result: ok." into the merged log,
+        # so 3 is the healthy count; anything less means a filter
+        # failed or never ran.
+        n["units_oks"] = _v101_count(path, r"test result: ok\.")
     if key in ("seed",):
         take("seed_cs", r"V2 QM SEED: cs=(\d+)")
         take("seed_igc", r"V2 QM SEED: cs=\d+ igc=(\d+)")
         take("mid_hits", r"mid_hits=(\d+)")
         take("skipped", r"skipped=(\d+)")
+        # Printed since :2363 and never read.  Without it F1 cannot
+        # tell a 36,860 taken over the whole 1209-word corpus from one
+        # taken over a truncated set -- same number, different claim.
+        take("seed_words", r"V2 QM SEED:.* words=(\d+)")
         take("seed_ms", r"V2 PHASE seed ms=(\d+)")
         take("db_ms", r"build DB\. (\d+) ms")
         # bora_data_driver.rs:2370 -- the ONE panic that is by design
@@ -3144,7 +3215,7 @@ def v101_parse(key, path, res):
     take("shipped_qm", r"vs shipped qm_real_rows=(\d+)/")
     take("caperr_units", r"caperr_units=(\d+)")
     # The decider's real self-verify markers.  foldpot does not abort
-    # on a verify failure (consts.rs:69-75), so these counters ARE the
+    # on a verify failure (consts.rs:67-77), so these counters ARE the
     # whole gate, and every token below is quoted from the emit site
     # rather than from a healthy log:
     #   batch_proc.rs:800,1025,1149  ->  if ok {"PASS"} else {"REJECT"}
@@ -3162,7 +3233,7 @@ def v101_parse(key, path, res):
     # batch2 (the Groth16 decider) and ind -- measured on both arms
     # 2026-08-17.  Counting PASS markers alone is not enough: batch1
     # failing early-returns and simply OMITS the batch2 line
-    # (batch_proc.rs:1030-1033), so a missing marker is as much a
+    # (batch_proc.rs:1032-1041), so a missing marker is as much a
     # failure as a REJECTed one.
     n["verify_final"] = _v101_count(
         path, r"VERIFY-FLAGS \w+\[final\].*verdict=PASS")
@@ -3173,6 +3244,10 @@ def v101_parse(key, path, res):
 
 
 def _v101_count(path, pat):
+    """Occurrences of `pat`, or None if the log could not be read at
+    all.  Returning 0 there was fail-OPEN: a truncated or missing log
+    made every bump counter read "zero bumps" and F3a/F3b PASS on
+    evidence that was never produced."""
     rx = re.compile(pat)
     c = 0
     try:
@@ -3181,7 +3256,7 @@ def _v101_count(path, pat):
                 if rx.search(line):
                     c += 1
     except OSError:
-        return 0
+        return None
     return c
 
 
@@ -3242,10 +3317,12 @@ def v101_progress_text(t0, deadline, run_dir, results, veh, model):
     A("V101 SUITE PROGRESS  %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
     settled = sum(1 for r in results.values()
                   if r.status not in ("PENDING", "RUNNING"))
-    A("elapsed %s   deadline %s (hard)   left %s   %d/%d settled"
-      % (_v101_hm(now - t0),
+    A("elapsed %s of %s budget   left %s   finish by %s   "
+      "%d/%d settled"
+      % (_v101_hm(now - t0), _v101_hm(_v101_run_seconds()),
+         _v101_hm(deadline - now),
          time.strftime("%H:%M", time.localtime(deadline)),
-         _v101_hm(deadline - now), settled, len(results)))
+         settled, len(results)))
     if veh:
         A("vehicle perc_samples=%d  %d files  %.1fMB  %d chunks  "
           "share %d (production 129)"
@@ -3392,11 +3469,11 @@ def _v101_bundle(run_dir, results, reason, dlog):
 
 def run_v101():
     """Menu item: the whole V101 test suite, unattended, self-sizing
-    against a hard clock deadline, with its own verdict."""
+    against a fixed run budget, with its own verdict."""
     t0 = _v101_now()
     deadline = _v101_deadline(t0)
     # DATED, unlike _ts(): the suite spans midnight by construction
-    # (20:00 -> 12:00), and detail.log is opened "a", so a bare
+    # (a 16 h run), and detail.log is opened "a", so a bare
     # %H:%M:%S would let two runs started at the same second-of-day
     # share a directory and interleave their logs.
     ts = time.strftime("%Y%m%d_%H%M%S")
@@ -3404,19 +3481,52 @@ def run_v101():
     os.makedirs(run_dir, exist_ok=True)
     detail_path = os.path.join(run_dir, "detail.log")
     detail = open(detail_path, "a", buffering=1)
+    # The stable paths are what the operator polls.  V101_VERDICT.txt
+    # was only repointed at the END and V101_BUNDLE.tgz only on a
+    # failure, so for up to 16 h `cat V101_VERDICT.txt` returned the
+    # PREVIOUS run's verdict -- complete, plausible, and wrong -- and
+    # `scp V101_BUNDLE.tgz` fetched last night's evidence.  Claim both
+    # now: the placeholder says the run is live, and the stale bundle
+    # link is dropped so a fetch fails loudly instead of lying.
+    _vpath = os.path.join(run_dir, "verdict.txt")
+    try:
+        with open(_vpath, "w") as f:
+            f.write("V101 RUN IN PROGRESS since %s\n"
+                    "No verdict yet.  Live status:\n  %s\n  %s\n"
+                    % (time.strftime("%Y-%m-%d %H:%M:%S"),
+                       V101_PROGRESS, detail_path))
+        _atomic_symlink(_vpath, V101_VERDICT)
+        if os.path.lexists(V101_BUNDLE):
+            os.unlink(V101_BUNDLE)
+    except OSError:
+        pass
 
     def dlog(msg):
-        detail.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), msg))
+        # Defensive: these run OUTSIDE the per-step try/except, and
+        # both write files.  A full /tmp here would otherwise escape
+        # the step loop and destroy the verdict, the bundle and the
+        # traceback together -- the exact failure the guard exists to
+        # prevent, one frame out.  Losing a log line is survivable;
+        # losing the run is not.
+        try:
+            detail.write("[%s] %s\n"
+                         % (time.strftime("%H:%M:%S"), msg))
+        except (OSError, ValueError):
+            pass
 
     def prog(msg):
         """One line per step, to SUMMARY.log and detail.log, so a
         `tail -F` shows progress without opening anything else."""
         dlog(msg)
-        _summary_line("       v101: %s" % msg)
-        log("v101: %s" % msg)
+        try:
+            _summary_line("       v101: %s" % msg)
+            log("v101: %s" % msg)
+        except OSError:
+            pass
 
-    dlog("V101 suite start; deadline %s (hard clock), run dir %s"
-         % (time.strftime("%Y-%m-%d %H:%M", time.localtime(deadline)),
+    dlog("V101 suite start; budget %s -> finish by %s, run dir %s"
+         % (_v101_hm(_v101_run_seconds()),
+            time.strftime("%Y-%m-%d %H:%M", time.localtime(deadline)),
             run_dir))
     model = dict(V101_PRIORS)
     dlog("cost model priors: %s" % model)
@@ -3433,6 +3543,11 @@ def run_v101():
     if only:
         dlog("ZKR_V101_ONLY=%s -- every other step reports NOT-SELECTED"
              % ",".join(only))
+        # LOUD, and in the artifacts the operator reads.  A stale
+        # ZKR_V101_ONLY in the launching shell runs 2 of 13 steps and
+        # still exits 0; the banner named the budget but never this.
+        prog("RESTRICTED RUN: ZKR_V101_ONLY=%s -- this is NOT the "
+             "full suite" % ",".join(only))
     have_v2 = True
     veh = None
     veh_pred = None
@@ -3461,6 +3576,11 @@ def run_v101():
         # child would be spawned with no arguments at all -- bora_cli
         # then prints USAGE and exits 0, which reads as a step that
         # ran and produced no markers.  Skip honestly instead.
+        if st.cap_s < 0:
+            r.status, r.why = "SKIP", ("surrendered so the A/B could "
+                                       "fit the budget")
+            prog("%-9s SKIP (%s)" % (st.key, r.why))
+            continue
         if st.key in ("ab_v1", "ab_v2") and not st.argv:
             r.status, r.why = "SKIP", "picker chose no vehicle"
             prog("%-9s SKIP (%s)" % (st.key, r.why))
@@ -3511,6 +3631,15 @@ def run_v101():
                      % (_v101_hm(reserve), _v101_hm(floor)))
                 veh, veh_pred = v101_pick(model, left - 300 - floor,
                                            dlog)
+                if veh is not None:
+                    # ACTUALLY surrender it.  Saying so in a comment
+                    # while leaving it in the list meant dec_big
+                    # started with ~47 min against a 5 h ask, timed
+                    # out clock-clamped, and burned the 47 min.
+                    dbig = next((x for x in steps
+                                 if x.key == "dec_big"), None)
+                    if dbig is not None:
+                        dbig.cap_s = -1        # sentinel: skip it
             if veh is None:
                 r.status, r.why = "FAIL", "no vehicle fits the deadline"
                 prog("%-9s FAIL (%s)" % (st.key, r.why))
@@ -3582,7 +3711,8 @@ def run_v101():
                          % (st.key, k, v,
                             (r.nums or {}).get(k + "@", "")))
             _v101_keep(run_dir, st.key, run_log)
-            r.status, r.why = _v101_verdict_step(st, r, res, cap)
+            r.status, r.why = _v101_verdict_step(
+                st, r, res, cap, ctx.rss_ceiling_hit)
         except Exception as e:              # noqa: BLE001 -- see above
             r.wall_s = _v101_now() - t_s
             r.status = "FAIL"
@@ -3592,8 +3722,11 @@ def run_v101():
                      % (st.key, traceback.format_exc()))
             except (OSError, ValueError):
                 pass
-            _summary_line("       v101: %s RAISED %s"
-                          % (st.key, type(e).__name__))
+            try:
+                _summary_line("       v101: %s RAISED %s"
+                              % (st.key, type(e).__name__))
+            except OSError:
+                pass
         if st.key == "build" and r.status == "OK":
             have_v2 = _v101_has_v2(dlog)
             if not have_v2:
@@ -3601,8 +3734,12 @@ def run_v101():
                      "v2 step will be skipped; the v1 baseline still "
                      "runs")
         if st.key in ("seed", "calib", "calib_v1") \
-                and r.status == "OK":
-            _v101_recalibrate(model, st.key, r, veh, dlog)
+                and r.status in ("OK", "TIMEOUT"):
+            # A TIMEOUT is EVIDENCE: the arm takes at least the cap.
+            # Dropping it sent the picker back to a prior that cannot
+            # see the box, and it then chose a BIGGER vehicle.
+            _v101_recalibrate(model, st.key, r, veh, dlog,
+                               partial=(r.status == "TIMEOUT"))
         prog("%-9s %-7s %8s %5.1fGB  %s"
              % (st.key, r.status, _v101_hm(r.wall_s), r.rss_gb,
                 r.why or _v101_headline(st.key, r)))
@@ -3645,9 +3782,18 @@ def run_v101():
             f.write(txt)
         _atomic_symlink(vpath, V101_VERDICT)
         detail.write("\n" + txt)
-    except OSError as e:
-        dlog("VERDICT WRITE FAILED: %s" % e)
-        _summary_line("       v101: VERDICT WRITE FAILED: %s" % e)
+    except Exception as e:              # noqa: BLE001
+        # Deliberately not just OSError.  The point of this guard is
+        # that the run must never end with no verdict, no bundle and
+        # no traceback; a TypeError out of v101_report would do
+        # exactly that, since the final _v101_bundle sits below.
+        dlog("VERDICT WRITE FAILED: %s: %s" % (type(e).__name__, e))
+        try:
+            dlog(traceback.format_exc())
+        except Exception:               # noqa: BLE001
+            pass
+        _summary_line("       v101: VERDICT WRITE FAILED: %s"
+                      % type(e).__name__)
     # The bundle runs BEFORE detail.close() -- dlog() writes to that
     # handle.  detail.log is line-buffered, so the tar reads the
     # verdict text that was just appended to it.
@@ -3662,8 +3808,17 @@ def run_v101():
     log("v101: verdict -> %s   detail -> %s   bundle -> %s"
         % (V101_VERDICT, detail_path, V101_BUNDLE))
     bad = [k for k, r in results.items()
-           if r.status in ("FAIL", "TIMEOUT")]
-    return 1 if bad else 0
+           if r.status in ("FAIL", "TIMEOUT")
+           and not (k in ("dec_big", "calib_v1")
+                    and r.status == "TIMEOUT")]
+    dlog("blocking steps: %s" % (", ".join(bad) or "none"))
+    if aborted():
+        return ABORT_RC          # an operator abort is not a pass
+    # Derived from the VERDICT, not from step statuses alone: a
+    # falsifier FAIL and both INCONCLUSIVE outcomes are "not
+    # shippable" too, and an empty txt means the verdict never got
+    # written -- none of which is a zero.
+    return 0 if V101_GREEN_MARK in txt else 1
 
 
 def _v101_cargo(ctx, st, env, run_log, dlog, cap_s):
@@ -3747,9 +3902,26 @@ def _v101_has_v2(dlog):
     return ok
 
 
-def _v101_recalibrate(model, key, r, veh, dlog):
+def _v101_recalibrate(model, key, r, veh, dlog, partial=False):
     """Replace priors with what we just measured.  This is the whole
-    reason steps 4 and 5 come before the picker."""
+    reason steps 4 and 5 come before the picker.
+
+    `partial` = the step TIMED OUT, so its wall is a LOWER bound on
+    the arm rate rather than the rate.  Discarding it made the picker
+    NON-MONOTONE: measured, calib at 3000 s picked perc 10, but calib
+    at 3590 s (TIMEOUT) picked perc 15 -- the vehicle grew exactly
+    when the evidence said the box was slowest, because the fallback
+    is an analytic prior that cannot see the box.
+
+    What actually makes it safe is that a TIMEOUT wall is >= 0.98 x
+    the cap, so the derived rate is already a lower bound.  `slower()`
+    below is belt-and-braces and is INERT today: r_v1_arm / r_v2_arm
+    are absent from V101_PRIORS and each is written by exactly one
+    step.  It earns its keep only if a second writer ever appears."""
+
+    def slower(field, val):
+        model[field] = max(model.get(field) or 0.0, val) if partial \
+            else val
     n = r.nums or {}
     old = dict(model)
     if key == "seed":
@@ -3804,7 +3976,7 @@ def _v101_recalibrate(model, key, r, veh, dlog):
             body = r.wall_s - (model["t_db"]
                                + model["r_disch"] * vh2[2])
             if body > 0:
-                model["r_v2_arm"] = body / float(vh2[3])
+                slower("r_v2_arm", body / float(vh2[3]))
     if key == "calib_v1":
         # ONE number, measured end to end: the whole v1 arm at perc 2,
         # minus the setup the model already prices, divided by chunks.
@@ -3815,16 +3987,30 @@ def _v101_recalibrate(model, key, r, veh, dlog):
             setup = model["t_db"] + model["r_disch"] * vh[2]
             body = r.wall_s - setup
             if body > 0:
-                model["r_v1_arm"] = body / float(vh[3])
+                slower("r_v1_arm", body / float(vh[3]))
                 model["v1_rounds_seen"] = (n.get("v1_bumps") or 0) + 1
     dlog("recalibrate after %s: %s -> %s" % (key, old, model))
 
 
-def _v101_verdict_step(st, r, res, cap):
-    """OK / FAIL / TIMEOUT for one step, plus the reason.  The seed
-    step PANICS by design (the dry fire stops after logging), so its
-    nonzero rc and its panic marker are expected, not a failure."""
+def num_or(v, alt):
+    """A missing count prints its reason, never a bare 0."""
+    return alt if v is None else v
+
+
+def _v101_verdict_step(st, r, res, cap, rss_hit=False):
+    """OK / FAIL / TIMEOUT / SKIP for one step, plus the reason.  The
+    seed step PANICS by design (the dry fire stops after logging), so
+    its nonzero rc and its panic marker are expected, not a failure."""
     n = r.nums or {}
+    if rss_hit:
+        # The OOM guard is a RESOURCE outcome -- the same class as the
+        # min_avail_gb precondition that SKIPS the step before it
+        # starts.  Left as a FAIL (the kill makes rc nonzero) it read
+        # "BLOCKED BY: dec_big" for a box that simply did not have the
+        # RAM, on the one step the suite itself calls opportunistic.
+        return "SKIP", ("RSS ceiling %.0fGB hit (OOM-GUARD) at %.1fGB "
+                        "peak -- box too small for this step"
+                        % (st.max_rss_gb, r.rss_gb))
     if r.wall_s >= cap * 0.98:
         # Distinguish "this step hung" from "the clock ran out".  A
         # cap clamped below what the step asked for is a scheduling
@@ -3832,7 +4018,7 @@ def _v101_verdict_step(st, r, res, cap):
         # the reader hunting a hang that never happened.
         if st.cap_s and cap < st.cap_s:
             return "TIMEOUT", ("clock-clamped: asked %s, got %s "
-                               "before the 12:00 deadline"
+                               "before the run budget ran out"
                                % (_v101_hm(st.cap_s), _v101_hm(cap)))
         return "TIMEOUT", "hit the %s wall cap" % _v101_hm(cap)
     if st.key == "seed":
@@ -3852,14 +4038,14 @@ def _v101_verdict_step(st, r, res, cap):
     # POSITIVE markers: a tuner step must show that it converged, a
     # decider step that it folded.  Absence is a failure even at rc 0
     # -- foldpot does not abort on a self-verify failure, it reaches
-    # only the log while cargo still prints ok (consts.rs:69-75).
+    # only the log while cargo still prints ok (consts.rs:67-77).
     if st.key in ("smoke_v2", "calib", "ab_v2") \
             and n.get("v2_iters") is None:
         return "FAIL", "no V2 CONVERGED line"
     if st.key in ("smoke_v1", "ab_v1") and n.get("v1_iters") is None:
         return "FAIL", "no determine_config_non_aggr CONVERGED line"
     # foldpot does NOT abort on a self-verify failure -- it reaches
-    # only the log while cargo still prints ok (consts.rs:69-75), so a
+    # only the log while cargo still prints ok (consts.rs:67-77), so a
     # decider step must read the COUNTER, never the exit code.
     if st.key.startswith("dec_"):
         if n.get("verify_fail"):
@@ -3869,10 +4055,13 @@ def _v101_verdict_step(st, r, res, cap):
         # present AND PASS.  "at least one PASS somewhere" was the old
         # test and it let a REJECTed Groth16 decider through -- a
         # healthy run emits 7 PASS markers, so 6 could reject unseen.
-        if n.get("verify_final", 0) < 3:
+        # `or 0`, not a .get default: _v101_count returns None for an
+        # UNREADABLE log, and None < 3 raises.  An unreadable decider
+        # log must fail CLOSED -- absence of proof is not proof.
+        if (n.get("verify_final") or 0) < 3:
             return "FAIL", ("only %s of 3 [final] VERIFY-FLAGS PASS "
                             "markers (batch1/batch2/ind)"
-                            % n.get("verify_final", 0))
+                            % num_or(n.get("verify_final"), "unreadable"))
         if not n.get("verify_snark"):
             return "FAIL", "no batch2[final] PASS (Groth16 decider)"
     return "OK", ""
@@ -3913,6 +4102,38 @@ def _fx(cond, ev):
     return ("PASS" if cond else "FAIL", ev)
 
 
+def _wx(cond, ev):
+    """An ADVISORY row.  Never blocks the verdict -- only FAIL and N/A
+    do -- for checks whose miss means "eyeball this", not "do not
+    ship".  DECIDE still names every WARN it printed."""
+    if cond is None:
+        return ("NOTE", ev)
+    return ("PASS" if cond else "WARN", ev)
+
+
+def _com(n):
+    """Thousands separators: 36860 and 36,860 in the same line read as
+    two different numbers."""
+    return "{:,}".format(n)
+
+
+def _v101_loose(seed_cs):
+    """F1b: how far the seed sits above the proven corpus max.  Loose
+    is BY DESIGN (M3 tightens it); only the spec's RAM alarm stops."""
+    if seed_cs is None:
+        return ("NOTE", "seed_cs=not measured")
+    x = seed_cs / float(V101_QM_PROVEN_MAX)
+    ev = ("seed_cs=%s = %.2fx the proven max %s"
+          % (_com(seed_cs), x, _com(V101_QM_PROVEN_MAX)))
+    if seed_cs > V101_SEED_RAM_ALARM:
+        return ("FAIL", ev + "  <- over the %s RAM alarm (spec R-2)"
+                % _com(V101_SEED_RAM_ALARM))
+    if x > V101_SEED_LOOSE_X:
+        return ("WARN", ev + "  <- loose; M3 absorbs it, but check "
+                             "the RAM gate before the next pass")
+    return ("PASS", ev)
+
+
 def v101_report(t0, deadline, run_dir, results, veh, model):
     """The verdict.  Every claim carries its number; no adjectives.
     Shaped so a Claude Code session can decide PASS/FAIL from this
@@ -3925,10 +4146,10 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     A = L.append
     A("=" * 66)
     A("V101 SUITE VERDICT   %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
-    A("wall %s   deadline %s (hard clock)   margin %s"
-      % (_v101_hm(wall),
-         time.strftime("%H:%M", time.localtime(deadline)),
-         _v101_hm(deadline - _v101_now())))
+    A("wall %s of %s budget   margin %s   (finish-by was %s)"
+      % (_v101_hm(wall), _v101_hm(_v101_run_seconds()),
+         _v101_hm(deadline - _v101_now()),
+         time.strftime("%H:%M", time.localtime(deadline))))
     if veh:
         A("vehicle perc_samples=%d  %d files  %.1fMB  %d chunks  "
           "share %d (production 129)"
@@ -3946,29 +4167,72 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     # fall back from ab_v2 (the picked vehicle) to calib (perc 2, 25
     # files); without the tag the reader cannot tell a 272 MB result
     # from a 12.3 MB one, and they are not the same evidence.
-    def pick2(field, *keys):
+    def pick2(field, *keys, **kw):
+        """First step that measured `field`.  `zero_ok=False` skips a
+        step that measured ZERO and keeps looking, because for a
+        demand/cap a 0 is not a measurement -- testing for it AFTER
+        the pick threw away a good `calib` reading whenever `ab_v2`
+        had already won with its 0.  v2_iters keeps zero_ok=True: 0
+        rounds is the BEST outcome there, not a missing number."""
+        zero_ok = kw.pop("zero_ok", True)
+        assert not kw, kw
         for k in keys:
             v = g(k, field)
-            if v is not None:
+            if v is not None and (zero_ok or v):
                 return v, k
+        for k in keys:
+            if g(k, field) == 0:
+                return None, "%s read 0 -- not a credible value" % k
         # "no step" rather than the bare None, which rendered as the
         # nonsense "(from None)" on every unmeasured row.
         return None, "no step"
 
+    def worst(field, *keys):
+        """MAX over EVERY step that measured `field` -- the right
+        aggregation for a COUNTER.  first-hit was wrong for these:
+        `_v101_count` returns 0, not None, so ab_v2 always won and
+        every later step was invisible.  Five production-width
+        dis_adv::neo_qm_real bumps in dec_big parsed correctly and
+        were then never consulted, and the verdict went green over
+        the exact defect M2 exists to eliminate."""
+        hits = [(g(k, field), k) for k in keys
+                if g(k, field) is not None]
+        if not hits:
+            return None, "no step"
+        v, k = max(hits)
+        return v, (k if len(hits) == 1
+                   else "%s = max of %d steps" % (k, len(hits)))
+
+    # Every v2 tuner step, widest first.  A qm_real under-seed is a
+    # defect wherever it appears, so none of them may be skipped.
+    # NOTE the asymmetry: bumps are logged unconditionally, but
+    # caperr_units comes from meter_unit_demand, which only runs under
+    # ZKR_METER_T9901 -- so in practice only `calib` and `ab_v2` can
+    # ever contribute one.  R1 names its source for that reason.
+    V2_STEPS = ("dec_big", "ab_v2", "dec_v2", "calib", "smoke_v2")
+
     seed_cs = g("seed", "seed_cs")
-    v2_bumps, src_bump = pick2("v2_bumps", "ab_v2", "calib")
-    v2_qm_bumps, _ = pick2("v2_qm_bumps", "ab_v2", "calib")
-    v2_iters, _ = pick2("v2_iters", "ab_v2", "calib")
+    v2_bumps, src_bump = worst("v2_bumps", *V2_STEPS)
+    v2_qm_bumps, src_qm = worst("v2_qm_bumps", *V2_STEPS)
+    v2_iters, src_it = pick2("v2_iters", "ab_v2", "calib")
     v1_iters = g("ab_v1", "v1_iters")
     v1_bumps = g("ab_v1", "v1_bumps")
-    demand, src_dem = pick2("meter_demand_cs", "ab_v2", "calib")
-    shipped, src_shp = pick2("shipped_qm", "ab_v2", "calib")
+    # zero_ok=False: demand=0 made F2, F5 and R2 all print PASS at
+    # once.  num() was built so a MISSING number never prints as 0;
+    # a MEASURED 0 sailed straight through.  No clam vehicle demands
+    # zero qm_real rows -- the dry leaf measures 7.
+    demand, src_dem = pick2("meter_demand_cs", "ab_v2", "calib",
+                             zero_ok=False)
+    shipped, src_shp = pick2("shipped_qm", "ab_v2", "calib",
+                              zero_ok=False)
+    seed_words = g("seed", "seed_words")
     mid = g("seed", "mid_hits")
     skipped = g("seed", "skipped")
     seed_ms = g("seed", "seed_ms")
     v5_ms = g("ab_v2", "v5_ms")
     pr_ms = g("ab_v2", "probe_ms")
-    caperr, src_cap = pick2("caperr_units", "ab_v2", "calib")
+    caperr, src_cap = worst("caperr_units", *V2_STEPS)
+    units_oks = g("units", "units_oks")
     veh_perc = veh[0] if veh else None
 
     def num(v, unit=""):
@@ -3977,20 +4241,33 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
         return "not measured" if v is None else ("%s%s" % (v, unit))
 
     rows = [
-        # EXACT, not a lower bound.  The corpus max is 36,860 and a
-        # seed far above it is an R2 violation (gross over-capping)
-        # that no other row can see: F2 passes HARDER the larger the
-        # seed, and F5/R2 compare the post-tighten value, by which
-        # point the excess is gone.  5% band absorbs the odd->even
-        # adjustment without admitting a 10x over-seed.
-        ("F1 seed lands on the proven max 36,860",
+        # SOUNDNESS ONLY: >=, not a band.  The seed is a declared
+        # sound UPPER BOUND (bora_data_driver.rs:2063) that M3 then
+        # tightens, so sitting above the proven max is its job -- the
+        # design spec defines F1 as ">= 36,860", its own worked
+        # example passes at 41,208 (+11.8%), and the dry leaf
+        # measured 6.1x on a healthy run.  A +-5% band here would
+        # have stamped a healthy 16 h run "NOT shippable".  Looseness
+        # is real but it is a DIFFERENT question, so it gets its own
+        # row rather than being folded into the soundness gate.
+        ("F1 seed >= the proven max 36,860",
          _fx(None if seed_cs is None
-             else 36860 <= seed_cs <= int(36860 * 1.05),
-             "seed_cs=%s (band 36,860..38,703)" % num(seed_cs))),
-        ("F2 seed >= the max demand actually seen",
+             else seed_cs >= V101_QM_PROVEN_MAX,
+             "seed_cs=%s over %s words (proven max %s)"
+             % (num(seed_cs and _com(seed_cs)), num(seed_words),
+                _com(V101_QM_PROVEN_MAX)))),
+        ("F1b seed looseness vs the RAM alarm", _v101_loose(seed_cs)),
+        # NOT the spec's F2.  Spec sec 10 wants a PER-UNIT join
+        # (est_cs[u] >= qm_real_cs[u] for every u), which needs an
+        # estimator dump that was never added -- `grep -rn 61101
+        # crates/` is empty.  This row compares two MAXIMA from
+        # different populations, so a single per-unit miss is
+        # invisible to it.  Named for what it is.
+        ("F2 corpus-max seed >= subset-max demand",
          _fx(None if (seed_cs is None or demand is None)
              else seed_cs >= demand,
              "seed_cs=%s (perc 100) vs max demand=%s (from %s)"
+             " -- NOT the per-unit join (spec F2 not run)"
              % (num(seed_cs), num(demand), src_dem))),
         # CORRECTED 2026-08-17: "zero bumps" was wrong -- one bump
         # from dfa/comp_sig is expected.  What must be zero is the
@@ -3998,31 +4275,80 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
         ("F3a zero dis_adv::neo_qm_real bumps",
          _fx(None if v2_qm_bumps is None else v2_qm_bumps == 0,
              "qm_real bump rounds=%s (from %s)"
-             % (num(v2_qm_bumps), src_bump))),
+             % (num(v2_qm_bumps), src_qm))),
+        # The two numbers come from DIFFERENT pickers (bumps from
+        # worst() over every v2 step, iters from the A/B pair), so
+        # both sources are named.  Printing one source beside two
+        # numbers is the N4 defect that was fixed for R1.
         ("F3b <= 1 v2 bump round overall",
          _fx(None if v2_bumps is None else v2_bumps <= 1,
-             "v2 bump rounds=%s, converged @iter %s (from %s)"
-             % (num(v2_bumps), num(v2_iters), src_bump))),
+             "v2 bump rounds=%s (from %s), converged @iter %s "
+             "(from %s)"
+             % (num(v2_bumps), src_bump, num(v2_iters), src_it))),
         ("F5 shipped qm == measured max",
          _fx(None if (shipped is None or demand is None)
              else shipped >= demand and shipped <= demand + 1,
              "shipped=%s measured max=%s (from %s)"
              % (num(shipped), num(demand), src_shp))),
-        ("F6 seed wall < 5 min",
-         _fx(None if seed_ms is None else seed_ms < 300000,
-             "seed walk=%s" % num(seed_ms and seed_ms / 1000.0, "s"))),
-        ("F7 mid_hits > 0 (I1 branch alive)",
-         _fx(None if mid is None else mid > 0,
+        # ADVISORY, for the same reason the F1 band was wrong: this
+        # is a PERFORMANCE bar folded into a ship decision.  Spec I7
+        # says outright that with 8 rayon workers "F6's '< 5 min' bar
+        # may bind", and F6's own remedy (:1294) is a faster nibble
+        # decoder -- an optimisation follow-up, not a soundness stop.
+        # The suite's OWN prior says it will bind: r_seed 0.4 s/MB x
+        # 765.5 MB = 306 s, 2% OVER the bar.  The only supporting
+        # number (2m51s) is from the spec's ILLUSTRATIVE example; the
+        # full-corpus seed has never actually run.
+        ("F6 seed wall < 5 min (advisory)",
+         _wx(None if seed_ms is None else seed_ms < 300000,
+             "seed walk=%s%s"
+             % (num(seed_ms and seed_ms / 1000.0, "s"),
+                "  <- over the bar; I7's fast decoder is the fix, "
+                "not fewer words"
+                if (seed_ms or 0) >= 300000 else ""))),
+        # ADVISORY, not a gate.  b_mid is set only when the
+        # CARRY-FREE mid slice STRICTLY exceeds the best aligned
+        # chunk, and aligned chunks accumulate acc1
+        # (bora_data_driver.rs:2022-2023) while the mid slice
+        # restarts at init_state with none -- so it is handicapped,
+        # and mid_hits=0 is a healthy outcome, which is what every
+        # run on this box has printed.  A genuinely dead I1 branch
+        # surfaces as a CapErr, which R1 measures directly.
+        ("F7 mid_hits > 0 (advisory)",
+         _wx(None if mid is None else mid > 0,
              "mid_hits=%s" % num(mid))),
-        ("F8 skipped words == 0",
-         _fx(None if skipped is None else skipped == 0,
-             "skipped=%s" % num(skipped))),
-        ("F9 v5 walk vs probe phase",
-         _fx(None if (v5_ms is None or pr_ms is None) else True,
+        # ADVISORY, and the two None branches of v101_word_sigs are
+        # NOT alike.  Branch 1 (vec_sed_sigs empty, :2053) is benign:
+        # clamav.rs:3631 asserts the two vecs have equal length, so
+        # empty implies n_inp = 0 implies ZERO Q_m real rows -- the
+        # word is excluded from both the bound and the thing bounded.
+        # Branch 2 (len mismatch, :2059) is FATAL but never silent:
+        # sed_mapper.rs:557 asserts exactly its negation, unconditional
+        # in release, so a production tune ABORTS there rather than
+        # under-capping.  (NOT the all-zero pad word: that one is
+        # discharged for real at :1081 and every log prints skipped=0
+        # with it present.)  Advisory because it cannot hide an
+        # under-cap -- but it is the suite's ONLY full-corpus
+        # WordInfo-consistency reading, so the text names the stakes.
+        ("F8 skipped words == 0 (advisory)",
+         _wx(None if skipped is None else skipped == 0,
+             "skipped=%s%s"
+             % (num(skipped),
+                "  <- branch 2 would ABORT a production tune at "
+                "sed_mapper.rs:557; branch 1 (empty sig set) is benign"
+                if skipped else ""))),
+        # ADVISORY by DESIGN: the spec asks this row to REPORT, not to
+        # block ("say so in the result rather than quoting the probe
+        # phase alone").  As a falsifier it could never FAIL, yet it
+        # could go N/A and single-handedly force INCONCLUSIVE.
+        ("F9 v5 walk vs probe (advisory)",
+         _wx(None if (v5_ms is None or pr_ms is None)
+             else v5_ms <= pr_ms,
              "v5=%s probe=%s%s"
              % (num(v5_ms and v5_ms / 1000.0, "s"),
                 num(pr_ms and pr_ms / 1000.0, "s"),
-                "  <- V102 if v5 dominates"
+                "  <- v5 dominates: V102 (parallel qm_walk_units) "
+                "is the next job"
                 if (v5_ms or 0) > (pr_ms or 0) else ""))),
     ]
     A("FALSIFIERS                            verdict  evidence")
@@ -4043,10 +4369,8 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     r_rows = [
         ("R1 never under-cap",
          _fx(None if (caperr is None or not ab_ok) else caperr == 0,
-             "perc=%s receipt; caperr_units=%s (from %s); "
-             "decider steps ok: %s"
-             % (num(veh_perc), num(caperr), src_cap,
-                ",".join(dec) or "none"))),
+             "caperr_units=%s (from %s); decider steps ok: %s"
+             % (num(caperr), src_cap, ",".join(dec) or "none"))),
         ("R2 no waste",
          _fx(None if (shipped is None or demand is None)
              else shipped <= demand + 1,
@@ -4057,20 +4381,32 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     # bump counters miss the promotion round (bora_data_driver.rs
     # :2306), so they undercount both arms.
     if v1_iters is not None and v2_iters is not None:
-        r3 = _fx(v2_iters + 1 <= v1_iters + 1,
-                 "%d -> %d rounds  (v1 bumps=%s, v2 bumps=%s)"
-                 % (v1_iters + 1, v2_iters + 1, num(v1_bumps),
-                    num(v2_bumps)))
+        v1r, v2r = v1_iters + 1, v2_iters + 1
+        # A strict win, OR parity when v2 is already at the design
+        # floor of one round -- you cannot beat 1.  Plain "<=" let a
+        # row named "fast" print PASS on "2 -> 2 rounds", certifying
+        # a zero speedup.
+        r3 = _fx(v2r < v1r or v2r == 1,
+                 "%d -> %d rounds%s  (v1 bumps=%s, v2 bumps=%s)"
+                 % (v1r, v2r,
+                    "" if v2r < v1r else
+                    ("  [parity at the 1-round floor]" if v2r == 1
+                     else "  [NO SPEEDUP]"),
+                    num(v1_bumps), num(v2_bumps)))
     else:
         r3 = _fx(None, "A/B incomplete: v1_iters=%s v2_iters=%s"
                  % (num(v1_iters), num(v2_iters)))
     r_rows.append(("R3 fast (rounds)", r3))
     r_rows.append(
         ("R5 v1 unchanged",
-         _fx(None if not R.get("units")
-             else R["units"].status == "OK",
-             "fingerprint_ + m104 parse gate; units=%s"
-             % (R["units"].status if R.get("units") else "absent"))))
+         _fx(None if units_oks is None
+             else (R.get("units") is not None
+                   and R["units"].status == "OK" and units_oks >= 3),
+             "%s/3 cargo filters ok (test_v101_ incl. "
+             "test_v101_ab_switch_is_the_only_difference / m104 / "
+             "fingerprint_); units=%s"
+             % (num(units_oks),
+                R["units"].status if R.get("units") else "absent"))))
     for name, (verd, ev) in r_rows:
         A("  %-36s %-7s  %s" % (name, verd, ev))
     A("")
@@ -4090,6 +4426,11 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     fails = [k for k, r in R.items() if r.status in ("FAIL",
                                                       "TIMEOUT")]
     skips = [k for k, r in R.items() if r.status == "SKIP"]
+    # PENDING fell through BOTH buckets, so a suite that died before
+    # reaching a step could print green without mentioning it at all.
+    stalled = [k for k, r in R.items()
+               if r.status in ("PENDING", "RUNNING")]
+    not_ok = [k for k, r in R.items() if r.status != "OK"]
     # THE GREEN LINE IS GATED ON EVIDENCE, NOT ON THE ABSENCE OF
     # FAILURE.  "Nothing failed" is not "it passed": a run where the
     # v2 binary was missing, or where dec_big was skipped for RAM,
@@ -4105,6 +4446,23 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
              if verd == "FAIL"]
     na_f = [name for name, (verd, _e) in rows + r_rows
             if verd == "N/A"]
+    # Two steps are OPPORTUNISTIC, and a TIMEOUT on either is a
+    # scheduling outcome rather than evidence about the code:
+    # dec_big (RAM-guarded, last, 5 h cap) printed "BLOCKED BY"
+    # directly above the NOTE calling it optional; calib_v1 exists
+    # only to replace V101_V1_ARM_RATIO with a measurement, and the
+    # constant IS the designed fallback for it not returning.  A real
+    # FAIL on either still blocks.
+    fails = [k for k in fails
+             if not (k in ("dec_big", "calib_v1")
+                     and R[k].status == "TIMEOUT")]
+    warns = [name for name, (verd, _e) in rows + r_rows
+             if verd == "WARN"]
+    # NOTE = an advisory that could not be computed.  It blocks
+    # nothing, but F8 is the suite's only full-corpus consistency
+    # reading, so "we never looked" must not be silent either.
+    notes = [name for name, (verd, _e) in rows + r_rows
+             if verd == "NOTE"]
     A("DECIDE")
     if fails:
         A("  BLOCKED BY: %s   -> %s/detail.log"
@@ -4121,8 +4479,26 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
         A("  INCONCLUSIVE -- every step ran, but these could not be "
           "computed: %s" % ", ".join(na_f))
     else:
-        A("  ALL STEPS OK AND EVERY FALSIFIER/REQUIREMENT PASSED "
-          "-> stage 3 complete; propose the commit.")
+        # "ALL STEPS OK" was an overclaim: the gate gets its evidence
+        # from the six MANDATORY steps, and dec_v1/smoke_*/calib_v1
+        # could each be SKIP underneath it.  Name what did not run in
+        # the same sentence rather than in a footnote below it.
+        A("  ALL 6 MANDATORY STEPS OK AND EVERY "
+          "FALSIFIER/REQUIREMENT PASSED")
+        if not_ok:
+            A("  (not-OK, none of them mandatory: %s)"
+              % ", ".join("%s=%s" % (k, R[k].status) for k in not_ok))
+        A("  " + V101_GREEN_MARK)
+    if warns:
+        # An advisory row cannot block, but it must never be silent
+        # under a green line either.
+        A("  ADVISORY (does not block, read before shipping): %s"
+          % ", ".join(warns))
+    if notes:
+        A("  NOT MEASURED (advisory rows, no evidence either way): %s"
+          % ", ".join(notes))
+    if stalled:
+        A("  DID NOT RUN (suite ended early): %s" % ", ".join(stalled))
     if "dec_big" in skips:
         A("  NOTE: dec_big (production-width fold+prove, R1's "
           "strongest evidence) was skipped: %s" % R["dec_big"].why)
@@ -4395,6 +4771,11 @@ def main():
               % (ts, SUMMARY_LOG))
         print("[paper_data %s]   current job:    tail -F %s"
               % (ts, CURRENT_JOB_LOG))
+        print("[paper_data %s]   budget:         %s from now "
+              "(finish by %s; ZKR_V101_HOURS overrides)"
+              % (ts, _v101_hm(_v101_run_seconds()),
+                 time.strftime("%H:%M", time.localtime(
+                     time.time() + _v101_run_seconds()))))
         print("[paper_data %s]   progress:       cat %s"
               % (ts, V101_PROGRESS))
         print("[paper_data %s]   verdict:        %s"
@@ -6931,7 +7312,10 @@ class _WatchProbe:
         self.samples = list(samples)
         self.clock = 0.0
         self.proc = _FakeProc(pid=999)
-        self.ctx = mock.Mock(peak_rss_gb=0.0, peak_idle_s=0.0)
+        # rss_ceiling_hit is spelled out: a bare Mock auto-creates a
+        # TRUTHY attribute, so the negative case could not fail.
+        self.ctx = mock.Mock(peak_rss_gb=0.0, peak_idle_s=0.0,
+                              rss_ceiling_hit=False)
         self.kills = []
         self.summary = []
 
@@ -6941,7 +7325,8 @@ class _WatchProbe:
             return ([], 0.0, 0.0, 0.0)
         return self.samples.pop(0)
 
-    def run(self, stall_s=100, step=10.0, max_wall_s=0):
+    def run(self, stall_s=100, step=10.0, max_wall_s=0,
+            max_rss_gb=0):
         cur = [([], 0.0, 0.0, 0.0)]
 
         def sleep(_s):
@@ -6968,7 +7353,7 @@ class _WatchProbe:
              mock.patch("time.time", side_effect=now), \
              mock.patch("time.sleep", side_effect=sleep):
             _watch_child(self.proc, "/tmp/run.log", self.ctx,
-                          max_wall_s, 0)
+                          max_wall_s, max_rss_gb)
         return self
 
 
@@ -6998,6 +7383,24 @@ class WatchChildTest(unittest.TestCase):
                           for i in range(10)]).run(stall_s=10_000,
                                                     max_wall_s=10_000)
         self.assertEqual(pr.kills, [])
+
+    def test_rss_ceiling_kills_and_flags_the_handle(self):
+        """The flag is what tells the suite this was a RESOURCE
+        outcome; without it dec_big's OOM guard read as a FAIL and
+        printed BLOCKED BY over the NOTE calling the step optional."""
+        pr = _WatchProbe([([1], 1.0, 1.0, 100.0),
+                          ([1], 2.0, 2.0, 500.0)]).run(
+                              stall_s=10_000, max_rss_gb=460.0)
+        self.assertEqual(len(pr.kills), 1)
+        self.assertTrue(pr.ctx.rss_ceiling_hit)
+        self.assertTrue(any("OOM-GUARD" in s for s in pr.summary))
+
+    def test_rss_under_the_ceiling_is_left_alone(self):
+        pr = _WatchProbe([([1], float(i), float(i), 100.0)
+                          for i in range(10)]).run(
+                              stall_s=10_000, max_rss_gb=460.0)
+        self.assertEqual(pr.kills, [])
+        self.assertFalse(pr.ctx.rss_ceiling_hit)
 
     def test_keeps_peak_rss(self):
         """peak_rss_gb is the max tree RSS across polls, not the last."""
@@ -8486,17 +8889,39 @@ class V101VehicleTableTest(unittest.TestCase):
 
 
 class V101ClockTest(unittest.TestCase):
-    """The deadline is a CLOCK: it bounds the finish, not the work."""
+    """The budget is a DURATION: same window whenever it starts."""
 
-    def test_deadline_is_the_next_noon(self):
-        """20:00 today -> 12:00 tomorrow, i.e. the 16 h window."""
+    def test_budget_is_a_duration_from_launch(self):
+        """16 h from t0, not a fixed hour of the day."""
         t = time.mktime((2026, 8, 17, 20, 0, 0, 0, 0, -1))
-        d = _MOD._v101_deadline(t)
-        self.assertEqual(time.localtime(d).tm_hour,
-                          _MOD.V101_DEADLINE_HOUR)
-        self.assertEqual(time.localtime(d).tm_min,
-                          _MOD.V101_DEADLINE_MIN)
-        self.assertAlmostEqual((d - t) / 3600.0, 16.0, delta=0.01)
+        self.assertAlmostEqual(
+            (_MOD._v101_deadline(t) - t) / 3600.0,
+            _MOD.V101_RUN_HOURS, delta=0.01)
+
+    def test_a_late_start_gets_the_same_budget(self):
+        """The whole point of the change: under the old fixed-clock
+        deadline a start at 23:00 got 13 h and one at 12:30 got 23.5,
+        so the vehicle silently tracked the launch hour."""
+        a = time.mktime((2026, 8, 17, 20, 0, 0, 0, 0, -1))
+        b = time.mktime((2026, 8, 18, 12, 30, 0, 0, 0, -1))
+        self.assertAlmostEqual(_MOD._v101_deadline(a) - a,
+                               _MOD._v101_deadline(b) - b, delta=1.0)
+
+    def test_env_override_is_honoured(self):
+        t = 1000.0
+        with mock.patch.dict(os.environ, {"ZKR_V101_HOURS": "2.5"}):
+            self.assertAlmostEqual(_MOD._v101_deadline(t) - t,
+                                   9000.0, delta=1.0)
+
+    def test_a_bad_or_zero_override_falls_back(self):
+        """Never run forever, never finish instantly."""
+        for bad in ("", "abc", "0", "-3"):
+            with mock.patch.dict(os.environ,
+                                 {"ZKR_V101_HOURS": bad}):
+                self.assertAlmostEqual(
+                    _MOD._v101_run_seconds() / 3600.0,
+                    _MOD.V101_RUN_HOURS, delta=0.01,
+                    msg="override %r" % bad)
 
     def test_a_fixed_cap_is_clamped_to_the_time_left(self):
         """dec_big asks for 5 h; with 1 h left it gets 1 h minus the
@@ -8798,6 +9223,10 @@ determine_config_non_aggr CONVERGED @iter 1: steps=10
 """
 _V101_DEC_SNARK_REJECT = _V101_DEC_OK.replace(
     "c5=1 verdict=PASS", "c5=0 verdict=REJECT")
+# Three [final] PASS markers and NOT ONE of them from the Groth16
+# decider: the count gate alone waves this through.
+_V101_DEC_NO_SNARK = _V101_DEC_OK.replace(
+    "VERIFY-FLAGS batch2[final]", "VERIFY-FLAGS batchX[final]")
 
 
 class V101ParseTest(unittest.TestCase):
@@ -8872,6 +9301,27 @@ class V101StepVerdictTest(unittest.TestCase):
         res = mock.Mock(rc=rc, triage_tgz="/tmp/t.tgz")
         return _MOD._v101_verdict_step(st, r, res, cap)
 
+    def test_an_unreadable_log_is_not_zero_hits(self):
+        """Fail-OPEN primitive: returning 0 for a missing log made
+        every bump counter read "zero bumps"."""
+        self.assertIsNone(
+            _MOD._v101_count("/nonexistent/nope.log", r"x"))
+        # Built at runtime: a literal here would be IN this file,
+        # which is the file being searched.
+        self.assertEqual(
+            _MOD._v101_count(__file__, "q" + "9" * 40), 0)
+
+    def test_an_unreadable_decider_log_fails_closed(self):
+        """None < 3 raises; and absence of proof is not proof."""
+        st = _MOD.V101Step("dec_v2", "d", [], {}, 3600, True)
+        r = _MOD.V101Res("dec_v2", wall_s=10.0,
+                          nums={"verify_final": None,
+                                "verify_fail": None})
+        res = mock.Mock(rc=0, triage_tgz="")
+        status, why = _MOD._v101_verdict_step(st, r, res, 3600)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("unreadable", why)
+
     def test_healthy_decider_is_ok(self):
         self.assertEqual(self._verdict("dec_v2", _V101_DEC_OK)[0],
                           "OK")
@@ -8913,6 +9363,27 @@ class V101StepVerdictTest(unittest.TestCase):
         self.assertEqual(status, "FAIL")
         self.assertIn("SEED-ONLY marker", why)
 
+    def test_a_nonzero_rc_fails_and_names_the_bundle(self):
+        """Untested until now: the plainest failure in the suite."""
+        text = "V2 CONVERGED @iter 1: qm_real 36860/1\n"
+        status, why = self._verdict("calib", text, rc=101)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("rc=101", why)
+        self.assertIn(".tgz", why)
+
+    def test_a_tuner_that_never_converged_fails_at_rc_zero(self):
+        """cargo prints ok while foldpot logs the failure, so the
+        POSITIVE marker is the only real test (consts.rs:67-77)."""
+        for key, want in (("ab_v2", "no V2 CONVERGED line"),
+                          ("calib", "no V2 CONVERGED line"),
+                          ("smoke_v2", "no V2 CONVERGED line"),
+                          ("ab_v1", "CONVERGED line"),
+                          ("smoke_v1", "CONVERGED line")):
+            with self.subTest(step=key):
+                status, why = self._verdict(key, "nothing useful\n")
+                self.assertEqual(status, "FAIL")
+                self.assertIn(want, why)
+
     def test_clock_clamped_timeout_says_so(self):
         """A cap cut down by the deadline is a scheduling outcome, not
         a hang, and must not read like one."""
@@ -8920,6 +9391,43 @@ class V101StepVerdictTest(unittest.TestCase):
                                      cap=1000, cap_s=18000)
         self.assertEqual(status, "TIMEOUT")
         self.assertIn("clock-clamped", why)
+
+    def test_three_final_markers_without_the_decider_still_fail(self):
+        """The count gate is not enough: batch2[final] IS the Groth16
+        decider, and three other PASS markers can make the count."""
+        status, why = self._verdict("dec_v2", _V101_DEC_NO_SNARK)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("batch2[final]", why)
+
+    def test_an_oom_guard_kill_is_a_skip_not_a_failure(self):
+        """dec_big is opportunistic and RAM-guarded; a box that is too
+        small is a resource outcome, not a defect in the decider."""
+        r = _MOD.V101Res("dec_big", wall_s=100.0, rss_gb=470.0)
+        st = _MOD.V101Step("dec_big", "d", [], {}, 18000, True,
+                            max_rss_gb=460.0)
+        res = mock.Mock(rc=-9, triage_tgz="")
+        status, why = _MOD._v101_verdict_step(st, r, res, 18000,
+                                               rss_hit=True)
+        self.assertEqual(status, "SKIP")
+        self.assertIn("OOM-GUARD", why)
+
+    def test_without_the_flag_the_same_kill_is_a_failure(self):
+        """The control: the demotion must hang off the flag, not off
+        dec_big's name."""
+        r = _MOD.V101Res("dec_big", wall_s=100.0, rss_gb=470.0)
+        st = _MOD.V101Step("dec_big", "d", [], {}, 18000, True,
+                            max_rss_gb=460.0)
+        res = mock.Mock(rc=-9, triage_tgz="")
+        self.assertEqual(
+            _MOD._v101_verdict_step(st, r, res, 18000)[0], "FAIL")
+
+    def test_the_two_cargo_steps_share_one_wall_cap(self):
+        """`units` runs three filters off one budget and the first
+        may recompile zkregplus in cfg(test) -- a compile `build`
+        does not do -- so it must not be capped tighter."""
+        caps = dict((st.key, st.cap_s) for st in _MOD.v101_steps())
+        self.assertEqual(caps["units"], 3600)
+        self.assertEqual(caps["build"], 3600)
 
     def test_a_real_hang_is_a_plain_timeout(self):
         status, why = self._verdict("dec_v2", _V101_DEC_OK, wall=3590.0,
@@ -8973,6 +9481,7 @@ class V101ReportGateTest(unittest.TestCase):
     def test_green_needs_every_falsifier_to_pass(self):
         """All steps OK, all evidence present and correct."""
         nums = {
+            "units": {"units_oks": 3},
             "seed": {"seed_cs": 36860, "mid_hits": 3, "skipped": 0,
                      "seed_ms": 120000},
             "ab_v1": {"v1_iters": 4, "v1_bumps": 4},
@@ -8984,15 +9493,40 @@ class V101ReportGateTest(unittest.TestCase):
         self.assertIn("propose the commit", txt)
         self.assertNotIn("N/A", txt)
 
-    def test_an_over_seed_is_caught_by_f1(self):
-        """A 10x seed is gross over-capping -- an R2 violation that
-        F2 and F5 both pass right over."""
+    def test_a_loose_seed_is_reported_but_does_not_block(self):
+        """The seed is a declared UPPER BOUND that M3 tightens, so 10x
+        is loose, not unsound: F1 passes, F1b warns."""
         nums = {"seed": {"seed_cs": 368600, "mid_hits": 3,
                           "skipped": 0, "seed_ms": 120000}}
         txt = self._report({}, nums)
+        f1 = [l for l in txt.splitlines()
+              if l.strip().startswith("F1 seed")][0]
+        f1b = [l for l in txt.splitlines()
+               if l.strip().startswith("F1b")][0]
+        self.assertIn("PASS", f1)
+        self.assertIn("WARN", f1b)
+        self.assertIn("10.00x", f1b)
+
+    def test_a_seed_over_the_ram_alarm_blocks(self):
+        """Loose is absorbed; past the spec's R-2 RAM alarm it is
+        not, because the next pass cannot be run at all."""
+        nums = {"seed": {"seed_cs": 2000000, "mid_hits": 3,
+                          "skipped": 0, "seed_ms": 120000}}
+        txt = self._report({}, nums)
+        f1b = [l for l in txt.splitlines()
+               if l.strip().startswith("F1b")][0]
+        self.assertIn("FAIL", f1b)
         self.assertNotIn("propose the commit", txt)
-        f1 = [l for l in txt.splitlines() if "F1 seed" in l][0]
+
+    def test_a_seed_under_the_proven_max_is_unsound_and_blocks(self):
+        """F1's real job: below 36,860 the estimator under-caps."""
+        nums = {"seed": {"seed_cs": 100, "mid_hits": 3,
+                          "skipped": 0, "seed_ms": 120000}}
+        txt = self._report({}, nums)
+        f1 = [l for l in txt.splitlines()
+              if l.strip().startswith("F1 seed")][0]
         self.assertIn("FAIL", f1)
+        self.assertNotIn("propose the commit", txt)
 
     def test_r1_cannot_pass_without_a_caperr_measurement(self):
         """None means 'the meter line was absent', not 'zero'."""
@@ -9014,6 +9548,449 @@ class V101ReportGateTest(unittest.TestCase):
         txt = self._report({})
         self.assertIn("not measured", txt)
         self.assertNotIn("seed walk=0.0s", txt)
+
+
+# A run in which everything worked.  Numbers are shaped like the real
+# ones (36,860 is the proven corpus max; v1 converges @iter 4, v2 @0).
+_V101_HEALTHY = {
+    "units": {"units_oks": 3},
+    "seed": {"seed_cs": 36860, "mid_hits": 3, "skipped": 0,
+             "seed_ms": 120000},
+    "ab_v1": {"v1_iters": 4, "v1_bumps": 4},
+    "ab_v2": {"v2_iters": 0, "v2_bumps": 0, "v2_qm_bumps": 0,
+              "meter_demand_cs": 36860, "shipped_qm": 36860,
+              "caperr_units": 0, "v5_ms": 100, "probe_ms": 90},
+}
+
+
+class V101RunLoopTest(unittest.TestCase):
+    """run_v101's step loop had NO coverage -- it is called only from
+    the dispatcher, so every scheduling decision in it was pinned by
+    execution alone.  These drive it with fake children."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.rss_hit = False
+        # Exposed so a test can assert the bundle survived: patching
+        # it again from the test would LOSE, since _env enters last.
+        self.bundle = mock.Mock()
+        self.model = {}
+
+        class _Ctx:
+            def __init__(_s, key, mode):
+                _s.rss_ceiling_hit = False
+                _s.peak_rss_gb = 0.0
+                _s._p = os.path.join(self.tmp.name, "%s.log" % key)
+                io.open(_s._p, "w").write("")
+
+            def note(_s, _m):
+                pass
+
+            def log_path(_s, _n):
+                return _s._p
+
+            def finish(_s, rc, b_fail_scan=True):
+                _s.rss_ceiling_hit = self.rss_hit
+                return mock.Mock(rc=rc, peak_rss_gb=1.0,
+                                  triage_tgz="")
+
+        self.Ctx = _Ctx
+
+    def _env(self, steps):
+        """Every external edge run_v101 touches, stubbed."""
+        st = contextlib.ExitStack()
+        for p in (
+                mock.patch.object(_MOD, "V101_ROOT", self.tmp.name),
+                mock.patch.object(_MOD, "V101_VERDICT",
+                                  os.path.join(self.tmp.name, "V.txt")),
+                mock.patch.object(_MOD, "V101_BUNDLE",
+                                  os.path.join(self.tmp.name, "B.tgz")),
+                mock.patch.object(_MOD, "v101_steps",
+                                  return_value=steps),
+                mock.patch.object(_MOD, "JobHandle", self.Ctx),
+                mock.patch.object(_MOD, "run_rust_example",
+                                  return_value=0),
+                mock.patch.object(_MOD, "neo_env", return_value={}),
+                mock.patch.object(_MOD, "v101_parse"),
+                mock.patch.object(_MOD, "_v101_keep"),
+                mock.patch.object(_MOD, "_v101_bundle",
+                                  self.bundle),
+                mock.patch.object(_MOD, "_v101_write_progress"),
+                mock.patch.object(_MOD, "_atomic_symlink"),
+                mock.patch.object(_MOD, "_summary_line"),
+                mock.patch.object(_MOD, "log"),
+                mock.patch.object(_MOD, "_v101_mem_avail_gb",
+                                  return_value=999.0),
+                mock.patch("builtins.print")):
+            st.enter_context(p)
+        return st
+
+    def _run_raw(self, steps, rss_hit=False):
+        """_run without the v101_report spy, so a test can patch it."""
+        self.rss_hit = rss_hit
+        with self._env(steps):
+            return _MOD.run_v101(), None
+
+    def _run(self, steps, rss_hit=False):
+        self.rss_hit = rss_hit
+        with self._env(steps):
+            captured = {}
+            real = _MOD.v101_report
+
+            def spy(t0, dl, rd, R, veh, model):
+                captured["R"] = R
+                self.model = dict(model)
+                return real(t0, dl, rd, R, veh, model)
+
+            with mock.patch.object(_MOD, "v101_report", spy):
+                rc = _MOD.run_v101()
+            return rc, captured["R"]
+
+    def _step(self, key, **kw):
+        kw.setdefault("cap_s", 600)
+        return _MOD.V101Step(key, key, ["x"], {}, kw.pop("cap_s"),
+                              False, **kw)
+
+    def test_a_report_that_raises_still_leaves_a_bundle(self):
+        """The guard's whole point: never end with no verdict, no
+        bundle AND no traceback.  It caught only OSError, so a
+        TypeError out of v101_report lost all three."""
+        st = self._step("smoke_v1")
+        with mock.patch.object(_MOD, "v101_report",
+                               side_effect=TypeError("boom")):
+            rc, _R = self._run_raw([st])
+        self.assertTrue(self.bundle.called, "the bundle was lost")
+        self.assertEqual(rc, 1)
+
+    def test_the_exit_code_agrees_with_the_verdict(self):
+        """A falsifier FAIL is "not shippable" too; rc counted only
+        step FAIL/TIMEOUT, so that run exited 0."""
+        st = self._step("smoke_v1")
+        for txt, want in ((_MOD.V101_GREEN_MARK, 0),
+                          ("FALSIFIED BY: F1 ...", 1),
+                          ("", 1)):
+            with self.subTest(verdict=txt[:20]):
+                with mock.patch.object(_MOD, "v101_report",
+                                       return_value=txt):
+                    rc, _R = self._run_raw([st])
+                self.assertEqual(rc, want)
+
+    def test_a_timed_out_calibration_still_feeds_the_model(self):
+        """Pins the CALL SITE, not the function: the gate used to be
+        `status == "OK"`, so a TIMEOUT was thrown away entirely and
+        the picker fell back to a prior that cannot see the box."""
+        st = self._step("calib", cap_s=600)
+        with mock.patch.object(_MOD, "_v101_verdict_step",
+                               return_value=("TIMEOUT", "capped")), \
+             mock.patch.object(_MOD, "_v101_recalibrate") as rc_:
+            self._run([st])
+        self.assertTrue(rc_.called,
+                        "a TIMEOUT taught the model nothing")
+        self.assertTrue(rc_.call_args[1].get("partial"),
+                        "a TIMEOUT was taken as an exact rate")
+
+    def test_a_partial_measurement_never_speeds_the_model_up(self):
+        """A TIMEOUT is a LOWER bound on the arm rate.  Overwriting
+        with it could make the model FASTER than something already
+        measured, which is the one direction that overruns."""
+        model = dict(_MOD.V101_PRIORS)
+        slow = _MOD.V101Res("calib", status="OK", wall_s=3000.0,
+                             nums={"probe_ms": 100, "v5_ms": 100})
+        _MOD._v101_recalibrate(model, "calib", slow, None,
+                                lambda m: None)
+        was = model["r_v2_arm"]
+        fast = _MOD.V101Res("calib", status="TIMEOUT", wall_s=300.0,
+                             nums={"probe_ms": 100, "v5_ms": 100})
+        _MOD._v101_recalibrate(model, "calib", fast, None,
+                                lambda m: None, partial=True)
+        self.assertEqual(model["r_v2_arm"], was)
+
+    def test_a_slower_calibration_never_buys_a_bigger_vehicle(self):
+        """The picker was NON-MONOTONE: a calib that TIMED OUT was
+        discarded, the model fell back to a prior that cannot see the
+        box, and the vehicle grew exactly when the evidence said the
+        box was slowest.  Measured: 3000s -> perc 10, 3590s TIMEOUT
+        -> perc 15."""
+        def pick(wall, status):
+            model = dict(_MOD.V101_PRIORS)
+            r = _MOD.V101Res("calib", status=status, wall_s=wall,
+                              nums={"probe_ms": int(wall * 400),
+                                    "v5_ms": int(wall * 500)})
+            _MOD._v101_recalibrate(model, "calib", r, None,
+                                    lambda m: None,
+                                    partial=(status == "TIMEOUT"))
+            left = (16 * 3600 - wall - 300
+                    - _MOD.V101_DEC_RESERVE_S)
+            veh, _c = _MOD.v101_pick(model, left, lambda m: None)
+            return veh[0] if veh else 0
+
+        seq = [pick(1000.0, "OK"), pick(2000.0, "OK"),
+               pick(3000.0, "OK"), pick(3590.0, "TIMEOUT")]
+        self.assertEqual(seq, sorted(seq, reverse=True),
+                         "picker is non-monotone in the calib wall: "
+                         "%s" % seq)
+
+    def test_an_oom_guard_kill_reaches_the_verdict_as_a_skip(self):
+        """Pins the WIRING: the flag has to be passed through, not
+        just set.  Dropping the argument made the kill a FAIL again."""
+        st = self._step("dec_big", max_rss_gb=460.0)
+        _rc, R = self._run([st], rss_hit=True)
+        self.assertEqual(R["dec_big"].status, "SKIP")
+        self.assertIn("OOM-GUARD", R["dec_big"].why)
+
+    def test_a_surrendered_step_is_skipped_not_run_with_a_stub_cap(self):
+        """cap_s = -1 is the picker's sentinel.  Before it, dec_big
+        started with ~47 min against a 5 h ask and burned them."""
+        st = self._step("dec_big", cap_s=-1)
+        _rc, R = self._run([st])
+        self.assertEqual(R["dec_big"].status, "SKIP")
+        self.assertIn("surrendered", R["dec_big"].why)
+
+
+class V101FalsifierNegativeTest(unittest.TestCase):
+    """One NEGATIVE case per falsifier and requirement.  A measured
+    mutation sweep found 17 of 28 verdict-logic mutations escaping the
+    suite -- every row could be neutered to `True` undetected, because
+    only green-is-REACHABLE was tested.  Reachability is not a gate."""
+
+    def _report(self, nums, statuses=None):
+        keys = [st.key for st in _MOD.v101_steps()]
+        R = {}
+        for k in keys:
+            R[k] = _MOD.V101Res(
+                k, status=(statuses or {}).get(k, "OK"), wall_s=60.0,
+                nums=dict(nums.get(k, {})))
+        return _MOD.v101_report(time.time() - 60, time.time() + 3600,
+                                 "/tmp/none", R, None,
+                                 dict(_MOD.V101_PRIORS))
+
+    def _mutate(self, step, field, value):
+        nums = dict((k, dict(v)) for k, v in _V101_HEALTHY.items())
+        nums.setdefault(step, {})[field] = value
+        return self._report(nums)
+
+    def test_healthy_run_is_green(self):
+        """The control: without it every case below passes trivially."""
+        self.assertIn("propose the commit",
+                      self._report(_V101_HEALTHY))
+
+    def test_each_broken_metric_blocks_green_and_names_its_row(self):
+        cases = [
+            ("F1", "seed", "seed_cs", 100),      # under the proven max
+            ("F1b", "seed", "seed_cs", 2000000), # past the RAM alarm
+            ("F2", "ab_v2", "meter_demand_cs", 99999),
+            ("F3a", "ab_v2", "v2_qm_bumps", 1),
+            ("F3b", "ab_v2", "v2_bumps", 3),
+            # BOTH directions of F5.  Over-shipping is waste; UNDER-
+            # shipping is an under-cap, and only the second half was
+            # ever exercised.
+            ("F5", "ab_v2", "shipped_qm", 50000),
+            ("F5", "ab_v2", "shipped_qm", 30000),
+            ("R1", "ab_v2", "caperr_units", 3),
+            ("R2", "ab_v2", "shipped_qm", 40000),
+            ("R3", "ab_v2", "v2_iters", 5),
+            ("R5", "units", "units_oks", 2),
+        ]
+        for row, step, field, bad in cases:
+            with self.subTest(row=row, field=field, value=bad):
+                txt = self._mutate(step, field, bad)
+                self.assertNotIn("propose the commit", txt,
+                                 "%s did not block green" % row)
+                line = [l for l in txt.splitlines()
+                        if l.strip().startswith(row + " ")]
+                self.assertTrue(line, "no %s row rendered" % row)
+                self.assertIn("FAIL", line[0],
+                              "%s did not read FAIL" % row)
+
+    def test_advisory_rows_warn_loudly_without_blocking(self):
+        """F7/F8/F1b cannot make a healthy v2 unshippable -- but a
+        WARN that no one is told about is the same as no check."""
+        for row, step, field, bad in (
+                ("F7", "seed", "mid_hits", 0),
+                ("F8", "seed", "skipped", 2),
+                ("F1b", "seed", "seed_cs", 368600),
+                ("F6", "seed", "seed_ms", 400000)):   # > 5 min
+            with self.subTest(row=row):
+                txt = self._mutate(step, field, bad)
+                line = [l for l in txt.splitlines()
+                        if l.strip().startswith(row + " ")][0]
+                self.assertIn("WARN", line)
+                self.assertIn("propose the commit", txt)
+                adv = [l for l in txt.splitlines()
+                       if "ADVISORY" in l]
+                self.assertTrue(adv, "%s WARN was silent" % row)
+                self.assertIn(row, adv[0])
+
+    def test_an_unmeasured_advisory_is_announced_too(self):
+        """F8 is the suite's ONLY full-corpus consistency reading, so
+        "we never looked" must not be silent under a green line."""
+        nums = dict((k, dict(v)) for k, v in _V101_HEALTHY.items())
+        del nums["seed"]["skipped"]
+        txt = self._report(nums)
+        note = [l for l in txt.splitlines() if "NOT MEASURED (" in l]
+        self.assertTrue(note, "an unmeasured advisory was silent")
+        self.assertIn("F8", note[0])
+
+    def test_a_skipped_word_names_the_abort_site(self):
+        """Advisory, but the reader must learn what branch 2 costs."""
+        txt = self._mutate("seed", "skipped", 2)
+        f8 = [l for l in txt.splitlines()
+              if l.strip().startswith("F8")][0]
+        self.assertIn("sed_mapper.rs:557", f8)
+
+    def test_f1_says_how_many_words_the_max_came_from(self):
+        """36,860 over 1209 words and over 3 are different claims."""
+        nums = dict((k, dict(v)) for k, v in _V101_HEALTHY.items())
+        nums["seed"]["seed_words"] = 1209
+        txt = self._report(nums)
+        f1 = [l for l in txt.splitlines()
+              if l.strip().startswith("F1 seed")][0]
+        self.assertIn("1209 words", f1)
+
+    def test_a_zero_on_one_step_does_not_discard_a_good_one(self):
+        """pick2 committed to ab_v2 BEFORE the zero test ran, so a
+        zero meter there threw away a perfectly good calib reading
+        and the whole night went INCONCLUSIVE."""
+        nums = dict((k, dict(v)) for k, v in _V101_HEALTHY.items())
+        nums["ab_v2"]["meter_demand_cs"] = 0
+        nums["ab_v2"]["shipped_qm"] = 0
+        nums["calib"] = {"meter_demand_cs": 36860, "shipped_qm": 36860}
+        txt = self._report(nums)
+        r2 = [l for l in txt.splitlines()
+              if l.strip().startswith("R2 ")][0]
+        self.assertIn("PASS", r2)
+        self.assertIn("calib", r2)
+
+    def test_an_uncomputable_advisory_is_a_note_not_a_pass(self):
+        """_v101_loose(None) reading PASS would certify a seed that
+        was never measured."""
+        self.assertEqual(_MOD._v101_loose(None)[0], "NOTE")
+        self.assertEqual(_MOD._v101_loose(36860)[0], "PASS")
+
+    def test_f9_warns_when_the_v5_walk_dominates(self):
+        """It is advisory, but it still has to be able to say so --
+        it used to be `else True`, which could never fire."""
+        nums = dict((k, dict(v)) for k, v in _V101_HEALTHY.items())
+        nums["ab_v2"].update(v5_ms=5000, probe_ms=100)
+        f9 = [l for l in self._report(nums).splitlines()
+              if l.strip().startswith("F9")][0]
+        self.assertIn("WARN", f9)
+        nums["ab_v2"].update(v5_ms=100, probe_ms=5000)
+        f9 = [l for l in self._report(nums).splitlines()
+              if l.strip().startswith("F9")][0]
+        self.assertIn("PASS", f9)
+
+    def test_a_meter_that_read_zero_is_not_a_measurement(self):
+        """demand=0 made F2, F5 and R2 all print PASS at once."""
+        txt = self._mutate("ab_v2", "meter_demand_cs", 0)
+        for row in ("F2", "F5", "R2"):
+            line = [l for l in txt.splitlines()
+                    if l.strip().startswith(row + " ")][0]
+            self.assertIn("N/A", line, "%s passed on a zero" % row)
+        # "never measured" and "measured, and it was 0" are different
+        # findings; the evidence has to say which one happened.
+        f2 = [l for l in txt.splitlines()
+              if l.strip().startswith("F2 ")][0]
+        self.assertIn("read 0", f2)
+        self.assertNotIn("propose the commit", txt)
+
+    def test_a_shipped_cap_of_zero_is_not_a_measurement(self):
+        """The mirror of the demand guard: shipped=0 would let F5 and
+        R2 certify a cap that cannot exist."""
+        txt = self._mutate("ab_v2", "shipped_qm", 0)
+        for row in ("F5", "R2"):
+            line = [l for l in txt.splitlines()
+                    if l.strip().startswith(row + " ")][0]
+            self.assertIn("N/A", line, "%s passed on a zero" % row)
+        self.assertNotIn("propose the commit", txt)
+
+    def test_the_mandatory_step_list_is_pinned(self):
+        """Dropping any one of the six escapes every other test: the
+        remaining five still block, so green stays unreachable."""
+        for k in ("units", "seed", "calib", "ab_v1", "ab_v2",
+                  "dec_v2"):
+            with self.subTest(step=k):
+                txt = self._report(_V101_HEALTHY, {k: "SKIP"})
+                self.assertIn("INCONCLUSIVE", txt)
+                self.assertIn(k, txt)
+                self.assertNotIn("propose the commit", txt)
+
+    def test_an_opportunistic_timeout_does_not_block(self):
+        """dec_big is RAM-guarded and calib_v1 has V101_V1_ARM_RATIO
+        as its designed fallback; neither TIMEOUT is evidence."""
+        for k in ("dec_big", "calib_v1"):
+            with self.subTest(step=k):
+                txt = self._report(_V101_HEALTHY, {k: "TIMEOUT"})
+                self.assertNotIn("BLOCKED BY", txt)
+                self.assertIn("propose the commit", txt)
+
+    def test_a_real_failure_on_those_two_still_blocks(self):
+        """The exemption is for TIMEOUT only, not for FAIL."""
+        for k in ("dec_big", "calib_v1"):
+            with self.subTest(step=k):
+                txt = self._report(_V101_HEALTHY, {k: "FAIL"})
+                self.assertIn("BLOCKED BY: %s" % k, txt)
+
+    def test_f3b_names_the_source_of_both_of_its_numbers(self):
+        """Bumps come from worst(), iters from the A/B pair."""
+        txt = self._report(_V101_HEALTHY)
+        f3b = [l for l in txt.splitlines()
+               if l.strip().startswith("F3b")][0]
+        self.assertEqual(f3b.count("from "), 2)
+
+    def test_a_qm_bump_in_dec_big_is_not_invisible(self):
+        """N1 regression.  _v101_count returns 0 rather than None, so
+        a first-hit lookup let ab_v2's 0 mask five production-width
+        dis_adv::neo_qm_real bumps in dec_big -- the exact defect M2
+        exists to eliminate -- and the verdict went green."""
+        txt = self._mutate("dec_big", "v2_qm_bumps", 5)
+        self.assertNotIn("propose the commit", txt)
+        f3a = [l for l in txt.splitlines() if "F3a" in l][0]
+        self.assertIn("FAIL", f3a)
+        self.assertIn("dec_big", f3a)
+
+    def test_a_caperr_in_any_v2_step_blocks_green(self):
+        """Same aggregation bug, on R1's counter."""
+        for step in ("dec_v2", "calib", "smoke_v2", "dec_big"):
+            with self.subTest(step=step):
+                txt = self._mutate(step, "caperr_units", 4)
+                self.assertNotIn("propose the commit", txt)
+
+    def test_parity_rounds_do_not_certify_speed(self):
+        """A row called "fast" must not PASS on 2 -> 2 rounds."""
+        nums = dict((k, dict(v)) for k, v in _V101_HEALTHY.items())
+        nums["ab_v1"]["v1_iters"] = 1
+        nums["ab_v2"]["v2_iters"] = 1
+        txt = self._report(nums)
+        r3 = [l for l in txt.splitlines() if "R3 fast" in l][0]
+        self.assertIn("FAIL", r3)
+        self.assertIn("NO SPEEDUP", r3)
+
+    def test_parity_at_the_one_round_floor_is_allowed(self):
+        """v2 at 1 round cannot beat v1 at 1 round; that is not a
+        failure, and calling it one would be a false RED."""
+        nums = dict((k, dict(v)) for k, v in _V101_HEALTHY.items())
+        nums["ab_v1"]["v1_iters"] = 0
+        nums["ab_v2"]["v2_iters"] = 0
+        txt = self._report(nums)
+        r3 = [l for l in txt.splitlines() if "R3 fast" in l][0]
+        self.assertIn("PASS", r3)
+
+    def test_a_pending_step_is_never_silent(self):
+        """PENDING was in neither `fails` nor `skips`, so a suite that
+        died early could print green mentioning nothing."""
+        txt = self._report(_V101_HEALTHY, {"dec_v1": "PENDING"})
+        self.assertIn("DID NOT RUN", txt)
+        self.assertIn("dec_v1", txt)
+
+    def test_the_green_sentence_names_non_mandatory_gaps(self):
+        """dec_big SKIP is allowed, but must not sit silently under a
+        sentence that reads as if everything ran."""
+        txt = self._report(_V101_HEALTHY, {"dec_big": "SKIP"})
+        self.assertIn("propose the commit", txt)
+        self.assertIn("MANDATORY", txt)
+        self.assertIn("dec_big=SKIP", txt)
 
 
 if __name__ == "__main__":
