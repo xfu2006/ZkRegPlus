@@ -304,6 +304,16 @@ DEC_IDX = len(LEG_TL) - 1
 # before it is a legacy placeholder, so a comparison made there says
 # nothing about the fold.
 P1_IDX = 5
+# LEG_TL index of PHASE 2.  Every cmF marker in it is LOG4, so a LOG3
+# run writes NOTHING for the whole stage and the flat STALL_S below
+# would fire on every check for hours.  Its allowance is the legacy
+# stage duration with margin; neo's own estimate is 0.88x of that.
+P2_IDX = 6
+P2_STALL_MULT = 1.25
+# available RAM coming back by this many GB between two checks means a
+# part exited.  While phase 2 is silent this is the only liveness
+# signal left, so relaxing the stall budget must not drop it.
+MEM_JUMP_GB = 100
 # the source string forecast() stamps on a stage neo never times.  Used
 # to decide whether the run has produced ANY number of its own yet.
 LEG_SRC = "legacy (neo does not time it)"
@@ -416,6 +426,10 @@ RE_P4_CP_CS = re.compile(
 RE_P4_VERIFY = re.compile(r"FOLDPOT Step 13\. Verify Individual Proof")
 RE_P4_BATCH = re.compile(r"==== BatchProof ====")
 RE_FOLDONLY = re.compile(r"b_folding_only set, no snark generated")
+# the OTHER way a job ends without proving.  driver.rs:3450 returns on
+# b_one_proof BEFORE the b_folding_only branch, so a proving part's
+# non-chosen jobs log this and are counted by RE_FOLDONLY nowhere.
+RE_ONEPROOF = re.compile(r"b_one_proof set -> skip SNARK")
 RE_VERIFY_FAIL = re.compile(r"PROOF VERIFICATION FAILED")
 
 # cheap substring gate: a line holding none of these can never match
@@ -426,6 +440,7 @@ HOT = ("PERF 1", "PERF W", "PROGRESS fold", "prove_step cost",
 	"ZKP driver", "qm_real_rows", "loadClamDB", "fast_finalize",
 	"fold_pot starts", "MainDeciderCirtuit", "CyclePairCirc",
 	"FOLDPOT Step 13", "BatchProof", "b_folding_only set",
+	"b_one_proof set",
 	"VERIFICATION FAILED")
 
 
@@ -709,6 +724,7 @@ class Acc(object):
 		self.verified = st.get("verified", 0)
 		self.batchproof = st.get("batchproof", 0)
 		self.foldonly = st.get("foldonly", 0)
+		self.oneproof = st.get("oneproof", 0)
 		self.vfail = st.get("vfail", 0)
 
 	def dump(self):
@@ -747,6 +763,7 @@ class Acc(object):
 			"folddone": {str(k): v for k, v in self.folddone.items()},
 			"verified": self.verified,
 			"batchproof": self.batchproof, "foldonly": self.foldonly,
+			"oneproof": self.oneproof,
 			"vfail": self.vfail,
 		}
 
@@ -867,6 +884,9 @@ class Acc(object):
 			return
 		if RE_FOLDONLY.search(ln):
 			self.foldonly += 1
+			return
+		if RE_ONEPROOF.search(ln):
+			self.oneproof += 1
 			return
 		if RE_VERIFY_FAIL.search(ln):
 			self.vfail += 1
@@ -1930,14 +1950,21 @@ def show_markers(run):
 	ver = run.sum_attr("verified")
 	bp = run.sum_attr("batchproof")
 	fo = run.sum_attr("foldonly")
+	op = run.sum_attr("oneproof")
 	vf = run.sum_attr("vfail")
 	fd = sum(len(a.folddone) for a in run.accs)
-	print("MARKERS    : the same ones dlp_missing_success() checks")
-	print("  fold-done per job      %d / %d" % (fd, run.njobs))
-	print("  Verify Individual Prf  %d  (needs exactly 1)" % ver)
+	print("MARKERS    : [gate] = what dlp_missing_success() scores; "
+		"the rest is context")
+	print("  fold-done per job      %d / %d  [gate]" % (fd, run.njobs))
+	print("  Verify Individual Prf  %d  (needs exactly 1)  [gate]"
+		% ver)
 	print("  BatchProof             %d" % bp)
-	print("  b_folding_only         %d  (part1's jobs + part2's "
-		"non-proving ones)" % fo)
+	print("  b_folding_only         %d  (per-PART: all jobs of a "
+		"non-proving part)" % fo)
+	print("  b_one_proof skip       %d  (the proving part's other "
+		"jobs; driver.rs:3450)" % op)
+	print("  accounted for          %d / %d  (a job ends in exactly "
+		"one of the three)" % (fo + op + ver, run.njobs))
 	if vf:
 		print("  PROOF VERIFICATION FAILED x%d  <-- the run is BAD; "
 			"the process still exits 0" % vf)
@@ -2043,9 +2070,12 @@ def show_forecast(run, fc, el, tot, tot_fold, idx, frac, equiv):
 
 
 def show_mem(run, bank):
-	"""RAM headroom, with the phase-3 OOM floor once the fold starts."""
+	"""RAM headroom, with the phase-3 OOM floor once the fold starts.
+	Returns the GB rise in available RAM since the last check -- the
+	liveness signal show_next needs while phase 2 is silent."""
 	print("-" * 72)
 	total, avail = mem_gb()
+	jump = None
 	if total:
 		line = "memory     : %d / %d GB available" % (avail, total)
 		if avail < MEM_FLOOR_GB:
@@ -2060,6 +2090,7 @@ def show_mem(run, bank):
 				"phase-3 OOM; fix is numa_num=2")
 		elif vel is not None:
 			print("             stable/rising (%+.0f GB/hr)" % vel)
+		jump = bank.rise("mem", avail)
 	ram = max([a.ram for a in run.accs] + [0])
 	if ram:
 		print("log RAM    : %d GB reported (legacy %d-%d, mean %.0f); "
@@ -2073,8 +2104,19 @@ def show_mem(run, bank):
 			"mean %.4f) = %.2fx" % (max(spd), LEG_MB_HR[0],
 				LEG_MB_HR[1], LEG_MB_HR[2], max(spd) / LEG_MB_HR[2]))
 
+	return jump
 
-def show_next(run, gate, age, short, idx):
+
+def stall_budget(idx):
+	"""Seconds of log silence that are normal at stage `idx`.  Phase 2
+	writes nothing at LOG3, so the flat STALL_S is a guaranteed false
+	alarm there for the whole stage."""
+	if idx == P2_IDX:
+		return LEG_STEP[3][0] * P2_STALL_MULT
+	return STALL_S
+
+
+def show_next(run, gate, age, short, idx, jump=None):
 	"""When to look again, and the one-line call."""
 	print("-" * 72)
 	ver = run.sum_attr("verified")
@@ -2110,9 +2152,22 @@ def show_next(run, gate, age, short, idx):
 			"not the production fold.")
 	elif ver:
 		print("VERDICT    : COMPLETE -- proof verified.")
-	elif age > STALL_S:
+	elif age > stall_budget(idx):
 		print("VERDICT    : SUSPECT -- no write for %s. Check the "
 			"process and free -g." % hm(age))
+	elif idx == P2_IDX and jump is not None and jump >= MEM_JUMP_GB:
+		print("VERDICT    : SUSPECT -- phase 2 is silent by design, "
+			"but %d GB of RAM came" % jump)
+		print("             back since the last check -- that is a "
+			"part exiting, not cmF work.")
+	elif idx == P2_IDX and age > STALL_S:
+		print("VERDICT    : HEALTHY -- phase 2 is silent by design "
+			"(quiet %s of an" % hm(age))
+		print("             expected %s).  %s"
+			% (hm(LEG_STEP[3][0]),
+				"RAM held, so a part exiting is ruled out."
+				if jump is not None else
+				"No RAM baseline yet; the next check adds one."))
 	elif gate:
 		print("VERDICT    : HEALTHY -- gate passed, run in flight.")
 	else:
@@ -2165,6 +2220,16 @@ class Bank(object):
 		if not old:
 			return None
 		return (val - old[-1][1][key]) / ((now - old[-1][0]) / 3600.0)
+
+	def rise(self, key, val):
+		"""Change since the NEWEST banked sample, or None.  Unlike
+		velocity this is interval-independent: a part exiting frees its
+		RAM at once, however long ago the previous check ran."""
+		self.note(key, val)
+		prev = [r for r in self.rows if key in r[1]]
+		if not prev:
+			return None
+		return val - prev[-1][1][key]
 
 	def stamp(self, idx, frac, equiv, el):
 		"""Record this invocation's position against its elapsed hour,
@@ -2406,8 +2471,8 @@ def main():
 	fc = forecast(run, mix, got)
 	tot, tot_fold = show_stages(run, fc)
 	show_forecast(run, fc, el, tot, tot_fold, idx, frac, equiv)
-	show_mem(run, bank)
-	show_next(run, gate, age, short, idx)
+	jump = show_mem(run, bank)
+	show_next(run, gate, age, short, idx, jump)
 
 	st["logs"] = dict(zip(paths, [a.dump() for a in accs]))
 	st["bank"] = bank.dump()
