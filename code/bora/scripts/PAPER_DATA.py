@@ -1256,9 +1256,11 @@ VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))
 
 
 def ensure_vma(target):
-    """Best-effort raise vm.max_map_count via sudo sysctl.  Non-fatal:
-    logs the manual command if sudo is unavailable.  No-op if
-    target <= 0."""
+    """Raise vm.max_map_count via sudo sysctl, then ENFORCE the floor:
+    below it we quit here.  No-op if target <= 0; an unreadable
+    /proc entry stays non-fatal (we cannot gate on what we cannot
+    read).  Bypass with ZKR_SKIP_MAP_COUNT_CHECK=1, the same env var
+    Rust honours."""
     if target <= 0:
         return
     path = "/proc/sys/vm/max_map_count"
@@ -1276,6 +1278,44 @@ def ensure_vma(target):
     if rc != 0:
         log("WARN: could not raise vm.max_map_count (sudo?). Run manually: "
             "sudo sysctl -w vm.max_map_count=%d" % target)
+    # The RAISE is best-effort; the FLOOR is not.  Re-read instead of
+    # trusting rc -- the file is the authority, and the value may
+    # already be high from /etc/sysctl.d or an earlier session, in
+    # which case a missing sudo is harmless.
+    try:
+        cur = int(open(path).read().strip())
+    except OSError as e:
+        log("vm.max_map_count: cannot re-read (%s); not gating" % e)
+        return
+    if cur >= target:
+        return
+    if os.environ.get("ZKR_SKIP_MAP_COUNT_CHECK"):
+        log("WARN: vm.max_map_count=%d < %d but "
+            "ZKR_SKIP_MAP_COUNT_CHECK is set -- continuing" %
+            (cur, target))
+        return
+    # Quit HERE, not hours in.  Rust re-checks per job with the exact
+    # packed-field count (foldpot/driver.rs:2686) but only AFTER the
+    # DB build, and it has FALSE-PASSED (52,544 est vs >1M actual on
+    # small_full_snark, 512GB box, 2026-08-13) -- so this floor is the
+    # gate that has to hold.  One floor covers every menu item;
+    # measured needs by `32768 + n_jobs*max_job_fields*16`:
+    #   full_dlp  474,624,000   (8 jobs)
+    #   full_clam 431,521,792   (8 jobs, max job 3,371,008 fields)
+    #   full_dna   21,518,560   (1 job, 1,342,862 fields)
+    raise SystemExit(
+        "PREFLIGHT ABORT: vm.max_map_count=%d < %d.\n"
+        "  mimalloc hits ENOMEM on mmap/munmap once the VMA count\n"
+        "  reaches this ceiling, with RAM still free -- every full\n"
+        "  run needs it (full_dlp 474,624,000, full_clam\n"
+        "  431,521,792, full_dna 21,518,560).\n"
+        "  Fix on the server (free, no memory cost):\n"
+        "    sudo sysctl -w vm.max_map_count=%d\n"
+        "  Persist:\n"
+        "    echo 'vm.max_map_count=%d' | sudo tee \\\n"
+        "      /etc/sysctl.d/99-zkregplus.conf && sudo sysctl --system\n"
+        "  Or bypass: export ZKR_SKIP_MAP_COUNT_CHECK=1"
+        % (cur, target, target, target))
 
 
 def preflight_numactl(node_ranges):
@@ -3106,7 +3146,8 @@ def v101_steps():
         V101Step("units", "test_v101_ / m104 parse / fingerprint_",
                  [], {}, 3600, True, kind="cargo"),
         V101Step("smoke_v1", "dry clam leaf, v1 arm",
-                 v101_argv("full_clam", 0.5, 0.1, 2, 2, 1, 0, "1", "1"),
+                 v101_argv("full_clam_v1", 0.5, 0.1, 2, 2, 1, 0,
+                           "1", "1"),
                  {}, 900, False),
         V101Step("smoke_v2", "dry clam leaf, v2 arm",
                  v101_argv("full_clam_v2", 0.5, 0.1, 2, 2, 1, 0,
@@ -3128,7 +3169,7 @@ def v101_steps():
         # the probe rate and the pass count -- with one number.
         V101Step("calib_v1", "v1 receipt @ perc 2 (measures the v1 "
                  "arm rate; C3 is v2-only)",
-                 v101_argv("full_clam", 100, 2, 2, 1, 1, 0,
+                 v101_argv("full_clam_v1", 100, 2, 2, 1, 1, 0,
                            "0", "1"), V101_METER_ENV, 5400, False),
         V101Step("pick", "choose the A/B vehicle", [], {}, 0, False,
                  kind="calc"),
@@ -3136,7 +3177,8 @@ def v101_steps():
         V101Step("ab_v2", "A/B v2 arm", [], V101_METER_ENV, 0, True),
         V101Step("dec_v1", "decider check, v1 ladder (dry leaf, FOLD"
                  " + Groth16 + verify)",
-                 v101_argv("full_clam", 0.5, 0.1, 2, 2, 1, 0, "1", "0"),
+                 v101_argv("full_clam_v1", 0.5, 0.1, 2, 2, 1, 0,
+                           "1", "0"),
                  {}, 3600, False),
         V101Step("dec_v2", "decider check, v2 ladder (dry leaf, FOLD"
                  " + Groth16 + verify)",
@@ -3262,12 +3304,14 @@ def _v101_count(path, pat):
 
 def _v101_keep(run_dir, key, ctx_log):
     """Copy this step's artifacts out BEFORE the next step's
-    reset_part_dir wipes the plan dir.  Both arms now have their own
-    plan dir (spec name clam / clam_v2), so this is belt-and-braces --
-    but a lost meter.json is a lost A/B, so it stays."""
+    reset_part_dir wipes the plan dir.  Both A/B arms have their own
+    plan dir (spec name clam_v1 / clam_v2 -- the BARE `full_clam` is
+    production and keeps `clam`), so this is belt-and-braces -- but a
+    lost meter.json is a lost A/B, so it stays."""
     dst = os.path.join(run_dir, key)
     os.makedirs(dst, exist_ok=True)
-    for pd in ("/tmp/bora/clam_neo_p0", "/tmp/bora/clam_v2_neo_p0"):
+    for pd in ("/tmp/bora/clam_v1_neo_p0",
+               "/tmp/bora/clam_v2_neo_p0"):
         for name in ("ladder.json", "meter.json"):
             src = os.path.join(pd, name)
             if os.path.exists(src):
@@ -3649,7 +3693,8 @@ def run_v101():
                       "chunks": veh[3], "share": veh[4],
                       "pred_s": veh_pred, "model": dict(model)}
             for k in ("ab_v1", "ab_v2"):
-                sub = "full_clam" if k == "ab_v1" else "full_clam_v2"
+                sub = ("full_clam_v1" if k == "ab_v1"
+                       else "full_clam_v2")
                 stx = next(x for x in steps if x.key == k)
                 stx.argv = v101_argv(sub, 100, veh[0], 2, 1, 1, 0,
                                       "0", "1")
@@ -3896,9 +3941,15 @@ def _v101_has_v2(dlog):
     except Exception as e:
         dlog("capability probe failed: %s" % e)
         return False
-    ok = "full_clam_v2" in out
-    dlog("capability probe: full_clam_v2 %s" % ("present" if ok
-                                                 else "ABSENT"))
+    # BOTH A/B tokens: since the 2026-08-18 default flip the bare
+    # `full_clam` means v2, so the v1 arm needs its own token and an
+    # older binary that only knows `_v2` would fail 4 steps deep.
+    missing = [t for t in ("full_clam_v1", "full_clam_v2")
+               if t not in out]
+    ok = not missing
+    dlog("capability probe: A/B tokens %s" % ("present" if ok
+                                              else "ABSENT: %s"
+                                              % ",".join(missing)))
     return ok
 
 
@@ -7586,14 +7637,52 @@ class EnsureVmaTest(unittest.TestCase):
             run.assert_not_called()
 
     def test_raises_via_sudo(self):
-        with mock.patch("builtins.open",
-                         _fake_open({"/proc/sys/vm/max_map_count":
-                                     "100\n"})), \
+        """A successful raise is re-read and passes the floor."""
+        pm = {"/proc/sys/vm/max_map_count": "100\n"}
+        with mock.patch("builtins.open", _fake_open(pm)), \
              mock.patch("subprocess.run") as run:
-            run.return_value.returncode = 0
+            def _raised(*a, **kw):
+                pm["/proc/sys/vm/max_map_count"] = "1000\n"
+                return mock.Mock(returncode=0)
+            run.side_effect = _raised
             ensure_vma(1000)
             run.assert_called_once_with(
                 ["sudo", "sysctl", "-w", "vm.max_map_count=1000"])
+
+    def test_still_short_after_raise_aborts(self):
+        """A failed sudo must QUIT, not warn: Rust catches it only
+        after the DB build, and has false-passed."""
+        pm = {"/proc/sys/vm/max_map_count": "65530\n"}
+        with mock.patch("builtins.open", _fake_open(pm)), \
+             mock.patch("subprocess.run") as run, \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ZKR_SKIP_MAP_COUNT_CHECK", None)
+            run.return_value.returncode = 1
+            with self.assertRaises(SystemExit) as cm:
+                ensure_vma(1073741824)
+            self.assertIn("PREFLIGHT ABORT", str(cm.exception))
+            self.assertIn("65530", str(cm.exception))
+
+    def test_bypass_env_downgrades_abort_to_warn(self):
+        """ZKR_SKIP_MAP_COUNT_CHECK is the SAME escape hatch Rust
+        honours, so one bypass covers both gates."""
+        pm = {"/proc/sys/vm/max_map_count": "65530\n"}
+        with mock.patch("builtins.open", _fake_open(pm)), \
+             mock.patch("subprocess.run") as run, \
+             mock.patch.dict(os.environ,
+                             {"ZKR_SKIP_MAP_COUNT_CHECK": "1"}):
+            run.return_value.returncode = 1
+            ensure_vma(1073741824)   # must not raise
+
+    def test_already_high_enough_never_reaches_the_gate(self):
+        """cur >= target returns BEFORE sudo, so a box already set up
+        by sysctl.d never needs a tty."""
+        with mock.patch("builtins.open",
+                         _fake_open({"/proc/sys/vm/max_map_count":
+                                     "2000000000\n"})), \
+             mock.patch("subprocess.run") as run:
+            ensure_vma(1073741824)
+            run.assert_not_called()
 
     def test_unreadable_is_nonfatal(self):
         with mock.patch("builtins.open", side_effect=OSError("nope")):
@@ -8766,8 +8855,12 @@ class EndToEndWiringTest(unittest.TestCase):
         self.addCleanup(p.stop)
 
     def test_full_leaf_plan_runs_end_to_end(self):
+        # ensure_vma is FATAL since 2026-08-18 and a dev box is
+        # typically below the floor; this test is about plan wiring,
+        # not the kernel.  EnsureVmaTest owns that gate.
         with mock.patch("sys.argv",
                          ["prog", "--run", "dry_run", "--items", "A"]), \
+             mock.patch.object(_MOD, "ensure_vma"), \
              mock.patch.object(_MOD, "_preflight", return_value=0) as pf, \
              mock.patch.object(_MOD, "go_background") as gb, \
              mock.patch.object(_MOD, "install_signal_handlers") as ish:

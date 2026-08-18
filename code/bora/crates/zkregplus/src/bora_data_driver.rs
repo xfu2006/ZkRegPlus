@@ -441,8 +441,10 @@ pub struct DatasetSpec {
 	/// true only for SMALL_DLP, whose whole point is fold timing.
 	pub(crate) b_fold_only: bool,
 	/// V101: route the non-aggressive tuner to tune_neo_non_aggr_v2.
-	/// false in every spec literal; only full_clamav_neo's cloned
-	/// CLAM sets it, from the `full_clam_v2` subcommand.
+	/// false in every spec literal; the cloned CLAM / DNA set it from
+	/// the subcommand. DEFAULT IS v2 since 2026-08-18 -- the bare
+	/// `full_clam` / `full_dna` tokens select v2, and only the
+	/// explicit `_v1` tokens fall back to the legacy tuner.
 	pub(crate) b_tune_v2: bool,
 }
 
@@ -2937,26 +2939,54 @@ pub fn small_full_dlp_neo(perc_db: f64, perc_samples: f64,
 /// num_jobs = numa_num = 1 (single offset-anchored sample).
 pub fn full_dna_neo(perc_db: f64, perc_samples: f64,
 	num_circs: usize, num_jobs: usize, numa_num: usize,
-	part_id: usize, b_dry_run: bool, b_ladder_only: bool)
-	-> Vec<CapParams> {
-	run_neo(&DNA, perc_db, perc_samples, num_circs, num_jobs,
+	part_id: usize, b_dry_run: bool, b_ladder_only: bool,
+	tune_v2: Option<bool>) -> Vec<CapParams> {
+	let mut spec = DNA.clone();
+	spec.b_tune_v2 = tune_v2.unwrap_or(true);
+	arm_plan_dir(&mut spec, tune_v2, "dna_v1", "dna_v1_neo",
+		"dna_v2", "dna_v2_neo");
+	run_neo(&spec, perc_db, perc_samples, num_circs, num_jobs,
 		numa_num, part_id, b_dry_run, b_ladder_only)
 }
 
-/// ClamAV full run: run_neo over the CLAM const. `b_tune_v2` (the
-/// `full_clam_v2` subcommand) routes the non-aggr tuner to v2 and
-/// gives that arm its OWN plan dir + DB cache, so an A/B pair cannot
-/// wipe each other's ladder.json / meter.json (reset_part_dir, :2388).
+/// An explicit A/B token gets its OWN plan dir + DB cache so the two
+/// arms cannot wipe each other's ladder.json / meter.json
+/// (reset_part_dir, :2388). The BARE token is the production run and
+/// keeps the canonical dirs, so the collectors that look under
+/// /tmp/bora/<name>_neo_p* still find it.
+/// Tuner arm from the subcommand token. None = the BARE name, which
+/// takes the default arm (v2 since 2026-08-18) and the canonical plan
+/// dir; Some = an explicit A/B token, which also gets its own dir.
+fn arm_of(sub: &str) -> Option<bool> {
+	if sub.ends_with("_v1") { return Some(false); }
+	if sub.ends_with("_v2") { return Some(true); }
+	None
+}
+
+fn arm_plan_dir(spec: &mut DatasetSpec, tune_v2: Option<bool>,
+	v1_name: &'static str, v1_cache: &'static str,
+	v2_name: &'static str, v2_cache: &'static str) {
+	match tune_v2 {
+		Some(false) => { spec.name = v1_name;
+			spec.db_cache_dir = v1_cache; }
+		Some(true) => { spec.name = v2_name;
+			spec.db_cache_dir = v2_cache; }
+		None => {}
+	}
+}
+
+/// ClamAV full run: run_neo over the CLAM const. `tune_v2` is the
+/// subcommand's arm -- None for the bare `full_clam` (production,
+/// which takes the v2 DEFAULT and the canonical plan dir), Some for
+/// the explicit `full_clam_v1` / `full_clam_v2` A/B tokens.
 pub fn full_clamav_neo(perc_db: f64, perc_samples: f64,
 	num_circs: usize, num_jobs: usize, numa_num: usize,
 	part_id: usize, b_dry_run: bool, b_ladder_only: bool,
-	b_tune_v2: bool) -> Vec<CapParams> {
+	tune_v2: Option<bool>) -> Vec<CapParams> {
 	let mut spec = CLAM.clone();
-	spec.b_tune_v2 = b_tune_v2;
-	if b_tune_v2 {
-		spec.name = "clam_v2";
-		spec.db_cache_dir = "clam_v2_neo";
-	}
+	spec.b_tune_v2 = tune_v2.unwrap_or(true);
+	arm_plan_dir(&mut spec, tune_v2, "clam_v1", "clam_v1_neo",
+		"clam_v2", "clam_v2_neo");
 	run_neo(&spec, perc_db, perc_samples, num_circs, num_jobs,
 		numa_num, part_id, b_dry_run, b_ladder_only)
 }
@@ -3420,8 +3450,11 @@ pub const USAGE: &str = "bora_cli: backend of \
 	   (dry=1 also drops the hab22 cover check)\n \
 	 full_dna <same 8 args as full_dlp>\n \
 	 full_clam <same 8 args as full_dlp>\n \
-	 full_clam_v2 <same 8 args as full_clam>\n \
-	   (V101: identical run, v2 non-aggr tuner; own plan dir)\n \
+	   (both DEFAULT to the v2 non-aggr tuner since 2026-08-18)\n \
+	 full_dna_v1 | full_clam_v1 <same 8 args>\n \
+	   (legacy v1 tuner; own plan dir)\n \
+	 full_dna_v2 | full_clam_v2 <same 8 args>\n \
+	   (V101 A/B: identical run, v2 tuner; own plan dir)\n \
 	 small_full_dlp <same 8 args as full_dlp>\n \
 	   (entire DB, pre-cut ~5% corpus, fold cost only -- no snark;\n \
 	    pass perc_samples=100, the list IS the sample)\n \
@@ -3438,10 +3471,15 @@ pub enum Cmd {
 		b_dry_run: bool, b_ladder_only: bool },
 	FullDna { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
-		b_dry_run: bool, b_ladder_only: bool },
+		b_dry_run: bool, b_ladder_only: bool,
+		/// tuner arm: None = bare token (production, v2 default and
+		/// canonical plan dir), Some = explicit _v1/_v2 A/B token.
+		tune_v2: Option<bool> },
 	FullClam { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
-		b_dry_run: bool, b_ladder_only: bool, b_tune_v2: bool },
+		b_dry_run: bool, b_ladder_only: bool,
+		/// tuner arm; same contract as FullDna::tune_v2.
+		tune_v2: Option<bool> },
 	SmallFullDlp { perc_db: f64, perc_samples: f64, num_circs: usize,
 		num_jobs: usize, numa_num: usize, part_id: usize,
 		b_dry_run: bool, b_ladder_only: bool },
@@ -3535,15 +3573,17 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				num_jobs, numa_num, part_id, b_dry_run,
 				b_ladder_only }
 		}
-		Some("full_dna") => {
+		Some(sub @ ("full_dna" | "full_dna_v1"
+			| "full_dna_v2")) => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
 				numa_num, part_id, b_dry_run, b_ladder_only) =
-				parse_full8(args, "full_dna");
+				parse_full8(args, sub);
 			Cmd::FullDna { perc_db, perc_samples, num_circs,
 				num_jobs, numa_num, part_id, b_dry_run,
-				b_ladder_only }
+				b_ladder_only, tune_v2: arm_of(sub) }
 		}
-		Some(sub @ ("full_clam" | "full_clam_v2")) => {
+		Some(sub @ ("full_clam" | "full_clam_v1"
+			| "full_clam_v2")) => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
 				numa_num, part_id, b_dry_run, b_ladder_only) =
 				parse_full8(args, sub);
@@ -3551,7 +3591,7 @@ pub fn parse_args(args: &[String]) -> Cmd {
 			// tuner runs, so an A/B needs no rebuild (R6).
 			Cmd::FullClam { perc_db, perc_samples, num_circs,
 				num_jobs, numa_num, part_id, b_dry_run,
-				b_ladder_only, b_tune_v2: sub.ends_with("_v2") }
+				b_ladder_only, tune_v2: arm_of(sub) }
 		}
 		Some("small_full_dlp") => {
 			let (perc_db, perc_samples, num_circs, num_jobs,
@@ -5328,7 +5368,8 @@ pub mod tests_bora_data_driver {
 			"1", "0", "1", "0"])),
 			Cmd::FullDna { perc_db: 1.0, perc_samples: 2.0,
 				num_circs: 1, num_jobs: 1, numa_num: 1, part_id: 0,
-				b_dry_run: true, b_ladder_only: false });
+				b_dry_run: true, b_ladder_only: false,
+				tune_v2: None });
 		assert_eq!(parse_args(&a(&["full_dlp", "0.25", "0.0198",
 			"2", "2", "1", "0", "1", "0"])),
 			Cmd::FullDlp { perc_db: 0.25, perc_samples: 0.0198,
@@ -5707,11 +5748,11 @@ pub mod tests_bora_data_driver {
 		}
 	}
 
-	/// V101 R6: the two subcommands differ ONLY in b_tune_v2, so an
+	/// V101 R6: the two A/B subcommands differ ONLY in the arm, so an
 	/// A/B needs no rebuild and no argv change.
 	#[test]
 	fn test_v101_ab_switch_is_the_only_difference() {
-		let a = parse_args(&argv(&["full_clam", "100", "15", "2",
+		let a = parse_args(&argv(&["full_clam_v1", "100", "15", "2",
 			"1", "1", "0", "0", "1"]));
 		let b = parse_args(&argv(&["full_clam_v2", "100", "15", "2",
 			"1", "1", "0", "0", "1"]));
@@ -5719,18 +5760,47 @@ pub mod tests_bora_data_driver {
 			(Cmd::FullClam { perc_db: p1, perc_samples: s1,
 				num_circs: c1, num_jobs: j1, numa_num: n1,
 				part_id: i1, b_dry_run: d1, b_ladder_only: l1,
-				b_tune_v2: v1 },
+				tune_v2: v1 },
 			 Cmd::FullClam { perc_db: p2, perc_samples: s2,
 				num_circs: c2, num_jobs: j2, numa_num: n2,
 				part_id: i2, b_dry_run: d2, b_ladder_only: l2,
-				b_tune_v2: v2 }) => {
+				tune_v2: v2 }) => {
 				assert_eq!((p1, s1, c1, j1, n1, i1, d1, l1),
 					(p2, s2, c2, j2, n2, i2, d2, l2),
 					"every arg but the tuner flag must match");
-				assert!(!v1 && v2, "only b_tune_v2 differs");
+				assert_eq!((v1, v2), (Some(false), Some(true)),
+					"only the tuner arm differs");
 			}
 			_ => panic!("both must parse to FullClam"),
 		}
+	}
+
+	/// The BARE token defaults to v2 and keeps the canonical plan
+	/// dir; only an explicit `_v1` token falls back to the v1 tuner.
+	#[test]
+	fn test_bare_subcommand_defaults_to_v2() {
+		for bare in ["full_clam", "full_dna"] {
+			assert_eq!(arm_of(bare), None, "{} must be the default",
+				bare);
+		}
+		assert_eq!(arm_of("full_clam_v1"), Some(false));
+		assert_eq!(arm_of("full_dna_v1"), Some(false));
+		assert_eq!(arm_of("full_clam_v2"), Some(true));
+		assert_eq!(arm_of("full_dna_v2"), Some(true));
+		// None must RESOLVE to v2: that is the switch itself.
+		assert!(None::<bool>.unwrap_or(true));
+		// and the bare arm must NOT take an A/B plan dir, or the
+		// production dump collectors stop finding ladder.json.
+		let mut sp = CLAM.clone();
+		arm_plan_dir(&mut sp, None, "clam_v1", "clam_v1_neo",
+			"clam_v2", "clam_v2_neo");
+		assert_eq!((sp.name, sp.db_cache_dir),
+			(CLAM.name, CLAM.db_cache_dir));
+		let mut sp = DNA.clone();
+		arm_plan_dir(&mut sp, None, "dna_v1", "dna_v1_neo",
+			"dna_v2", "dna_v2_neo");
+		assert_eq!((sp.name, sp.db_cache_dir),
+			(DNA.name, DNA.db_cache_dir));
 	}
 
 	/// M104: full_clam parses through the shared parse_full8;
@@ -5742,15 +5812,15 @@ pub mod tests_bora_data_driver {
 			Cmd::FullClam { perc_db: 0.5, perc_samples: 0.1,
 				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
 				b_dry_run: true, b_ladder_only: false,
-				b_tune_v2: false });
+				tune_v2: None });
 		// V101: the _v2 spelling takes the SAME 8 args and differs
-		// only in b_tune_v2 -- that is the A/B switch (R6).
+		// only in the arm -- that is the A/B switch (R6).
 		assert_eq!(parse_args(&argv(&["full_clam_v2", "0.5", "0.1",
 			"2", "2", "1", "0", "1", "0"])),
 			Cmd::FullClam { perc_db: 0.5, perc_samples: 0.1,
 				num_circs: 2, num_jobs: 2, numa_num: 1, part_id: 0,
 				b_dry_run: true, b_ladder_only: false,
-				b_tune_v2: true });
+				tune_v2: Some(true) });
 		assert_eq!(parse_args(&argv(&["scale_clam", "1", "1,300",
 			"1"])),
 			Cmd::ScaleClam { corpus_idx: 1,

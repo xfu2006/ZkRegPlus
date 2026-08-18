@@ -31146,10 +31146,6 @@ Goal 3. continue to test on 512gb server
   grep -E "PROGRESS step" /tmp/bora/CURRENT_JOB.log | tail -2
 
 Sat 08/15/2026
-#####################################
-*Small server: started 08/14 6am
-*Big server: started 08/15 4am
-#####################################
 
 Goal 1. correct bib
 	[a] T916, T918 done
@@ -31241,29 +31237,32 @@ Tuesday 08/18/2026
 Goal 1. monitor full_dlp
 	[a] 8:00am check good pass cmF and fast
 	[b] 9:00am watch memory
+	[c] going well, expected 40% faster in folding
 Goal 2. monitor clamav tuning test
 	[a] 8:00am check ok last item
 	[b] prepare dry run of clamav on 512gb
 	[c] test tuning results back -> it overcapped to twice the size
 			-> it takes 2:00am -> 10:00am: run for 8 hours
-		-> fix?
+		-> fix? -> deployed 12:00pm -> watch progress
+			=? skip 2:56pm (3 hrs)
+	[d] test run on 512gb for clamav
+		[a] started 4:15pm 08/18/2026 ==> 
 Goal 3. Writing section 5
-	[a]
+	[a] 5.1 and 5.2
+	-- TODO --
+	[b] 5.3
 
 --- DATA ----
+#####################################
+*Small server: started 08/14 6am
+*Big server: started 08/15 4am
+#####################################
 *** LARGE SERVER ***
 [1] full_dna -> DONE
 [2] full_dlp (6:10pm 08/17) -> 
 
 *** SMALL SERVER ***
-[1]
-
-
-
-
-	
-		
-
+[1] 
 
 ----- ACTIVE GOALS -----
 Setting: https://anonymous.4open.science/r/bora_sec27
