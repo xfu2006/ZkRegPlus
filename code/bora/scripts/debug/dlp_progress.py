@@ -156,6 +156,25 @@ LEG_MAX_PP = 29308137
 # the side fold's single circuit (KEYS info n_circs: 1).
 LEG_SIDE = (183775, 185119, 368891)
 
+# ---- THE 08-16 FULL-SCALE NEO REFERENCE.  Same spec, same DB, same
+# corpus, ratchet off (b_fold_only false for DLP), so this run must
+# REPRODUCE it -- a divergence means the tree changed, not the data.
+# Source: /tmp/bora/neo_run/speed/neo_pass1_0816.log, PERF 1002 + KEYS.
+NEO_REF_LADDER = {
+	1: (295516, 245348),
+	2: (1942772, 1620648),
+	3: (7920188, 6738718),
+	4: (20453765, 17296201),
+}
+# (total_w, total_e, cs1e, max_pp) from that run's 4-circ KEYS info.
+NEO_REF_KEYS = (30612229, 25900915, 56513145, 20453765)
+# v5 walk occupancy in WORDS (not chunks) and the rung costs beside it.
+# The occupancy doubles as the routing prior until phase 1 measures the
+# real per-CHUNK mix: on the 512 GB run words read 91.67% on rung 1
+# against 90.59% of chunks, so it is close but not identical.
+NEO_REF_HIST = [462809, 34035, 6700, 1311]
+NEO_REF_COSTS = [2054, 22168, 82472, 300288]
+
 # routing mix in percent, low rung first, over ALL 926,900 chunks.
 LEG_MIX = [24.6509, 70.4427, 4.6640, 0.2424]
 # P_max.subsigs the full_dlp tuner settles on, both arms.
@@ -938,6 +957,17 @@ class Run(object):
 					for k, v in a.pending.items()}, "IN FLIGHT")
 		return None
 
+	def v5_hist(self):
+		"""v5 walk occupancy as 4 per-rung WORD counts, or None."""
+		v5 = next((a.v5 for a in self.accs if a.v5), None)
+		if not v5:
+			return None
+		try:
+			h = [int(x) for x in v5[1].split(",") if x.strip()]
+		except ValueError:
+			return None
+		return h if len(h) == 4 else None
+
 	def ladder_dict(self):
 		"""Just the {idx: (cols, rows)} map, or {}."""
 		lad = self.ladder()
@@ -1125,16 +1155,28 @@ def weighted(ladder, mix, col=0):
 		for i in range(4) if (i + 1) in ladder)
 
 
-def pick_inputs(got, mix):
-	"""(ladder, ladder source, mix, mix source) for every projection:
-	this run's own numbers once it has them, the legacy ones as a
-	placeholder until then, so one place decides and every section
-	agrees."""
-	have_lad = bool(got) and len(got) >= 4
-	return (got if have_lad else LEG_LADDER,
-		"measured" if have_lad else "legacy placeholder",
-		mix if sum(mix) else LEG_MIX,
-		"measured" if sum(mix) else "legacy placeholder")
+def pick_inputs(got, mix, v5=None):
+	"""(ladder, ladder source, mix, mix source) for every projection.
+	Best available first: this run's own numbers, then the 08-16
+	full-scale neo reference this run is expected to reproduce, then
+	legacy.  One place decides so every section agrees."""
+	if sum(mix):
+		m, ms = mix, "measured"
+	elif v5 and sum(v5):
+		m, ms = v5, "v5 occupancy"
+	else:
+		# nothing neo-derived exists yet.  Both halves stay on the
+		# LEGACY arm: neo's ladder priced with legacy's routing pays
+		# neo's oversized rung 2 at legacy's rate of using it, which
+		# describes no run (1.495x vs 1.000x legacy, 0.835x neo).
+		return LEG_LADDER, "legacy placeholder", LEG_MIX, \
+			"legacy placeholder"
+	# a partial ladder still prices the run when it covers every rung
+	# that carries work; falling back would drop that rung's hours.
+	if got and not [r for r in range(1, 5)
+			if m[r - 1] > 0 and r not in got]:
+		return got, "measured", m, ms
+	return NEO_REF_LADDER, "08-16 neo ref", m, ms
 
 
 def project_step_ms(lad, m):
@@ -1192,9 +1234,12 @@ def p3_projection(run, mix, got):
 	15% high, so the model leads until a quarter of the fold is done."""
 	steps = run.steps_per_job()
 	span_s, span_n = run.p3_span_s()
-	lad, _ls, m, _ms = pick_inputs(got, mix)
+	lad, ls, m, ms = pick_inputs(got, mix, run.v5_hist())
 	pr = project_step_ms(lad, m)
 	model = pr[0] * steps / 1000.0 if pr else None
+	msrc = ("legacy-fitted cost model"
+		if ls == ms == "legacy placeholder"
+		else "legacy fit on %s + %s" % (ls, ms))
 	shape = None
 	f = 0.0
 	if span_n:
@@ -1205,7 +1250,7 @@ def p3_projection(run, mix, got):
 	if shape is not None and f >= 0.25:
 		return shape, "own spans at the same point", f, model, shape
 	if model is not None:
-		return model, "legacy-fitted cost model", f, model, shape
+		return model, msrc, f, model, shape
 	return shape, "own spans at the same point", f, model, shape
 
 
@@ -1398,8 +1443,21 @@ def show_gate(run):
 		print("ratchet    : not fired")
 	v5 = next((a.v5 for a in run.accs if a.v5), None)
 	if v5:
-		print("v5 walk    : %s rungs, hist=[%s], costs=[%s]"
-			% (v5[0], v5[1], v5[2]))
+		h = run.v5_hist()
+		n = float(sum(h)) if h else 0.0
+		print("v5 walk    : %s rungs over %s WORDS (occupancy, not "
+			"chunks)" % (v5[0], com(int(n)) if n else "?"))
+		if n:
+			print("             %s   mean rung %.3f vs %.3f legacy"
+				% (" / ".join("%.2f%%" % (100.0 * c / n) for c in h),
+					sum((i + 1) * h[i] for i in range(4)) / n,
+					sum((i + 1) * LEG_MIX[i] for i in range(4)) / 100.0))
+		print("             costs=[%s] -- cost-MODEL units, not ms"
+			% v5[2])
+		if h:
+			print("             %s the 08-16 full-scale reference walk"
+				% ("MATCHES" if h == NEO_REF_HIST
+					else "DIVERGES from"))
 	gate = run.gate()
 	if not gate:
 		print("gate       : PENDING -- tuner has not reported yet")
@@ -1418,7 +1476,24 @@ def show_circuits(run, mix):
 	print("-" * 72)
 	lad = run.ladder()
 	if not lad:
-		print("CIRCUITS   : ladder PENDING -- no preprocess block yet")
+		# not just "wait": the 08-16 run fixed what this ladder must
+		# be, so print the target now and the operator can check it
+		# the moment PERF 1002 lands.
+		print("CIRCUITS   : ladder PENDING -- no preprocess block yet."
+			"  EXPECTED, from 08-16:")
+		print("  %-5s %-13s %-13s %-7s %s"
+			% ("circ", "expected", "legacy cols", "x", "expected rows"))
+		for i in sorted(NEO_REF_LADDER):
+			c, r = NEO_REF_LADDER[i]
+			lc = LEG_LADDER[i][0]
+			print("  %-5d %-13s %-13s %-7.3f %s"
+				% (i, com(c), com(lc), c / float(lc), com(r)))
+		print("  %-5s %-13s %-13s %-7.3f"
+			% ("cs1e", com(NEO_REF_KEYS[2]), com(LEG_CS1E),
+				NEO_REF_KEYS[2] / float(LEG_CS1E)))
+		print("  %-5s %-13s %-13s %-7.3f   <-- decider size, peak RAM"
+			% ("maxpp", com(NEO_REF_KEYS[3]), com(LEG_MAX_PP),
+				NEO_REF_KEYS[3] / float(LEG_MAX_PP)))
 		return {}
 	n_circs, got, tag = lad
 	print("CIRCUITS   : ladder circs: %d  [%s]" % (n_circs, tag))
@@ -1431,6 +1506,17 @@ def show_circuits(run, mix):
 			% (i, com(c), com(lc),
 				"%.3f" % (c / lc) if c and lc else "-", com(r),
 				com(lr)))
+	# the 08-16 run pinned every one of these; a mismatch is a TREE
+	# change, since spec, DB and corpus are identical.
+	off = [i for i in NEO_REF_LADDER
+		if i in got and got[i][0] != NEO_REF_LADDER[i][0]]
+	if len(got) >= EXPECT_RUNGS:
+		print("  vs 08-16 ref: %s"
+			% ("MATCH on all %d rungs" % EXPECT_RUNGS if not off
+				else "DIVERGED at rung %s -- %s"
+				% (",".join(str(i) for i in off),
+					" ".join("%s vs %s" % (com(got[i][0]),
+						com(NEO_REF_LADDER[i][0])) for i in off))))
 	keys = run.keys()
 	if keys:
 		for name, v, lv, note in (
@@ -1517,23 +1603,28 @@ def show_breakdown(run, mix, got):
 	phase 3 prints anything, since cmF is LOG4-silent -- so this is the
 	earliest honest read on the fold."""
 	print("-" * 72)
-	tot = float(sum(mix))
-	if not got:
-		print("BREAKDOWN  : PENDING -- needs the ladder (no preprocess "
-			"block yet)")
+	got, ls, m, ms = pick_inputs(got, mix, run.v5_hist())
+	tot = float(sum(m))
+	if tot <= 0 or ms == "legacy placeholder":
+		print("BREAKDOWN  : PENDING -- needs routing or the v5 walk "
+			"(neither has reported)")
 		return
-	if tot <= 0:
-		print("BREAKDOWN  : PENDING -- needs routing (no completed "
-			"words yet)")
-		return
+	mix = m
 	outer = run.merged("outer")
 	adv = run.merged("adv")
 	done = run.step_wall(2)[0] is not None
 	all_c = run.total_steps()
-	print("BREAKDOWN  : %s -- %s chunks routed%s"
-		% ("FINAL (phase 1 done)" if done else "PARTIAL", com(int(tot)),
-			"" if done else ", %.1f%% of ~%s"
-			% (min(100.0, 100.0 * tot / max(all_c, 1)), com(all_c))))
+	if ls == "measured" and ms == "measured":
+		state = "FINAL (phase 1 done)" if done else "PARTIAL"
+		note = ("" if done else ", %.1f%% of ~%s"
+			% (min(100.0, 100.0 * tot / max(all_c, 1)), com(all_c)))
+		print("BREAKDOWN  : %s -- %s chunks routed%s"
+			% (state, com(int(tot)), note))
+		tag = "" if done else "   [PARTIAL]"
+	else:
+		print("BREAKDOWN  : PROJECTED -- ladder %s, routing %s"
+			% (ls, ms))
+		tag = "   [PROJECTED]"
 	# ms[r] is what ONE step on rung r costs; cost[r] weights it by the
 	# chunks that route there, which is the only thing hours care about.
 	ms, meas, cost = {}, {}, {}
@@ -1583,8 +1674,7 @@ def show_breakdown(run, mix, got):
 		% (mean, LEG_STEP_WALL_MS, mean / LEG_STEP_WALL_MS))
 	p3 = mean * run.steps_per_job() / 1000.0
 	print("  => PHASE 3 ~= %s per job vs legacy %s = %.3fx%s"
-		% (hm(p3), hm(LEG_STEP[7][0]), p3 / LEG_STEP[7][0],
-			"" if done else "   [PARTIAL]"))
+		% (hm(p3), hm(LEG_STEP[7][0]), p3 / LEG_STEP[7][0], tag))
 
 
 def show_phase1(run, bank):

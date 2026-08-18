@@ -31228,6 +31228,9 @@ Goal 3. Full clam
 	[h] check 11:00am! -> still NOT finished!
 	[i] run 12 hours no completion - > stop it
 		tune TOO SLOW! -> tuner cost is 19 hrs!
+	[j] new improvement algorithm is implemented, local tests done
+	[h] long server tests deploy to 512GB
+		-> 
 
 Goal 4. full dlp on server
 	[a] started 6:10pm on 1tb srever

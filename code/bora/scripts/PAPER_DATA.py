@@ -2374,8 +2374,9 @@ TOP_CHOICES = [
     # JOB_SPECS leaf -- `full_run --items all` must never reach it,
     # it writes nothing into raw_data/.
     ("v101", "V101 tuner test suite (all tests, unattended, self-"
-             "sizing to a 08:30 clock; verdict -> "
-             "/tmp/bora/v101/V101_VERDICT.txt)"),
+             "sizing to a 12:00 clock; watch "
+             "/tmp/bora/v101/V101_PROGRESS.txt, verdict + "
+             "V101_BUNDLE.tgz beside it)"),
 ]
 
 LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
@@ -2711,25 +2712,52 @@ def run_small_full_dlp():
 #   * no safe_pack_dump / place_raw_data call, so raw_data/ -- and the
 #     paper's full_clam.part*.tgz in particular -- is untouched.
 #
-# Everything the suite learns lands in TWO places:
+# Everything the suite learns lands in FOUR places, all stable paths:
 #   /tmp/bora/v101/<ts>/detail.log   every number + the line it came
 #                                    from (the debug artifact)
-#   /tmp/bora/v101/V101_VERDICT.txt  the succinct report (symlink to
-#                                    the latest run's verdict.txt)
+#   /tmp/bora/v101/V101_PROGRESS.txt live status, rewritten at every
+#                                    step START and END -- `cat` it
+#                                    any time to see where the run is
+#   /tmp/bora/v101/V101_VERDICT.txt  the succinct final report
+#   /tmp/bora/v101/V101_BUNDLE.tgz   downloadable artifact: the whole
+#                                    run dir, repacked after ANY
+#                                    failing step and again at the end
 
 V101_ROOT = "/tmp/bora/v101"
 V101_VERDICT = os.path.join(V101_ROOT, "V101_VERDICT.txt")
+V101_PROGRESS = os.path.join(V101_ROOT, "V101_PROGRESS.txt")
+V101_BUNDLE = os.path.join(V101_ROOT, "V101_BUNDLE.tgz")
+
+# Per-file truncation inside the bundle: head + tail, with a marker
+# between.  A tuner run.log reaches hundreds of MB and the bundle has
+# to stay small enough to scp; the head holds the seed/config lines
+# and the tail holds the failure.
+V101_BUNDLE_KEEP_MB = 20.0     # files at or under this go in whole
+V101_BUNDLE_HEAD_MB = 5.0
+V101_BUNDLE_TAIL_MB = 15.0
 
 # neo_env() scrubs every ZKR_*, so these must be re-added AFTER it
 # (same mechanism as DNA_DEBUG_ENV).
 V101_SEED_ENV = {"ZKR_V101_SEED_ONLY": "1"}
 V101_METER_ENV = {"ZKR_METER_T9901": "1"}
 
-# Hard clock the suite must be finished by: the next local 08:30
-# (18:30 + 14 h).  A CLOCK, not a budget -- a late start degrades the
-# vehicle the picker chooses, never the finish time.
-V101_DEADLINE_HOUR = 8
-V101_DEADLINE_MIN = 30
+# Hard clock the suite must be finished by: the next local 12:00
+# (20:00 + 16 h).  A CLOCK, not a budget -- a late start degrades the
+# vehicle the picker chooses, never the finish time.  Enforced twice:
+# a step is not STARTED without room, and every step's wall cap is
+# clamped to the time left (run_v101), so a fixed cap_s -- dec_big's
+# 5 h in particular -- can no longer overrun the clock.
+V101_DEADLINE_HOUR = 12
+V101_DEADLINE_MIN = 0
+
+# Seconds the picker must LEAVE on the clock for the three decider
+# steps that follow the A/B.  dec_v1/dec_v2 measured 7m/8m locally;
+# dec_big is priced at its own 5 h cap.  Without this reserve the
+# picker spends the entire clock on the A/B and dec_big -- the only
+# production-width fold+prove, i.e. R1's strongest evidence -- is
+# skipped for "no time".  Unused reserve is not wasted: a fast A/B
+# simply hands its slack to dec_big, whose cap is per-step.
+V101_DEC_RESERVE_S = 5.5 * 3600
 
 # Cost-model priors, in the units of the model.  Steps 4 and 5 REPLACE
 # every one of these with a measurement before the picker runs; they
@@ -2754,9 +2782,24 @@ V101_V2_PASSES = 1
 # (perc_samples, files, MB, padded chunks, derived lkup share) for the
 # deterministic subsets of the clam corpus at chunk_len 4096.  Measured
 # 2026-08-17 by replaying subset()/fixed_perm() over the 8 binexec
-# manifests; production's own share is 129, so perc 20 is the closest
-# vehicle that can fit.  DESCENDING: the picker takes the first fit.
+# manifests.  DESCENDING: the picker takes the first fit.
+#
+# Rows 25/30/40 added 2026-08-17 for the 16 h clock.  Same replay,
+# re-validated first: it reproduces files and MB EXACTLY on all three
+# pre-existing anchors (25/12.3, 242/112.2, 1209/765.5), and its raw
+# ceil(size/131072) chunk count runs a flat 5.2-5.5% under the logged
+# padded count, so chunks here are replay x 1.0555 (which returns
+# 989 at perc 20 and 111 vs the logged 110 at perc 2).
+#
+# `share` is INFORMATIONAL -- it never enters v101_cost (design 11.1a:
+# the derived lkup share does not touch per-chunk probe cost, only
+# ladder construction and RAM).  It falls as the vehicle grows, so the
+# new rows are strictly CHEAPER in RAM than perc 20, not dearer.
+# Production's own share is 129; perc 20 (110) remains the closest.
 V101_VEHICLES = [
+    (40, 484, 272.0, 2357, 45),
+    (30, 363, 175.1, 1539, 71),
+    (25, 303, 146.1, 1287, 85),
     (20, 242, 112.2, 989, 110),
     (15, 182, 91.6, 800, 135),
     (10, 121, 48.5, 435, 255),
@@ -2793,11 +2836,14 @@ class V101Step:
 @dataclass
 class V101Res:
     key: str
-    status: str = "PENDING"   # OK FAIL TIMEOUT SKIP
+    status: str = "PENDING"   # PENDING RUNNING OK FAIL TIMEOUT SKIP
     why: str = ""
     wall_s: float = 0.0
     rss_gb: float = 0.0
     nums: dict = None         # parsed numbers, verbatim into detail.log
+    tgz: str = ""             # this step's own JobHandle triage bundle
+    t_start: float = 0.0      # epoch; 0 until the step is spawned
+    cap_s: int = 0            # the wall cap this step actually got
 
 
 def _v101_now():
@@ -2831,6 +2877,21 @@ def _v101_deadline(t0):
     if at <= t0:
         at += 24 * 3600
     return at
+
+
+def _v101_room(left):
+    """Seconds a step may use without crossing the hard deadline; 180 s
+    are held back for the verdict and the bundle."""
+    return int(max(60, left - 180))
+
+
+def _v101_cap(cap_s, left):
+    """The wall cap a step actually gets.  A fixed cap_s -- dec_big's
+    5 h in particular -- is CLAMPED to the room left, so no step can
+    run through the clock; a step with no cap of its own takes the
+    room."""
+    room = _v101_room(left)
+    return min(cap_s, room) if cap_s else room
 
 
 def _v101_hm(s):
@@ -3039,6 +3100,158 @@ def _v101_keep(run_dir, key, ctx_log):
     return dst
 
 
+def _v101_step_rows(results, now=None):
+    """(key, status, wall, rss, note) per step.  ONE renderer, shared
+    by the progress file and the verdict, so the two cannot disagree.
+    A RUNNING step reports its elapsed time, not a zero."""
+    now = _v101_now() if now is None else now
+    out = []
+    for k, r in results.items():
+        wall = r.wall_s
+        note = r.why or _v101_headline(k, r)
+        if r.status == "RUNNING" and r.t_start:
+            wall = now - r.t_start
+            note = "cap %s, kill at %s" % (
+                _v101_hm(r.cap_s),
+                time.strftime("%H:%M",
+                              time.localtime(r.t_start + r.cap_s)))
+        out.append((k, r.status, wall, r.rss_gb, note or ""))
+    return out
+
+
+def v101_progress_text(t0, deadline, run_dir, results, veh, model):
+    """Live status, renderable at ANY moment -- including mid-step.
+    This is what `cat /tmp/bora/v101/V101_PROGRESS.txt` shows."""
+    now = _v101_now()
+    L = []
+    A = L.append
+    A("=" * 66)
+    A("V101 SUITE PROGRESS  %s" % time.strftime("%Y-%m-%d %H:%M:%S"))
+    settled = sum(1 for r in results.values()
+                  if r.status not in ("PENDING", "RUNNING"))
+    A("elapsed %s   deadline %s (hard)   left %s   %d/%d settled"
+      % (_v101_hm(now - t0),
+         time.strftime("%H:%M", time.localtime(deadline)),
+         _v101_hm(deadline - now), settled, len(results)))
+    if veh:
+        A("vehicle perc_samples=%d  %d files  %.1fMB  %d chunks  "
+          "share %d (production 129)"
+          % (veh[0], veh[1], veh[2], veh[3], veh[4]))
+    else:
+        A("vehicle not chosen yet (picker runs after calib)")
+    A("model  t_db=%.0fs r_disch=%.2fs/MB r_probe=%.3fs/chunk "
+      "k5=%.2f km=%.2f" % (model["t_db"], model["r_disch"],
+                            model["r_probe"], model["k5"],
+                            model["km"]))
+    A("")
+    A("STEP        STATUS     WALL    RSS  NOTE")
+    for k, status, wall, rss, note in _v101_step_rows(results, now):
+        A("  %-10s %-8s %7s %5.1fGB  %s"
+          % (k, status, _v101_hm(wall), rss, note[:42]))
+    A("")
+    bad = [k for k, r in results.items()
+           if r.status in ("FAIL", "TIMEOUT")]
+    A("FAILURES SO FAR: %s" % (", ".join(bad) if bad else "none"))
+    if bad:
+        A("  bundle (repacked after each failure): %s" % V101_BUNDLE)
+    A("detail: %s/detail.log" % run_dir)
+    A("=" * 66)
+    return "\n".join(L)
+
+
+def _v101_write_progress(run_dir, text):
+    """tmp + rename, so a `cat` racing the writer never sees a
+    half-written file."""
+    path = os.path.join(run_dir, "progress.txt")
+    tmp = path + ".tmp"
+    try:
+        with open(tmp, "w") as f:
+            f.write(text + "\n")
+        os.rename(tmp, path)
+        _atomic_symlink(path, V101_PROGRESS)
+    except OSError:
+        pass
+    return path
+
+
+def _v101_tar_add(t, path, arcname, stage):
+    """Add one file, TRUNCATED to head + tail if it is over
+    V101_BUNDLE_KEEP_MB.  A tuner run.log reaches hundreds of MB; the
+    head carries the seed/config lines and the tail the failure, and
+    the bundle has to stay small enough to scp."""
+    try:
+        sz = os.path.getsize(path)
+    except OSError:
+        return
+    if sz <= V101_BUNDLE_KEEP_MB * 1e6:
+        t.add(path, arcname=arcname)
+        return
+    head = int(V101_BUNDLE_HEAD_MB * 1e6)
+    tail = int(V101_BUNDLE_TAIL_MB * 1e6)
+    cut = os.path.join(stage, arcname.replace(os.sep, "_") + ".cut")
+    try:
+        with open(path, "rb") as src, open(cut, "wb") as dst:
+            dst.write(src.read(head))
+            dst.write(b"\n\n===== V101 BUNDLE TRUNCATED: dropped %d "
+                      b"bytes from the middle of a %d byte file "
+                      b"=====\n\n" % (sz - head - tail, sz))
+            src.seek(sz - tail)
+            shutil.copyfileobj(src, dst)
+        t.add(cut, arcname=arcname + ".TRUNCATED")
+    except OSError:
+        pass
+
+
+def _v101_bundle(run_dir, results, reason, dlog):
+    """Repack the whole run dir -- plus every per-step JobHandle
+    triage tgz -- into ONE tarball at a stable path.  Called after ANY
+    failing step, so the artifact survives a kill, and again at the
+    end.  Never raises: a broken bundle must not fail the suite."""
+    tgz = os.path.join(run_dir, "bundle.tgz")
+    tmp = tgz + ".tmp"
+    stage = tempfile.mkdtemp(prefix="v101bundle_")
+    try:
+        man = os.path.join(stage, "MANIFEST.txt")
+        with open(man, "w") as f:
+            f.write("V101 bundle  host=%s  %s\nreason: %s\n"
+                    "run_dir: %s\n\n"
+                    % (platform.node(),
+                       time.strftime("%Y-%m-%d %H:%M:%S"), reason,
+                       run_dir))
+            for k, status, wall, rss, note in _v101_step_rows(results):
+                f.write("%-10s %-8s wall=%-7s rss=%.1fGB  %s\n"
+                        % (k, status, _v101_hm(wall), rss, note))
+                if results[k].tgz:
+                    f.write("%-10s   triage: %s\n"
+                            % ("", results[k].tgz))
+        with tarfile.open(tmp, "w:gz", compresslevel=6) as t:
+            t.add(man, arcname="MANIFEST.txt")
+            for dirpath, _d, names in os.walk(run_dir):
+                for nm in sorted(names):
+                    p = os.path.join(dirpath, nm)
+                    if nm.startswith("bundle.tgz") \
+                            or os.path.islink(p) \
+                            or not os.path.isfile(p):
+                        continue
+                    _v101_tar_add(t, p,
+                                   os.path.relpath(p, run_dir), stage)
+            for r in results.values():
+                if r.tgz and os.path.isfile(r.tgz):
+                    t.add(r.tgz, arcname="triage/"
+                           + os.path.basename(r.tgz))
+        os.rename(tmp, tgz)
+        _atomic_symlink(tgz, V101_BUNDLE)
+        dlog("bundle (%s): %s -> %s  %.1f MB"
+             % (reason, tgz, V101_BUNDLE,
+                os.path.getsize(tgz) / 1e6))
+        return tgz
+    except (OSError, tarfile.TarError) as e:
+        dlog("bundle FAILED (%s): %s" % (reason, e))
+        return ""
+    finally:
+        shutil.rmtree(stage, ignore_errors=True)
+
+
 def run_v101():
     """Menu item: the whole V101 test suite, unattended, self-sizing
     against a hard clock deadline, with its own verdict."""
@@ -3092,11 +3305,18 @@ def run_v101():
             r.status, r.why = "SKIP", "binary predates stage 2"
             prog("%-9s SKIP (%s)" % (st.key, r.why))
             continue
-        cap = st.cap_s if st.cap_s else int(max(60, left - 180))
-        if st.kind != "calc" and left < min(cap, 300) + 120:
+        # `want` is what the step ASKS for; the skip test uses it, so
+        # a step is dropped for "no time" on the same terms as before
+        # the clock moved.  `cap` is then CLAMPED to the time actually
+        # left: the deadline is hard, and dec_big's fixed 5 h used to
+        # be able to run straight through it.
+        want = st.cap_s if st.cap_s else _v101_room(left)
+        if st.kind != "calc" and left < min(want, 300) + 120:
             r.status, r.why = "SKIP", "no time (%s left)" % _v101_hm(left)
             prog("%-9s SKIP (%s)" % (st.key, r.why))
             continue
+        cap = _v101_cap(st.cap_s, left)
+        r.cap_s = cap
 
         if st.min_avail_gb:
             avail = _v101_mem_avail_gb()
@@ -3111,7 +3331,21 @@ def run_v101():
                  % (st.key, avail, st.min_avail_gb, st.max_rss_gb))
 
         if st.kind == "calc":                      # the picker
-            veh, veh_pred = v101_pick(model, left - 300, dlog)
+            # Hand the decider steps their room BEFORE sizing the A/B
+            # (V101_DEC_RESERVE_S).  With no v2 binary only dec_v1
+            # survives, so the reserve collapses to its cap.
+            reserve = V101_DEC_RESERVE_S if have_v2 else 900.0
+            veh, veh_pred = v101_pick(model, left - 300 - reserve,
+                                       dlog)
+            if veh is None:
+                # The reserve is a PREFERENCE, not a constraint: the
+                # A/B is the deliverable (R2, R3) and dec_v1/dec_v2
+                # already fold and verify, so give the reserve up
+                # rather than ship a suite with no A/B at all.
+                dlog("picker: nothing fits with the %s decider "
+                     "reserve -- retrying without it"
+                     % _v101_hm(reserve))
+                veh, veh_pred = v101_pick(model, left - 300, dlog)
             if veh is None:
                 r.status, r.why = "FAIL", "no vehicle fits the deadline"
                 prog("%-9s FAIL (%s)" % (st.key, r.why))
@@ -3143,6 +3377,12 @@ def run_v101():
         env.update(st.env)
         dlog("step %s argv=%s env+=%s cap=%ds"
              % (st.key, st.argv, sorted(st.env), cap))
+        r.status, r.t_start = "RUNNING", t_s
+        prog("%-9s RUNNING cap %s -> kill at %s"
+             % (st.key, _v101_hm(cap),
+                time.strftime("%H:%M", time.localtime(t_s + cap))))
+        _v101_write_progress(run_dir, v101_progress_text(
+            t0, deadline, run_dir, results, veh, model))
         if st.kind == "cargo":
             rc = _v101_cargo(ctx, st, env, run_log, dlog)
         else:
@@ -3158,6 +3398,7 @@ def run_v101():
         res = ctx.finish(rc, b_fail_scan=False)
         r.wall_s = _v101_now() - t_s
         r.rss_gb = res.peak_rss_gb
+        r.tgz = res.triage_tgz or ""
         v101_parse(st.key, run_log, r)
         for k, v in sorted((r.nums or {}).items()):
             if not k.endswith("@"):
@@ -3176,6 +3417,14 @@ def run_v101():
         prog("%-9s %-7s %8s %5.1fGB  %s"
              % (st.key, r.status, _v101_hm(r.wall_s), r.rss_gb,
                 r.why or _v101_headline(st.key, r)))
+        _v101_write_progress(run_dir, v101_progress_text(
+            t0, deadline, run_dir, results, veh, model))
+        if r.status in ("FAIL", "TIMEOUT"):
+            # Repack NOW, not at the end: a suite that is later killed
+            # or that overruns the clock must still leave a
+            # downloadable artifact for the failure it already saw.
+            _v101_bundle(run_dir, results,
+                          "after %s %s" % (st.key, r.status), dlog)
         if r.status in ("FAIL", "TIMEOUT") and st.key in (
                 "build", "units", "smoke_v1", "smoke_v2", "seed",
                 "calib"):
@@ -3188,18 +3437,24 @@ def run_v101():
             elif st.key == "build":
                 break
 
+    _v101_write_progress(run_dir, v101_progress_text(
+        t0, deadline, run_dir, results, veh, model))
     txt = v101_report(t0, deadline, run_dir, results, veh, model)
     vpath = os.path.join(run_dir, "verdict.txt")
     with open(vpath, "w") as f:
         f.write(txt)
     _atomic_symlink(vpath, V101_VERDICT)
     detail.write("\n" + txt)
+    # The bundle runs BEFORE detail.close() -- dlog() writes to that
+    # handle.  detail.log is line-buffered, so the tar reads the
+    # verdict text that was just appended to it.
+    _v101_bundle(run_dir, results, "final", dlog)
     detail.close()
     print(txt)
     for line in txt.splitlines():
         _summary_line("  %s" % line)
-    log("v101: verdict -> %s   detail -> %s" % (V101_VERDICT,
-                                                 detail_path))
+    log("v101: verdict -> %s   detail -> %s   bundle -> %s"
+        % (V101_VERDICT, detail_path, V101_BUNDLE))
     bad = [k for k, r in results.items()
            if r.status in ("FAIL", "TIMEOUT")]
     return 1 if bad else 0
@@ -3277,7 +3532,11 @@ def _v101_recalibrate(model, key, r, veh, dlog):
             if disch > 0:
                 model["r_disch"] = disch / 765.5
     if key == "calib":
-        chunks = 110.0            # the perc-2 vehicle, V101_VEHICLES
+        # the perc-2 vehicle, read FROM the table rather than copied
+        # out of it: the table grew on 2026-08-17 and a duplicated
+        # literal is exactly the thing that goes stale silently.
+        chunks = float(dict((v[0], v[3])
+                            for v in V101_VEHICLES).get(2, 110))
         pr = n.get("probe_ms")
         if pr:
             model["r_probe"] = (pr / 1000.0) / chunks
@@ -3384,11 +3643,10 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
       "k5=%.2f km=%.2f" % (model["t_db"], model["r_disch"],
                             model["r_probe"], model["k5"], model["km"]))
     A("")
-    A("STEPS                                 status     wall    RSS")
-    for k, r in R.items():
-        A("  %-11s %-22s %-8s %7s %5.1fGB %s"
-          % (k, "", r.status, _v101_hm(r.wall_s), r.rss_gb,
-             (r.why or _v101_headline(k, r))[:40]))
+    A("STEP        STATUS     WALL    RSS  NOTE")
+    for k, status, wall, rss, note in _v101_step_rows(R):
+        A("  %-10s %-8s %7s %5.1fGB  %s"
+          % (k, status, _v101_hm(wall), rss, note[:42]))
     A("")
 
     # ---- falsifiers ----
@@ -3491,7 +3749,10 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     if skips:
         A("  SKIPPED: %s" % ", ".join(
             "%s (%s)" % (k, R[k].why) for k in skips))
-    A("  detail: %s/detail.log" % run_dir)
+    A("  detail:   %s/detail.log" % run_dir)
+    A("  progress: %s" % V101_PROGRESS)
+    A("  bundle:   %s   <- scp THIS for offline analysis"
+      % V101_BUNDLE)
     A("=" * 66)
     return "\n".join(L)
 
@@ -3754,8 +4015,12 @@ def main():
               % (ts, SUMMARY_LOG))
         print("[paper_data %s]   current job:    tail -F %s"
               % (ts, CURRENT_JOB_LOG))
+        print("[paper_data %s]   progress:       cat %s"
+              % (ts, V101_PROGRESS))
         print("[paper_data %s]   verdict:        %s"
               % (ts, V101_VERDICT))
+        print("[paper_data %s]   bundle on fail: %s"
+              % (ts, V101_BUNDLE))
         sys.stdout.flush()
         go_background()
         install_signal_handlers()
@@ -7708,6 +7973,326 @@ class EndToEndWiringTest(unittest.TestCase):
         self.assertEqual(re.findall(r"OK\s+(\S+)", text),
                           list(_LEAF_KEYS))
         self.assertIn("DONE   overall_rc=0", text)
+
+
+_V101_MANIFESTS = [
+    os.path.join(REPO, "data", "debug", "full_clamav", "config",
+                 "binexec_p%d.dat" % i) for i in range(8)]
+
+
+def _v101_replay_corpus():
+    """Re-derive (files, MB, raw chunks) per perc straight from the 8
+    binexec manifests, transcribing bora_data_driver.rs fixed_perm /
+    subset / count_of.  This is the ONLY check that can catch a
+    mistyped V101_VEHICLES row."""
+    mask = (1 << 64) - 1
+
+    def fixed_perm(n, s):
+        v = list(range(n))
+        for i in range(n - 1, 0, -1):
+            s = (s + 0x9E3779B97F4A7C15) & mask
+            z = s
+            z = ((z ^ (z >> 30)) * 0xBF58476D1CE4E5B9) & mask
+            z = ((z ^ (z >> 27)) * 0x94D049BB133111EB) & mask
+            z ^= z >> 31
+            j = z % (i + 1)
+            v[i], v[j] = v[j], v[i]
+        return v
+
+    files = []
+    for p in _V101_MANIFESTS:
+        with open(p) as f:
+            files += [ln.strip() for ln in f if ln.strip()]
+    sizes = [os.path.getsize(os.path.join(REPO, f)) for f in files]
+    n = len(files)
+    perm = fixed_perm(n - 1, 0x5CA15EED0F0F0F0F)
+
+    def row(perc):
+        keep = max(1, min(n, -(-n * perc // 100)))
+        if keep >= n:
+            idx = list(range(n))
+        else:
+            idx = sorted([0] + [i + 1 for i in perm[:keep - 1]])
+        return (len(idx), sum(sizes[i] for i in idx) / 1e6,
+                sum(-(-sizes[i] // 131072) for i in idx))
+    return row
+
+
+def _v101_corpus_present():
+    if not all(os.path.isfile(p) for p in _V101_MANIFESTS):
+        return False
+    with open(_V101_MANIFESTS[0]) as f:
+        first = f.readline().strip()
+    return bool(first) and os.path.isfile(os.path.join(REPO, first))
+
+
+class V101VehicleTableTest(unittest.TestCase):
+    """The picker walks V101_VEHICLES top-down and takes the first
+    fit, so the table's order and its numbers are both load-bearing."""
+
+    def test_perc_is_strictly_descending_and_unique(self):
+        """A non-descending row would make the picker take a SMALLER
+        vehicle than the clock affords."""
+        percs = [v[0] for v in _MOD.V101_VEHICLES]
+        self.assertEqual(percs, sorted(set(percs), reverse=True))
+
+    def test_every_column_grows_with_perc(self):
+        """files/MB/chunks rise and the lkup share falls, monotonically
+        -- a typo in one column shows up as a break here."""
+        for a, b in zip(_MOD.V101_VEHICLES, _MOD.V101_VEHICLES[1:]):
+            self.assertGreater(a[1], b[1], "files at perc %d" % a[0])
+            self.assertGreater(a[2], b[2], "MB at perc %d" % a[0])
+            self.assertGreater(a[3], b[3], "chunks at perc %d" % a[0])
+            self.assertLess(a[4], b[4], "share at perc %d" % a[0])
+
+    def test_perc_2_row_is_the_calib_vehicle(self):
+        """_v101_recalibrate divides by this row; losing it silently
+        falls back to the old hardcoded 110."""
+        self.assertIn(2, [v[0] for v in _MOD.V101_VEHICLES])
+
+    @unittest.skipUnless(_v101_corpus_present(),
+                         "clam corpus not extracted (data/DOWNLOAD.py)")
+    def test_rows_match_the_rust_subset_replay(self):
+        """files and MB must equal subset()/fixed_perm() EXACTLY, and
+        chunks must sit within 2% of raw x 1.0555 (the padding factor
+        the table was built with)."""
+        row = _v101_replay_corpus()
+        for perc, files, mb, chunks, _share in _MOD.V101_VEHICLES:
+            f, m, c = row(perc)
+            self.assertEqual(files, f, "files at perc %d" % perc)
+            self.assertAlmostEqual(mb, m, delta=0.05,
+                                    msg="MB at perc %d" % perc)
+            self.assertAlmostEqual(chunks, c * 1.0555,
+                                    delta=max(3, 0.02 * chunks),
+                                    msg="chunks at perc %d" % perc)
+
+
+class V101ClockTest(unittest.TestCase):
+    """The deadline is a CLOCK: it bounds the finish, not the work."""
+
+    def test_deadline_is_the_next_noon(self):
+        """20:00 today -> 12:00 tomorrow, i.e. the 16 h window."""
+        t = time.mktime((2026, 8, 17, 20, 0, 0, 0, 0, -1))
+        d = _MOD._v101_deadline(t)
+        self.assertEqual(time.localtime(d).tm_hour,
+                          _MOD.V101_DEADLINE_HOUR)
+        self.assertEqual(time.localtime(d).tm_min,
+                          _MOD.V101_DEADLINE_MIN)
+        self.assertAlmostEqual((d - t) / 3600.0, 16.0, delta=0.01)
+
+    def test_a_fixed_cap_is_clamped_to_the_time_left(self):
+        """dec_big asks for 5 h; with 1 h left it gets 1 h minus the
+        180 s report reserve, NOT 5 h through the deadline."""
+        self.assertEqual(_MOD._v101_cap(18000, 3600), 3420)
+
+    def test_a_fixed_cap_survives_when_there_is_room(self):
+        self.assertEqual(_MOD._v101_cap(3600, 36000), 3600)
+
+    def test_no_cap_means_take_the_room(self):
+        self.assertEqual(_MOD._v101_cap(0, 3600), 3420)
+
+    def test_cap_never_goes_below_the_floor(self):
+        """Even past the deadline the cap stays positive, so a step
+        that does start still terminates."""
+        self.assertEqual(_MOD._v101_cap(18000, -500), 60)
+
+
+class V101PickerReserveTest(unittest.TestCase):
+    """The picker must leave the decider steps their room."""
+
+    def setUp(self):
+        self.model = dict(_MOD.V101_PRIORS)
+        self.model["r_probe"] = 0.55        # post-C3
+
+    def test_reserve_shrinks_the_chosen_vehicle(self):
+        """Same clock, minus V101_DEC_RESERVE_S, must not pick a
+        LARGER vehicle -- that is the whole point of the reserve."""
+        left = 13 * 3600
+        big, _ = _MOD.v101_pick(self.model, left, lambda *_a: None)
+        small, _ = _MOD.v101_pick(self.model,
+                                   left - _MOD.V101_DEC_RESERVE_S,
+                                   lambda *_a: None)
+        self.assertIsNotNone(big)
+        self.assertIsNotNone(small)
+        self.assertLessEqual(small[0], big[0])
+
+    def test_a_full_clock_still_reaches_a_real_vehicle(self):
+        """16 h minus the reserve must still afford more than the
+        perc-2 calibration vehicle, else the A/B proves nothing."""
+        left = 15 * 3600 - _MOD.V101_DEC_RESERVE_S
+        veh, _ = _MOD.v101_pick(self.model, left, lambda *_a: None)
+        self.assertIsNotNone(veh)
+        self.assertGreaterEqual(veh[0], 20)
+
+    def test_no_time_returns_none_not_a_crash(self):
+        veh, pred = _MOD.v101_pick(self.model, 10, lambda *_a: None)
+        self.assertIsNone(veh)
+        self.assertIsNone(pred)
+
+
+class V101ProgressTest(unittest.TestCase):
+    """`cat V101_PROGRESS.txt` has to work mid-step, not just after."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(
+            _MOD, "V101_PROGRESS",
+            os.path.join(self.tmp.name, "V101_PROGRESS.txt"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.res = {k: _MOD.V101Res(k)
+                    for k in ("build", "units", "seed")}
+        self.res["build"].status = "OK"
+        self.res["build"].wall_s = 300.0
+
+    def _text(self):
+        return _MOD.v101_progress_text(
+            time.time() - 600, time.time() + 3600, self.tmp.name,
+            self.res, None, dict(_MOD.V101_PRIORS))
+
+    def test_running_step_shows_elapsed_not_zero(self):
+        """A RUNNING row reports time-in-flight; r.wall_s is still 0."""
+        self.res["units"].status = "RUNNING"
+        self.res["units"].t_start = time.time() - 7200
+        self.res["units"].cap_s = 10800
+        rows = dict((r[0], r) for r in _MOD._v101_step_rows(self.res))
+        self.assertEqual(rows["units"][1], "RUNNING")
+        self.assertGreater(rows["units"][2], 7000)
+        self.assertIn("2h00m", self._text())
+
+    def test_pending_steps_are_listed_before_they_run(self):
+        """All 3 rows appear even though only one has finished."""
+        t = self._text()
+        for k in ("build", "units", "seed"):
+            self.assertIn(k, t)
+        self.assertIn("PENDING", t)
+        self.assertIn("1/3 settled", t)
+
+    def test_failures_line_names_the_bundle(self):
+        self.res["seed"].status = "FAIL"
+        t = self._text()
+        self.assertIn("FAILURES SO FAR: seed", t)
+        self.assertIn(_MOD.V101_BUNDLE, t)
+
+    def test_write_is_atomic_and_symlinked(self):
+        """The stable path is a symlink and no .tmp is left behind."""
+        _MOD._v101_write_progress(self.tmp.name, self._text())
+        self.assertTrue(os.path.islink(_MOD.V101_PROGRESS))
+        with open(_MOD.V101_PROGRESS) as f:
+            self.assertIn("V101 SUITE PROGRESS", f.read())
+        self.assertFalse(os.path.exists(
+            os.path.join(self.tmp.name, "progress.txt.tmp")))
+
+    def test_verdict_and_progress_share_one_renderer(self):
+        """Both tables come from _v101_step_rows, so a step cannot
+        read OK in one and FAIL in the other."""
+        self.res["seed"].status = "FAIL"
+        self.res["seed"].why = "no V2 QM SEED line"
+        verdict = _MOD.v101_report(
+            time.time() - 600, time.time() + 3600, self.tmp.name,
+            self.res, None, dict(_MOD.V101_PRIORS))
+        for line in ("seed", "FAIL"):
+            self.assertIn(line, verdict)
+            self.assertIn(line, self._text())
+
+
+class V101BundleTest(unittest.TestCase):
+    """One downloadable tarball, written after ANY failure."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.run_dir = os.path.join(self.tmp.name, "run")
+        os.makedirs(os.path.join(self.run_dir, "seed"))
+        with open(os.path.join(self.run_dir, "detail.log"), "w") as f:
+            f.write("detail line\n")
+        with open(os.path.join(self.run_dir, "seed", "run.log"),
+                   "w") as f:
+            f.write("seed log\n")
+        p = mock.patch.object(
+            _MOD, "V101_BUNDLE",
+            os.path.join(self.tmp.name, "V101_BUNDLE.tgz"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.res = {"seed": _MOD.V101Res("seed", status="FAIL")}
+
+    def _names(self, path):
+        with tarfile.open(path) as t:
+            return t.getnames()
+
+    def test_bundle_carries_the_run_dir_and_a_manifest(self):
+        out = _MOD._v101_bundle(self.run_dir, self.res, "test",
+                                 lambda *_a: None)
+        names = self._names(out)
+        self.assertIn("MANIFEST.txt", names)
+        self.assertIn("detail.log", names)
+        self.assertIn(os.path.join("seed", "run.log"), names)
+        self.assertTrue(os.path.islink(_MOD.V101_BUNDLE))
+
+    def test_bundle_carries_the_per_step_triage_tgz(self):
+        """JobHandle's own bundle rides along, so ONE scp is enough."""
+        tri = os.path.join(self.tmp.name, "triage_seed.tgz")
+        with tarfile.open(tri, "w:gz") as t:
+            t.add(os.path.join(self.run_dir, "detail.log"),
+                  arcname="x.log")
+        self.res["seed"].tgz = tri
+        out = _MOD._v101_bundle(self.run_dir, self.res, "test",
+                                 lambda *_a: None)
+        self.assertIn("triage/triage_seed.tgz", self._names(out))
+
+    def test_a_huge_log_is_truncated_head_plus_tail(self):
+        """A 200 MB run.log must not make the bundle unscp-able."""
+        big = os.path.join(self.run_dir, "seed", "big.log")
+        with open(big, "wb") as f:
+            f.write(b"H" * 1000)
+            f.write(b"M" * (30 * 1000 * 1000))
+            f.write(b"T" * 1000)
+        with mock.patch.object(_MOD, "V101_BUNDLE_KEEP_MB", 1.0), \
+             mock.patch.object(_MOD, "V101_BUNDLE_HEAD_MB", 0.2), \
+             mock.patch.object(_MOD, "V101_BUNDLE_TAIL_MB", 0.3):
+            out = _MOD._v101_bundle(self.run_dir, self.res, "test",
+                                     lambda *_a: None)
+            names = self._names(out)
+            arc = os.path.join("seed", "big.log")
+            self.assertIn(arc + ".TRUNCATED", names)
+            self.assertNotIn(arc, names)
+            with tarfile.open(out) as t:
+                body = t.extractfile(arc + ".TRUNCATED").read()
+        self.assertTrue(body.startswith(b"H" * 1000))
+        self.assertTrue(body.endswith(b"T" * 1000))
+        self.assertIn(b"V101 BUNDLE TRUNCATED", body)
+        self.assertLess(len(body), 1_000_000)
+
+    def test_rebundling_does_not_nest_the_previous_bundle(self):
+        """The bundle lives IN run_dir; a second call must skip it."""
+        _MOD._v101_bundle(self.run_dir, self.res, "first",
+                           lambda *_a: None)
+        out = _MOD._v101_bundle(self.run_dir, self.res, "second",
+                                 lambda *_a: None)
+        self.assertNotIn("bundle.tgz", self._names(out))
+
+    def test_a_broken_run_dir_never_raises(self):
+        """A bundle failure must not take the suite down with it."""
+        said = []
+        out = _MOD._v101_bundle("/nonexistent/run", self.res, "x",
+                                 said.append)
+        self.assertEqual(out, "")
+        self.assertTrue(any("bundle FAILED" in s for s in said))
+
+
+class V101RecalibrateTest(unittest.TestCase):
+    def test_calib_divides_by_the_table_not_a_literal(self):
+        """r_probe = probe_ms / perc-2 chunks, read from the table."""
+        model = dict(_MOD.V101_PRIORS)
+        chunks = dict((v[0], v[3]) for v in _MOD.V101_VEHICLES)[2]
+        r = _MOD.V101Res("calib", wall_s=1000.0,
+                          nums={"probe_ms": 55000, "v5_ms": 110000})
+        _MOD._v101_recalibrate(model, "calib", r, None,
+                                lambda *_a: None)
+        self.assertAlmostEqual(model["r_probe"], 55.0 / chunks,
+                                places=6)
+        self.assertAlmostEqual(model["k5"], 2.0, places=6)
 
 
 if __name__ == "__main__":
