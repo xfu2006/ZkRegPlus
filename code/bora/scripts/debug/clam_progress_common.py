@@ -105,6 +105,19 @@ NEO_SHARE_PRED = 120           # derived for the same corpus, 8 jobs
 LEG_WORDS_PER_JOB = 152
 LEG_CHUNKS = [820, 816, 818, 819, 820, 823, 819]   # 7 real jobs seen
 LEG_CHUNKS_MIN = 816
+# TUNER reference, v1 arm, parsed from the 2026-08-16 neo_run log at
+# this corpus: 19 rounds, TOTAL 2,199,665 ms, per-round wall climbing
+# 0.4 s -> 283 s as the caps grow.  13 of those rounds bumped
+# `cp::subsigs` by exactly +1 (the CP under-seed crawl).  The tuner
+# runs BEFORE Phase 1 step 1 and is charged to NO stage column, so it
+# is pure added wall that appears nowhere else in this report.
+LEG_TUNE_V1_ROUNDS = 19
+LEG_TUNE_V1_S = 2199.665
+LEG_TUNE_V1_CRAWL_S = 1944.0    # rounds 5-17, all cp::subsigs +1
+# tuner rows printed before the middle is elided.  A pathological tune
+# is ~20 rounds; showing head and tail keeps the seed climb AND the
+# expensive tail visible without burying the rest of the report.
+TUNE_ROWS = 14
 # RAM, GiB.  The log's `MEM:`/`Total RAM:` UNDERSTATE true peak RSS by
 # ~3% (cross-checked against PAPER_DATA_PEAK_RSS_GIB on small_full_
 # snark: 433.151 GiB measured for a 204.06M-constraint decider).
@@ -180,6 +193,30 @@ RE_PLAN = re.compile(r"loadClamDB from: (\S+)")
 RE_V2CONV = re.compile(r"V2 CONVERGED @iter (\d+): qm_real (\d+)")
 RE_V1CONV = re.compile(
 	r"determine_config_non_aggr CONVERGED @iter (\d+)")
+# tuner ROUNDS, both arms.  Every round prints its own `round N ms`
+# and the CONVERGED line adds `TOTAL T ms`, so tune time is MEASURED.
+# It is deliberately NOT summed from the rounds: that sum omits the
+# seed block and v1's post-converge fwd-queue tightening.
+RE_V2SEED = re.compile(
+	r"V2 SEED BLOCK: subsigs (\d+) igc (\d+) cp (\d+) dfa (\d+) "
+	r"perc_comp (\d+)")
+RE_V2ITER = re.compile(r"v2 iter (\d+): (.+)")
+RE_V1ITER = re.compile(r"determine_config_non_aggr iter (\d+): (.+)")
+RE_ROUNDMS = re.compile(r"round (\d+) ms")
+RE_TOTALMS = re.compile(r"TOTAL (\d+) ms")
+# one bumped cap.  The name may itself contain a comma
+# (`dis_adv::neo_qm_real, b_igc: false`), so the quoted span -- not a
+# comma split -- is what delimits it.
+RE_BUMP = re.compile(r'\("([^"]+)",\s*(\d+)\)')
+# run start: the header line PAPER_DATA writes as the log's first
+# line.  Exact, and the only wall-clock anchor in the file.
+RE_START = re.compile(r"^# (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})")
+# the subcommand, off the argv header PAPER_DATA writes as line 2.
+# This is the AUTHORITATIVE arm: it mirrors Rust's `arm_of`
+# (bora_data_driver.rs), it is exact, and it is known before the run
+# does any work -- unlike the plan dir, which the bare token leaves
+# canonical, and unlike the tuner markers, which arrive minutes in.
+RE_CMD = re.compile(r"^# cmd=.*bora_cli -- (\S+)")
 # lkup / share.  The share is derived from the SMALLEST job's chunk
 # count; a wrong share is the single biggest circuit-size distorter.
 RE_SHARE = re.compile(r"perc_lkup_share\s*:\s*(\d+)")
@@ -202,6 +239,30 @@ def hm(sec):
 	"""Seconds -> `NhNNm`, the one duration spelling used everywhere."""
 	sec = max(int(sec or 0), 0)
 	return "%dh%02dm" % (sec // 3600, (sec % 3600) // 60)
+
+
+def arm_of(sub):
+	"""Subcommand token -> arm, mirroring Rust's `arm_of`.  A BARE
+	token takes the default arm, which has been v2 for clam and dna
+	since 2026-08-18; only an explicit _v1/_v2 suffix overrides."""
+	if sub.endswith("_v1"):
+		return "v1"
+	if sub.endswith("_v2"):
+		return "v2"
+	return "v2"
+
+
+def secs(s):
+	"""Seconds -> the tightest exact spelling.  Tune rounds span 0.4 s
+	to 283 s within ONE run and the total reaches 37 min, so a single
+	fixed unit misreads one end or the other."""
+	if s is None:
+		return "-"
+	if s < 60:
+		return "%.1fs" % s
+	if s < 3600:
+		return "%.1f min" % (s / 60.0)
+	return "%.2f hr" % (s / 3600.0)
 
 
 def com(n):
@@ -359,6 +420,21 @@ class Acc(object):
 		self.arm = None
 		self.tune_iter = None
 		self.qm_real = None
+		# seed caps as a 5-list [subsigs, igc, cp, dfa, perc_comp].
+		# v2 only -- v1 has no seed marker.
+		self.tune_seed = None
+		# one entry per round: [iter, seconds, "cap -> val, ..."].
+		self.tune_rounds = []
+		# `TOTAL T ms` off the CONVERGED line, in seconds.  None means
+		# the tuner has NOT converged -- while a run is tuning that is
+		# the live signal, not missing data.
+		self.tune_total_s = None
+		# epoch of the log header line = the exact run start.
+		self.t_start = None
+		# the bora_cli subcommand this leaf was launched with, e.g.
+		# `full_clam` / `full_clam_v1`.  Printed so the arm is
+		# attributable to argv rather than inferred.
+		self.sub = None
 		# highest RAM the log itself printed, GiB (UNDERSTATES peak).
 		self.ram_log = 0.0
 		# Pass 3 prove spans: (count, summed seconds).
@@ -483,21 +559,58 @@ class Acc(object):
 				self.prog[int(jm.group(1))] = (int(m.group(2)),
 					int(m.group(3)))
 			return
+		m = RE_V2ITER.search(ln) or RE_V1ITER.search(ln)
+		if m:
+			self.arm = "v2" if "v2 iter" in ln else "v1"
+			self._round(m.group(1), m.group(2))
+			return
+		m = RE_V2SEED.search(ln)
+		if m:
+			self.arm = "v2"
+			self.tune_seed = [int(g) for g in m.groups()]
+			return
+		m = RE_CMD.search(ln)
+		if m:
+			self.sub = m.group(1)
+			if self.arm is None:
+				self.arm = arm_of(self.sub)
+			return
+		m = RE_START.search(ln)
+		if m and self.t_start is None:
+			try:
+				self.t_start = time.mktime(time.strptime(
+					m.group(1), "%Y-%m-%d %H:%M:%S"))
+			except ValueError:
+				pass
+			return
 		m = RE_PLAN.search(ln)
 		if m:
-			self.arm = "v2" if "clam_v2" in m.group(1) else "v1"
+			# The plan dir is a valid arm signal ONLY for an explicit
+			# A/B token.  Since 2026-08-18 the bare `full_clam` /
+			# `full_dna` run v2 under the CANONICAL dir (arm_plan_dir
+			# renames on Some(..) only), so "no clam_v2 in the path"
+			# no longer means v1 -- reading it that way reported every
+			# production run as the legacy tuner.  A canonical dir now
+			# says nothing, and the arm comes from the tuner markers.
+			d = m.group(1)
+			if "clam_v2" in d or "dna_v2" in d:
+				self.arm = "v2"
+			elif "clam_v1" in d or "dna_v1" in d:
+				self.arm = "v1"
 			return
 		m = RE_V2CONV.search(ln)
 		if m:
 			self.arm = "v2"
 			self.tune_iter = int(m.group(1))
 			self.qm_real = int(m.group(2))
+			self._converged(ln)
 			return
 		m = RE_V1CONV.search(ln)
 		if m:
 			if self.arm is None:
 				self.arm = "v1"
 			self.tune_iter = int(m.group(1))
+			self._converged(ln)
 			return
 		m = RE_RAM.search(ln)
 		if m:
@@ -510,6 +623,34 @@ class Acc(object):
 		m = RE_ALLJOBS.search(ln)
 		if m:
 			self.all_jobs_s = int(m.group(1)) / 1e3
+
+	def _round(self, it, rest):
+		"""Record one tuner round.  `rest` is everything after the
+		iter number, which differs per arm and per outcome."""
+		ms = RE_ROUNDMS.search(rest)
+		bumps = RE_BUMP.findall(rest)
+		if bumps:
+			what = ", ".join("%s -> %s" % (n, v) for n, v in bumps)
+		elif "subset clean" in rest:
+			# not a bump: the subset passed, so the round re-runs on
+			# the FULL corpus.  Costed, and it is NOT a crawl step.
+			what = "(subset clean, promote to full corpus)"
+		else:
+			what = "(no bump parsed)"
+		self.tune_rounds.append([int(it),
+			float(ms.group(1)) / 1e3 if ms else 0.0, what])
+
+	def _converged(self, ln):
+		"""Fold the CONVERGED line's own round into the table and
+		take its TOTAL, which is the authoritative tune time."""
+		ms = RE_ROUNDMS.search(ln)
+		it = self.tune_iter
+		if ms and it is not None:
+			self.tune_rounds.append([it,
+				float(ms.group(1)) / 1e3, "(CONVERGED)"])
+		t = RE_TOTALMS.search(ln)
+		if t:
+			self.tune_total_s = float(t.group(1)) / 1e3
 
 
 class Run(object):
@@ -590,6 +731,26 @@ class Run(object):
 	def snark_job(self):
 		return self._first("snark_job")
 
+	def tune_iter(self):
+		return self._first("tune_iter")
+
+	def tune(self):
+		"""(seed, rounds, total_s) from whichever process tuned.  On a
+		two-half box both processes tune independently and agree, so
+		the first that has anything wins."""
+		for a in self.accs:
+			if a.tune_rounds or a.tune_total_s or a.tune_seed:
+				return a.tune_seed, a.tune_rounds, a.tune_total_s
+		return None, [], None
+
+	def sub(self):
+		return self._first("sub")
+
+	def t_start(self):
+		"""Earliest run start across processes, epoch seconds."""
+		v = [a.t_start for a in self.accs if a.t_start]
+		return min(v) if v else None
+
 	# ---- RAM (TOPOLOGY-SPECIFIC) -----------------------------------
 	def ram_log_gib(self):
 		"""What the logs printed.  For a 2-process box the BOX figure
@@ -624,9 +785,10 @@ def show_header(run, bank, new_bytes, dt):
 		% (t.label, t.n_procs, t.n_jobs // max(t.n_procs, 1), t.note))
 	arm = run.arm()
 	sh, lk = run.share(), run.lkup()
-	L.append("arm %s%s   share %s (legacy pin %d, neo pred %d)   "
+	L.append("arm %s%s%s   share %s (legacy pin %d, neo pred %d)   "
 		"lkup %s" % (
 			arm or "not seen",
+			"" if not run.sub() else " (%s)" % run.sub(),
 			"" if arm != "v1" else "  <- WARN: legacy tuner",
 			sh if sh else "-", LEG_SHARE, NEO_SHARE_PRED,
 			com(lk)))
@@ -843,6 +1005,209 @@ def show_progress(run, bank):
 	return L
 
 
+def full_corpus(run):
+	"""True/False that this run's jobs carry legacy's corpus, or None
+	when no job has reported yet.  Every cross-run RATIO in this file
+	is gated on it: a per-job second measures corpus as much as speed,
+	so a 2% log scores a fake 5x win.  None is common and NOT an
+	error -- the tuner runs before step 1 reports."""
+	corp = run.corpus()
+	if not corp:
+		return None
+	wpj = sum(v[0] for v in corp.values()) / float(len(corp))
+	return wpj >= LEG_WORDS_PER_JOB * 0.5
+
+
+def crawl_span(rounds):
+	"""Longest run of consecutive rounds that bump exactly ONE cap,
+	the same cap each time.  Returns (name, count, seconds).
+
+	This is the CP under-seed pathology measured 2026-08-16: the seed
+	is below the true demand, so the tuner walks the cap up by +1 and
+	pays a FULL probe round per step, each costlier than the last.  It
+	is the difference between a 4-minute tune and a 37-minute one, and
+	no other section of this report can show it."""
+	best = (None, 0, 0.0)
+	i = 0
+	while i < len(rounds):
+		w = rounds[i][2]
+		# a single bump renders as exactly one `name -> val`.
+		if " -> " not in w or "," in w.split(" -> ")[0]:
+			i += 1
+			continue
+		name = w.split(" -> ")[0]
+		if w.count(" -> ") != 1:
+			i += 1
+			continue
+		j, tot = i, 0.0
+		while j < len(rounds) and rounds[j][2].count(" -> ") == 1 \
+				and rounds[j][2].split(" -> ")[0] == name:
+			tot += rounds[j][1]
+			j += 1
+		if j - i > best[1]:
+			best = (name, j - i, tot)
+		i = max(j, i + 1)
+	return best
+
+
+def show_tuner(run):
+	"""Tune rounds and tune time.  The tuner runs FIRST, before Phase
+	1 step 1, and its cost lands in NO stage column -- so without this
+	section a 37-minute tune is invisible everywhere in the report."""
+	seed, rounds, total = run.tune()
+	arm = run.arm()
+	L = ["", "TUNER  arm %s" % (arm or "not seen")]
+	if seed:
+		L.append("  seed   subsigs %d  igc %d  cp %d  dfa %d  "
+			"perc_comp %d" % tuple(seed))
+	if not rounds:
+		L.append("  no round yet.  The tuner is the FIRST thing that "
+			"runs, so a run that")
+		L.append("  has printed nothing else is most likely HERE "
+			"(v1 reference: %s)." % secs(LEG_TUNE_V1_S))
+		return L
+	L.append("  %5s %10s   %s" % ("iter", "wall", "bumped"))
+	if len(rounds) <= TUNE_ROWS:
+		show = rounds
+	else:
+		# head AND tail: the head carries the seed climb, the tail
+		# carries the expensive rounds.  Dropping either misleads.
+		h = TUNE_ROWS // 2
+		show = rounds[:h] + [None] + rounds[-h:]
+	for r in show:
+		if r is None:
+			L.append("  %5s %10s   ... %d rounds elided ..." % (
+				"", "", len(rounds) - TUNE_ROWS))
+			continue
+		L.append("  %5d %10s   %s" % (r[0], secs(r[1]), r[2]))
+	if total is not None:
+		L.append("  CONVERGED @iter %s   TOTAL %s over %d rounds" % (
+			run.tune_iter(), secs(total), len(rounds)))
+		if arm == "v2":
+			# the ratio is printed ONLY at a comparable corpus: the
+			# v1 reference is a 100% tune, so dividing a 0.5% smoke
+			# tune into it reads 0.00x and means nothing.
+			ok = full_corpus(run)
+			L.append("  v1 reference, 100%% corpus 08-16: %s over %d "
+				"rounds%s" % (secs(LEG_TUNE_V1_S),
+					LEG_TUNE_V1_ROUNDS,
+					"   -> %s" % ratio(total, LEG_TUNE_V1_S)
+					if ok else ""))
+			if not ok:
+				L.append("  (no ratio: %s)" % (
+					"this run is SUBSAMPLED" if ok is False
+					else "corpus not reported yet"))
+	else:
+		el = sum(r[1] for r in rounds)
+		L.append("  TUNING -- %d rounds, %s so far, last round %s"
+			% (len(rounds), secs(el), secs(rounds[-1][1])))
+		# rounds grow as the caps grow, so a rising trend is normal;
+		# it is quoted so a FLAT trend (a stuck probe) is visible too.
+		if len(rounds) >= 4:
+			prev = sum(r[1] for r in rounds[-4:-1]) / 3.0
+			if prev > 0:
+				L.append("             last vs prior 3 mean: %s "
+					"(rounds grow with the caps)"
+					% ratio(rounds[-1][1], prev))
+		L.append("             v1 reference %s over %d rounds; the "
+			"tuner is NOT hung" % (secs(LEG_TUNE_V1_S),
+				LEG_TUNE_V1_ROUNDS))
+	name, n, sp = crawl_span(rounds)
+	if n >= 3:
+		L.append("  !! CRAWL: %d consecutive rounds bumping %s by +1 "
+			"= %s" % (n, name, secs(sp)))
+		L.append("     that cap is UNDER-SEEDED; the seed, not the "
+			"probe, is the cost")
+	return L
+
+
+def show_position(run):
+	"""WHERE IT IS plus a pace verdict, scored in per-JOB seconds
+	against the legacy stage budget -- the one axis that transfers
+	across all three box shapes."""
+	L = ["", "POSITION"]
+	t0 = run.t_start()
+	# "as of" is NOW while the run is live, but the log's last write
+	# once it is not: a finished or dead run must report its runtime,
+	# not the age of its log.  Live runs are unaffected -- the log is
+	# being written, so mtime is now.
+	mt = max([a.mtime for a in run.accs if a.mtime] or [0])
+	asof = mt if (run.stalled() and mt) else time.time()
+	wall = (asof - t0) if t0 else None
+	seed, rounds, tune_total = run.tune()
+	jobs = run.jobs()
+	if wall is not None:
+		L.append("  wall since start  %s%s" % (hm(wall),
+			"   (tuner %s of it, see TUNER)" % secs(tune_total)
+			if tune_total else ""))
+	if not jobs:
+		where = ("TUNING" if rounds and tune_total is None
+			else "pre-step-1 (tuner done, Phase 1 not yet reporting)"
+			if tune_total else "before the tuner's first round")
+		L.append("  WHERE IT IS: %s" % where)
+		L.append("  no Phase 1 step has completed, so there is "
+			"nothing to pace yet.")
+		return L
+	# the LEADING job sets the position: jobs run concurrently and the
+	# run ends when the last finishes, but the furthest job is what
+	# says which stage the run has reached.
+	lead = max(jobs, key=lambda j: sum(jobs[j].values()))
+	done = jobs[lead]
+	cur = max(done) + 1 if done else 1
+	neo_cum = sum(done.values())
+	leg_cum = sum(LEG_STEP[k] for k in done if k in LEG_STEP)
+	if cur > 8:
+		L.append("  WHERE IT IS: Phase 1 COMPLETE on job %d "
+			"(all 8 steps)" % lead)
+	else:
+		frac = None
+		if cur == 7:
+			p = run.progress().get(lead)
+			if p and p[1]:
+				frac = float(p[0]) / p[1]
+		L.append("  WHERE IT IS: step %d %s%s  (job %d leads of %d "
+			"reporting)" % (cur, LEG_STEP_NAME.get(cur, "?"),
+				" -- %.1f%% through it" % (100.0 * frac)
+				if frac is not None else "",
+				lead, len(jobs)))
+		if frac is None:
+			L.append("               (no in-step progress marker; "
+				"only step 7 emits one)")
+		L.append("               legacy budget for this step: %s"
+			% secs(LEG_STEP.get(cur, 0.0)))
+	if not leg_cum:
+		L.append("  nothing comparable has completed yet.")
+		return L
+	# A per-job second only compares when the job carries the same
+	# corpus, so this takes show_stages' guard verbatim: below half
+	# legacy's words/job a subsampled run scores a FAKE win (a 2% log
+	# reads ~5x AHEAD purely because its steps are shorter).
+	corp = run.corpus()
+	if full_corpus(run) is False:
+		wpj = sum(v[0] for v in corp.values()) / float(len(corp))
+		L.append("  completed steps   legacy %9.1f s   neo %9.1f s"
+			% (leg_cum, neo_cum))
+		L.append("                    NO PACE: %.0f words/job vs "
+			"legacy %d -- this run is" % (wpj, LEG_WORDS_PER_JOB))
+		L.append("                    SUBSAMPLED, so a ratio here "
+			"measures corpus, not speed")
+		return L
+	L.append("  completed steps   legacy %9.1f s   neo %9.1f s   "
+		"PACE %s" % (leg_cum, neo_cum, ratio(leg_cum, neo_cum)))
+	r = leg_cum / neo_cum if neo_cum else 0.0
+	L.append("                    %s" % (
+		"AHEAD of legacy" if r > 1.02 else
+		("BEHIND legacy" if r < 0.98 else "at legacy pace")))
+	# the pace above is a STEP-BOUNDARY comparison: it excludes the
+	# step in flight and the tuner, both of which are reported above.
+	# Said plainly so it is not read as an end-to-end ratio.
+	L.append("                    step-boundary only -- excludes the "
+		"step in flight")
+	L.append("                    and the tuner; neither is in the "
+		"legacy stage budget")
+	return L
+
+
 def show_next(run):
 	L = ["", "NEXT"]
 	if run.stalled():
@@ -901,6 +1266,8 @@ def run(topo, argv):
 	out = []
 	out += show_header(r, bank, new, time.time() - t0)
 	out += show_ram(r, bank)
+	out += show_tuner(r)
+	out += show_position(r)
 	out += show_size(r)
 	out += show_stages(r)
 	out += show_progress(r, bank)
