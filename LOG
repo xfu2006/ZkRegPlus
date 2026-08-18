@@ -31244,6 +31244,9 @@ Goal 1. monitor full_dlp
 Goal 2. monitor clamav tuning test
 	[a] 8:00am check ok last item
 	[b] prepare dry run of clamav on 512gb
+	[c] test tuning results back -> it overcapped to twice the size
+			-> it takes 2:00am -> 10:00am: run for 8 hours
+		-> fix?
 Goal 3. Writing section 5
 	[a]
 

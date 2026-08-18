@@ -2845,10 +2845,17 @@ fn set_diag_env(part_id: usize) {
 /// hab22 cover check AND swaps in dry_range2_bit when the spec has
 /// one; heavy keeps the spec values. ONE derivation site so every
 /// consumer of both fields agrees.
-fn effective_spec(spec: &DatasetSpec, b_dry_run: bool)
-	-> DatasetSpec {
+fn effective_spec(spec: &DatasetSpec, b_dry_run: bool,
+	perc_samples: f64) -> DatasetSpec {
 	let mut s = spec.clone();
-	s.b_check_lkup = s.b_check_lkup && !b_dry_run;
+	// The hab22 cover check is only meaningful when the fold sees
+	// the WHOLE corpus: perc_lkup_share_neo sizes the share from
+	// cover_word_n (the SMALLEST job), so a subsampled run derives
+	// a share far above production's and inflates every circuit.
+	// Measured 2026-08-18: 1 job at perc 2 gave share 1013 vs the
+	// production 143, and the framework block grew 6.45x.
+	s.b_check_lkup = s.b_check_lkup && !b_dry_run
+		&& perc_samples >= 100.0;
 	if b_dry_run {
 		if let Some(b) = s.dry_range2_bit {
 			s.range2_bit = b;
@@ -2868,7 +2875,7 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	numa_num: usize, part_id: usize, b_dry_run: bool,
 	b_ladder_only: bool) -> Vec<CapParams> {
 	set_diag_env(part_id);
-	let spec = &effective_spec(spec, b_dry_run);
+	let spec = &effective_spec(spec, b_dry_run, perc_samples);
 	let role = part_role(part_id, numa_num, num_jobs);
 	apply_spec_config(spec, b_dry_run, &role);
 	if spec.b_fold_only {
@@ -3027,7 +3034,7 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 	// b_dry_run is SHAPE only (effective_spec's dry knobs);
 	// scale still never proves, so the flag's decider gates are
 	// unreachable either way.
-	let eff = effective_spec(spec, b_dry_run);
+	let eff = effective_spec(spec, b_dry_run, 100.0);
 	let sc = scale_spec_clone(&eff);
 	apply_spec_config(&sc, b_dry_run, &part_role(0, 1, 1));
 	{
@@ -4573,7 +4580,7 @@ pub mod tests_bora_data_driver {
 		spec.range2_bit = DLP.dry_range2_bit
 			.expect("DLP must carry a dry range2_bit");
 		if let Some(c) = DLP.dry_chunk_len { spec.chunk_len = c; }
-		assert!(effective_spec(&spec, false).b_check_lkup,
+		assert!(effective_spec(&spec, false, 100.0).b_check_lkup,
 			"a non-dry run must keep the clone's cover check");
 		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
 		let _t2 = TmpConfigDir(PathBuf::from(format!(
@@ -5055,8 +5062,8 @@ pub mod tests_bora_data_driver {
 	/// DLP dry swaps in the 22-bit range table; full keeps 25.
 	#[test]
 	fn test_dlp_dry_range2_bit_swaps() {
-		assert_eq!(effective_spec(&DLP, true).range2_bit, 22);
-		assert_eq!(effective_spec(&DLP, false).range2_bit, 25);
+		assert_eq!(effective_spec(&DLP, true, 100.0).range2_bit, 22);
+		assert_eq!(effective_spec(&DLP, false, 100.0).range2_bit, 25);
 	}
 
 	/// DLP/DNA fold their scale corpus WHOLE (2 KB mails / no sweep);
@@ -5182,13 +5189,16 @@ pub mod tests_bora_data_driver {
 	#[test]
 	fn test_d102_effective_spec() {
 		assert!(DLP.b_check_lkup);
-		let e = effective_spec(&DLP, true);
+		let e = effective_spec(&DLP, true, 100.0);
 		assert!(!e.b_check_lkup, "light run must not cover-check");
 		assert_eq!(e.name, DLP.name);
 		assert_eq!(e.db_cache_dir, DLP.db_cache_dir);
-		assert!(effective_spec(&DLP, false).b_check_lkup);
+		assert!(effective_spec(&DLP, false, 100.0).b_check_lkup);
+		// a subsampled fold cannot size the share: cover_word_n is
+		// the smallest job, so the check must be OFF below perc 100.
+		assert!(!effective_spec(&DLP, false, 2.0).b_check_lkup);
 		let sc = scale_spec_clone(&DLP);
-		assert!(!effective_spec(&sc, false).b_check_lkup);
+		assert!(!effective_spec(&sc, false, 100.0).b_check_lkup);
 	}
 
 	/// M103: the DNA const points at real files and pins legacy
@@ -5401,16 +5411,16 @@ pub mod tests_bora_data_driver {
 		assert_eq!(DNA.dry_chunk_len, Some(256));
 		assert_eq!(DLP.dry_range2_bit, Some(22));
 		assert_eq!(DLP.dry_chunk_len, None);
-		let d = effective_spec(&DNA, true);
+		let d = effective_spec(&DNA, true, 100.0);
 		assert_eq!((d.range2_bit, d.chunk_len), (22, 256));
-		let h = effective_spec(&DNA, false);
+		let h = effective_spec(&DNA, false, 100.0);
 		assert_eq!((h.range2_bit, h.chunk_len), (27, 4096),
 			"full run must keep the REAL shape");
 		// DLP dry shrinks the table (2026-08-11) but keeps chunk_len:
 		// 64 is already the smallest of the three.
-		let dl = effective_spec(&DLP, true);
+		let dl = effective_spec(&DLP, true, 100.0);
 		assert_eq!((dl.range2_bit, dl.chunk_len), (22, 64));
-		let dh = effective_spec(&DLP, false);
+		let dh = effective_spec(&DLP, false, 100.0);
 		assert_eq!((dh.range2_bit, dh.chunk_len), (25, 64));
 	}
 
@@ -5568,15 +5578,15 @@ pub mod tests_bora_data_driver {
 	/// effective_spec's light branch is its only consumer.
 	#[test]
 	fn test_m104_effective_spec_clam() {
-		let d = effective_spec(&CLAM, true);
+		let d = effective_spec(&CLAM, true, 100.0);
 		assert_eq!((d.range2_bit, d.chunk_len), (22, 128));
 		assert!(!d.b_check_lkup);
-		let h = effective_spec(&CLAM, false);
+		let h = effective_spec(&CLAM, false, 100.0);
 		assert_eq!((h.range2_bit, h.chunk_len), (26, 4096),
 			"full run must keep the REAL shape");
 		assert!(h.b_check_lkup);
 		// the scale clone preserves the same dry-only property.
-		let sh = effective_spec(&scale_spec_clone(&CLAM), false);
+		let sh = effective_spec(&scale_spec_clone(&CLAM), false, 100.0);
 		assert_eq!((sh.range2_bit, sh.chunk_len), (26, 4096));
 	}
 
@@ -5767,7 +5777,7 @@ pub mod tests_bora_data_driver {
 		let _g = cfg_lock();
 		let proot = utils::os::proj_root();
 		let mut spec =
-			scale_spec_clone(&effective_spec(&CLAM, true));
+			scale_spec_clone(&effective_spec(&CLAM, true, 100.0));
 		spec.name = "clam_test";     // /tmp/bora/clam_test_neo_p0
 		spec.db_cache_dir = "clam_test_neo";
 		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
@@ -5792,7 +5802,7 @@ pub mod tests_bora_data_driver {
 	#[test]
 	fn test_m104_dry_scale_fragment_fits_table() {
 		let proot = utils::os::proj_root();
-		let eff = effective_spec(&CLAM, true);
+		let eff = effective_spec(&CLAM, true, 100.0);
 		let table = 1usize << eff.range2_bit;
 		assert_eq!(CLAM.dry_scale_perc, 5.0);
 		for s in CLAM.scale_sources {
