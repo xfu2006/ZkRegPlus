@@ -1064,19 +1064,28 @@ def _watch_child(p, log_path, ctx, max_wall_s=0, max_rss_gb=0):
                           % (label, max_rss_gb, gb))
             _stall_kill(p, ctx, pids, log_path, 0, label)
             return
-        now = (tuple(pids), _cpu_s(pids), _log_mtime(log_path))
-        idle = time.time() - last
-        if idle > ctx.peak_idle_s:
-            ctx.peak_idle_s = idle     # the run's own margin vs STALL_S
-        if now != key:
-            key, last, warned = now, time.time(), False
-        elif max_wall_s and time.time() - t_start >= max_wall_s:
+        # WALL CAP -- an UNCONDITIONAL test, deliberately not an elif
+        # on the progress branch.  `now` below carries summed CPU
+        # time, which advances at every poll for any compute-bound
+        # tree, so a progress-gated wall cap can only ever fire on a
+        # process that is ALREADY idle: never on the diverging tuner
+        # it exists to bound.  MEASURED 2026-08-17 before the fix:
+        # busy child, cap 4 s -> still running at 19 s; idle child,
+        # same cap -> killed at 4.2 s.  Pinned by
+        # WatchChildTest.test_wall_cap_kills_a_busy_child.
+        if max_wall_s and time.time() - t_start >= max_wall_s:
             _summary_line("       %s: WALL CAP %ds reached -- killing "
                           "(TIMEOUT, not a failure)"
                           % (label, max_wall_s))
             _stall_kill(p, ctx, pids, log_path,
                         time.time() - t_start, label)
             return
+        now = (tuple(pids), _cpu_s(pids), _log_mtime(log_path))
+        idle = time.time() - last
+        if idle > ctx.peak_idle_s:
+            ctx.peak_idle_s = idle     # the run's own margin vs STALL_S
+        if now != key:
+            key, last, warned = now, time.time(), False
         elif idle >= STALL_S:
             _stall_kill(p, ctx, pids, log_path, idle, label)
             last, warned = time.time(), False      # re-arm on a survivor
@@ -2774,10 +2783,25 @@ V101_DEC_RESERVE_S = 5.5 * 3600
 V101_PRIORS = dict(t_db=180.0, r_disch=2.35, r_probe=1.0,
                     k5=2.5, km=2.5, r_seed=0.4)
 
-# v1 = 3 convergence rounds + ~7 post-convergence tightening passes
-# (job_v101.txt:215-222); v2 = 1 pass by design.
-V101_V1_PASSES = 10
+# v1 = convergence rounds + post-convergence tightening passes; v2 = 1
+# pass by design.  The 12.47 h reference run converged at iter 4 (= 5
+# rounds) and its four binary searches (zkp_driver.rs:1207,:1249 and
+# their igc twins) cost ~7-10 probes, so 10 was the OPTIMISTIC end of
+# the range and an under-estimate here becomes a TIMEOUT on ab_v1.
+V101_V1_PASSES = 13
 V101_V2_PASSES = 1
+
+# C3 (capacity_probe_collect_top) is on the v2 path ONLY:
+# bora_data_driver.rs:2248 probes at the widest rung, while v1's
+# zkp_driver.rs:1139 still calls capacity_probe_par -> plan_nd_advice
+# and walks 2-5 rungs per word.  `calib` is a v2 step, so the r_probe
+# it measures is the C3 rate; spending that same rate on v1's passes
+# under-prices the v1 arm by this factor and hands ab_v1 a cap it
+# cannot make.  MEASURED 2026-08-17 on one vehicle, both ways:
+# probe 62,902 ms -> 34,806 ms = 1.81x.  Superseded at run time by
+# the calib_v1 step, which measures the v1 rate directly; this is
+# only the fallback for a suite where that step did not run.
+V101_V1_PROBE_MULT = 1.81
 
 # (perc_samples, files, MB, padded chunks, derived lkup share) for the
 # deterministic subsets of the clam corpus at chunk_len 4096.  Measured
@@ -2809,10 +2833,18 @@ V101_VEHICLES = [
     (2, 25, 12.3, 110, 1011),
 ]
 
-# The suite's own safety factor on the cost model.  Every coefficient
-# is measured minutes earlier on the SAME box under the SAME load, so
-# 15% is generous rather than tight.
-V101_MODEL_SLACK = 0.85
+# The A/B steps' wall cap, as a multiple of the modelled cost.  1.3
+# was too tight: the reference run's rounds GREW 113 -> 154 min
+# (+36%) as caps grew, and a subset-calibrated model cannot see that.
+V101_AB_CAP_MULT = 1.6
+
+# Extra margin on top of the caps.  NOTE this multiplies the CAPS, not
+# the model estimate -- the picker's promise and the caps it then
+# hands out have to be the same promise.  The old form compared the
+# model estimate to 0.85 x room while handing out caps of 1.3 x the
+# estimate, i.e. 10% MORE than the whole room, which quietly ate the
+# decider reserve.
+V101_MODEL_SLACK = 0.95
 
 
 @dataclass
@@ -2879,6 +2911,29 @@ def _v101_deadline(t0):
     return at
 
 
+def _v101_model_line(model):
+    """The cost model with every coefficient tagged MEASURED or left
+    as a prior.  Untagged, the line reads as if all five were
+    measured -- and on the four verdicts already on disk, none of
+    them was."""
+    seen = model.get("_measured") or set()
+
+    def tag(k):
+        return "*" if k in seen else ""
+    parts = ["t_db=%.0fs%s" % (model["t_db"], tag("t_db")),
+             "r_disch=%.2fs/MB%s" % (model["r_disch"],
+                                      tag("r_disch")),
+             "r_probe=%.3fs/chunk%s" % (model["r_probe"],
+                                         tag("r_probe")),
+             "k5=%.2f%s" % (model["k5"], tag("k5")),
+             "km=%.2f%s" % (model["km"], tag("km"))]
+    for k in ("r_v2_arm", "r_v1_arm"):
+        if model.get(k):
+            parts.append("%s=%.3fs/chunk*" % (k, model[k]))
+    return ("model  " + " ".join(parts)
+            + "   (* = measured this run, rest = prior)")
+
+
 def _v101_room(left):
     """Seconds a step may use without crossing the hard deadline; 180 s
     are held back for the verdict and the bundle."""
@@ -2934,26 +2989,40 @@ def v101_cost(model, veh, passes):
     are paid by BOTH arms -- that is I5, and it is why the model has
     k5 and km at all."""
     _p, _f, mb, chunks, _sh = veh
+    v1 = passes != V101_V2_PASSES
     setup = model["t_db"] + model["r_disch"] * mb
-    probe = model["r_probe"] * chunks
-    walks = (model["k5"] + model["km"]) * probe
-    seed = model["r_seed"] * mb if passes == V101_V2_PASSES else 0.0
-    return setup + seed + passes * probe + walks
+    # PREFERRED: the arm's own end-to-end rate, measured by calib /
+    # calib_v1 on the perc-2 vehicle.  One number that already
+    # contains the probe rate, the pass count, the tightening passes
+    # and both walks -- so none of them has to be modelled, and the
+    # v1/v2 asymmetry that C3 introduced cannot be mis-applied.
+    arm = model.get("r_v1_arm" if v1 else "r_v2_arm")
+    if arm:
+        return setup + arm * chunks
+    # FALLBACK, only if that step did not run: the analytic model.
+    # v1 pays the non-C3 probe rate (C3 is v2-only).
+    rate = model["r_probe"] * (V101_V1_PROBE_MULT if v1 else 1.0)
+    walks = (model["k5"] + model["km"]) * model["r_probe"] * chunks
+    seed = 0.0 if v1 else model["r_seed"] * mb
+    return setup + seed + passes * rate * chunks + walks
 
 
 def v101_pick(model, remain_s, log):
-    """Largest vehicle whose A/B pair fits `remain_s` with the model's
-    own slack.  Returns (veh, predicted_s) or (None, None)."""
+    """Largest vehicle whose A/B pair fits `remain_s` -- measured
+    against the CAPS the two steps will actually be given, not against
+    the bare model estimate.  Returns (veh, predicted_s) or (None,
+    None)."""
+    budget = remain_s * V101_MODEL_SLACK
     for veh in V101_VEHICLES:
         c1 = v101_cost(model, veh, V101_V1_PASSES)
         c2 = v101_cost(model, veh, V101_V2_PASSES)
+        need = (c1 + c2) * V101_AB_CAP_MULT
         log("picker: perc=%-3d chunks=%-5d v1=%s v2=%s pair=%s "
-            "budget=%s %s" % (veh[0], veh[3], _v101_hm(c1),
-                              _v101_hm(c2), _v101_hm(c1 + c2),
-                              _v101_hm(remain_s * V101_MODEL_SLACK),
-                              "TAKE" if c1 + c2 <= remain_s *
-                              V101_MODEL_SLACK else "skip"))
-        if c1 + c2 <= remain_s * V101_MODEL_SLACK:
+            "caps=%s budget=%s %s"
+            % (veh[0], veh[3], _v101_hm(c1), _v101_hm(c2),
+               _v101_hm(c1 + c2), _v101_hm(need), _v101_hm(budget),
+               "TAKE" if need <= budget else "skip"))
+        if need <= budget:
             return veh, c1 + c2
     return None, None
 
@@ -2991,6 +3060,15 @@ def v101_steps():
         V101Step("calib", "v2 receipt @ perc 2 (+ calibrates k5/km)",
                  v101_argv("full_clam_v2", 100, 2, 2, 1, 1, 0,
                            "0", "1"), V101_METER_ENV, 3600, True),
+        # The v1 arm does NOT get C3 (zkp_driver.rs:1139 still walks
+        # 2-5 rungs per word), so its per-chunk rate cannot be read
+        # off a v2 step.  Measuring one whole v1 tune at perc 2 costs
+        # ~25 min out of hours of margin and replaces BOTH guesses --
+        # the probe rate and the pass count -- with one number.
+        V101Step("calib_v1", "v1 receipt @ perc 2 (measures the v1 "
+                 "arm rate; C3 is v2-only)",
+                 v101_argv("full_clam", 100, 2, 2, 1, 1, 0,
+                           "0", "1"), V101_METER_ENV, 5400, False),
         V101Step("pick", "choose the A/B vehicle", [], {}, 0, False,
                  kind="calc"),
         V101Step("ab_v1", "A/B v1 arm", [], V101_METER_ENV, 0, False),
@@ -3031,6 +3109,11 @@ def v101_parse(key, path, res):
         take("skipped", r"skipped=(\d+)")
         take("seed_ms", r"V2 PHASE seed ms=(\d+)")
         take("db_ms", r"build DB\. (\d+) ms")
+        # bora_data_driver.rs:2370 -- the ONE panic that is by design
+        # on this step.  Without it, any crash after the seed line was
+        # being forgiven as "the expected panic".
+        n["seed_marker"] = _v101_count(
+            path, r"V101 SEED-ONLY DRY FIRE")
     if key in ("calib", "ab_v2", "smoke_v2", "dec_v2", "dec_big"):
         take("v2_iters", r"V2 CONVERGED @iter (\d+)")
         take("qm_real", r"V2 CONVERGED @iter \d+: qm_real (\d+)")
@@ -3038,8 +3121,20 @@ def v101_parse(key, path, res):
         take("probe_ms", r"V2 PHASE probe ms=(\d+)")
         take("v5_ms", r"V2 PHASE v5 ms=(\d+)")
         take("seed_ms", r"V2 PHASE seed ms=(\d+)")
-        n["v2_bumps"] = _v101_count(path, r"^.*v2 iter \d+: \d+ of")
-    if key in ("ab_v1", "smoke_v1", "dec_v1"):
+        # A bump round is emitted in TWO shapes (bora_data_driver.rs
+        # :2265 BUILD bump, :2318 "N of M words failed ... bumped").
+        # The old regex saw only :2318, so a run that bumped at build
+        # time reported bumps=0 -- observed live 2026-08-17, where the
+        # log carried "v2 iter 0: BUILD bump" beside "bumps=0".  Note
+        # :2306 ("subset clean, promoting") is a ROUND but NOT a bump.
+        n["v2_bumps"] = _v101_count(
+            path, r"v2 iter \d+: (BUILD bump|\d+ of \d+ words)")
+        # The one bump M2 is supposed to make impossible: the qm_real
+        # seed under-capping.  Any other bump (dfa, comp_sig) is
+        # tolerated once; this one is not tolerated at all.
+        n["v2_qm_bumps"] = _v101_count(
+            path, r"v2 iter \d+:.*dis_adv::neo_qm_real")
+    if key in ("ab_v1", "smoke_v1", "dec_v1", "calib_v1"):
         take("v1_iters", r"determine_config_non_aggr CONVERGED @iter (\d+)")
         n["v1_bumps"] = _v101_count(path,
                                      r"determine_config_non_aggr iter \d+:")
@@ -3048,17 +3143,31 @@ def v101_parse(key, path, res):
     take("meter_demand_igc", r"igc=(\d+)/\d+ \(demand/cap_seen\)")
     take("shipped_qm", r"vs shipped qm_real_rows=(\d+)/")
     take("caperr_units", r"caperr_units=(\d+)")
-    # The decider's real self-verify markers, confirmed against a
-    # live dec_v2 log 2026-08-17:
-    #   VERIFY-FLAGS batch1[final]: qa=1 fs=1 kzg=1 verdict=PASS
-    #   VERIFY-FLAGS ind[final] i=0: ... verdict=PASS
-    # There is NO "VERIFY_FAILS=" line -- grepping for one made this
-    # gate VACUOUS.  foldpot does not abort on a verify failure
-    # (consts.rs:69-75), so this counter IS the whole gate.
+    # The decider's real self-verify markers.  foldpot does not abort
+    # on a verify failure (consts.rs:69-75), so these counters ARE the
+    # whole gate, and every token below is quoted from the emit site
+    # rather than from a healthy log:
+    #   batch_proc.rs:800,1025,1149  ->  if ok {"PASS"} else {"REJECT"}
+    # TWICE BURNED HERE.  The first version grepped "VERIFY_FAILS=",
+    # a line that does not exist.  The second grepped "verdict=FAIL",
+    # a token that does not exist either -- the failure word is
+    # REJECT.  A failure regex CANNOT be validated against a healthy
+    # log, which is why both survived review; validate it against the
+    # Rust emit site.
     n["verify_pass"] = _v101_count(path,
                                     r"VERIFY-FLAGS.*verdict=PASS")
     n["verify_fail"] = _v101_count(path,
-                                    r"VERIFY-FLAGS.*verdict=FAIL")
+                                    r"VERIFY-FLAGS.*verdict=REJECT")
+    # A healthy run emits exactly THREE [final] markers -- batch1,
+    # batch2 (the Groth16 decider) and ind -- measured on both arms
+    # 2026-08-17.  Counting PASS markers alone is not enough: batch1
+    # failing early-returns and simply OMITS the batch2 line
+    # (batch_proc.rs:1030-1033), so a missing marker is as much a
+    # failure as a REJECTed one.
+    n["verify_final"] = _v101_count(
+        path, r"VERIFY-FLAGS \w+\[final\].*verdict=PASS")
+    n["verify_snark"] = _v101_count(
+        path, r"VERIFY-FLAGS batch2\[final\].*verdict=PASS")
     res.nums = n
     return n
 
@@ -3108,7 +3217,11 @@ def _v101_step_rows(results, now=None):
     out = []
     for k, r in results.items():
         wall = r.wall_s
-        note = r.why or _v101_headline(k, r)
+        # A step that has not run has no numbers; _v101_headline would
+        # render them as "conv@None bumps=None", which reads like a
+        # measurement that came back empty rather than one not taken.
+        note = r.why if r.status == "PENDING" \
+            else (r.why or _v101_headline(k, r))
         if r.status == "RUNNING" and r.t_start:
             wall = now - r.t_start
             note = "cap %s, kill at %s" % (
@@ -3139,10 +3252,7 @@ def v101_progress_text(t0, deadline, run_dir, results, veh, model):
           % (veh[0], veh[1], veh[2], veh[3], veh[4]))
     else:
         A("vehicle not chosen yet (picker runs after calib)")
-    A("model  t_db=%.0fs r_disch=%.2fs/MB r_probe=%.3fs/chunk "
-      "k5=%.2f km=%.2f" % (model["t_db"], model["r_disch"],
-                            model["r_probe"], model["k5"],
-                            model["km"]))
+    A(_v101_model_line(model))
     A("")
     A("STEP        STATUS     WALL    RSS  NOTE")
     for k, status, wall, rss, note in _v101_step_rows(results, now):
@@ -3183,11 +3293,17 @@ def _v101_tar_add(t, path, arcname, stage):
         sz = os.path.getsize(path)
     except OSError:
         return
-    if sz <= V101_BUNDLE_KEEP_MB * 1e6:
-        t.add(path, arcname=arcname)
-        return
     head = int(V101_BUNDLE_HEAD_MB * 1e6)
     tail = int(V101_BUNDLE_TAIL_MB * 1e6)
+    # Add whole unless the file is genuinely bigger than head+tail.
+    # The shipped constants leave exactly ONE byte of margin at the
+    # threshold; testing against head+tail instead of against KEEP
+    # removes the edge no matter how the three are later retuned.  A
+    # file that is over the limit but under head+tail would otherwise
+    # "drop" a negative count and seek backwards into its own head.
+    if sz <= max(V101_BUNDLE_KEEP_MB * 1e6, head + tail):
+        t.add(path, arcname=arcname)
+        return
     cut = os.path.join(stage, arcname.replace(os.sep, "_") + ".cut")
     try:
         with open(path, "rb") as src, open(cut, "wb") as dst:
@@ -3209,8 +3325,12 @@ def _v101_bundle(run_dir, results, reason, dlog):
     end.  Never raises: a broken bundle must not fail the suite."""
     tgz = os.path.join(run_dir, "bundle.tgz")
     tmp = tgz + ".tmp"
-    stage = tempfile.mkdtemp(prefix="v101bundle_")
+    # mkdtemp is INSIDE the try: it raises on a full or unwritable
+    # /tmp, which is precisely the state this function runs in after a
+    # failure, and an escape from here lands in the step loop.
+    stage = None
     try:
+        stage = tempfile.mkdtemp(prefix="v101bundle_")
         man = os.path.join(stage, "MANIFEST.txt")
         with open(man, "w") as f:
             f.write("V101 bundle  host=%s  %s\nreason: %s\n"
@@ -3236,9 +3356,23 @@ def _v101_bundle(run_dir, results, reason, dlog):
                     _v101_tar_add(t, p,
                                    os.path.relpath(p, run_dir), stage)
             for r in results.values():
-                if r.tgz and os.path.isfile(r.tgz):
-                    t.add(r.tgz, arcname="triage/"
-                           + os.path.basename(r.tgz))
+                # A triage tgz is already gzipped, so it cannot be
+                # head+tail truncated the way a log can -- a cut
+                # tarball is simply unreadable.  Over the limit it is
+                # NAMED in the manifest and left on the box instead of
+                # silently bloating the download.  The `seed` step
+                # always produces one (it panics by design), so this
+                # is the common case, not the rare one.
+                if not (r.tgz and os.path.isfile(r.tgz)):
+                    continue
+                if os.path.getsize(r.tgz) > V101_BUNDLE_KEEP_MB * 1e6:
+                    dlog("bundle: %s triage %.1f MB > %.0f MB limit "
+                         "-- left on the box, see MANIFEST"
+                         % (r.key, os.path.getsize(r.tgz) / 1e6,
+                            V101_BUNDLE_KEEP_MB))
+                    continue
+                t.add(r.tgz, arcname="triage/"
+                       + os.path.basename(r.tgz))
         os.rename(tmp, tgz)
         _atomic_symlink(tgz, V101_BUNDLE)
         dlog("bundle (%s): %s -> %s  %.1f MB"
@@ -3249,7 +3383,8 @@ def _v101_bundle(run_dir, results, reason, dlog):
         dlog("bundle FAILED (%s): %s" % (reason, e))
         return ""
     finally:
-        shutil.rmtree(stage, ignore_errors=True)
+        if stage:
+            shutil.rmtree(stage, ignore_errors=True)
 
 
 def run_v101():
@@ -3257,7 +3392,11 @@ def run_v101():
     against a hard clock deadline, with its own verdict."""
     t0 = _v101_now()
     deadline = _v101_deadline(t0)
-    ts = _ts()
+    # DATED, unlike _ts(): the suite spans midnight by construction
+    # (20:00 -> 12:00), and detail.log is opened "a", so a bare
+    # %H:%M:%S would let two runs started at the same second-of-day
+    # share a directory and interleave their logs.
+    ts = time.strftime("%Y%m%d_%H%M%S")
     run_dir = os.path.join(V101_ROOT, ts)
     os.makedirs(run_dir, exist_ok=True)
     detail_path = os.path.join(run_dir, "detail.log")
@@ -3300,9 +3439,27 @@ def run_v101():
         if only and st.key not in only:
             r.status, r.why = "SKIP", "not selected (ZKR_V101_ONLY)"
             continue
+        # SIGTERM must actually stop the suite.  install_signal_
+        # handlers only kills the CHILD and sets _ABORTED; without
+        # this test the suite bundled the killed step and cheerfully
+        # started the next one, so the only way to stop it was
+        # SIGKILL -- which loses the verdict and the final bundle.
+        if aborted():
+            r.status, r.why = "SKIP", "aborted (SIGINT/SIGTERM)"
+            prog("%-9s SKIP (%s)" % (st.key, r.why))
+            continue
         left = deadline - _v101_now()
         if st.needs_v2 and not have_v2:
             r.status, r.why = "SKIP", "binary predates stage 2"
+            prog("%-9s SKIP (%s)" % (st.key, r.why))
+            continue
+        # The A/B steps get their argv from the picker.  If the picker
+        # never ran or found nothing, `stx.argv` is still [] and the
+        # child would be spawned with no arguments at all -- bora_cli
+        # then prints USAGE and exits 0, which reads as a step that
+        # ran and produced no markers.  Skip honestly instead.
+        if st.key in ("ab_v1", "ab_v2") and not st.argv:
+            r.status, r.why = "SKIP", "picker chose no vehicle"
             prog("%-9s SKIP (%s)" % (st.key, r.why))
             continue
         # `want` is what the step ASKS for; the skip test uses it, so
@@ -3338,14 +3495,19 @@ def run_v101():
             veh, veh_pred = v101_pick(model, left - 300 - reserve,
                                        dlog)
             if veh is None:
-                # The reserve is a PREFERENCE, not a constraint: the
-                # A/B is the deliverable (R2, R3) and dec_v1/dec_v2
-                # already fold and verify, so give the reserve up
-                # rather than ship a suite with no A/B at all.
+                # The dec_big part of the reserve is a PREFERENCE:
+                # the A/B is the deliverable (R2, R3), so give dec_big
+                # up rather than ship a suite with no A/B at all.  The
+                # dec_v1 + dec_v2 part is NOT negotiable -- dropping
+                # it would leave no fold-and-prove evidence anywhere,
+                # so a floor stays behind on the retry.
+                floor = 2 * 3600 + 300
                 dlog("picker: nothing fits with the %s decider "
-                     "reserve -- retrying without it"
-                     % _v101_hm(reserve))
-                veh, veh_pred = v101_pick(model, left - 300, dlog)
+                     "reserve -- retrying with the %s floor "
+                     "(dec_v1 + dec_v2 only, dec_big surrendered)"
+                     % (_v101_hm(reserve), _v101_hm(floor)))
+                veh, veh_pred = v101_pick(model, left - 300 - floor,
+                                           dlog)
             if veh is None:
                 r.status, r.why = "FAIL", "no vehicle fits the deadline"
                 prog("%-9s FAIL (%s)" % (st.key, r.why))
@@ -3361,7 +3523,8 @@ def run_v101():
                                       "0", "1")
                 passes = (V101_V1_PASSES if k == "ab_v1"
                           else V101_V2_PASSES)
-                stx.cap_s = int(1.3 * v101_cost(model, veh, passes))
+                stx.cap_s = int(V101_AB_CAP_MULT
+                                 * v101_cost(model, veh, passes))
             prog("%-9s OK   perc=%d (%d files, %d chunks, share %d), "
                  "pair predicted %s" % (st.key, veh[0], veh[1],
                                         veh[3], veh[4],
@@ -3369,50 +3532,73 @@ def run_v101():
             continue
 
         # ---- spawn ----
-        ctx = JobHandle("v101_%s" % st.key, "full")
-        ctx.note("v101 step %s: %s" % (st.key, st.label))
-        run_log = ctx.log_path("run")
+        # The whole spawn is guarded.  Under go_background() stdio is
+        # /dev/null, so an uncaught OSError from point_current_job,
+        # spawn's open(), Popen, _summary_line or _pack_bundle would
+        # kill the suite leaving no verdict, no bundle and no
+        # traceback anywhere.  Every Sequencer leaf is wrapped for
+        # exactly this reason; run_v101 is not a Sequencer leaf and
+        # so needs its own.  One broken step is recorded and the
+        # suite carries on to the next.
         t_s = _v101_now()
-        env = dict(neo_env())
-        env.update(st.env)
-        dlog("step %s argv=%s env+=%s cap=%ds"
-             % (st.key, st.argv, sorted(st.env), cap))
-        r.status, r.t_start = "RUNNING", t_s
-        prog("%-9s RUNNING cap %s -> kill at %s"
-             % (st.key, _v101_hm(cap),
-                time.strftime("%H:%M", time.localtime(t_s + cap))))
-        _v101_write_progress(run_dir, v101_progress_text(
-            t0, deadline, run_dir, results, veh, model))
-        if st.kind == "cargo":
-            rc = _v101_cargo(ctx, st, env, run_log, dlog)
-        else:
-            rc = run_rust_example(ctx, "bora_cli", st.argv, env,
-                                   max_wall_s=cap,
-                                   max_rss_gb=st.max_rss_gb)
-        # b_fail_scan=False on EVERY step: the non-aggr tuner
-        # prints caught CapErr probe panics into every SUCCESSFUL log
-        # (M103 11.4 -- run_leaf_clamav passes False for the same
-        # reason), so FAIL_RE's "panicked" fires on a healthy run.
-        # The verdict below uses rc plus POSITIVE markers instead,
-        # which is a stronger test than a text scan.
-        res = ctx.finish(rc, b_fail_scan=False)
-        r.wall_s = _v101_now() - t_s
-        r.rss_gb = res.peak_rss_gb
-        r.tgz = res.triage_tgz or ""
-        v101_parse(st.key, run_log, r)
-        for k, v in sorted((r.nums or {}).items()):
-            if not k.endswith("@"):
-                dlog("  %s.%s = %s   <- %s"
-                     % (st.key, k, v, (r.nums or {}).get(k + "@", "")))
-        _v101_keep(run_dir, st.key, run_log)
-        r.status, r.why = _v101_verdict_step(st, r, res, cap)
+        try:
+            ctx = JobHandle("v101_%s" % st.key, "full")
+            ctx.note("v101 step %s: %s" % (st.key, st.label))
+            run_log = ctx.log_path("run")
+            env = dict(neo_env())
+            env.update(st.env)
+            dlog("step %s argv=%s env+=%s cap=%ds"
+                 % (st.key, st.argv, sorted(st.env), cap))
+            r.status, r.t_start = "RUNNING", t_s
+            prog("%-9s RUNNING cap %s -> kill at %s"
+                 % (st.key, _v101_hm(cap),
+                    time.strftime("%H:%M",
+                                  time.localtime(t_s + cap))))
+            _v101_write_progress(run_dir, v101_progress_text(
+                t0, deadline, run_dir, results, veh, model))
+            if st.kind == "cargo":
+                rc = _v101_cargo(ctx, st, env, run_log, dlog, cap)
+            else:
+                rc = run_rust_example(ctx, "bora_cli", st.argv, env,
+                                       max_wall_s=cap,
+                                       max_rss_gb=st.max_rss_gb)
+            # b_fail_scan=False on EVERY step: the non-aggr tuner
+            # prints caught CapErr probe panics into every SUCCESSFUL
+            # log (M103 11.4 -- run_leaf_clamav passes False for the
+            # same reason), so FAIL_RE's "panicked" fires on a healthy
+            # run.  The verdict below uses rc plus POSITIVE markers
+            # instead, which is a stronger test than a text scan.
+            res = ctx.finish(rc, b_fail_scan=False)
+            r.wall_s = _v101_now() - t_s
+            r.rss_gb = res.peak_rss_gb
+            r.tgz = res.triage_tgz or ""
+            v101_parse(st.key, run_log, r)
+            for k, v in sorted((r.nums or {}).items()):
+                if not k.endswith("@"):
+                    dlog("  %s.%s = %s   <- %s"
+                         % (st.key, k, v,
+                            (r.nums or {}).get(k + "@", "")))
+            _v101_keep(run_dir, st.key, run_log)
+            r.status, r.why = _v101_verdict_step(st, r, res, cap)
+        except Exception as e:              # noqa: BLE001 -- see above
+            r.wall_s = _v101_now() - t_s
+            r.status = "FAIL"
+            r.why = "suite exception: %s: %s" % (type(e).__name__, e)
+            try:
+                dlog("STEP %s RAISED:\n%s"
+                     % (st.key, traceback.format_exc()))
+            except (OSError, ValueError):
+                pass
+            _summary_line("       v101: %s RAISED %s"
+                          % (st.key, type(e).__name__))
         if st.key == "build" and r.status == "OK":
             have_v2 = _v101_has_v2(dlog)
             if not have_v2:
                 dlog("capability probe: full_clam_v2 ABSENT -> every "
                      "v2 step will be skipped; the v1 baseline still "
                      "runs")
-        if st.key in ("seed", "calib") and r.status == "OK":
+        if st.key in ("seed", "calib", "calib_v1") \
+                and r.status == "OK":
             _v101_recalibrate(model, st.key, r, veh, dlog)
         prog("%-9s %-7s %8s %5.1fGB  %s"
              % (st.key, r.status, _v101_hm(r.wall_s), r.rss_gb,
@@ -3437,19 +3623,32 @@ def run_v101():
             elif st.key == "build":
                 break
 
-    _v101_write_progress(run_dir, v101_progress_text(
-        t0, deadline, run_dir, results, veh, model))
-    txt = v101_report(t0, deadline, run_dir, results, veh, model)
-    vpath = os.path.join(run_dir, "verdict.txt")
-    with open(vpath, "w") as f:
-        f.write(txt)
-    _atomic_symlink(vpath, V101_VERDICT)
-    detail.write("\n" + txt)
+    # Every write below is individually guarded.  Under
+    # go_background() stdio is /dev/null, so an OSError here (a full
+    # /tmp is the realistic one) would otherwise destroy the verdict,
+    # the bundle AND the traceback in one go -- the run would simply
+    # stop with no artifact and no explanation.
+    txt = ""
+    try:
+        _v101_write_progress(run_dir, v101_progress_text(
+            t0, deadline, run_dir, results, veh, model))
+        txt = v101_report(t0, deadline, run_dir, results, veh, model)
+        vpath = os.path.join(run_dir, "verdict.txt")
+        with open(vpath, "w") as f:
+            f.write(txt)
+        _atomic_symlink(vpath, V101_VERDICT)
+        detail.write("\n" + txt)
+    except OSError as e:
+        dlog("VERDICT WRITE FAILED: %s" % e)
+        _summary_line("       v101: VERDICT WRITE FAILED: %s" % e)
     # The bundle runs BEFORE detail.close() -- dlog() writes to that
     # handle.  detail.log is line-buffered, so the tar reads the
     # verdict text that was just appended to it.
     _v101_bundle(run_dir, results, "final", dlog)
-    detail.close()
+    try:
+        detail.close()
+    except OSError:
+        pass
     print(txt)
     for line in txt.splitlines():
         _summary_line("  %s" % line)
@@ -3460,14 +3659,20 @@ def run_v101():
     return 1 if bad else 0
 
 
-def _v101_cargo(ctx, st, env, run_log, dlog):
+def _v101_cargo(ctx, st, env, run_log, dlog, cap_s):
     """The two cargo steps.  build = release build of bora_cli; units =
     the V101 unit filter plus the fingerprint gate, which must run
     --test-threads=1."""
     if st.key == "build":
         cmd = ["cargo", "build", "--release", "--example", "bora_cli"]
-        return _v101_spawn(ctx, cmd, env, run_log, st.cap_s)
+        return _v101_spawn(ctx, cmd, env, run_log, cap_s)
     rc = 0
+    # `cap_s` is the budget for ALL THREE filters together.  Passing
+    # st.cap_s to each invocation gave `units` three times the wall it
+    # declares, while _v101_verdict_step compared the TOTAL against
+    # the single cap -- so a legitimate finish could read as TIMEOUT.
+    budget = float(max(60, cap_s))
+    parts = []
     # (filter, minimum tests that MUST run).  A filter that matches
     # NOTHING exits 0 -- a false green, exactly the trap recorded in
     # small_data_par_lkup_coverage_red -- so every filter carries a
@@ -3476,11 +3681,20 @@ def _v101_cargo(ctx, st, env, run_log, dlog):
                               ("test_m104_parse_clam", 1, []),
                               ("fingerprint_", 1,
                                ["--test-threads=1"])):
+        # Each filter writes its OWN log.  spawn() opens with "w", so
+        # three filters sharing one path leaves only the last one's
+        # output -- the failing filter's evidence was being destroyed
+        # before the bundle was built.  ctx.log_path registers them,
+        # so they ride along in the triage tgz too.
+        sub = ctx.log_path("units_%s" % filt.strip("_"))
         cmd = ["cargo", "test", "--release", "-p", "zkregplus",
                "--lib", "--", filt, "--nocapture"] + extra
         dlog("  units: %s" % " ".join(cmd))
-        rc |= _v101_spawn(ctx, cmd, env, run_log, st.cap_s)
-        n, raw = _v101_grep(run_log, r"(\d+) passed", 1)
+        t0 = time.time()
+        rc |= _v101_spawn(ctx, cmd, env, sub, int(max(30, budget)))
+        budget -= time.time() - t0
+        parts.append(sub)
+        n, raw = _v101_grep(sub, r"(\d+) passed", 1)
         got = int(n) if n else 0
         dlog("  units: filter %-22s ran %s (need >= %d)  <- %s"
              % (filt, got, need, raw))
@@ -3488,6 +3702,15 @@ def _v101_cargo(ctx, st, env, run_log, dlog):
             dlog("  units: FILTER %s MATCHED %d TESTS -- treating as "
                  "FAIL (a 0-match filter exits 0)" % (filt, got))
             rc |= 1
+    try:
+        with open(run_log, "w") as out:
+            for p in parts:
+                out.write("\n===== %s =====\n" % os.path.basename(p))
+                if os.path.isfile(p):
+                    with open(p, errors="replace") as f:
+                        shutil.copyfileobj(f, out)
+    except OSError as e:
+        dlog("  units: could not merge filter logs: %s" % e)
     return rc
 
 
@@ -3523,14 +3746,26 @@ def _v101_recalibrate(model, key, r, veh, dlog):
     n = r.nums or {}
     old = dict(model)
     if key == "seed":
+        # `db_ms` comes from "build DB. N ms", which ONLY the legacy
+        # zkp_driver emits (:1686,:2081).  Every V101 step runs
+        # bora_data_driver::build_fresh_db, which logs no such line,
+        # so this branch is dead on the neo path and t_db keeps its
+        # prior.  Left in place because it costs nothing and would
+        # start working the day that timer is added -- but the seed
+        # step's own arithmetic below no longer DEPENDS on it: the
+        # residual goes into r_disch, a per-MB term, rather than
+        # into km, which the old code then multiplied by chunk count.
         if n.get("db_ms"):
             model["t_db"] = n["db_ms"] / 1000.0
-        # everything else in that step is DB + discharge + seed walk
+            model.setdefault("_measured", set()).add("t_db")
         if n.get("seed_ms") is not None:
             model["r_seed"] = n["seed_ms"] / 1000.0 / 765.5
+            model.setdefault("_measured", set()).add("r_seed")
             disch = r.wall_s - model["t_db"] - n["seed_ms"] / 1000.0
             if disch > 0:
                 model["r_disch"] = disch / 765.5
+                model.setdefault("_measured",
+                                  set()).add("r_disch")
     if key == "calib":
         # the perc-2 vehicle, read FROM the table rather than copied
         # out of it: the table grew on 2026-08-17 and a duplicated
@@ -3540,15 +3775,41 @@ def _v101_recalibrate(model, key, r, veh, dlog):
         pr = n.get("probe_ms")
         if pr:
             model["r_probe"] = (pr / 1000.0) / chunks
+            model.setdefault("_measured", set()).add("r_probe")
         if n.get("v5_ms") and pr:
             model["k5"] = max(0.2, (n["v5_ms"] / float(pr)))
+            model.setdefault("_measured", set()).add("k5")
         # the meter walk is the tail of the step that neither phase
         # line covers; attribute it as km
         acc = sum(n.get(k, 0) for k in ("seed_ms", "probe_ms", "v5_ms"))
+        mb2 = float(dict((v[0], v[2])
+                          for v in V101_VEHICLES).get(2, 12.3))
         rest = r.wall_s - acc / 1000.0 - model["t_db"] \
-            - model["r_disch"] * 12.3
+            - model["r_disch"] * mb2
         if pr and rest > 0:
             model["km"] = max(0.2, rest / (pr / 1000.0))
+            model.setdefault("_measured", set()).add("km")
+        # ...and the same end-to-end rate the v1 arm gets, so the two
+        # arms are priced by the same method rather than one by
+        # measurement and one by model.
+        vh2 = dict((v[0], v) for v in V101_VEHICLES).get(2)
+        if vh2 and r.wall_s > 0:
+            body = r.wall_s - (model["t_db"]
+                               + model["r_disch"] * vh2[2])
+            if body > 0:
+                model["r_v2_arm"] = body / float(vh2[3])
+    if key == "calib_v1":
+        # ONE number, measured end to end: the whole v1 arm at perc 2,
+        # minus the setup the model already prices, divided by chunks.
+        # It absorbs the probe rate, the pass count AND the tightening
+        # passes at once, so none of the three has to be guessed.
+        vh = dict((v[0], v) for v in V101_VEHICLES).get(2)
+        if vh and r.wall_s > 0:
+            setup = model["t_db"] + model["r_disch"] * vh[2]
+            body = r.wall_s - setup
+            if body > 0:
+                model["r_v1_arm"] = body / float(vh[3])
+                model["v1_rounds_seen"] = (n.get("v1_bumps") or 0) + 1
     dlog("recalibrate after %s: %s -> %s" % (key, old, model))
 
 
@@ -3558,12 +3819,26 @@ def _v101_verdict_step(st, r, res, cap):
     nonzero rc and its panic marker are expected, not a failure."""
     n = r.nums or {}
     if r.wall_s >= cap * 0.98:
+        # Distinguish "this step hung" from "the clock ran out".  A
+        # cap clamped below what the step asked for is a scheduling
+        # outcome, not a defect in the step, and conflating them sends
+        # the reader hunting a hang that never happened.
+        if st.cap_s and cap < st.cap_s:
+            return "TIMEOUT", ("clock-clamped: asked %s, got %s "
+                               "before the 12:00 deadline"
+                               % (_v101_hm(st.cap_s), _v101_hm(cap)))
         return "TIMEOUT", "hit the %s wall cap" % _v101_hm(cap)
     if st.key == "seed":
-        # the dry fire PANICS by design after logging, so rc != 0 is
-        # expected here; the seed line is the whole verdict.
-        if n.get("seed_cs"):
+        # The dry fire panics BY DESIGN after logging, so rc != 0 is
+        # expected -- but only for THAT panic.  Narrow the allowance
+        # to the marker the seed-only path prints, so a different
+        # crash after the seed line is still a failure.
+        if n.get("seed_cs") and n.get("seed_marker"):
             return "OK", ""
+        if n.get("seed_cs"):
+            return "FAIL", ("seed printed but the SEED-ONLY marker "
+                            "is absent: rc=%s is a real crash"
+                            % res.rc)
         return "FAIL", "no V2 QM SEED line"
     if res.rc != 0:
         return "FAIL", "rc=%s (%s)" % (res.rc, res.triage_tgz)
@@ -3581,12 +3856,18 @@ def _v101_verdict_step(st, r, res, cap):
     # decider step must read the COUNTER, never the exit code.
     if st.key.startswith("dec_"):
         if n.get("verify_fail"):
-            return "FAIL", "%d VERIFY-FLAGS verdict=FAIL" \
+            return "FAIL", "%d VERIFY-FLAGS verdict=REJECT" \
                 % n["verify_fail"]
-        # POSITIVE: no PASS marker at all means the fold never
-        # reached the verify, which is a failure, not a pass.
-        if not n.get("verify_pass"):
-            return "FAIL", "no VERIFY-FLAGS verdict=PASS marker"
+        # POSITIVE, and specific: all THREE [final] markers must be
+        # present AND PASS.  "at least one PASS somewhere" was the old
+        # test and it let a REJECTed Groth16 decider through -- a
+        # healthy run emits 7 PASS markers, so 6 could reject unseen.
+        if n.get("verify_final", 0) < 3:
+            return "FAIL", ("only %s of 3 [final] VERIFY-FLAGS PASS "
+                            "markers (batch1/batch2/ind)"
+                            % n.get("verify_final", 0))
+        if not n.get("verify_snark"):
+            return "FAIL", "no batch2[final] PASS (Groth16 decider)"
     return "OK", ""
 
 
@@ -3596,15 +3877,21 @@ def _v101_headline(key, r):
         return "cs=%s igc=%s mid_hits=%s skipped=%s" % (
             n.get("seed_cs"), n.get("seed_igc"), n.get("mid_hits"),
             n.get("skipped"))
-    if key in ("calib", "ab_v2", "smoke_v2", "dec_v2", "dec_big"):
+    # The decider test comes FIRST.  It used to sit below the v2
+    # branch, which also matches dec_v2 and dec_big -- so the two
+    # steps whose entire purpose is to prove showed tuner numbers and
+    # no verify evidence at all, and the branch below was dead code.
+    if key.startswith("dec_"):
+        return "verify final=%s/3 PASS=%s REJECT=%s  %s" % (
+            n.get("verify_final"), n.get("verify_pass"),
+            n.get("verify_fail"),
+            ("v2 iters=%s" % n.get("v2_iters"))
+            if key in ("dec_v2", "dec_big")
+            else ("v1 conv@%s" % n.get("v1_iters")))
+    if key in ("calib", "ab_v2", "smoke_v2"):
         return "v2 iters=%s bumps=%s qm_real=%s" % (
             n.get("v2_iters"), n.get("v2_bumps"), n.get("qm_real"))
-    if key.startswith("dec_"):
-        return "verify PASS=%s FAIL=%s  %s" % (
-            n.get("verify_pass"), n.get("verify_fail"),
-            ("v2 iters=%s" % n.get("v2_iters")) if key == "dec_v2"
-            else ("v1 conv@%s" % n.get("v1_iters")))
-    if key in ("ab_v1", "smoke_v1", "dec_v1"):
+    if key in ("ab_v1", "smoke_v1", "calib_v1"):
         return "v1 conv@%s bumps=%s" % (n.get("v1_iters"),
                                          n.get("v1_bumps"))
     return ""
@@ -3639,9 +3926,7 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
         A("vehicle perc_samples=%d  %d files  %.1fMB  %d chunks  "
           "share %d (production 129)"
           % (veh[0], veh[1], veh[2], veh[3], veh[4]))
-    A("model  t_db=%.0fs r_disch=%.2fs/MB r_probe=%.3fs/chunk "
-      "k5=%.2f km=%.2f" % (model["t_db"], model["r_disch"],
-                            model["r_probe"], model["k5"], model["km"]))
+    A(_v101_model_line(model))
     A("")
     A("STEP        STATUS     WALL    RSS  NOTE")
     for k, status, wall, rss, note in _v101_step_rows(R):
@@ -3650,47 +3935,84 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     A("")
 
     # ---- falsifiers ----
+    # `src` records WHICH step a number came from.  Several metrics
+    # fall back from ab_v2 (the picked vehicle) to calib (perc 2, 25
+    # files); without the tag the reader cannot tell a 272 MB result
+    # from a 12.3 MB one, and they are not the same evidence.
+    def pick2(field, *keys):
+        for k in keys:
+            v = g(k, field)
+            if v is not None:
+                return v, k
+        return None, None
+
     seed_cs = g("seed", "seed_cs")
-    v2_bumps = g("ab_v2", "v2_bumps", g("calib", "v2_bumps"))
+    v2_bumps, src_bump = pick2("v2_bumps", "ab_v2", "calib")
+    v2_qm_bumps, _ = pick2("v2_qm_bumps", "ab_v2", "calib")
+    v2_iters, _ = pick2("v2_iters", "ab_v2", "calib")
     v1_iters = g("ab_v1", "v1_iters")
     v1_bumps = g("ab_v1", "v1_bumps")
-    demand = g("ab_v2", "meter_demand_cs", g("calib",
-                                              "meter_demand_cs"))
-    shipped = g("ab_v2", "shipped_qm", g("calib", "shipped_qm"))
+    demand, src_dem = pick2("meter_demand_cs", "ab_v2", "calib")
+    shipped, src_shp = pick2("shipped_qm", "ab_v2", "calib")
     mid = g("seed", "mid_hits")
     skipped = g("seed", "skipped")
     seed_ms = g("seed", "seed_ms")
     v5_ms = g("ab_v2", "v5_ms")
     pr_ms = g("ab_v2", "probe_ms")
-    caperr = g("ab_v2", "caperr_units", g("calib", "caperr_units"))
+    caperr, src_cap = pick2("caperr_units", "ab_v2", "calib")
+    veh_perc = veh[0] if veh else None
+
+    def num(v, unit=""):
+        """A missing measurement prints as 'not measured', NEVER as a
+        zero -- a printed 0.0s reads as a real, excellent result."""
+        return "not measured" if v is None else ("%s%s" % (v, unit))
 
     rows = [
-        ("F1 seed >= 36,860 (proven demand)",
-         _fx(None if seed_cs is None else seed_cs >= 36860,
-             "seed_cs=%s" % seed_cs)),
+        # EXACT, not a lower bound.  The corpus max is 36,860 and a
+        # seed far above it is an R2 violation (gross over-capping)
+        # that no other row can see: F2 passes HARDER the larger the
+        # seed, and F5/R2 compare the post-tighten value, by which
+        # point the excess is gone.  5% band absorbs the odd->even
+        # adjustment without admitting a 10x over-seed.
+        ("F1 seed lands on the proven max 36,860",
+         _fx(None if seed_cs is None
+             else 36860 <= seed_cs <= int(36860 * 1.05),
+             "seed_cs=%s (band 36,860..38,703)" % num(seed_cs))),
         ("F2 est >= truth, every unit",
          _fx(None if (seed_cs is None or demand is None)
              else seed_cs >= demand,
-             "seed_cs=%s vs meter max demand=%s" % (seed_cs, demand))),
-        ("F3 zero v2 bump rounds",
-         _fx(None if v2_bumps is None else v2_bumps == 0,
-             "v2 bump rounds=%s" % v2_bumps)),
+             "seed_cs=%s (perc 100) vs max demand=%s (from %s)"
+             % (num(seed_cs), num(demand), src_dem))),
+        # CORRECTED 2026-08-17: "zero bumps" was wrong -- one bump
+        # from dfa/comp_sig is expected.  What must be zero is the
+        # qm_real bump, which is the one M2 exists to remove.
+        ("F3a zero dis_adv::neo_qm_real bumps",
+         _fx(None if v2_qm_bumps is None else v2_qm_bumps == 0,
+             "qm_real bump rounds=%s (from %s)"
+             % (num(v2_qm_bumps), src_bump))),
+        ("F3b <= 1 v2 bump round overall",
+         _fx(None if v2_bumps is None else v2_bumps <= 1,
+             "v2 bump rounds=%s, converged @iter %s (from %s)"
+             % (num(v2_bumps), num(v2_iters), src_bump))),
         ("F5 shipped qm == measured max",
          _fx(None if (shipped is None or demand is None)
              else shipped >= demand and shipped <= demand + 1,
-             "shipped=%s measured max=%s" % (shipped, demand))),
+             "shipped=%s measured max=%s (from %s)"
+             % (num(shipped), num(demand), src_shp))),
         ("F6 seed wall < 5 min",
          _fx(None if seed_ms is None else seed_ms < 300000,
-             "seed walk=%.1fs" % ((seed_ms or 0) / 1000.0))),
+             "seed walk=%s" % num(seed_ms and seed_ms / 1000.0, "s"))),
         ("F7 mid_hits > 0 (I1 branch alive)",
-         _fx(None if mid is None else mid > 0, "mid_hits=%s" % mid)),
+         _fx(None if mid is None else mid > 0,
+             "mid_hits=%s" % num(mid))),
         ("F8 skipped words == 0",
          _fx(None if skipped is None else skipped == 0,
-             "skipped=%s" % skipped)),
+             "skipped=%s" % num(skipped))),
         ("F9 v5 walk vs probe phase",
          _fx(None if (v5_ms is None or pr_ms is None) else True,
-             "v5=%.0fs probe=%.0fs%s"
-             % ((v5_ms or 0) / 1000.0, (pr_ms or 0) / 1000.0,
+             "v5=%s probe=%s%s"
+             % (num(v5_ms and v5_ms / 1000.0, "s"),
+                num(pr_ms and pr_ms / 1000.0, "s"),
                 "  <- V102 if v5 dominates"
                 if (v5_ms or 0) > (pr_ms or 0) else ""))),
     ]
@@ -3703,25 +4025,45 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     dec = [k for k in ("dec_v1", "dec_v2", "dec_big")
            if k in R and R[k].status == "OK"]
     A("REQUIREMENTS")
-    A("  %-36s %-7s  %s" % ("R1 never under-cap",
-        "PASS" if (R.get("ab_v2") and R["ab_v2"].status == "OK"
-                   and (caperr in (0, None))) else "N/A",
-        "full-corpus receipt; caperr_units=%s; decider steps ok: %s"
-        % (caperr, ",".join(dec) or "none")))
-    A("  %-36s %-7s  %s" % ("R2 no waste", 
-        "PASS" if (shipped is not None and demand is not None
-                   and shipped <= demand + 1) else "N/A",
-        "qm_real_rows=%s vs measured max demand=%s" % (shipped,
-                                                        demand)))
-    ratio = None
-    if v1_iters is not None and v2_bumps is not None:
-        v1p = (v1_bumps or 0) + 1
-        ratio = "%d -> %d rounds" % (v1p, (v2_bumps or 0) + 1)
-    A("  %-36s %-7s  %s" % ("R3 fast", "PASS" if ratio else "N/A",
-                             ratio or "A/B incomplete"))
-    A("  %-36s %-7s  %s" % ("R5 v1 unchanged",
-        "PASS" if (R.get("units") and R["units"].status == "OK")
-        else "N/A", "fingerprint_ + m104 parse gate"))
+    # Every row goes through _fx, exactly like the falsifiers.  These
+    # four used to be hand-rolled if/else expressions and every one of
+    # them could print PASS on evidence that did not exist: R1 read a
+    # MISSING caperr measurement (None) as "zero cap errors", and R3
+    # tested a non-empty STRING, so it could not fail at all.
+    ab_ok = bool(R.get("ab_v2") and R["ab_v2"].status == "OK")
+    r_rows = [
+        ("R1 never under-cap",
+         _fx(None if (caperr is None or not ab_ok) else caperr == 0,
+             "perc=%s receipt; caperr_units=%s (from %s); "
+             "decider steps ok: %s"
+             % (num(veh_perc), num(caperr), src_cap,
+                ",".join(dec) or "none"))),
+        ("R2 no waste",
+         _fx(None if (shipped is None or demand is None)
+             else shipped <= demand + 1,
+             "qm_real_rows=%s vs max demand=%s (from %s)"
+             % (num(shipped), num(demand), src_shp))),
+    ]
+    # R3 compares ROUNDS, and a round count is v*_iters + 1 -- the
+    # bump counters miss the promotion round (bora_data_driver.rs
+    # :2306), so they undercount both arms.
+    if v1_iters is not None and v2_iters is not None:
+        r3 = _fx(v2_iters + 1 <= v1_iters + 1,
+                 "%d -> %d rounds  (v1 bumps=%s, v2 bumps=%s)"
+                 % (v1_iters + 1, v2_iters + 1, num(v1_bumps),
+                    num(v2_bumps)))
+    else:
+        r3 = _fx(None, "A/B incomplete: v1_iters=%s v2_iters=%s"
+                 % (num(v1_iters), num(v2_iters)))
+    r_rows.append(("R3 fast (rounds)", r3))
+    r_rows.append(
+        ("R5 v1 unchanged",
+         _fx(None if not R.get("units")
+             else R["units"].status == "OK",
+             "fingerprint_ + m104 parse gate; units=%s"
+             % (R["units"].status if R.get("units") else "absent"))))
+    for name, (verd, ev) in r_rows:
+        A("  %-36s %-7s  %s" % (name, verd, ev))
     A("")
 
     # ---- headline ----
@@ -3739,13 +4081,42 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
     fails = [k for k, r in R.items() if r.status in ("FAIL",
                                                       "TIMEOUT")]
     skips = [k for k, r in R.items() if r.status == "SKIP"]
+    # THE GREEN LINE IS GATED ON EVIDENCE, NOT ON THE ABSENCE OF
+    # FAILURE.  "Nothing failed" is not "it passed": a run where the
+    # v2 binary was missing, or where dec_big was skipped for RAM,
+    # produces zero FAILs and zero evidence, and the old wording
+    # ("ALL RUN STEPS PASS -> propose the commit") was printed over
+    # exactly that -- observed 2026-08-17 on a run with 10 of 12
+    # steps SKIP and every falsifier N/A.  dec_big stays an explicit
+    # opportunistic exception; the other five are mandatory.
+    must = ["units", "seed", "calib", "ab_v1", "ab_v2", "dec_v2"]
+    missing = [k for k in must
+               if not (R.get(k) and R[k].status == "OK")]
+    bad_f = [name for name, (verd, _e) in rows + r_rows
+             if verd == "FAIL"]
+    na_f = [name for name, (verd, _e) in rows + r_rows
+            if verd == "N/A"]
     A("DECIDE")
     if fails:
         A("  BLOCKED BY: %s   -> %s/detail.log"
           % (", ".join(fails), run_dir))
+    elif missing:
+        A("  INCONCLUSIVE -- NOT shippable.  These steps did not "
+          "reach OK: %s" % ", ".join(missing))
+        A("  Nothing FAILED, but the evidence for R1/R2/R3 was never "
+          "produced.")
+    elif bad_f:
+        A("  FALSIFIED BY: %s   -> NOT shippable"
+          % ", ".join(bad_f))
+    elif na_f:
+        A("  INCONCLUSIVE -- every step ran, but these could not be "
+          "computed: %s" % ", ".join(na_f))
     else:
-        A("  ALL RUN STEPS PASS -> stage 3 complete; propose the "
-          "commit.")
+        A("  ALL STEPS OK AND EVERY FALSIFIER/REQUIREMENT PASSED "
+          "-> stage 3 complete; propose the commit.")
+    if "dec_big" in skips:
+        A("  NOTE: dec_big (production-width fold+prove, R1's "
+          "strongest evidence) was skipped: %s" % R["dec_big"].why)
     if skips:
         A("  SKIPPED: %s" % ", ".join(
             "%s (%s)" % (k, R[k].why) for k in skips))
@@ -6561,7 +6932,7 @@ class _WatchProbe:
             return ([], 0.0, 0.0, 0.0)
         return self.samples.pop(0)
 
-    def run(self, stall_s=100, step=10.0):
+    def run(self, stall_s=100, step=10.0, max_wall_s=0):
         cur = [([], 0.0, 0.0, 0.0)]
 
         def sleep(_s):
@@ -6587,11 +6958,38 @@ class _WatchProbe:
                                 side_effect=self.summary.append), \
              mock.patch("time.time", side_effect=now), \
              mock.patch("time.sleep", side_effect=sleep):
-            _watch_child(self.proc, "/tmp/run.log", self.ctx)
+            _watch_child(self.proc, "/tmp/run.log", self.ctx,
+                          max_wall_s, 0)
         return self
 
 
 class WatchChildTest(unittest.TestCase):
+    def test_wall_cap_kills_a_busy_child(self):
+        """THE regression test.  The wall cap used to hang off an
+        `elif` on the progress branch, and `now` carries summed CPU
+        time -- which advances at every poll for any compute-bound
+        tree.  So the cap could only ever fire on an ALREADY IDLE
+        process: never on the diverging tuner it exists to bound.
+        Measured against the real function before the fix: busy child,
+        cap 4 s, still alive at 19 s."""
+        pr = _WatchProbe([([1], float(i), float(i), 1.0)
+                          for i in range(40)]).run(stall_s=10_000,
+                                                    max_wall_s=50)
+        self.assertEqual(len(pr.kills), 1)
+        self.assertTrue(any("WALL CAP" in s for s in pr.summary))
+
+    def test_wall_cap_of_zero_never_fires(self):
+        """Every pre-existing caller passes 0 and must be unaffected."""
+        pr = _WatchProbe([([1], float(i), float(i), 1.0)
+                          for i in range(40)]).run(stall_s=10_000)
+        self.assertEqual(pr.kills, [])
+
+    def test_a_busy_child_inside_its_cap_is_left_alone(self):
+        pr = _WatchProbe([([1], float(i), float(i), 1.0)
+                          for i in range(10)]).run(stall_s=10_000,
+                                                    max_wall_s=10_000)
+        self.assertEqual(pr.kills, [])
+
     def test_keeps_peak_rss(self):
         """peak_rss_gb is the max tree RSS across polls, not the last."""
         pr = _WatchProbe([([1], 1.0, 1.0, 5.0), ([1], 2.0, 1.0, 20.0),
@@ -8053,9 +8451,11 @@ class V101VehicleTableTest(unittest.TestCase):
     @unittest.skipUnless(_v101_corpus_present(),
                          "clam corpus not extracted (data/DOWNLOAD.py)")
     def test_rows_match_the_rust_subset_replay(self):
-        """files and MB must equal subset()/fixed_perm() EXACTLY, and
-        chunks must sit within 2% of raw x 1.0555 (the padding factor
-        the table was built with)."""
+        """files and MB must equal subset()/fixed_perm() EXACTLY.
+        NOTE the chunk check is weaker BY CONSTRUCTION: the table was
+        built as replay x 1.0555, so re-deriving it the same way is
+        circular and catches only transcription typos.  The padding
+        factor itself is pinned independently below."""
         row = _v101_replay_corpus()
         for perc, files, mb, chunks, _share in _MOD.V101_VEHICLES:
             f, m, c = row(perc)
@@ -8065,6 +8465,15 @@ class V101VehicleTableTest(unittest.TestCase):
             self.assertAlmostEqual(chunks, c * 1.0555,
                                     delta=max(3, 0.02 * chunks),
                                     msg="chunks at perc %d" % perc)
+
+    @unittest.skipUnless(_v101_corpus_present(),
+                         "clam corpus not extracted (data/DOWNLOAD.py)")
+    def test_padding_factor_matches_the_logged_full_corpus(self):
+        """The ONE independent anchor for the 1.0555 chunk factor: the
+        reference run logged 6,549 padded chunks for the whole corpus.
+        Without this the chunk column is self-referential."""
+        _f, _m, raw = _v101_replay_corpus()(100)
+        self.assertAlmostEqual(raw * 1.0555, 6549, delta=0.02 * 6549)
 
 
 class V101ClockTest(unittest.TestCase):
@@ -8105,8 +8514,9 @@ class V101PickerReserveTest(unittest.TestCase):
         self.model["r_probe"] = 0.55        # post-C3
 
     def test_reserve_shrinks_the_chosen_vehicle(self):
-        """Same clock, minus V101_DEC_RESERVE_S, must not pick a
-        LARGER vehicle -- that is the whole point of the reserve."""
+        """assertLess, not assertLessEqual: <= is a property of any
+        descending-table picker and passes with the reserve set to 0,
+        so it cannot detect the reserve being removed."""
         left = 13 * 3600
         big, _ = _MOD.v101_pick(self.model, left, lambda *_a: None)
         small, _ = _MOD.v101_pick(self.model,
@@ -8114,7 +8524,20 @@ class V101PickerReserveTest(unittest.TestCase):
                                    lambda *_a: None)
         self.assertIsNotNone(big)
         self.assertIsNotNone(small)
-        self.assertLessEqual(small[0], big[0])
+        self.assertLess(small[0], big[0])
+
+    def test_the_caps_handed_out_fit_the_budget_promised(self):
+        """The picker must size against the CAPS the A/B steps get,
+        not the bare estimate: comparing the estimate to 0.85 x room
+        while granting 1.3 x the estimate spent 10% more than the
+        whole room, quietly eating the decider reserve."""
+        left = 13 * 3600
+        veh, _ = _MOD.v101_pick(self.model, left, lambda *_a: None)
+        self.assertIsNotNone(veh)
+        caps = _MOD.V101_AB_CAP_MULT * sum(
+            _MOD.v101_cost(self.model, veh, p)
+            for p in (_MOD.V101_V1_PASSES, _MOD.V101_V2_PASSES))
+        self.assertLessEqual(caps, left)
 
     def test_a_full_clock_still_reaches_a_real_vehicle(self):
         """16 h minus the reserve must still afford more than the
@@ -8185,16 +8608,21 @@ class V101ProgressTest(unittest.TestCase):
             os.path.join(self.tmp.name, "progress.txt.tmp")))
 
     def test_verdict_and_progress_share_one_renderer(self):
-        """Both tables come from _v101_step_rows, so a step cannot
-        read OK in one and FAIL in the other."""
+        """Assert on the step-row TEXT, not on bare words: 'seed' and
+        'FAIL' both occur elsewhere in the verdict (falsifier labels,
+        the BLOCKED BY line), so matching those would pass even with
+        the shared renderer removed."""
         self.res["seed"].status = "FAIL"
         self.res["seed"].why = "no V2 QM SEED line"
+        row = [r for r in _MOD._v101_step_rows(self.res)
+               if r[0] == "seed"][0]
+        rendered = "  %-10s %-8s" % (row[0], row[1])
         verdict = _MOD.v101_report(
             time.time() - 600, time.time() + 3600, self.tmp.name,
             self.res, None, dict(_MOD.V101_PRIORS))
-        for line in ("seed", "FAIL"):
-            self.assertIn(line, verdict)
-            self.assertIn(line, self._text())
+        self.assertIn(rendered, verdict)
+        self.assertIn(rendered, self._text())
+        self.assertIn("no V2 QM SEED line", verdict)
 
 
 class V101BundleTest(unittest.TestCase):
@@ -8283,16 +8711,300 @@ class V101BundleTest(unittest.TestCase):
 
 class V101RecalibrateTest(unittest.TestCase):
     def test_calib_divides_by_the_table_not_a_literal(self):
-        """r_probe = probe_ms / perc-2 chunks, read from the table."""
+        """The perc-2 chunk count comes FROM the table: with the row
+        changed, r_probe follows it and not the 110 fallback."""
         model = dict(_MOD.V101_PRIORS)
-        chunks = dict((v[0], v[3]) for v in _MOD.V101_VEHICLES)[2]
+        table = [(40, 484, 272.0, 2357, 45),
+                 (2, 25, 12.3, 500, 1011)]      # 500 != the 110 default
+        r = _MOD.V101Res("calib", wall_s=1000.0,
+                          nums={"probe_ms": 55000, "v5_ms": 110000})
+        with mock.patch.object(_MOD, "V101_VEHICLES", table):
+            _MOD._v101_recalibrate(model, "calib", r, None,
+                                    lambda *_a: None)
+        self.assertAlmostEqual(model["r_probe"], 55.0 / 500, places=6)
+        self.assertAlmostEqual(model["k5"], 2.0, places=6)
+
+    def test_measured_coefficients_are_tagged_in_the_model_line(self):
+        """A prior must not print like a measurement.  The trailing
+        legend also contains a '*', so only the coefficients count."""
+        def coeffs(m):
+            return _MOD._v101_model_line(m).split("   (*")[0]
+        model = dict(_MOD.V101_PRIORS)
+        self.assertNotIn("*", coeffs(model))
         r = _MOD.V101Res("calib", wall_s=1000.0,
                           nums={"probe_ms": 55000, "v5_ms": 110000})
         _MOD._v101_recalibrate(model, "calib", r, None,
                                 lambda *_a: None)
-        self.assertAlmostEqual(model["r_probe"], 55.0 / chunks,
+        line = coeffs(model)
+        self.assertIn("r_probe=", line)
+        self.assertRegex(line, r"r_probe=[\d.]+s/chunk\*")
+        self.assertNotRegex(line, r"t_db=\d+s\*")   # still a prior
+        self.assertIn("measured this run",
+                      _MOD._v101_model_line(model))
+
+    def test_calib_v1_measures_the_whole_arm_rate(self):
+        """calib_v1 yields r_v1_arm, which v101_cost then prefers over
+        the C3-contaminated analytic model."""
+        model = dict(_MOD.V101_PRIORS)
+        vh = dict((v[0], v) for v in _MOD.V101_VEHICLES)[2]
+        setup = model["t_db"] + model["r_disch"] * vh[2]
+        r = _MOD.V101Res("calib_v1", wall_s=setup + 1100.0,
+                          nums={"v1_bumps": 2})
+        _MOD._v101_recalibrate(model, "calib_v1", r, None,
+                                lambda *_a: None)
+        self.assertAlmostEqual(model["r_v1_arm"], 1100.0 / vh[3],
                                 places=6)
-        self.assertAlmostEqual(model["k5"], 2.0, places=6)
+        big = (30, 363, 175.1, 1539, 71)
+        want = (model["t_db"] + model["r_disch"] * 175.1
+                + model["r_v1_arm"] * 1539)
+        self.assertAlmostEqual(
+            _MOD.v101_cost(model, big, _MOD.V101_V1_PASSES), want,
+            places=4)
+
+    def test_v1_arm_is_priced_above_v2_without_a_measurement(self):
+        """C3 is v2-only, so the fallback model must charge v1 more
+        per chunk -- pricing both at the calibrated (C3) rate is what
+        made ab_v1 unable to make its cap."""
+        model = dict(_MOD.V101_PRIORS)
+        veh = (30, 363, 175.1, 1539, 71)
+        c1 = _MOD.v101_cost(model, veh, _MOD.V101_V1_PASSES)
+        c2 = _MOD.v101_cost(model, veh, _MOD.V101_V2_PASSES)
+        self.assertGreater(c1, c2)
+        model["r_probe"] *= 2
+        self.assertGreater(
+            _MOD.v101_cost(model, veh, _MOD.V101_V1_PASSES), c1)
+
+
+# Real log fragments.  Every marker below is quoted from the emit site
+# (batch_proc.rs:800/1025/1149, bora_data_driver.rs:2265/2318/2370),
+# not from a healthy log -- the two decider gates that shipped broken
+# were both written by reading a log in which nothing had failed.
+_V101_DEC_OK = """\
+VERIFY-FLAGS batch1[self]: qa=1 fs=1 kzg=1 verdict=PASS
+VERIFY-FLAGS ind[self] i=0: idx=1 veval=1 vcom=1 verdict=PASS
+VERIFY-FLAGS batch1[final]: qa=1 fs=1 kzg=1 verdict=PASS
+VERIFY-FLAGS batch2[final]: c1=1 c2=1 c3=1 c4=1 c5=1 verdict=PASS
+VERIFY-FLAGS ind[final] i=0: idx=1 veval=1 kzg=1 verdict=PASS
+determine_config_non_aggr CONVERGED @iter 1: steps=10
+"""
+_V101_DEC_SNARK_REJECT = _V101_DEC_OK.replace(
+    "c5=1 verdict=PASS", "c5=0 verdict=REJECT")
+
+
+class V101ParseTest(unittest.TestCase):
+    """v101_parse decides what the verdict can see; it had no tests."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _parse(self, key, text):
+        p = os.path.join(self.tmp.name, "run.log")
+        with open(p, "w") as f:
+            f.write(text)
+        r = _MOD.V101Res(key)
+        _MOD.v101_parse(key, p, r)
+        return r.nums
+
+    def test_reject_is_the_failure_token_not_fail(self):
+        """batch_proc.rs emits REJECT.  Grepping 'verdict=FAIL' made
+        this counter permanently 0 -- a vacuous gate, twice shipped."""
+        n = self._parse("dec_v2", _V101_DEC_SNARK_REJECT)
+        self.assertEqual(n["verify_fail"], 1)
+        self.assertEqual(n["verify_pass"], 4)
+
+    def test_three_final_markers_are_counted_separately(self):
+        n = self._parse("dec_v2", _V101_DEC_OK)
+        self.assertEqual(n["verify_final"], 3)
+        self.assertEqual(n["verify_snark"], 1)
+
+    def test_build_bump_counts_as_a_bump_round(self):
+        """bora_data_driver.rs:2265.  The old regex saw only :2318, so
+        a real bump printed alongside 'bumps=0'."""
+        n = self._parse("calib", 'v2 iter 0: BUILD bump '
+                        '[("comp_sig::subsigs_igc", 2)], round 0 ms\n')
+        self.assertEqual(n["v2_bumps"], 1)
+
+    def test_word_failure_bump_also_counts(self):
+        n = self._parse("calib", "v2 iter 1: 7 of 40 words failed, "
+                        'round 90 ms, bumped [("x", 2)]\n')
+        self.assertEqual(n["v2_bumps"], 1)
+
+    def test_subset_promotion_is_a_round_but_not_a_bump(self):
+        """bora_data_driver.rs:2306 is not a CapErr bump."""
+        n = self._parse("calib", "v2 iter 2: subset clean, promoting "
+                        "to full corpus; round 5 ms\n")
+        self.assertEqual(n["v2_bumps"], 0)
+
+    def test_qm_real_bumps_are_counted_apart(self):
+        """The one bump M2 must make impossible."""
+        n = self._parse("calib", "v2 iter 0: 3 of 9 words failed, "
+                        'round 1 ms, bumped '
+                        '[("dis_adv::neo_qm_real", 5509)]\n')
+        self.assertEqual(n["v2_qm_bumps"], 1)
+        self.assertEqual(n["v2_bumps"], 1)
+
+
+class V101StepVerdictTest(unittest.TestCase):
+    """_v101_verdict_step turns a log into OK/FAIL; it had no tests."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _verdict(self, key, text, rc=0, cap=3600, wall=10.0,
+                 cap_s=3600):
+        p = os.path.join(self.tmp.name, "run.log")
+        with open(p, "w") as f:
+            f.write(text)
+        st = _MOD.V101Step(key, key, [], {}, cap_s, False)
+        r = _MOD.V101Res(key, wall_s=wall)
+        _MOD.v101_parse(key, p, r)
+        res = mock.Mock(rc=rc, triage_tgz="/tmp/t.tgz")
+        return _MOD._v101_verdict_step(st, r, res, cap)
+
+    def test_healthy_decider_is_ok(self):
+        self.assertEqual(self._verdict("dec_v2", _V101_DEC_OK)[0],
+                          "OK")
+
+    def test_rejected_groth16_proof_is_a_failure(self):
+        """THE regression test: 4 PASS markers and one REJECT used to
+        report OK, because the gate only asked for >=1 PASS."""
+        status, why = self._verdict("dec_v2", _V101_DEC_SNARK_REJECT)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("REJECT", why)
+
+    def test_missing_batch2_line_is_a_failure(self):
+        """batch1 failing early-returns and OMITS batch2 entirely, so
+        counting PASS markers cannot see it."""
+        text = _V101_DEC_OK.replace(
+            "VERIFY-FLAGS batch2[final]: c1=1 c2=1 c3=1 c4=1 c5=1 "
+            "verdict=PASS\n", "")
+        status, why = self._verdict("dec_v2", text)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("2 of 3", why)
+
+    def test_decider_with_no_verify_at_all_is_a_failure(self):
+        status, why = self._verdict("dec_v1", "nothing happened\n")
+        self.assertEqual(status, "FAIL")
+        self.assertIn("of 3", why)
+
+    def test_seed_ok_needs_the_by_design_panic_marker(self):
+        text = ("V2 QM SEED: cs=36860 igc=1 floors=(0,0) words=14 "
+                "mid_hits=3 skipped=0 elapsed=200 ms\n"
+                "V101 SEED-ONLY DRY FIRE: stop after seed\n")
+        self.assertEqual(self._verdict("seed", text, rc=101)[0], "OK")
+
+    def test_seed_crash_after_the_seed_line_is_not_forgiven(self):
+        """Without narrowing, ANY nonzero rc was excused once the seed
+        line existed."""
+        text = ("V2 QM SEED: cs=36860 igc=1 mid_hits=3 skipped=0 "
+                "elapsed=200 ms\nsegfault somewhere else\n")
+        status, why = self._verdict("seed", text, rc=139)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("SEED-ONLY marker", why)
+
+    def test_clock_clamped_timeout_says_so(self):
+        """A cap cut down by the deadline is a scheduling outcome, not
+        a hang, and must not read like one."""
+        status, why = self._verdict("dec_v2", _V101_DEC_OK, wall=990.0,
+                                     cap=1000, cap_s=18000)
+        self.assertEqual(status, "TIMEOUT")
+        self.assertIn("clock-clamped", why)
+
+    def test_a_real_hang_is_a_plain_timeout(self):
+        status, why = self._verdict("dec_v2", _V101_DEC_OK, wall=3590.0,
+                                     cap=3600, cap_s=3600)
+        self.assertEqual(status, "TIMEOUT")
+        self.assertNotIn("clock-clamped", why)
+
+
+class V101ReportGateTest(unittest.TestCase):
+    """The verdict's DECIDE line is the deliverable a later session
+    reads; it must never claim more than was measured."""
+
+    def _report(self, statuses, nums=None):
+        keys = [s.key for s in _MOD.v101_steps()]
+        R = {}
+        for k in keys:
+            R[k] = _MOD.V101Res(k, status=statuses.get(k, "OK"),
+                                 wall_s=60.0,
+                                 nums=dict((nums or {}).get(k, {})))
+        return _MOD.v101_report(time.time() - 60, time.time() + 3600,
+                                 "/tmp/none", R, None,
+                                 dict(_MOD.V101_PRIORS))
+
+    def test_all_skipped_is_inconclusive_not_a_pass(self):
+        """THE regression test: 10 of 12 steps SKIP, every falsifier
+        N/A, and the old text said 'propose the commit'."""
+        txt = self._report(dict((k, "SKIP") for k in
+                                ("units", "seed", "calib", "ab_v1",
+                                 "ab_v2", "dec_v2", "dec_big")))
+        self.assertIn("INCONCLUSIVE", txt)
+        self.assertNotIn("propose the commit", txt)
+
+    def test_missing_v2_arm_alone_blocks_the_green_line(self):
+        txt = self._report({"ab_v2": "SKIP"})
+        self.assertIn("INCONCLUSIVE", txt)
+        self.assertIn("ab_v2", txt)
+        self.assertNotIn("propose the commit", txt)
+
+    def test_a_failed_step_blocks_and_is_named(self):
+        txt = self._report({"calib": "FAIL"})
+        self.assertIn("BLOCKED BY: calib", txt)
+        self.assertNotIn("propose the commit", txt)
+
+    def test_dec_big_skip_is_called_out_but_not_fatal(self):
+        """It is opportunistic -- but silence about it would let a
+        reader assume production-width evidence exists."""
+        txt = self._report({"dec_big": "SKIP"})
+        self.assertIn("dec_big", txt)
+        self.assertNotIn("propose the commit", txt)   # falsifiers N/A
+
+    def test_green_needs_every_falsifier_to_pass(self):
+        """All steps OK, all evidence present and correct."""
+        nums = {
+            "seed": {"seed_cs": 36860, "mid_hits": 3, "skipped": 0,
+                     "seed_ms": 120000},
+            "ab_v1": {"v1_iters": 4, "v1_bumps": 4},
+            "ab_v2": {"v2_iters": 0, "v2_bumps": 0, "v2_qm_bumps": 0,
+                      "meter_demand_cs": 36860, "shipped_qm": 36860,
+                      "caperr_units": 0, "v5_ms": 100, "probe_ms": 90},
+        }
+        txt = self._report({}, nums)
+        self.assertIn("propose the commit", txt)
+        self.assertNotIn("N/A", txt)
+
+    def test_an_over_seed_is_caught_by_f1(self):
+        """A 10x seed is gross over-capping -- an R2 violation that
+        F2 and F5 both pass right over."""
+        nums = {"seed": {"seed_cs": 368600, "mid_hits": 3,
+                          "skipped": 0, "seed_ms": 120000}}
+        txt = self._report({}, nums)
+        self.assertNotIn("propose the commit", txt)
+        f1 = [l for l in txt.splitlines() if "F1 seed" in l][0]
+        self.assertIn("FAIL", f1)
+
+    def test_r1_cannot_pass_without_a_caperr_measurement(self):
+        """None means 'the meter line was absent', not 'zero'."""
+        txt = self._report({}, {"ab_v2": {"v2_iters": 0}})
+        r1 = [l for l in txt.splitlines() if "R1 never" in l][0]
+        self.assertIn("N/A", r1)
+        self.assertNotIn("PASS", r1)
+
+    def test_r3_can_actually_fail(self):
+        """It used to test a non-empty string, so it always passed."""
+        nums = {"ab_v1": {"v1_iters": 0, "v1_bumps": 0},
+                "ab_v2": {"v2_iters": 5, "v2_bumps": 5}}
+        txt = self._report({}, nums)
+        r3 = [l for l in txt.splitlines() if "R3 fast" in l][0]
+        self.assertIn("FAIL", r3)
+
+    def test_a_missing_number_prints_not_measured_not_zero(self):
+        """'seed walk=0.0s' reads as a superb result; it was a hole."""
+        txt = self._report({})
+        self.assertIn("not measured", txt)
+        self.assertNotIn("seed walk=0.0s", txt)
 
 
 if __name__ == "__main__":
