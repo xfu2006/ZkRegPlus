@@ -3261,7 +3261,10 @@ def v101_progress_text(t0, deadline, run_dir, results, veh, model):
     A("")
     bad = [k for k, r in results.items()
            if r.status in ("FAIL", "TIMEOUT")]
-    A("FAILURES SO FAR: %s" % (", ".join(bad) if bad else "none"))
+    # "FAILURES" would over-claim: this counts STATUSES, and a step
+    # can be OK while a falsifier it feeds later fails.
+    A("FAILED STEPS SO FAR: %s"
+      % (", ".join(bad) if bad else "none"))
     if bad:
         A("  bundle (repacked after each failure): %s" % V101_BUNDLE)
     A("detail: %s/detail.log" % run_dir)
@@ -3611,7 +3614,11 @@ def run_v101():
             # downloadable artifact for the failure it already saw.
             _v101_bundle(run_dir, results,
                           "after %s %s" % (st.key, r.status), dlog)
-        if r.status in ("FAIL", "TIMEOUT") and st.key in (
+        # A TIMEOUT is a CLOCK outcome, not evidence about the
+        # binary, so it must not clear have_v2 -- doing so turned one
+        # slow step into a v1-only night (5 of 13 steps skipped).
+        # Only an actual failure downgrades the run.
+        if r.status == "FAIL" and st.key in (
                 "build", "units", "smoke_v1", "smoke_v2", "seed",
                 "calib"):
             # a broken v2 must not poison the rest: keep the v1
@@ -3944,7 +3951,9 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
             v = g(k, field)
             if v is not None:
                 return v, k
-        return None, None
+        # "no step" rather than the bare None, which rendered as the
+        # nonsense "(from None)" on every unmeasured row.
+        return None, "no step"
 
     seed_cs = g("seed", "seed_cs")
     v2_bumps, src_bump = pick2("v2_bumps", "ab_v2", "calib")
@@ -3978,7 +3987,7 @@ def v101_report(t0, deadline, run_dir, results, veh, model):
          _fx(None if seed_cs is None
              else 36860 <= seed_cs <= int(36860 * 1.05),
              "seed_cs=%s (band 36,860..38,703)" % num(seed_cs))),
-        ("F2 est >= truth, every unit",
+        ("F2 seed >= the max demand actually seen",
          _fx(None if (seed_cs is None or demand is None)
              else seed_cs >= demand,
              "seed_cs=%s (perc 100) vs max demand=%s (from %s)"
@@ -8595,7 +8604,7 @@ class V101ProgressTest(unittest.TestCase):
     def test_failures_line_names_the_bundle(self):
         self.res["seed"].status = "FAIL"
         t = self._text()
-        self.assertIn("FAILURES SO FAR: seed", t)
+        self.assertIn("FAILED STEPS SO FAR: seed", t)
         self.assertIn(_MOD.V101_BUNDLE, t)
 
     def test_write_is_atomic_and_symlinked(self):

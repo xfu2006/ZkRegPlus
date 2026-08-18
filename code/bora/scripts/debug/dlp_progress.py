@@ -247,6 +247,19 @@ LEG_MB_HR = (2.184, 2.341, 2.2757)
 LEG_P1_CURVE = [5261, 7204, 8763, 9927, 10953, 11940, 12823, 13510,
 	14108, 14680, 15266, 15834, 16389, 16941, 17463, 17981, 18491,
 	18986, 19472, 19997]
+# Sub-5% head for LEG_P1_CURVE, measured from the 504,856 legacy
+# per-word rows in leg1008.tsv (it reproduces the 5% and 10% samples
+# above to 0.3 s).  Needed because the curve's first sample is 5% and
+# the stage is 5.3x front-loaded INSIDE that bucket: interpolating
+# linearly from zero put legacy at 104.7 s where it truly stood at
+# 760.8 s, reporting a healthy neo phase 1 as 4.163x SLOW instead of
+# 0.573x.  Non-uniform (fraction, seconds-per-job) pairs, ascending.
+LEG_P1_HEAD = [
+	(0.0002, 273), (0.0005, 514), (0.001, 761), (0.002, 1218),
+	(0.0035, 1627), (0.005, 1955), (0.0075, 2354), (0.01, 2661),
+	(0.015, 3115), (0.02, 3524), (0.025, 3893), (0.03, 4195),
+	(0.035, 4496), (0.04, 4765), (0.045, 5013), (0.05, 5261),
+]
 # PHASE 3 is nearly linear (worst 1.13x at f=0.10, from the
 # largest-circuit-first dispatch).
 LEG_P3_CURVE = [19634, 41083, 59398, 77899, 96339, 114904, 133879,
@@ -468,12 +481,48 @@ def mem_gb():
 
 # ------------------------------------------------------- shape helpers
 
+def curve_head(curve):
+	"""The sub-first-sample head table for `curve`, or None.  Identity,
+	not equality, so a copied list cannot silently inherit one."""
+	return LEG_P1_HEAD if curve is LEG_P1_CURVE else None
+
+
+def _head_sec(head, f):
+	"""Seconds at fraction f from a non-uniform [(frac, sec)] table."""
+	lo_f, lo_s = 0.0, 0.0
+	for hf, hs in head:
+		if f <= hf:
+			span = hf - lo_f
+			if span <= 0:
+				return float(hs)
+			return lo_s + (hs - lo_s) * (f - lo_f) / span
+		lo_f, lo_s = float(hf), float(hs)
+	return float(head[-1][1])
+
+
+def _head_frac(head, sec):
+	"""Inverse of _head_sec: fraction reached after `sec` seconds."""
+	lo_f, lo_s = 0.0, 0.0
+	for hf, hs in head:
+		if sec <= hs:
+			span = hs - lo_s
+			if span <= 0:
+				return float(hf)
+			return lo_f + (hf - lo_f) * (sec - lo_s) / span
+		lo_f, lo_s = float(hf), float(hs)
+	return float(head[-1][0])
+
+
 def curve_sec(curve, f):
 	"""Seconds a legacy job had spent to reach work fraction f of a
-	stage, linearly interpolated between the 5% samples."""
+	stage, linearly interpolated between the 5% samples -- or between
+	the head's samples below the first of them."""
 	f = min(max(f, 0.0), 1.0)
 	if f <= 0:
 		return 0.0
+	head = curve_head(curve)
+	if head and f < head[-1][0]:
+		return _head_sec(head, f)
 	x = f * len(curve)
 	i = int(x) - 1
 	if i >= len(curve) - 1:
@@ -488,6 +537,9 @@ def curve_frac(curve, sec):
 	after `sec` seconds in the stage."""
 	if sec <= 0:
 		return 0.0
+	head = curve_head(curve)
+	if head and sec < head[-1][1]:
+		return _head_frac(head, sec)
 	if sec >= curve[-1]:
 		return 1.0
 	prev_t, prev_f = 0.0, 0.0
@@ -2103,14 +2155,16 @@ class Bank(object):
 		return (val - b[1][key]) / (now - b[0])
 
 	def velocity(self, key, val):
-		"""Units per hour for a value that may fall, or None."""
+		"""Units per hour for a value that may fall, or None.  Baseline is
+		the NEWEST sample at least 5 min old, so the slope reads the last
+		check interval and not the setup ramp averaged since launch."""
 		self.note(key, val)
 		now = time.time()
 		old = [r for r in self.rows
 			if key in r[1] and now - r[0] >= 300]
 		if not old:
 			return None
-		return (val - old[0][1][key]) / ((now - old[0][0]) / 3600.0)
+		return (val - old[-1][1][key]) / ((now - old[-1][0]) / 3600.0)
 
 	def stamp(self, idx, frac, equiv, el):
 		"""Record this invocation's position against its elapsed hour,
