@@ -300,11 +300,40 @@ impl SedCapacity{
 				(self.basis_acc_states/16).max(read_global_config().min_basis_acc_states), // OLD: /4
 			)
 		};
-		//new() resets the T_qm budget to the dense sentinel. The descent
-		//shrinks sizing params only, so carry the converged value across
-		//(no-op when the parent is itself on the dense path).
-		res.set_qm_real_rows(self.da_capacity().qm_real_rows);
+		//new() resets the T_qm budget to the dense sentinel. Carrying
+		//the parent value verbatim froze this axis while every other
+		//one descended. Scale it by the ratio the DENSE bound shrinks
+		//-- what the qm_real_rows==0 (hand-cap) arm gets for free out
+		//of basis_pats_in_trace and perc_pats_expansion.
+		//  0 stays 0: that IS the dense path, and forcing it nonzero
+		//    flips a hand-cap run into explicit mode and CapErrs.
+		//  .min(qm): the floors above are .max(min) with no upper
+		//    clamp, so a child param can be RAISED past its parent and
+		//    push the ratio over 1. A lower rung must never grow.
+		//  .max(2): 0 means dense; qm_real_cap rounds odd up anyway.
+		let qm = self.da_capacity().qm_real_rows;
+		if qm > 0 {
+			let d0 = Self::dense_qm_rows(self.da_capacity());
+			let d1 = Self::dense_qm_rows(res.da_capacity());
+			res.set_qm_real_rows(
+				(qm * d1 / d0.max(1)).min(qm).max(2));
+		}
+		//F2': subsigs is pinned flat by the tuner's floor write-back,
+		//so the wrap demand does not descend -- carry it as-is. 0 is
+		//again a no-op (the derived top-K sum stays in force).
+		res.set_wrap_keys(self.da_capacity().wrap_keys);
 		res
+	}
+
+	/// Dense ResLarge bound of a capacity: what qm_real_cap returns
+	/// when qm_real_rows is 0. vec_size is pure integer arithmetic,
+	/// so the field parameter is inert -- Fr is a placeholder.
+	fn dense_qm_rows(d: &DischargeAdvCapacity) -> usize {
+		let mut c = Clone::clone(d);
+		c.qm_real_rows = 0;
+		let (n, _, _) = StepQueue::<ark_bn254::Fr>::vec_size(
+			&StepQueueType::ResLarge, &c);
+		n
 	}
 
 	/// syntax sugar for returning a reference to its wea_capacity
@@ -369,6 +398,15 @@ impl SedCapacity{
 		if rows == 0 { return; }
 		let mut da = Clone::clone(self.da_capacity());
 		da.qm_real_rows = rows;
+		self.comp_capacities[2] = Arc::new(da);
+	}
+
+	/// F2'. Override the T_qm wrap-key budget with the tuner-converged
+	/// demand. No-op when 0 (keeps the derived top-K chain sum).
+	pub fn set_wrap_keys(&mut self, keys: usize){
+		if keys == 0 { return; }
+		let mut da = Clone::clone(self.da_capacity());
+		da.wrap_keys = keys;
 		self.comp_capacities[2] = Arc::new(da);
 	}
 

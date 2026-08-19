@@ -32,3 +32,6 @@ pub mod probe_t601c;
 /// T602: real chunk_len=64 vs 128 rung histogram on a bounded DLP
 /// corpus sample, validating T601's naive doubling estimate.
 pub mod probe_t602;
+/// T9906 PROBE (read-only): replays the neo non-aggr ladder descent
+/// from a real ladder.json and scores rung-1 T_qm budget policies.
+pub mod probe_t9906;

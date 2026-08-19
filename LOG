@@ -31252,6 +31252,15 @@ Goal 3. Writing section 5
 	[a] 5.1 and 5.2
 	[b] 5.3
 
+Wed 08/19/2026
+Goal 1. redesign tune algorithm
+	[a] mainly cancel v5 walk and replace with legacy model
+		of decrease_cp(2)
+	[b] add probes to optimize decrease_cp(2) 
+Goal 2. writing section 6
+	[a] 6.0 and 6.1
+	[b] 6.2
+
 --- DATA ----
 #####################################
 *Small server: started 08/14 6am

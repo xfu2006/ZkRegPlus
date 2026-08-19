@@ -112,6 +112,15 @@ pub fn get_acc(b_igc: bool) -> usize {
 /// DEBUG USE 62070: single env gate (ZKR_PROBE_P36) for the NewP3.6
 /// saturation + lookup-share probes. Read once; every 62070.x site is
 /// log-only and must stay behind it.
+/// TEMPORARY (2026-08-19, decrease_cp data collection). Gates the
+/// 69908 rung-decline probes. Delete this fn together with the probes
+/// once the 512 GB dataset is collected -- production must not pay an
+/// env check it will never use.
+pub fn b_probe_decline() -> bool {
+    static B: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *B.get_or_init(|| std::env::var("ZKR_PROBE_DECLINE").is_ok())
+}
+
 pub fn b_probe_p36() -> bool {
     static B: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *B.get_or_init(|| std::env::var("ZKR_PROBE_P36").is_ok())

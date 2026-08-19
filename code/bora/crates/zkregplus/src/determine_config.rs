@@ -41,6 +41,14 @@ pub struct CapParams {
     // derive (hand-cap paths).
     #[serde(default)]
     pub qm_real_rows: usize,
+    // T_qm WRAP-key budget: tuner-converged, tightened off QM_WRAP_SAT
+    // and CapErr-converged via "dis_adv::neo_wrap_keys". 0 = the
+    // derived top-K chain sum (hand-cap + aggressive paths).
+    // serde(default) so ladder.json written before this still parses.
+    #[serde(default)]
+    pub qm_wrap_rows: usize,
+    #[serde(default)]
+    pub qm_wrap_rows_igc: usize,
     pub sigs_sed: usize,
     pub perc_comp_subsigs: usize,
     pub basis_unique_states: usize,
@@ -254,6 +262,13 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
             // reported directly in row units (no back-solve).
             if igc { up(&mut p.qm_real_rows_igc, r, &mut changed); }
             else { up(&mut p.qm_real_rows, r, &mut changed); }
+        } else if name.starts_with("dis_adv::neo_wrap_keys") {
+            // F2': explicit wrap budget, reported directly in KEY units
+            // (no back-solve). Must precede neo_wrap_subsigs: bumping
+            // subsigs cannot move an explicit budget, so that route
+            // would spin instead of converge.
+            if igc { up(&mut p.qm_wrap_rows_igc, r, &mut changed); }
+            else { up(&mut p.qm_wrap_rows, r, &mut changed); }
         } else if name.starts_with("dis_adv::prod_pats_expansion") {
             // aggressive forward-queue cap (rung-independent).
             if igc { up(&mut p.prod_pats_expansion_igc, r, &mut changed); }
@@ -383,6 +398,10 @@ pub fn caps_from_params_general(p: &CapParams)
     // T305: override the T_qm real-row budget with the tuner-converged
     // demand (no-op when 0 -> keeps the dense derive).
     sed_cs.set_qm_real_rows(p.qm_real_rows);
+    // F2'. Non-aggressive ONLY: caps_from_params_aggr never calls this,
+    // and bora_data_driver.rs:1516 routes aggressive specs there, so no
+    // DLP capacity can carry a nonzero wrap_keys.
+    sed_cs.set_wrap_keys(p.qm_wrap_rows);
     // v5: install the per-level descent targets (no-op when empty).
     sed_cs.set_levels(p.levels.clone());
     let mut sed_igc = SedCapacity::new(p.max_word_len, p.acdfa_state_part_bits,
@@ -390,6 +409,7 @@ pub fn caps_from_params_general(p: &CapParams)
         p.basis_pats_in_trace_igc, p.perc_pats_expansion_rate_igc, p.sigs_sed,
         p.perc_comp_subsigs, p.basis_unique_states, p.basis_acc_states_igc);
     sed_igc.set_qm_real_rows(p.qm_real_rows_igc);
+    sed_igc.set_wrap_keys(p.qm_wrap_rows_igc);
     let dfa = DfaCapacity::new(p.max_word_len, p.dfa_sigs, p.dfa_subsigs);
     (cp_cs, sed_cs, dfa, cp_igc, sed_igc)
 }
@@ -418,6 +438,7 @@ pub fn capparams_from_caps_general(cp_cs: &CpCapacity, sed_cs: &SedCapacity,
         perc_pats_expansion_rate_igc: sed_igc.perc_pats_expansion_rate,
         prod_pats_expansion_igc: 0,
         qm_real_rows_igc: 0,
+        qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
         basis_acc_states_igc: sed_igc.basis_acc_states,
         basis_unique_states_igc: sed_igc.basis_unique_states,
         dfa_sigs: dfa.sigs,
@@ -457,6 +478,7 @@ pub fn capparams_from_caps_aggr(cp: &CpCapacity, sed: &SedCapacity,
         perc_pats_expansion_rate_igc: 0,
         prod_pats_expansion_igc: 0,
         qm_real_rows_igc: 0,
+        qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
         basis_acc_states_igc: 0,
         basis_unique_states_igc: 0,
         dfa_sigs: 0,
@@ -616,6 +638,7 @@ mod tests {
             subsigs_igc: 0, avg_active_pats_per_subsig_igc: 0,
             basis_pats_in_trace_igc: 0, perc_pats_expansion_rate_igc: 0,
             prod_pats_expansion_igc: 0, qm_real_rows_igc: 0,
+            qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
             basis_acc_states_igc: 0, basis_unique_states_igc: 0,
             dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
             max_word_len: 0, acdfa_state_part_bits: 0,
@@ -719,6 +742,19 @@ mod tests {
                 assert_eq!(p2.subsigs, 65);
                 assert_eq!(p2.aggr_needs_subsigs, 64, "aggr co-bump");
             }
+
+            // F2': the EXPLICIT wrap arm reports in KEY units and must
+            // route to qm_wrap_rows. Were it to fall through to the
+            // neo_wrap_subsigs arm above, bumping subsigs could never
+            // move an explicit budget and the ratchet would spin.
+            let mut p2b = zero_params();
+            let (ch2b, un2b) = apply_caperr_bumps(&mut p2b, true,
+                &[(format!("dis_adv::neo_wrap_keys, b_igc: {}", tag), 91)]);
+            assert!(ch2b && un2b.is_empty(), "neo_wrap_keys unmapped");
+            if igc { assert_eq!(p2b.qm_wrap_rows_igc, 91); }
+            else { assert_eq!(p2b.qm_wrap_rows, 91); }
+            assert_eq!(p2b.subsigs, 0,
+                "neo_wrap_keys must NOT touch the subsigs axis");
         }
 
         // (c) the real-row arm of qm_caperr reports in prod/perc units

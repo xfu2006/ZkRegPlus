@@ -629,6 +629,7 @@ pub const DNA: DatasetSpec = DatasetSpec {
 		perc_pats_expansion_rate_igc: 4,
 		prod_pats_expansion_igc: 0,
 		qm_real_rows_igc: 0,
+		qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
 		basis_acc_states_igc: 2,
 		basis_unique_states_igc: 6500, // unused non-aggr (cs shared)
 		dfa_sigs: 0,
@@ -729,6 +730,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 		perc_pats_expansion_rate_igc: 2,
 		prod_pats_expansion_igc: 0,
 		qm_real_rows_igc: 0,
+		qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
 		basis_acc_states_igc: 750,
 		basis_unique_states_igc: 1300, // unused non-aggr (cs shared)
 		dfa_sigs: 8,
@@ -770,6 +772,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 			perc_pats_expansion_rate_igc: 104,
 			prod_pats_expansion_igc: 0,
 			qm_real_rows_igc: 0,
+			qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
 			basis_acc_states_igc: 2,
 			basis_unique_states_igc: 120,
 			dfa_sigs: 2,
@@ -2149,6 +2152,23 @@ fn v101_tighten_from_gauge(p: &mut CapParams) {
 	let pk_igc = utils::consts::QM_REAL_SAT[1].get().0;
 	if pk_cs > 0 { p.qm_real_rows = pk_cs; }
 	if pk_igc > 0 { p.qm_real_rows_igc = pk_igc; }
+	// F2'. Sound for the same reason as the lines above: n_wrap_keys is
+	// computed at discharge_adv_neo.rs:1982 from the seeded subsigs and
+	// the store, BEFORE wrap_cap is read at :1994 -- so the peak seen
+	// under the derived budget IS the true demand and the tightened
+	// value needs no re-test. reset_sat() runs at the top of every
+	// round and the caller only accepts a pass on the FULL corpus, so
+	// this peak covers the data the fold will see. Runs on the way OUT
+	// of the loop: costs no round.
+	// The 1/16 margin is a deliberate asymmetry with qm_real_rows above,
+	// which ships exact: the TOP rung has no larger layer to fall back
+	// to, so a short wrap budget there kills the run instead of routing
+	// around it. 6% of a budget just cut by ~90% is cheap insurance.
+	let marg = |v: usize| v + std::cmp::max(2, v / 16);
+	let wk_cs = utils::consts::QM_WRAP_SAT[0].get().0;
+	let wk_igc = utils::consts::QM_WRAP_SAT[1].get().0;
+	if wk_cs > 0 { p.qm_wrap_rows = marg(wk_cs); }
+	if wk_igc > 0 { p.qm_wrap_rows_igc = marg(wk_igc); }
 }
 
 /// Restores the three subsigs ladder floors on EVERY exit, exactly as
@@ -3734,6 +3754,7 @@ pub mod tests_bora_data_driver {
 			basis_pats_in_trace_igc: 0,
 			perc_pats_expansion_rate_igc: 0,
 			prod_pats_expansion_igc: 0, qm_real_rows_igc: 0,
+			qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
 			basis_acc_states_igc: 0, basis_unique_states_igc: 0,
 			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 9999,
 			max_word_len: 64, acdfa_state_part_bits: 22,
@@ -3788,6 +3809,7 @@ pub mod tests_bora_data_driver {
 			basis_pats_in_trace_igc: 8,
 			perc_pats_expansion_rate_igc: 64,
 			prod_pats_expansion_igc: 0, qm_real_rows_igc: 2,
+			qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
 			basis_acc_states_igc: 2, basis_unique_states_igc: 4,
 			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
 			max_word_len: 64, acdfa_state_part_bits: 4,
@@ -3810,6 +3832,7 @@ pub mod tests_bora_data_driver {
 			basis_pats_in_trace_igc: 8,
 			perc_pats_expansion_rate_igc: 64,
 			prod_pats_expansion_igc: 0, qm_real_rows_igc: 20000,
+			qm_wrap_rows: 0, qm_wrap_rows_igc: 0,
 			basis_acc_states_igc: 2, basis_unique_states_igc: 4,
 			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
 			max_word_len: 64, acdfa_state_part_bits: 4,

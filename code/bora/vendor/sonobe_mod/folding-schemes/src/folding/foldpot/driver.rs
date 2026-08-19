@@ -1073,10 +1073,41 @@ where
 				(layer_id, r)
 			})
 			.collect();
+		// PROBE 69908 (READ-ONLY). Every layer above is already
+		// evaluated and a decline is already materialised as
+		// Err(CapErr([(axis, required)])), so this only FORMATS what
+		// the search computed -- no logic, no extra work, nothing
+		// re-run. Fires once per (word, layer), never per chunk, row
+		// or constraint.
+		//   The guard is load-bearing: log() takes &String, so
+		//   format! runs at the CALL SITE before log() checks the
+		//   level (logger.rs:166-169). Unguarded, this would cost on
+		//   every run at every level. Same shape as :435.
+		if utils::consts::b_probe_decline() {
+			for (layer_id, res) in results.iter() {
+				match res {
+					Ok(_) => log(job_id, LOG1,
+						&format!("DEBUG USE 69908.1: layer={} \
+						 wordlen={} FIT", layer_id, word.len())),
+					Err(e) => log(job_id, LOG1,
+						&format!("DEBUG USE 69908.1: layer={} \
+						 wordlen={} DECLINED {:?}", layer_id,
+						word.len(), e)),
+				}
+			}
+		}
 		let best_result = results.iter()
 			.filter_map(|(layer_id, res)| res.as_ref().ok()
 				.map(|val| (*layer_id, val)))
 			.min_by_key(|(layer_id, _)| *layer_id);
+		if utils::consts::b_probe_decline() {
+			let n_fit = results.iter()
+				.filter(|(_, r)| r.is_ok()).count();
+			log(job_id, LOG1, &format!(
+				"DEBUG USE 69908.2: wordlen={} layers={} fit={} \
+				 chosen={}", word.len(), results.len(), n_fit,
+				best_result.map(|(l, _)| l as i64).unwrap_or(-1)));
+		}
 		match best_result {
 			Some((best_layer, (num_segs, vec_seg_size, vec_pci,
 					vec_cap, vec_adv))) => {

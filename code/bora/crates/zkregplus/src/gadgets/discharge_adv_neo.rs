@@ -1840,12 +1840,21 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		real: usize, real_cap: usize) -> Error {
 		let mut v = vec![];
 		if n_keys > wrap_cap {
+			if capacity.wrap_keys > 0 {
+				//F2' explicit budget: report demand directly in KEY
+				//units; the ratchet sets the cap to it exactly. The
+				//top-K back-solve below cannot move an explicit
+				//budget, so routing there would spin.
+				v.push((format!("dis_adv::neo_wrap_keys, b_igc: {}",
+					b_igc), n_keys));
+			} else {
 			//derived wrap = top-K chain sum -> bump subsigs to the
 			//smallest K covering the demand. "subsigs" in the name
 			//routes to p.subsigs (and the aggr_needs_subsigs
 			//co-bump) in determine_config.
 			v.push((format!("dis_adv::neo_wrap_subsigs, b_igc: {}",
 				b_igc), Self::wrap_subsigs_for(info, n_keys)));
+			}
 		}
 		if real > real_cap {
 			if capacity.qm_real_rows > 0 {
@@ -1997,6 +2006,19 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		// gen_mtbl_qr_nonaggr), so it pads exactly like every other
 		// capacity-sized column. NOT row-parallel, so pad_front below
 		// must not touch it.
+		// anch.resize TRUNCATES when wrap_cap < anch.len(), and the
+		// n_total check further down can MISS a wrap-only overflow (a
+		// chunk with few real rows keeps the total under budget while
+		// the wrap side is over). Provably inert on the DERIVED path:
+		// n_keys sums at most `subsigs` chains, so it can never exceed
+		// their top-K sum. Gated to the explicit arm so the aggressive
+		// path stays byte-identical. real=0 / real_cap=MAX so only the
+		// wrap arm reports.
+		if !self.capacity.b_aggressive && self.capacity.wrap_keys > 0
+			&& n_keys > wrap_cap {
+			return Err(Self::qm_caperr(&self.capacity, self.b_igc,
+				info, n_keys, wrap_cap, 0, usize::MAX));
+		}
 		t.anch.resize(wrap_cap, F::zero());
 		let n_sub = subsigs.iter().filter(|s| !s.is_zero()).count();
 		let n_real = t.enc.len().saturating_sub(n_keys);
