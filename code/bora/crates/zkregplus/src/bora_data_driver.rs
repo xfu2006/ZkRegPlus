@@ -29,7 +29,7 @@ use utils::consts::{get_global_config, read_global_config,
 
 use crate::circs::composable_gadget_mapper::CompositeGadgetMapper;
 use crate::determine_config::{apply_caperr_bumps,
-	caps_from_params_aggr, caps_from_params_general,
+	caps_from_params_aggr, caps_from_params_general, load_ladder,
 	parse_caperr_from_panic, probe_catching, save_ladder, CapParams};
 use crate::gadgets::word_extract::LEGS;
 use crate::stats_helper::{estimate_config_aggr,
@@ -2956,6 +2956,18 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 		// fold cost, so its step circuits must be the real ones.
 		get_global_config().b_folding_only = true;
 	}
+	// Read BEFORE reset_part_dir wipes the part dir, so the source can
+	// be that same directory's ladder.json from an earlier run.
+	// ZKR_NEO_LOAD_LADDER reuses a ladder from an earlier tune of the
+	// same spec instead of re-tuning (~2 hr on full_clam). Safe across
+	// job counts -- CapParams carries no share or job field; the
+	// lookup share is derived at fold time.
+	let preload = std::env::var("ZKR_NEO_LOAD_LADDER").ok()
+		.map(|p| {
+			utils::logger::log(0, utils::logger::LOG1, &format!(
+				"LADDER LOADED from {} -- tune SKIPPED", p));
+			load_ladder(&p)
+		});
 	let pd = reset_part_dir(spec, part_id);
 	let proot = utils::os::proj_root();
 	let n_sigs = read_lines_nonblank(&format!("{}/{}/{}", proot,
@@ -2970,8 +2982,11 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	let bins = shrink_lone_sample(&pd, bins, perc_samples);
 	let manifests =
 		write_job_manifests(&format!("{}/jobs", pd), &bins);
-	let ladder = build_and_tune(spec, db_count, &bins, num_circs,
-		part_id);
+	let ladder = match preload {
+		Some(l) => l,
+		None => build_and_tune(spec, db_count, &bins, num_circs,
+			part_id),
+	};
 	save_ladder(&ladder, &format!("{}/ladder.json", pd))
 		.unwrap_or_else(|e| panic!(
 			"bora_data_driver: save ladder: {}", e));

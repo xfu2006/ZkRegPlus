@@ -206,10 +206,11 @@ def render_row(label: str, key: str, dump: str | None, unit: float,
     if b is not None:
         b_cell = fmt_hr(b["net"])
         if b["n_jobs"] > 1:
+            # b["wall"] holds the slowest-job wall-clock seconds; not
+            # surfaced in the caption since it is not a table column.
             notes.append(
                 f"{label} BORA is the total net cost summed over "
-                f"${b['n_jobs']}$ parallel jobs; the wall-clock time is "
-                f"${b['wall'] / 3600:.2f}$\\,hr (the slowest job).")
+                f"${b['n_jobs']}$ parallel jobs.")
     else:
         b_cell = PLACEHOLDER
 
