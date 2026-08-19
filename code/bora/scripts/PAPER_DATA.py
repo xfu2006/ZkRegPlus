@@ -7,6 +7,7 @@
 # C (leaf registry) -> B (sequencer) -> A (CLI/menu), landing shared
 # infra first with stub leaves before any leaf gets a real
 # implementation.
+# Prepared by Opus 5 under guidance of paper authors.
 # ---------------------------------------------------------------------
 
 import argparse

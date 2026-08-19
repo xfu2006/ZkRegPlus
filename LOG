@@ -31257,6 +31257,8 @@ Goal 1. redesign tune algorithm
 	[a] mainly cancel v5 walk and replace with legacy model
 		of decrease_cp(2)
 	[b] add probes to optimize decrease_cp(2) 
+	[c] collect 1st run to further help decrease_cp(2)
+	[d]
 Goal 2. writing section 6
 	[a] 6.0 and 6.1
 	[b] 6.2	
@@ -31264,7 +31266,7 @@ Goal 2. writing section 6
 	[d] open science stmt
 	[e] ai stmt
 	[f] bigfiles.tgz (T902)
-	[g]
+	[g] check references
 
 --- DATA ----
 #####################################
