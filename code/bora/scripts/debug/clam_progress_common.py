@@ -101,6 +101,26 @@ LEG_LKUP = 246225855
 LEG_SHARE = 143                # hand-pinned in legacy
 LEG_SHARE_SIZE = 363151
 NEO_SHARE_PRED = 120           # derived for the same corpus, 8 jobs
+
+# NEO CIRCUIT-SIZE LAW.  cs1e is AFFINE in perc_lkup_share, fitted
+# 08-18 from two share points on identical argv.  The per-unit
+# constant matches legacy's (363,151/143 = 2,539.5 vs neo 2,539.9),
+# so the mechanism is the same and only the multiplier differed.
+# This is what lets the meter size the circuit -- and therefore reach
+# a RAM verdict -- BEFORE a single circuit is built.
+NEO_CS1E_BASE = 66919717.0
+NEO_CS1E_PER_SHARE = 76343.7
+# neo's OWN measured decider/cs1e, from the 08-18 dec_big synthesis
+# (160,948,392 / 66,996,061).  Legacy's is 2.323.
+NEO_DEC_RATIO = 2.402
+
+# Bumped whenever a regex or Acc field changes.  A state file written
+# by an older parser holds a byte OFFSET past markers the new fields
+# never saw, so reusing it yields silently blank sections -- exactly
+# what happened on 08-18 when PRELUDE landed mid-run.  On a mismatch
+# the scan checkpoint is discarded and the log re-read from 0; the
+# bank survives, so no banked RSS peak is lost.
+PARSER_VERSION = 3
 # corpus shape, per job.
 LEG_WORDS_PER_JOB = 152
 LEG_CHUNKS = [820, 816, 818, 819, 820, 823, 819]   # 7 real jobs seen
@@ -235,6 +255,20 @@ RE_V2PHASE = re.compile(r"V2 PHASE (\w+) ms=(\d+)")
 # CLAM's LOG3 -- so counting these lines counts units walked.  T9903's
 # cap protects the AGGRESSIVE path only; clam gets the full walk.
 RE_BINSRCH = re.compile(r"bin_search: min_id:")
+# The v5 ladder itself, emitted once the walk finishes.  The two arms
+# spell the count differently -- aggressive says `rungs`
+# (bora_data_driver.rs:1759), non-aggressive `levels` (:1790) -- and
+# dlp_progress.py's copy only matches `rungs`, so it never fires on
+# clam or dna.  Both are accepted here.
+RE_V5 = re.compile(
+	r"v5\[(\S+)\]: (\d+) (?:rungs|levels), occupancy "
+	r"hist=\[([^\]]*)\], costs=\[([^\]]*)\]")
+# the qm ratchet, and its death.  b_fold_only only, so inert for the
+# paper datasets -- carried because a FIRE means the walk under-sized
+# qm_real_rows and every rung below P_max is suspect.
+RE_RATCHET = re.compile(
+	r"v5\[(\S+)\]: qm_real_rows (\d+) -> (\d+), re-walking")
+RE_SHORT = re.compile(r"qm_real_rows still short after 3 re-walks")
 # the qm seed's own cost and the corpus it measured over.  Its arrival
 # is also the only proof that discharge_for_tuning finished.
 RE_V2QM = re.compile(
@@ -476,6 +510,13 @@ class Acc(object):
 		# (cs, igc, words, seconds) off `V2 QM SEED`.  Its presence
 		# proves discharge finished; its elapsed is the seed's cost.
 		self.qm_seed = None
+		# the finished v5 ladder: [name, n_levels, hist, costs].
+		# Its arrival is the tuner's LAST act before run_neo writes
+		# ladder.json and enters the fold.
+		self.v5 = None
+		# every qm ratchet fire as (from, to); and the 3-re-walk death.
+		self.ratchet = []
+		self.short = False
 		# units the v5 qm walk has finished, counted ONLY between
 		# `V2 PHASE probe` and `V2 PHASE v5`.  The gate matters:
 		# bin_search also fires inside the probe and all through
@@ -500,6 +541,9 @@ class Acc(object):
 		self.all_jobs_s = None
 		# mtime at last scan, for stall detection.
 		self.mtime = 0.0
+		# inode at last scan.  A same-size replacement of the log is
+		# invisible to the offset check alone; the inode catches it.
+		self.ino = None
 
 	def to_json(self):
 		return {k: v for k, v in self.__dict__.items()}
@@ -512,25 +556,37 @@ class Acc(object):
 					v = {int(a): b for a, b in v.items()}
 				setattr(self, k, v)
 
-	def scan(self):
-		"""Consume new bytes only.  Returns bytes read."""
+	def scan(self, rescan=False):
+		"""Consume new bytes only.  Returns bytes read.  A partial
+		trailing line is LEFT for the next call rather than parsed
+		half-formed -- the log is being appended to as we read it."""
 		try:
-			sz = os.path.getsize(self.path)
-			self.mtime = os.path.getmtime(self.path)
+			st = os.stat(self.path)
 		except OSError:
 			return 0
-		if sz < self.off:            # rotated/replaced
-			self.__init__(self.path)
-			sz = os.path.getsize(self.path)
-		if sz == self.off:
+		self.mtime = st.st_mtime
+		# shrink OR inode change: a same-size replacement is invisible
+		# to the offset alone.
+		if (rescan or st.st_size < self.off
+				or (self.ino is not None and st.st_ino != self.ino)):
+			p = self.path
+			self.__init__(p)
+			self.mtime = st.st_mtime
+		self.ino = st.st_ino
+		if st.st_size == self.off:
 			return 0
-		with open(self.path, "r", errors="replace") as f:
-			f.seek(self.off)
-			data = f.read()
-			self.off = f.tell()
-		for ln in data.splitlines():
-			self._line(ln)
-		return len(data)
+		start = self.off
+		with open(self.path, "rb") as f:
+			f.seek(start)
+			off = start
+			for raw in f:
+				if not raw.endswith(b"\n"):
+					break        # half-written line: leave it
+				off += len(raw)
+				self._line(raw.decode("utf-8", "replace")
+					.rstrip("\n"))
+		self.off = off
+		return off - start
 
 	def _line(self, ln):
 		m = RE_STEP.search(ln)
@@ -624,8 +680,28 @@ class Acc(object):
 			self.arm = "v2"
 			self.tune_seed = [int(g) for g in m.groups()]
 			return
+		m = RE_V5.search(ln)
+		if m:
+			self.v5 = [m.group(1), int(m.group(2)), m.group(3),
+				m.group(4)]
+			return
+		m = RE_RATCHET.search(ln)
+		if m:
+			self.ratchet.append((int(m.group(2)), int(m.group(3))))
+			return
+		if RE_SHORT.search(ln):
+			self.short = True
+			return
 		if RE_BINSRCH.search(ln):
-			if "probe" in self.v2_phase and "v5" not in self.v2_phase:
+			# Arm-agnostic on purpose: size_levels_v5_non_aggr is
+			# called by BOTH tuners (:1913 v1, :2393 v2), so gating on
+			# a V2 marker would have left v1 with no walk progress at
+			# all.  Opens when either arm's CONVERGED line lands and
+			# closes on the ladder -- or on the fold, which is the
+			# backstop when num_circs==1 skips v5 and no ladder line
+			# is ever printed.
+			if (self.tune_total_s is not None and self.v5 is None
+					and self.n_jobs_log is None):
 				self.v5_walk += 1
 			return
 		m = RE_V2PHASE.search(ln)
@@ -831,6 +907,57 @@ class Run(object):
 				return a.tune_seed, a.tune_rounds, a.tune_total_s
 		return None, [], None
 
+	def v5(self):
+		"""The finished v5 ladder, or None while the walk runs."""
+		return next((a.v5 for a in self.accs if a.v5), None)
+
+	def v5_hist(self):
+		"""Per-level occupancy in WORDS, or None.  Occupancy counts
+		units, not chunks -- a long word is one entry here."""
+		v = self.v5()
+		if not v:
+			return None
+		try:
+			h = [int(x) for x in v[2].split(",") if x.strip()]
+		except ValueError:
+			return None
+		return h or None
+
+	def ladder_json(self):
+		"""(path, fresh, stale) for the part-0 ladder run_neo writes
+		the instant build_and_tune returns and BEFORE fold (:2906).
+		FRESH is the exact 'tuner completely done' test, independent
+		of what the log printed.  The mtime check is load-bearing: a
+		PREVIOUS run's file sits at the same path, and reading it as
+		this run's would declare tuning over while the walk runs.
+		reset_part_dir wipes the dir at start, so a live run cannot
+		trip this -- but a meter pointed at an archived log can."""
+		d = plan_dir_of(self.sub())
+		if not d:
+			return None, False, False
+		p = os.path.join(d, "ladder.json")
+		try:
+			mt = os.path.getmtime(p)
+		except OSError:
+			return p, False, False
+		t0 = self.t_start()
+		if t0 and mt < t0:
+			return p, False, True
+		return p, True, False
+
+	def proj_cs1e(self):
+		"""(cs1e, source).  MEASURED once KEYS info lands; before
+		that, projected from the affine share law so the circuit -- and
+		the RAM verdict -- are sized from the first scan."""
+		got = self.cs1e()
+		if got:
+			return got, "measured"
+		sh = self.share()
+		src = ("share %d, measured" % sh if sh
+			else "share %d, PREDICTED" % NEO_SHARE_PRED)
+		sh = sh or NEO_SHARE_PRED
+		return int(NEO_CS1E_BASE + NEO_CS1E_PER_SHARE * sh), src
+
 	def v5_walk(self):
 		"""Units the v5 qm walk has finished, max across processes."""
 		return max([a.v5_walk for a in self.accs] or [0])
@@ -878,11 +1005,18 @@ class Run(object):
 # ------------------------------------------------------------ sections
 
 
-def show_header(run, bank, new_bytes, dt):
+def sec(title):
+	"""dlp_progress.py's section rule: a 72-char separator then the
+	title, so the whole report reads top-to-bottom as a checklist
+	instead of a wall of indented blocks."""
+	return ["-" * 72, title]
+
+
+def show_header(run, bank, new_bytes, dt, stale=False):
 	L = []
 	t = run.topo
 	box, own = clocks(time.time())
-	L.append("=" * 66)
+	L.append("=" * 72)
 	L.append("full_clam NEO METER  %s  (owner %s)" % (box, own))
 	L.append("topology %s: %d process(es) x %d jobs   %s"
 		% (t.label, t.n_procs, t.n_jobs // max(t.n_procs, 1), t.note))
@@ -895,8 +1029,12 @@ def show_header(run, bank, new_bytes, dt):
 			"" if arm != "v1" else "  <- WARN: legacy tuner",
 			sh if sh else "-", LEG_SHARE, NEO_SHARE_PRED,
 			com(lk)))
-	L.append("logs %d, %d new bytes in %s" % (
-		len(run.accs), new_bytes, hm(dt)))
+	L.append("scan %d log(s), %s new bytes in %s   (incremental; "
+		"--rescan re-reads from 0)" % (
+			len(run.accs), com(new_bytes), hm(dt)))
+	if stale:
+		L.append("  parser changed since the last scan -- checkpoint "
+			"discarded, log re-read in full")
 	return L
 
 
@@ -905,7 +1043,8 @@ def show_ram(run, bank):
 	the ladder, long before the fold ends.  Every projection states
 	what it was derived from; nothing is asserted unsourced."""
 	t = run.topo
-	L = ["", "RAM VERDICT  (budget %.0f GiB)" % t.ram_gib]
+	L = sec("RAM        : verdict against a %.0f GiB budget"
+		% t.ram_gib)
 	avail = mem_avail_gib()
 	live = proc_rss_gib()
 	peak = bank.get("rss_peak") or 0.0
@@ -930,19 +1069,21 @@ def show_ram(run, bank):
 		proj = mx / 1e6 * t.ram_per_mcs
 		src = "measured %s %s cs" % (
 			max(dec, key=dec.get), com(mx))
-	elif cs1e:
-		# legacy MainDecider is 2.32x cs1e; neo's ratio is NOT yet
-		# established (dec_big died mid-build), so the legacy ratio is
-		# used and flagged.  This is an UPPER bound if neo's ratio is
-		# lower, which partial evidence suggests.
-		proj = cs1e * 2.32 / 1e6 * t.ram_per_mcs
-		src = "cs1e %s x2.32 (LEGACY ratio, neo's unmeasured)" % \
-			com(cs1e)
-	if proj is None:
-		L.append("  projection     not yet -- no ladder seen")
-		L.append("  VERDICT        PENDING")
-		return L
+	else:
+		# No decider measured yet -- size it from cs1e, MEASURED off
+		# KEYS info when available and otherwise from the affine share
+		# law.  Either way the run is never left un-sized: the decider
+		# runs LAST, so a verdict that only arrives once the decider
+		# is building arrives far too late to act on.
+		pc, csrc = run.proj_cs1e()
+		proj = pc * NEO_DEC_RATIO / 1e6 * t.ram_per_mcs
+		src = "cs1e %s (%s) x%.3f" % (com(pc), csrc, NEO_DEC_RATIO)
 	L.append("  projected peak %.0f GiB   from %s" % (proj, src))
+	if not dec and not cs1e:
+		L.append("                 PROJECTION, not a measurement -- "
+			"it rests on the predicted")
+		L.append("                 share; a share the run later "
+			"derives higher moves this UP")
 	L.append("                 @ %.2f GiB per M decider R1CS "
 		"(%s anchor)" % (t.ram_per_mcs, t.key))
 	head = t.ram_gib - proj
@@ -961,13 +1102,35 @@ def show_ram(run, bank):
 	return L
 
 
-def show_size(run):
-	"""The tuner-win scorecard: neo vs the legacy hand-tuned caps."""
+def show_circuit(run):
+	"""The tuner-win scorecard: neo vs the legacy hand-tuned caps.
+	Rows are MEASURED once the fold builds circuits; until then the
+	affine share law sizes cs1e and the decider, so this section is
+	never blank."""
 	lad = run.ladder()
 	cs1e = run.cs1e()
 	dec = run.dec_cs()
-	L = ["", "SIZE vs LEGACY  (legacy = hand-declared caps, "
-		"perc 100/100, 8 jobs)"]
+	L = sec("CIRCUIT    : neo vs legacy hand-declared caps "
+		"(perc 100/100, 8 jobs)")
+	b_any = bool(cs1e or dec or lad)
+	if not b_any:
+		pc, csrc = run.proj_cs1e()
+		L.append("  PROJECTED -- the fold has not built a circuit "
+			"yet, so nothing is measured")
+		L.append("  %-22s %14s %14s %8s"
+			% ("metric", "legacy", "neo proj", "x"))
+		L.append("  %-22s %14s %14s %8s" % ("cs1e", com(LEG_CS1E),
+			com(pc), ratio(pc, LEG_CS1E)))
+		L.append("  %-22s %14s %14s %8s" % ("MainDecider R1CS",
+			com(LEG_MAINDEC), com(int(pc * NEO_DEC_RATIO)),
+			ratio(pc * NEO_DEC_RATIO, LEG_MAINDEC)))
+		L.append("  from %s;  cs1e = %s + %.1f x share" % (csrc,
+			com(int(NEO_CS1E_BASE)), NEO_CS1E_PER_SHARE))
+		L.append("  decider = cs1e x %.3f, neo's OWN measured ratio "
+			"(legacy 2.323)" % NEO_DEC_RATIO)
+		L.append("  both rows move the moment `KEYS info` lands; "
+			"until then they are a MODEL")
+		return L
 	L.append("  %-22s %14s %14s %8s" % ("metric", "legacy", "neo", "x"))
 	rows = [
 		("ladder circ1 cols", LEG_LADDER[1][0],
@@ -1009,7 +1172,8 @@ def show_stages(run):
 	runs carry 8 jobs at the same cpus-per-job, so this compares 1:1
 	even on the 512 box where the WALL does not."""
 	jobs = run.jobs()
-	L = ["", "STAGES  per job, seconds, vs legacy mean over 8 jobs"]
+	L = sec("STAGES     : per job, seconds, vs legacy mean over 8 "
+		"jobs")
 	if not jobs:
 		L.append("  no Phase 1 step has completed yet")
 		return L
@@ -1065,7 +1229,7 @@ def show_progress(run, bank):
 	fold is front-loaded by circuit size -- a step-count ETA reads
 	optimistic early and pessimistic late."""
 	t = run.topo
-	L = ["", "PROGRESS"]
+	L = sec("PROGRESS   : fold position and landing time")
 	corp = run.corpus()
 	prog = run.progress()
 	if corp:
@@ -1153,6 +1317,17 @@ def crawl_span(rounds):
 	return best
 
 
+def plan_dir_of(sub):
+	"""bora_cli subcommand -> the part-0 plan dir, mirroring
+	bora_data_driver::plan_dir.  The BARE token keeps the CANONICAL
+	spec name, because arm_plan_dir renames on Some(..) only: so
+	`full_clam` -> clam_neo_p0 but `full_clam_v2` -> clam_v2_neo_p0."""
+	if not sub:
+		return None
+	n = sub[5:] if sub.startswith("full_") else sub
+	return "/tmp/bora/%s_neo_p0" % n
+
+
 def prel_rank(p):
 	"""How far a prelude tuple got.  Stages are strictly ordered, so
 	comparing the tuple lexicographically ranks two processes."""
@@ -1174,15 +1349,54 @@ def walk_rate(bank, n):
 	return (dn / dt) if (dt > 0 and dn > 0) else None
 
 
+def show_v5_row(run, row, cont, qm, pr, bank=None, v5s=None,
+		num=5):
+	"""PRELUDE stage 5, shared by both arms.  num_circs is 2 for
+	full_clam in BOTH modes (PAPER_DATA.py:1877), so this ALWAYS runs,
+	and its one LOG1 line lands only at the very end."""
+	if v5s is not None:
+		row("%d v5 ladder sizing" % num, secs(v5s), "done")
+		return
+	if run.v5() is not None:
+		row("%d v5 ladder sizing" % num, "done",
+			"ladder emitted, see GATE")
+		return
+	if pr is None:
+		row("%d v5 ladder sizing" % num, "-")
+		return
+	n = run.v5_walk()
+	tot_u = qm[2] if (qm and not isinstance(qm, bool)) else None
+	if tot_u:
+		row("%d v5 ladder sizing" % num, "IN FLIGHT",
+			"qm walk %s of %s units (%.1f%%)"
+			% (com(n), com(tot_u), 100.0 * n / tot_u))
+	else:
+		row("%d v5 ladder sizing" % num, "IN FLIGHT",
+			"qm walk %s units done" % com(n))
+	# rate needs TWO scans: the log carries no clock, so the walk has
+	# no discoverable start.  The bank supplies the first (time,
+	# count) pair and every later scan sharpens the rate.
+	r = walk_rate(bank, n) if bank is not None else None
+	if r:
+		cont("%.1f units/min" % (r * 60.0))
+		if tot_u and n < tot_u:
+			cont("ETA %s for the remaining %s"
+				% (secs((tot_u - n) / r), com(tot_u - n)))
+	elif bank is not None:
+		cont("rate needs a 2nd scan (no clock in the log)")
+	cont("SERIAL loop, UNCAPPED: b_walk_all=true bypasses")
+	cont("QM_WALK_ALL_MAX=256 (:1697).  T9903's cap is")
+	cont("aggressive-only, so both clam arms walk every unit.")
+
+
 def show_prelude(run, bank):
 	"""The stages that run BEFORE the tuner's first bump round.  None
 	is charged to a stage column and discharge_for_tuning prints
 	nothing at all, so without this a live prelude reads as a hang."""
-	if run.arm() == "v1":
-		return []          # v1 has no V2 PHASE / QM SEED markers
 	db_start, db_done, qm, ph = run.prelude()
-	L = ["", "PRELUDE  (before Phase 1 step 1; charged to NO stage "
-		"column)"]
+	v1 = run.arm() == "v1"
+	L = sec("PRELUDE    : before Phase 1 step 1; charged to NO stage "
+		"column")
 	rows = []
 
 	def row(name, val, note=""):
@@ -1208,6 +1422,23 @@ def show_prelude(run, bank):
 			"ref %s; no step timing at LOG3" % secs(LEG_DB_BUILD_S))
 	else:
 		row("1 DB build", "-", "not announced yet")
+
+	# v1 has no seed and no per-phase markers, so its middle rows
+	# collapse to a pointer at TUNER, which carries its round table.
+	if v1:
+		seed, rounds, total = run.tune()
+		done = total is not None
+		row("2 discharge for tuning",
+			"done" if rounds or done else "IN FLIGHT",
+			"DARK -- emits nothing at any level")
+		if not rounds and not done and el is not None:
+			cont("%s elapsed covers stages 1+2" % secs(el))
+		row("3 tuner rounds", secs(total) if done else
+			("IN FLIGHT" if rounds else "-"),
+			"%d round(s) so far -- see TUNER" % len(rounds))
+		show_v5_row(run, row, cont, True, (1 if done else None),
+			bank, None, 4)
+		return L + rows
 
 	# 2+3. The DARK window.  `V2 QM SEED` is the only proof either
 	# one finished, so before it they cannot be told apart.
@@ -1249,38 +1480,7 @@ def show_prelude(run, bank):
 	else:
 		row("4 v2 probe", "-")
 
-	# 5. v5 ladder sizing.  num_circs is 2 for full_clam in BOTH
-	# modes (PAPER_DATA.py:1877), so this ALWAYS runs, and its one
-	# LOG1 line lands only at the very end.
-	v5 = ph.get("v5")
-	if v5 is not None:
-		row("5 v5 ladder sizing", secs(v5), "done")
-	elif pr is not None:
-		n = run.v5_walk()
-		tot_u = qm[2] if qm else None
-		if tot_u:
-			row("5 v5 ladder sizing", "IN FLIGHT",
-				"qm walk %s of %s units (%.1f%%)"
-				% (com(n), com(tot_u), 100.0 * n / tot_u))
-		else:
-			row("5 v5 ladder sizing", "IN FLIGHT",
-				"qm walk %s units done" % com(n))
-		# rate needs TWO scans: the log carries no clock, so the walk
-		# has no discoverable start.  The bank supplies the first
-		# (time, count) pair and every later scan sharpens the rate.
-		r = walk_rate(bank, n)
-		if r:
-			cont("%.1f units/min" % (r * 60.0))
-			if tot_u and n < tot_u:
-				cont("ETA %s for the remaining %s"
-					% (secs((tot_u - n) / r), com(tot_u - n)))
-		else:
-			cont("rate needs a 2nd scan (no clock in the log)")
-		cont("SERIAL loop, UNCAPPED: b_walk_all=true bypasses")
-		cont("QM_WALK_ALL_MAX=256 (:1697).  T9903's cap is")
-		cont("aggressive-only, so clam walks every unit.")
-	else:
-		row("5 v5 ladder sizing", "-")
+	show_v5_row(run, row, cont, qm, pr, bank, ph.get("v5"))
 
 	tot = sum(v for v in ph.values())
 	if ph:
@@ -1293,13 +1493,63 @@ def show_prelude(run, bank):
 	return L + rows
 
 
+def show_gate(run):
+	"""The tuner's VERDICT: the ladder it produced, the qm ratchet,
+	and the on-disk proof that tuning is over.  PRELUDE stage 5 shows
+	the walk's PROGRESS; this shows its RESULT."""
+	L = sec("GATE       : tuner verdict and the ladder it produced")
+	if any(a.short for a in run.accs):
+		L.append("  ratchet    DEAD -- still short after 3 re-walks; "
+			"the walk did not converge")
+	else:
+		fires = [f for a in run.accs for f in a.ratchet]
+		L.append("  ratchet    %s" % ("not fired (expected: the "
+			"ratchet is b_fold_only)" if not fires
+			else "FIRED %dx, qm_real_rows %s" % (len(fires),
+				" -> ".join([str(fires[0][0])]
+					+ [str(f[1]) for f in fires]))))
+	v5 = run.v5()
+	if v5:
+		L.append("  v5 ladder  %d levels   costs=[%s]"
+			% (v5[1], v5[3]))
+		h = run.v5_hist()
+		if h:
+			n = float(sum(h))
+			L.append("             occupancy %s WORDS: %s" % (com(
+				int(n)), " / ".join("%.1f%%" % (100.0 * c / n)
+					for c in h) if n else "-"))
+			L.append("             occupancy counts UNITS, not "
+				"chunks -- one long word is one entry")
+	else:
+		L.append("  v5 ladder  not emitted yet -- the walk is still "
+			"running (see PRELUDE 5)")
+	p, ok, stale = run.ladder_json()
+	if p is None:
+		L.append("  ladder.json path unknown (no argv line parsed "
+			"yet)")
+	else:
+		L.append("  ladder.json %s   %s" % (
+			"PRESENT" if ok else
+			("STALE  " if stale else "absent "), p))
+		if stale:
+			L.append("             that file PREDATES this run -- it "
+				"is a previous run's, not proof")
+		L.append("             run_neo writes it the instant "
+			"build_and_tune returns and")
+		L.append("             BEFORE fold (:2906), so PRESENT is "
+			"the exact 'tuning is over'")
+		L.append("             test -- independent of what the log "
+			"did or did not print")
+	return L
+
+
 def show_tuner(run):
 	"""Tune rounds and tune time.  The tuner runs FIRST, before Phase
 	1 step 1, and its cost lands in NO stage column -- so without this
 	section a 37-minute tune is invisible everywhere in the report."""
 	seed, rounds, total = run.tune()
 	arm = run.arm()
-	L = ["", "TUNER  arm %s" % (arm or "not seen")]
+	L = sec("TUNER      : arm %s" % (arm or "not seen"))
 	if seed:
 		L.append("  seed   subsigs %d  igc %d  cp %d  dfa %d  "
 			"perc_comp %d" % tuple(seed))
@@ -1376,7 +1626,7 @@ def show_position(run):
 	"""WHERE IT IS plus a pace verdict, scored in per-JOB seconds
 	against the legacy stage budget -- the one axis that transfers
 	across all three box shapes."""
-	L = ["", "POSITION"]
+	L = sec("POSITION   : where the run actually is")
 	t0 = run.t_start()
 	# "as of" is NOW while the run is live, but the log's last write
 	# once it is not: a finished or dead run must report its runtime,
@@ -1459,21 +1709,60 @@ def show_position(run):
 	return L
 
 
+def show_markers(run):
+	"""Milestones in the order the run reaches them.  Each is a fact
+	the log or the filesystem can prove, so a run that looks stuck can
+	be placed exactly without reading the log."""
+	L = sec("MARKERS    : milestones, in the order they are reached")
+	seed, rounds, total = run.tune()
+	_, lj, _st = run.ladder_json()
+	pre = run.prelude()
+	rows = [
+		("DB built", pre[1]),
+		("qm seed done", pre[2] is not None),
+		("tuner converged", total is not None),
+		("v5 ladder emitted", run.v5() is not None),
+		("ladder.json on disk", lj),
+		("fold started", run.accs and any(
+			a.n_jobs_log for a in run.accs)),
+		("Phase 1 step reported", bool(run.jobs())),
+		("decider started", run.snark_job() is not None),
+		("ALL JOBS terminal", any(a.all_jobs_s for a in run.accs)),
+	]
+	for name, ok in rows:
+		L.append("  %-24s %s" % (name, "yes" if ok else "-"))
+	return L
+
+
 def show_next(run):
-	L = ["", "NEXT"]
+	L = sec("NEXT       : what to expect, and what to watch for")
 	if run.stalled():
 		L.append("  !! every log is older than %s with no terminal "
 			"marker -- check the box" % hm(STALL_S))
 	sj = run.snark_job()
-	if sj is None:
+	_, lj, _st = run.ladder_json()
+	started = any(a.n_jobs_log for a in run.accs)
+	if sj is not None:
+		L.append("  decider running: peak RSS is being paid now.")
+	elif started:
 		L.append("  fold in progress.  The decider begins at "
 			"`Job N generating SNARK proof`;")
 		L.append("  to take the fold WITHOUT the decider peak, stop "
 			"the run at that line.")
+	elif lj or run.v5():
+		L.append("  tuning is OVER and the fold is starting.  Watch "
+			"for `fold_pot starts with N jobs`.")
+	elif run.tune()[2] is not None:
+		L.append("  still TUNING: the v5 walk owns the run (PRELUDE "
+			"5).  It ends with a")
+		L.append("  `v5[...]: N levels` line, then ladder.json, then "
+			"the fold begins.")
+		L.append("  Nothing else prints in between -- silence here "
+			"is expected, not a hang.")
 	else:
-		L.append("  decider running: peak RSS is being paid now.")
+		L.append("  in the PRELUDE (see above).  The tuner has not "
+			"converged yet.")
 	L.append("  re-run this meter any time; the scan is incremental.")
-	L.append("=" * 66)
 	return L
 
 
@@ -1497,12 +1786,20 @@ def run(topo, argv):
 				" and %s" % CURRENT_2 if topo.n_procs > 1 else ""))
 	sp = state_path(topo)
 	st = {}
-	if "--fresh" not in argv:
+	rescan = "--rescan" in argv or "--fresh" in argv
+	if not rescan:
 		try:
 			st = json.load(open(sp))
 		except (OSError, ValueError):
 			st = {}
+	# The bank is parser-independent (it samples /proc, not the log),
+	# so it survives a version bump; only the scan checkpoint is
+	# discarded.  Without this a parser change leaves every new field
+	# permanently blank -- the offset is already past its markers.
 	bank = st.get("bank", {})
+	stale = bool(st) and st.get("parser") != PARSER_VERSION
+	if stale:
+		st = {}
 	accs = []
 	t0 = time.time()
 	new = 0
@@ -1511,22 +1808,34 @@ def run(topo, argv):
 		saved = (st.get("accs") or {}).get(p)
 		if saved:
 			a.from_json(saved)
-		new += a.scan()
+		new += a.scan(rescan)
 		accs.append(a)
 	r = Run(topo, accs)
 	out = []
-	out += show_header(r, bank, new, time.time() - t0)
-	out += show_ram(r, bank)
+	out += show_header(r, bank, new, time.time() - t0, stale)
+	out += show_position(r)
 	out += show_prelude(r, bank)
 	out += show_tuner(r)
-	out += show_position(r)
-	out += show_size(r)
+	out += show_gate(r)
+	out += show_circuit(r)
+	out += show_ram(r, bank)
 	out += show_stages(r)
 	out += show_progress(r, bank)
+	out += show_markers(r)
 	out += show_next(r)
+	out += ["-" * 72,
+		"state      : %s" % sp,
+		"reference  : --legacy dumps the legacy table; --rescan "
+		"re-reads from byte 0"]
 	try:
-		json.dump({"accs": {a.path: a.to_json() for a in accs},
-			"bank": bank}, open(sp, "w"))
+		# tmp + replace: a meter killed mid-write must not leave a
+		# truncated checkpoint that the next run silently reads as
+		# "nothing seen yet".
+		tmp = sp + ".tmp"
+		json.dump({"parser": PARSER_VERSION,
+			"accs": {a.path: a.to_json() for a in accs},
+			"bank": bank}, open(tmp, "w"))
+		os.replace(tmp, sp)
 	except OSError:
 		pass
 	return "\n".join(out)
