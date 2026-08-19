@@ -117,6 +117,21 @@ LEG_TUNE_V1_CRAWL_S = 1944.0    # rounds 5-17, all cp::subsigs +1
 # tuner rows printed before the middle is elided.  A pathological tune
 # is ~20 rounds; showing head and tail keeps the seed climb AND the
 # expensive tail visible without burying the rest of the report.
+# TUNER reference, v2 arm, full_clam at production corpus, parsed from
+# the 2026-08-18 512 GB run: a 17.094 s qm seed then ONE probe round of
+# 5,823,903 ms that converged at iter 0 with ZERO bumps.  v2 prints
+# nothing at all between `V2 SEED BLOCK` and `V2 CONVERGED`, so a good
+# seed buys a single round that is silent for its whole 1.6 hours --
+# the opposite failure mode from v1's 19 chatty rounds, and the reason
+# a live v2 tune looks identical to a hang.
+LEG_TUNE_V2_CLAM_SEED_S = 17.094
+LEG_TUNE_V2_CLAM_PROBE_S = 5823.903
+LEG_TUNE_V2_CLAM_S = 5841.0
+# DB build reference, full_clam (m104).  The neo path calls
+# build_or_load(read=false, write=true), so this is paid EVERY run;
+# there is no cache-hit fast path, and `loadClamDB from:` never fires.
+LEG_DB_BUILD_S = 592.0
+
 TUNE_ROWS = 14
 # RAM, GiB.  The log's `MEM:`/`Total RAM:` UNDERSTATE true peak RSS by
 # ~3% (cross-checked against PAPER_DATA_PEAK_RSS_GIB on small_full_
@@ -201,6 +216,30 @@ RE_V2SEED = re.compile(
 	r"V2 SEED BLOCK: subsigs (\d+) igc (\d+) cp (\d+) dfa (\d+) "
 	r"perc_comp (\d+)")
 RE_V2ITER = re.compile(r"v2 iter (\d+): (.+)")
+# PRELUDE, the three things that run BEFORE the tuner's first round.
+# DB build brackets itself with two LOG1 lines that both survive at
+# CLAM's LOG3; its seven `Build_DB: Step N` timings do NOT -- they are
+# gated `b_perf = LOG2 >= global.log_level` (clam_db.rs:2091), which
+# is false at LOG3.  discharge_for_tuning emits NOTHING at any level.
+RE_DBSTART = re.compile(r"cache (\S+) not found or incomplete")
+RE_DBDONE = re.compile(r"==== Summary of ClamavSig Database ====")
+# v2's per-phase wall, and the ONLY tuner cost that survives a
+# zero-round convergence: converging at iter 0 prints no `v2 iter`
+# line at all, so the round table stays empty on the BEST outcome.
+RE_V2PHASE = re.compile(r"V2 PHASE (\w+) ms=(\d+)")
+# The v5 ladder walk's ONLY live signal.  size_levels_v5_non_aggr calls
+# harvest_units with b_walk_all=TRUE, which BYPASSES the
+# QM_WALK_ALL_MAX=256 cap (bora_data_driver.rs:1697 gates it on
+# `!b_walk_all`), so qm_walk_units serial-loops over EVERY unit at
+# :1529.  Each unit's plan_nd_advice logs this at LOG2, which survives
+# CLAM's LOG3 -- so counting these lines counts units walked.  T9903's
+# cap protects the AGGRESSIVE path only; clam gets the full walk.
+RE_BINSRCH = re.compile(r"bin_search: min_id:")
+# the qm seed's own cost and the corpus it measured over.  Its arrival
+# is also the only proof that discharge_for_tuning finished.
+RE_V2QM = re.compile(
+	r"V2 QM SEED: cs=(\d+) igc=(\d+).*words=(\d+).*"
+	r"elapsed=(\d+) ms")
 RE_V1ITER = re.compile(r"determine_config_non_aggr iter (\d+): (.+)")
 RE_ROUNDMS = re.compile(r"round (\d+) ms")
 RE_TOTALMS = re.compile(r"TOTAL (\d+) ms")
@@ -429,6 +468,22 @@ class Acc(object):
 		# the tuner has NOT converged -- while a run is tuning that is
 		# the live signal, not missing data.
 		self.tune_total_s = None
+		# PRELUDE state.  db_start/db_done are the DB build's two
+		# LOG1 brackets; there is no marker between db_done and
+		# qm_seed, so discharge_for_tuning is a DARK window.
+		self.db_start = False
+		self.db_done = False
+		# (cs, igc, words, seconds) off `V2 QM SEED`.  Its presence
+		# proves discharge finished; its elapsed is the seed's cost.
+		self.qm_seed = None
+		# units the v5 qm walk has finished, counted ONLY between
+		# `V2 PHASE probe` and `V2 PHASE v5`.  The gate matters:
+		# bin_search also fires inside the probe and all through
+		# Phase 1, and an ungated count would mix all three.
+		self.v5_walk = 0
+		# phase name -> seconds, off `V2 PHASE <name> ms=`.  seed /
+		# probe / v5.  MEASURED, and independent of the round table.
+		self.v2_phase = {}
 		# epoch of the log header line = the exact run start.
 		self.t_start = None
 		# the bora_cli subcommand this leaf was launched with, e.g.
@@ -569,6 +624,28 @@ class Acc(object):
 			self.arm = "v2"
 			self.tune_seed = [int(g) for g in m.groups()]
 			return
+		if RE_BINSRCH.search(ln):
+			if "probe" in self.v2_phase and "v5" not in self.v2_phase:
+				self.v5_walk += 1
+			return
+		m = RE_V2PHASE.search(ln)
+		if m:
+			self.arm = "v2"
+			self.v2_phase[m.group(1)] = float(m.group(2)) / 1e3
+			return
+		m = RE_V2QM.search(ln)
+		if m:
+			self.arm = "v2"
+			self.qm_seed = (int(m.group(1)), int(m.group(2)),
+				int(m.group(3)), float(m.group(4)) / 1e3)
+			return
+		if RE_DBDONE.search(ln):
+			self.db_done = True
+			return
+		m = RE_DBSTART.search(ln)
+		if m:
+			self.db_start = True
+			return
 		m = RE_CMD.search(ln)
 		if m:
 			self.sub = m.group(1)
@@ -669,6 +746,17 @@ class Run(object):
 				return v
 		return None
 
+	def _first_set(self, attr):
+		"""Like _first but keyed on `is not None`.  Required for any
+		field whose VALID value can be 0 -- iter 0 is the tuner's best
+		outcome and job 0 is a real job, and truthiness reports both
+		as never-seen."""
+		for a in self.accs:
+			v = getattr(a, attr)
+			if v is not None:
+				return v
+		return None
+
 	# ---- size (topology-invariant: one ladder, built per process) --
 	def ladder(self):
 		for a in self.accs:
@@ -729,10 +817,10 @@ class Run(object):
 		return n, (s / n if n else None)
 
 	def snark_job(self):
-		return self._first("snark_job")
+		return self._first_set("snark_job")
 
 	def tune_iter(self):
-		return self._first("tune_iter")
+		return self._first_set("tune_iter")
 
 	def tune(self):
 		"""(seed, rounds, total_s) from whichever process tuned.  On a
@@ -742,6 +830,21 @@ class Run(object):
 			if a.tune_rounds or a.tune_total_s or a.tune_seed:
 				return a.tune_seed, a.tune_rounds, a.tune_total_s
 		return None, [], None
+
+	def v5_walk(self):
+		"""Units the v5 qm walk has finished, max across processes."""
+		return max([a.v5_walk for a in self.accs] or [0])
+
+	def prelude(self):
+		"""(db_start, db_done, qm_seed, v2_phase) from whichever
+		process got FURTHEST.  Every process runs the same prelude,
+		so the most-advanced one describes the run."""
+		best = (False, False, None, {})
+		for a in self.accs:
+			cur = (a.db_start, a.db_done, a.qm_seed, a.v2_phase)
+			if prel_rank(cur) > prel_rank(best):
+				best = cur
+		return best
 
 	def sub(self):
 		return self._first("sub")
@@ -1050,6 +1153,146 @@ def crawl_span(rounds):
 	return best
 
 
+def prel_rank(p):
+	"""How far a prelude tuple got.  Stages are strictly ordered, so
+	comparing the tuple lexicographically ranks two processes."""
+	db_start, db_done, qm, ph = p
+	return (len(ph), 1 if qm else 0, 1 if db_done else 0,
+		1 if db_start else 0)
+
+
+def walk_rate(bank, n):
+	"""Units/second for the v5 walk, from the first (time, count) the
+	bank saw.  None until a SECOND scan gives a nonzero span: the log
+	has no timestamps, so the walk's start is not otherwise knowable."""
+	t = time.time()
+	t0, n0 = bank.get("v5_t0"), bank.get("v5_n0")
+	if t0 is None or n0 is None or n < n0:
+		bank["v5_t0"], bank["v5_n0"] = t, n
+		return None
+	dt, dn = t - t0, n - n0
+	return (dn / dt) if (dt > 0 and dn > 0) else None
+
+
+def show_prelude(run, bank):
+	"""The stages that run BEFORE the tuner's first bump round.  None
+	is charged to a stage column and discharge_for_tuning prints
+	nothing at all, so without this a live prelude reads as a hang."""
+	if run.arm() == "v1":
+		return []          # v1 has no V2 PHASE / QM SEED markers
+	db_start, db_done, qm, ph = run.prelude()
+	L = ["", "PRELUDE  (before Phase 1 step 1; charged to NO stage "
+		"column)"]
+	rows = []
+
+	def row(name, val, note=""):
+		rows.append(("  %-22s %-10s %s" % (name, val, note)).rstrip())
+
+	def cont(note):
+		rows.append("  %-22s %-10s %s" % ("", "", note))
+
+	# elapsed covers stages 1+2 jointly: neither one brackets itself
+	# with a timestamp, and the log lines carry no clock.
+	t0, el = run.t_start(), None
+	if t0:
+		mt = max([a.mtime for a in run.accs if a.mtime] or [0])
+		asof = mt if (run.stalled() and mt) else time.time()
+		el = asof - t0
+
+	# 1. DB build.
+	if db_done:
+		row("1 DB build", "done",
+			"rebuilt EVERY neo run; ref %s" % secs(LEG_DB_BUILD_S))
+	elif db_start:
+		row("1 DB build", "IN FLIGHT",
+			"ref %s; no step timing at LOG3" % secs(LEG_DB_BUILD_S))
+	else:
+		row("1 DB build", "-", "not announced yet")
+
+	# 2+3. The DARK window.  `V2 QM SEED` is the only proof either
+	# one finished, so before it they cannot be told apart.
+	if qm:
+		row("2 discharge for tuning", "done",
+			"DARK -- emits nothing at any level")
+		row("3 qm seed", secs(qm[3]),
+			"cs %s  igc %s  over %s words"
+			% (com(qm[0]), com(qm[1]), com(qm[2])))
+	elif db_done:
+		row("2 discharge for tuning", "IN FLIGHT",
+			"DARK -- nothing prints until `V2 QM SEED`")
+		if el is not None:
+			cont("%s elapsed covers stages 1+2" % secs(el))
+		row("3 qm seed", "-")
+	else:
+		row("2 discharge for tuning", "-")
+		row("3 qm seed", "-")
+
+	# 4. The v2 probe: one silent round when the seed is good.
+	pr = ph.get("probe")
+	if pr is not None:
+		it = run.tune_iter()
+		# the CONVERGED line contributes a round of its own, and it
+		# is NOT a bump: counting it would report the ideal tune
+		# (converge on the first probe) as having cost one.
+		nb = len([r for r in run.tune()[1]
+			if "(CONVERGED)" not in r[2]])
+		row("4 v2 probe", secs(pr), "CONVERGED @iter %s, %s"
+			% ("?" if it is None else it,
+				"ZERO bump rounds" if nb == 0
+				else "%d bump rounds" % nb))
+	elif qm:
+		row("4 v2 probe", "IN FLIGHT",
+			"round 0 is SILENT: v2 prints nothing")
+		cont("between SEED BLOCK and CONVERGED.")
+		cont("clam ref: one round = %s"
+			% secs(LEG_TUNE_V2_CLAM_PROBE_S))
+	else:
+		row("4 v2 probe", "-")
+
+	# 5. v5 ladder sizing.  num_circs is 2 for full_clam in BOTH
+	# modes (PAPER_DATA.py:1877), so this ALWAYS runs, and its one
+	# LOG1 line lands only at the very end.
+	v5 = ph.get("v5")
+	if v5 is not None:
+		row("5 v5 ladder sizing", secs(v5), "done")
+	elif pr is not None:
+		n = run.v5_walk()
+		tot_u = qm[2] if qm else None
+		if tot_u:
+			row("5 v5 ladder sizing", "IN FLIGHT",
+				"qm walk %s of %s units (%.1f%%)"
+				% (com(n), com(tot_u), 100.0 * n / tot_u))
+		else:
+			row("5 v5 ladder sizing", "IN FLIGHT",
+				"qm walk %s units done" % com(n))
+		# rate needs TWO scans: the log carries no clock, so the walk
+		# has no discoverable start.  The bank supplies the first
+		# (time, count) pair and every later scan sharpens the rate.
+		r = walk_rate(bank, n)
+		if r:
+			cont("%.1f units/min" % (r * 60.0))
+			if tot_u and n < tot_u:
+				cont("ETA %s for the remaining %s"
+					% (secs((tot_u - n) / r), com(tot_u - n)))
+		else:
+			cont("rate needs a 2nd scan (no clock in the log)")
+		cont("SERIAL loop, UNCAPPED: b_walk_all=true bypasses")
+		cont("QM_WALK_ALL_MAX=256 (:1697).  T9903's cap is")
+		cont("aggressive-only, so clam walks every unit.")
+	else:
+		row("5 v5 ladder sizing", "-")
+
+	tot = sum(v for v in ph.values())
+	if ph:
+		# run order, not sorted: the phases are a sequence, and
+		# alphabetical puts probe before the seed that precedes it.
+		names = [k for k in ("seed", "probe", "v5") if k in ph]
+		names += [k for k in sorted(ph) if k not in names]
+		rows.append("  %-22s %-10s %s" % ("TUNE TOTAL", secs(tot),
+			"%s, MEASURED" % " + ".join(names)))
+	return L + rows
+
+
 def show_tuner(run):
 	"""Tune rounds and tune time.  The tuner runs FIRST, before Phase
 	1 step 1, and its cost lands in NO stage column -- so without this
@@ -1061,10 +1304,18 @@ def show_tuner(run):
 		L.append("  seed   subsigs %d  igc %d  cp %d  dfa %d  "
 			"perc_comp %d" % tuple(seed))
 	if not rounds:
-		L.append("  no round yet.  The tuner is the FIRST thing that "
-			"runs, so a run that")
-		L.append("  has printed nothing else is most likely HERE "
-			"(v1 reference: %s)." % secs(LEG_TUNE_V1_S))
+		# Converging at iter 0 is the BEST outcome and prints no
+		# `v2 iter` line at all, so an empty table must never read as
+		# "not started".  PRELUDE carries the true stage either way.
+		pr = run.prelude()[3].get("probe")
+		if pr is not None:
+			L.append("  ZERO bump rounds -- the seed was good enough "
+				"that the FIRST probe")
+			L.append("  round converged.  Its %s is the `v2 probe` "
+				"row in PRELUDE." % secs(pr))
+		else:
+			L.append("  no bump round yet -- see PRELUDE for the "
+				"stage actually running.")
 		return L
 	L.append("  %5s %10s   %s" % ("iter", "wall", "bumped"))
 	if len(rounds) <= TUNE_ROWS:
@@ -1266,6 +1517,7 @@ def run(topo, argv):
 	out = []
 	out += show_header(r, bank, new, time.time() - t0)
 	out += show_ram(r, bank)
+	out += show_prelude(r, bank)
 	out += show_tuner(r)
 	out += show_position(r)
 	out += show_size(r)
