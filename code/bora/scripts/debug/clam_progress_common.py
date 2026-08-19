@@ -151,6 +151,22 @@ LEG_TUNE_V2_CLAM_S = 5841.0
 # build_or_load(read=false, write=true), so this is paid EVERY run;
 # there is no cache-hit fast path, and `loadClamDB from:` never fires.
 LEG_DB_BUILD_S = 592.0
+# THE v5 WALK IS V1-ONLY AS OF T9905 (commit 0f511adb).
+# tune_neo_non_aggr_v2 no longer calls size_levels_v5_non_aggr: the v2
+# ladder is now the LEGACY RATIO DESCENT that build_circs_adv applies
+# via decreased_copy (zkp_driver.rs:407-415), driven by
+# spec.vec_decrease_level, which for CLAM is &[2]
+# (bora_data_driver.rs:696).  Consequences for this meter, all
+# load-bearing:
+#   - `V2 PHASE v5 ms=` is NEVER emitted again, so PRELUDE must not
+#     read its absence as a stall;
+#   - `v5[...]: N levels` is never emitted either, so GATE must not
+#     wait for it and MARKERS must not list it;
+#   - the descent is applied at CIRCUIT-BUILD time and logs NOTHING,
+#     so ladder.json is the only 'tuning is over' proof left.
+# v1 still walks (bora_data_driver.rs:1913), so everything below is
+# kept and gated on the arm.
+#
 # Per-unit cost of the v5 qm walk, quoted by the source itself:
 # "~8.7 s/unit x ~33k units on full DLP" (bora_data_driver.rs:1568,
 # the comment justifying QM_WALK_ALL_MAX).  CROSS-DATASET -- clam's
@@ -253,7 +269,8 @@ RE_DBDONE = re.compile(r"==== Summary of ClamavSig Database ====")
 # zero-round convergence: converging at iter 0 prints no `v2 iter`
 # line at all, so the round table stays empty on the BEST outcome.
 RE_V2PHASE = re.compile(r"V2 PHASE (\w+) ms=(\d+)")
-# The v5 ladder walk's per-unit completion.  size_levels_v5_non_aggr
+# The v5 ladder walk's per-unit completion.  V1 ARM ONLY since T9905
+# -- v2 does not walk at all.  size_levels_v5_non_aggr
 # calls harvest_units with b_walk_all=TRUE, which BYPASSES the
 # QM_WALK_ALL_MAX=256 cap (bora_data_driver.rs:1697 gates it on
 # `!b_walk_all`), so qm_walk_units serial-loops over EVERY unit at
@@ -1357,9 +1374,10 @@ def walk_rate(bank, n):
 
 def show_v5_row(run, row, cont, qm, pr, bank=None, v5s=None,
 		num=5, el=None, ph=None):
-	"""PRELUDE stage 5, shared by both arms.  num_circs is 2 for
-	full_clam in BOTH modes (PAPER_DATA.py:1877), so this ALWAYS runs,
-	and its one LOG1 line lands only at the very end."""
+	"""PRELUDE stage 5, V1 ARM ONLY since T9905 -- v2 has no walk
+	and uses show_descent_row instead.  num_circs is 2 for full_clam in
+	BOTH modes (PAPER_DATA.py:1877), so on v1 this ALWAYS runs, and its
+	one LOG1 line lands only at the very end."""
 	if v5s is not None:
 		row("%d v5 ladder sizing" % num, secs(v5s), "done")
 		return
@@ -1430,7 +1448,31 @@ def show_v5_row(run, row, cont, qm, pr, bank=None, v5s=None,
 	cont("it can, because it never attributes a gauge to one word.")
 	cont("UNCAPPED too: b_walk_all=true bypasses")
 	cont("QM_WALK_ALL_MAX=256 (:1697).  T9903's cap is")
-	cont("aggressive-only, so both clam arms walk every unit.")
+	cont("aggressive-only.  Since T9905 the V1 ARM is the only")
+	cont("one that walks at all; v2 does not reach this code.")
+
+
+def show_descent_row(row, cont, pr, num=5):
+	"""PRELUDE stage 5 on the v2 arm: the T9905 ratio descent.  It is
+	STRUCTURAL -- no walk, no measurement, no log line -- so the row
+	exists to say the stage is gone, not to time it."""
+	if pr is None:
+		row("%d ladder descent" % num, "-",
+			"waits on the probe; costs nothing when it comes")
+		return
+	row("%d ladder descent" % num, "structural",
+		"T9905: no walk on the v2 arm")
+	cont("the ladder is the LEGACY RATIO DESCENT, applied by")
+	cont("build_circs_adv via decreased_copy at circuit-build")
+	cont("time (zkp_driver.rs:407-415), not measured here.")
+	cont("clam: vec_decrease_level=[2] (:696), so rung 0 is")
+	cont("P_max exactly as tuned and rung 1 is decreased_copy(2).")
+	cont("It emits NOTHING -- there is no `V2 PHASE v5 ms=` and no")
+	cont("`v5[...]: N levels` to wait for.  ladder.json (see GATE)")
+	cont("is the only proof tuning is over.")
+	cont("Before T9905 this stage was the run's single biggest")
+	cont("cost: a SERIAL, UNCAPPED walk of every unit, >= 3.2 hr")
+	cont("on full_clam to size ONE rung.  That is now zero.")
 
 
 def show_prelude(run, bank):
@@ -1539,23 +1581,27 @@ def show_prelude(run, bank):
 	else:
 		row("4 v2 probe", "-")
 
-	show_v5_row(run, row, cont, qm, pr, bank, ph.get("v5"),
-		5, el, ph)
+	# v2 ONLY here: the v1 arm returned above.  T9905 removed the
+	# walk from this arm, so stage 5 is structural.
+	show_descent_row(row, cont, pr)
 
 	tot = sum(v for v in ph.values())
 	if ph:
 		# run order, not sorted: the phases are a sequence, and
 		# alphabetical puts probe before the seed that precedes it.
-		names = [k for k in ("seed", "probe", "v5") if k in ph]
+		names = [k for k in ("seed", "probe") if k in ph]
 		names += [k for k in sorted(ph) if k not in names]
-		if "v5" in ph or run.v5() is not None:
+		# seed + probe is now the WHOLE tune: with the v5 walk gone
+		# there is no third phase left to add, so a measured probe
+		# closes the total instead of merely flooring it.
+		if "probe" in ph:
 			rows.append("  %-22s %-10s %s" % ("TUNE TOTAL", secs(tot),
-				"%s, MEASURED" % " + ".join(names)))
+				"%s, MEASURED and COMPLETE" % " + ".join(names)))
 		else:
-			# the walk is still running, so the measured phases are
-			# a FLOOR on what tuning will have cost.
+			# the probe is still running, so what is measured so far
+			# is a FLOOR on what tuning will have cost.
 			rows.append("  %-22s %-10s %s" % ("TUNE SO FAR",
-				secs(tot), "%s measured; the v5 walk is still adding"
+				secs(tot), "%s measured; the probe is still running"
 				% " + ".join(names)))
 			if el is not None and el > tot:
 				rows.append("  %-22s %-10s %s" % ("", secs(el),
@@ -1566,8 +1612,9 @@ def show_prelude(run, bank):
 
 def show_gate(run):
 	"""The tuner's VERDICT: the ladder it produced, the qm ratchet,
-	and the on-disk proof that tuning is over.  PRELUDE stage 5 shows
-	the walk's PROGRESS; this shows its RESULT."""
+	and the on-disk proof that tuning is over.  On v1 PRELUDE stage 5
+	shows the walk's PROGRESS and this shows its RESULT; on v2 there
+	is no walk and no result line, so ladder.json carries the gate."""
 	L = sec("GATE       : tuner verdict and the ladder it produced")
 	if any(a.short for a in run.accs):
 		L.append("  ratchet    DEAD -- still short after 3 re-walks; "
@@ -1591,9 +1638,21 @@ def show_gate(run):
 					for c in h) if n else "-"))
 			L.append("             occupancy counts UNITS, not "
 				"chunks -- one long word is one entry")
-	else:
+	elif run.arm() == "v1":
 		L.append("  v5 ladder  not emitted yet -- the walk is still "
 			"running (see PRELUDE 5)")
+	else:
+		# T9905: v2 has no measured ladder to print.  Saying "not
+		# emitted yet" here would be a PERMANENT false alarm -- the
+		# line is never coming.
+		L.append("  ladder     RATIO DESCENT -- v2 emits no ladder "
+			"line at all (T9905)")
+		L.append("             rung 0 = P_max as tuned;  rung 1 = "
+			"decreased_copy(2)")
+		L.append("             build_circs_adv applies it at "
+			"circuit-build time, so the only")
+		L.append("             proof it happened is the CIRCUIT "
+			"section below (PERF 1002 x2)")
 	p, ok, stale = run.ladder_json()
 	if p is None:
 		L.append("  ladder.json path unknown (no argv line parsed "
@@ -1792,7 +1851,6 @@ def show_markers(run):
 		("DB built", pre[1] or pre[2] is not None or bool(pre[3])),
 		("qm seed done", pre[2] is not None),
 		("tuner converged", total is not None),
-		("v5 ladder emitted", run.v5() is not None),
 		("ladder.json on disk", lj),
 		("fold started", run.accs and any(
 			a.n_jobs_log for a in run.accs)),
@@ -1800,6 +1858,10 @@ def show_markers(run):
 		("decider started", run.snark_job() is not None),
 		("ALL JOBS terminal", any(a.all_jobs_s for a in run.accs)),
 	]
+	# v1 only: T9905 removed the walk from v2, so on v2 this row
+	# would read "-" forever and imply a stage that never runs.
+	if run.arm() == "v1":
+		rows.insert(3, ("v5 ladder emitted", run.v5() is not None))
 	for name, ok in rows:
 		L.append("  %-24s %s" % (name, "yes" if ok else "-"))
 	return L
@@ -1823,13 +1885,24 @@ def show_next(run):
 	elif lj or run.v5():
 		L.append("  tuning is OVER and the fold is starting.  Watch "
 			"for `fold_pot starts with N jobs`.")
-	elif run.tune()[2] is not None:
+	elif run.tune()[2] is not None and run.arm() == "v1":
 		L.append("  still TUNING: the v5 walk owns the run (PRELUDE "
 			"5).  It ends with a")
 		L.append("  `v5[...]: N levels` line, then ladder.json, then "
 			"the fold begins.")
 		L.append("  Nothing else prints in between -- silence here "
 			"is expected, not a hang.")
+	elif run.tune()[2] is not None:
+		# v2 + T9905: nothing measurable stands between CONVERGED
+		# and ladder.json, so a long silence here is NOT the old
+		# multi-hour walk and must not be excused as one.
+		L.append("  the tuner has CONVERGED and v2 has NO v5 walk "
+			"(T9905), so ladder.json")
+		L.append("  should land almost at once and the fold follow. "
+			" A long silence here is")
+		L.append("  NOT the old walk -- it is build_and_tune's tail "
+			"or key setup, so check")
+		L.append("  the log mtime rather than waiting it out.")
 	else:
 		L.append("  in the PRELUDE (see above).  The tuner has not "
 			"converged yet.")
