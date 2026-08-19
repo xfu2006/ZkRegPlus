@@ -31259,7 +31259,12 @@ Goal 1. redesign tune algorithm
 	[b] add probes to optimize decrease_cp(2) 
 Goal 2. writing section 6
 	[a] 6.0 and 6.1
-	[b] 6.2
+	[b] 6.2	
+	[c] ethics stmt
+	[d] open science stmt
+	[e] ai stmt
+	[f] bigfiles.tgz (T902)
+	[g]
 
 --- DATA ----
 #####################################

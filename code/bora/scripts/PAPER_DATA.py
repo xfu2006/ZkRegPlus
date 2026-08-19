@@ -424,14 +424,20 @@ PART_TOKEN = "{part_id}"   # substituted by run_example_two_half
 KILL_GRACE_S = 60          # SIGTERM -> SIGKILL, and the pump-join bound
 
 
+# Operator knobs that belong to the NEO arm itself, not legacy leakage:
+# they gate neo-side code and must survive the ZKR_* scrub below.
+NEO_ENV_PASS = ("ZKR_NEO_LOAD_LADDER", "ZKR_PROBE_DECLINE")
+
+
 def neo_env(b_show_dropped=False):
     """The one env builder for bora_cli and small's cargo-test spawns:
     os.environ minus every ZKR_* (neo is argv-only; ~90 legacy env
-    knobs must not leak in), RUSTFLAGS forced for deterministic
-    builds."""
-    dropped = sorted(k for k in os.environ if k.startswith("ZKR_"))
+    knobs must not leak in) except NEO_ENV_PASS, RUSTFLAGS forced for
+    deterministic builds."""
+    dropped = sorted(k for k in os.environ
+                     if k.startswith("ZKR_") and k not in NEO_ENV_PASS)
     e = {k: v for k, v in os.environ.items()
-         if not k.startswith("ZKR_")}
+         if not k.startswith("ZKR_") or k in NEO_ENV_PASS}
     e["RUSTFLAGS"] = RUSTFLAGS_NEO
     if b_show_dropped and dropped:
         log("neo_env: dropped %s" % " ".join(dropped))
@@ -5321,6 +5327,17 @@ class NeoEnvTest(unittest.TestCase):
             neo_env(b_show_dropped=True)
         self.assertTrue(any("ZKR_FOO" in str(c)
                             for c in lg.call_args_list))
+
+    def test_neo_env_pass_survives_the_scrub(self):
+        """NEO_ENV_PASS knobs reach bora_cli; other ZKR_* still don't."""
+        with mock.patch.dict(os.environ,
+                              {"ZKR_NEO_LOAD_LADDER": "/tmp/l.json",
+                               "ZKR_PROBE_DECLINE": "1",
+                               "ZKR_FOO": "1"}):
+            e = neo_env()
+        self.assertEqual(e.get("ZKR_NEO_LOAD_LADDER"), "/tmp/l.json")
+        self.assertEqual(e.get("ZKR_PROBE_DECLINE"), "1")
+        self.assertNotIn("ZKR_FOO", e)
 
 
 class RunExampleTwoHalfTest(unittest.TestCase):
