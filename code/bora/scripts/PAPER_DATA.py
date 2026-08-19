@@ -1882,12 +1882,21 @@ CLAM_LEAF_ARGS = {
 }
 
 
+def clam_jobs(mode):
+    """Job count for the clam leaf.  ZKR_4JOB halves the full shape:
+    8 jobs peak ~479 GB and OOM a 512 GB box, 4 fit.  The ladder is
+    job-count independent, so a reused ladder stays valid."""
+    if mode == "full" and os.environ.get("ZKR_4JOB"):
+        return "4"
+    return CLAM_LEAF_ARGS[mode][3]
+
+
 def clam_argv(mode, numa_num, part):
     """The 9-token bora_cli argv for one full_clam part; part is "0"
     (single process) or PART_TOKEN (two-half). ladder_only always 0."""
-    pdb, ps, nc, nj, light = CLAM_LEAF_ARGS[mode]
-    return ["full_clam", pdb, ps, nc, nj, str(numa_num), part,
-            light, "0"]
+    pdb, ps, nc, _nj, light = CLAM_LEAF_ARGS[mode]
+    return ["full_clam", pdb, ps, nc, clam_jobs(mode), str(numa_num),
+            part, light, "0"]
 
 
 def run_leaf_clamav(mode, ctx):
@@ -1895,7 +1904,7 @@ def run_leaf_clamav(mode, ctx):
     verdicts scan-free (the non-aggr tuner prints caught CapErr
     probe panics into every successful log, M103 11.4)."""
     return run_leaf_full_neo(mode, ctx, clam_argv, "full_clam",
-                              int(CLAM_LEAF_ARGS[mode][3]), "clam",
+                              int(clam_jobs(mode)), "clam",
                               False)
 
 
