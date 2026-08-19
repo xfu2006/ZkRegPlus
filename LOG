@@ -31246,10 +31246,10 @@ Goal 2. monitor clamav tuning test
 		-> fix? -> deployed 12:00pm -> watch progress
 			=? skip 2:56pm (3 hrs)
 	[d] test run on 512gb for clamav
-		[a] started 4:15pm 08/18/2026 ==> 
+		[a] started 4:15pm 08/18/2026 ==>  still too slow
+		[b] need to make the poll parallel
 Goal 3. Writing section 5
 	[a] 5.1 and 5.2
-	-- TODO --
 	[b] 5.3
 
 --- DATA ----

@@ -2387,16 +2387,64 @@ fn tune_neo_non_aggr_v2(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 		g.min_subsigs_igc = new.subsigs_igc;
 		g.min_cp_subsigs = new.cp_subsigs;
 	}
-	let mut new = new;
+	let new = new;
+	// T9905: the v2 non-aggressive ladder comes from the LEGACY ratio
+	// descent -- build_circs_adv's decreased_copy arm
+	// (zkp_driver.rs:407-415), driven by spec.vec_decrease_level --
+	// not from a measured v5 walk. An EMPTY levels vec is what selects
+	// that arm (next_level() -> None, sed_mapper.rs:385), so the work
+	// here is to assert the preconditions, not to compute levels.
+	//
+	// Why: the walk cost >= 3.2 hr on full_clam to size ONE rung.
+	// Clam's ladder is floor-dominated -- v5's own measured level 0
+	// returned basis_unique_states 1054, which IS
+	// min_basis_unique_states -- the subsig axis is deliberately flat
+	// with decreased_copy as its named consumer (:2385-2390), and the
+	// legacy scalability data shows rung0/rung1 differ little. Capping
+	// the walk instead was refuted: its cost scales with num_segs and
+	// clam's corpus spans ~8,000x in file size.
 	if num_circs > 1 {
-		let mut t_v5 = utils::timer::Timer::new();
-		new.levels = size_levels_v5_non_aggr(spec, db, ts, &new,
-			num_circs);
-		t_v5.stop();
-		utils::logger::log(0, utils::logger::LOG1, &format!(
-			"V2 PHASE v5 ms={}", t_v5.ms()));
+		ladder_descent_preconditions(spec, &new, num_circs);
 	}
 	vec![new]
+}
+
+/// T9905 preconditions for the v2 non-aggressive ladder, which
+/// build_circs_adv descends via decreased_copy instead of consuming
+/// measured v5 levels. Each assert blocks an otherwise SILENT failure.
+fn ladder_descent_preconditions(spec: &DatasetSpec, p: &CapParams,
+	num_circs: usize) {
+	// A1. build_circs_adv decreases only while
+	// `i < vec_decrease_level.len()`. A short vec leaves the remaining
+	// rungs at P_max: identical circuits, double key setup, zero
+	// routing benefit, no error.
+	assert_eq!(spec.vec_decrease_level.len(), num_circs - 1,
+		"bora_data_driver: {} v2 ladder needs vec_decrease_level len \
+		 {} for {} circs, got {}; a short vec silently ships \
+		 IDENTICAL P_max rungs", spec.name, num_circs - 1, num_circs,
+		spec.vec_decrease_level.len());
+	// A2. An EMPTY levels vec is what selects the descent. If a future
+	// edit installs levels upstream, the descent silently stops being
+	// used and this design is off without anyone noticing.
+	assert!(p.levels.is_empty(),
+		"bora_data_driver: {} v2 ships {} measured level(s); the \
+		 descent needs levels EMPTY", spec.name, p.levels.len());
+	// A3. A descended rung can lose the DFA gadget outright --
+	// build_circs_adv drops it when dfa.subsigs == 0 -- so a rung may
+	// differ in COMPOSITION, not just size. Clam survives on
+	// arithmetic (seed ~8, /4 = 2), which is an accident and not a
+	// guarantee, so walk the descent and check every rung.
+	let (_, _, dfa, _, _) = caps_from_params_general(p);
+	if dfa.subsigs > 0 {
+		let mut d = dfa;
+		for (i, &lv) in spec.vec_decrease_level.iter().enumerate() {
+			d = d.decreased_copy(lv);
+			assert!(d.subsigs > 0,
+				"bora_data_driver: {} rung {} descends to 0 dfa \
+				 subsigs; it would drop the DFA gadget while the top \
+				 rung keeps it", spec.name, i + 1);
+		}
+	}
 }
 
 /// The shared tuning kernel (full x3, scale x2): thin config if asked,
