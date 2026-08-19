@@ -531,9 +531,15 @@ def parse_dataset_specs(rust_path):
             raise RuntimeError("unbalanced braces in const %s" % name)
         body = clean[start:i - 1]
 
-        def scalar(field):
+        def scalar(field, specs=specs):
             mm = re.search(field + r'\s*:\s*"([^"]*)"', body)
-            return mm.group(1) if mm else None
+            if mm:
+                return mm.group(1)
+            mm = re.search(field + r'\s*:\s*(\w+)\.(\w+)\s*,', body)
+            if mm:
+                ref = specs.get(mm.group(1))
+                return ref.get(mm.group(2)) if ref else None
+            return None
 
         def array(field):
             mm = re.search(field + r'\s*:\s*&\s*\[(.*?)\]', body, re.S)

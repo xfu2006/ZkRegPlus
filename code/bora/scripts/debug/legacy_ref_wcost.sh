@@ -21,7 +21,7 @@ if [ $# -eq 0 ]; then
   exit 1
 fi
 
-PAPER=/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlusPaper
+PAPER=${PAPER:-"$HOME/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlusPaper"}
 LEG_LOG=${LEG_LOG:-"$PAPER/usenix27/data/raw_data/jet1tb/extracted/full_dlp.combined.log"}
 LEG_COSTS=${LEG_COSTS:-"1985 2522 8059 42156"}
 
