@@ -31266,7 +31266,16 @@ Goal 2. writing section 6
 	[d] open science stmt
 	[e] ai stmt
 	[f] bigfiles.tgz (T902)
-	[g] check references
+	[g] check references -> delay to tomorrow
+Goal 3. continue to invesgitate the DB Pproblem
+	[a] study collected data and decide how to cut to ring 0 from
+		ring 1
+	[b] 
+Goal 4. fix the refs one by one
+	[a] use command: hallucinator-cli check --searxng  --url-match ./bora.pdf
+
+	the searxng is a hybird engine that used multiple sources.
+	--url-match means don't skip url check.
 
 --- DATA ----
 #####################################
