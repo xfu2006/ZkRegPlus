@@ -151,6 +151,12 @@ LEG_TUNE_V2_CLAM_S = 5841.0
 # build_or_load(read=false, write=true), so this is paid EVERY run;
 # there is no cache-hit fast path, and `loadClamDB from:` never fires.
 LEG_DB_BUILD_S = 592.0
+# Per-unit cost of the v5 qm walk, quoted by the source itself:
+# "~8.7 s/unit x ~33k units on full DLP" (bora_data_driver.rs:1568,
+# the comment justifying QM_WALK_ALL_MAX).  CROSS-DATASET -- clam's
+# units and circuit differ from DLP's -- so it is a sanity reference,
+# not a prediction.  At 1,210 clam units it implies ~2.9 hr.
+V5_REF_S_PER_UNIT = 8.7
 
 TUNE_ROWS = 14
 # RAM, GiB.  The log's `MEM:`/`Total RAM:` UNDERSTATE true peak RSS by
@@ -247,14 +253,19 @@ RE_DBDONE = re.compile(r"==== Summary of ClamavSig Database ====")
 # zero-round convergence: converging at iter 0 prints no `v2 iter`
 # line at all, so the round table stays empty on the BEST outcome.
 RE_V2PHASE = re.compile(r"V2 PHASE (\w+) ms=(\d+)")
-# The v5 ladder walk's ONLY live signal.  size_levels_v5_non_aggr calls
-# harvest_units with b_walk_all=TRUE, which BYPASSES the
+# The v5 ladder walk's per-unit completion.  size_levels_v5_non_aggr
+# calls harvest_units with b_walk_all=TRUE, which BYPASSES the
 # QM_WALK_ALL_MAX=256 cap (bora_data_driver.rs:1697 gates it on
 # `!b_walk_all`), so qm_walk_units serial-loops over EVERY unit at
-# :1529.  Each unit's plan_nd_advice logs this at LOG2, which survives
-# CLAM's LOG3 -- so counting these lines counts units walked.  T9903's
-# cap protects the AGGRESSIVE path only; clam gets the full walk.
-RE_BINSRCH = re.compile(r"bin_search: min_id:")
+# :1529, passing the literal word_fname "v5".  plan_nd_advice logs
+# this at LOG2, which survives CLAM's LOG3, and the "for v5" tail
+# makes it unique to the walk -- the fold's own calls carry a real
+# filename.  So counting these counts units FINISHED.
+#
+# NOT bin_search: plan_nd_advice_new pins `b_fast = true`
+# (driver.rs:821), so the bin_search branch is dead code and its
+# marker never appears.  Counting it reported a permanent 0.
+RE_V5UNIT = re.compile(r"plan_nd_advice for v5")
 # The v5 ladder itself, emitted once the walk finishes.  The two arms
 # spell the count differently -- aggressive says `rungs`
 # (bora_data_driver.rs:1759), non-aggressive `levels` (:1790) -- and
@@ -692,17 +703,12 @@ class Acc(object):
 		if RE_SHORT.search(ln):
 			self.short = True
 			return
-		if RE_BINSRCH.search(ln):
-			# Arm-agnostic on purpose: size_levels_v5_non_aggr is
-			# called by BOTH tuners (:1913 v1, :2393 v2), so gating on
-			# a V2 marker would have left v1 with no walk progress at
-			# all.  Opens when either arm's CONVERGED line lands and
-			# closes on the ladder -- or on the fold, which is the
-			# backstop when num_circs==1 skips v5 and no ladder line
-			# is ever printed.
-			if (self.tune_total_s is not None and self.v5 is None
-					and self.n_jobs_log is None):
-				self.v5_walk += 1
+		if RE_V5UNIT.search(ln):
+			# No phase gate needed: the "v5" word_fname is the walk's
+			# own, so this cannot collide with the fold's calls.  Arm
+			# agnostic too -- size_levels_v5_non_aggr is reached by
+			# BOTH tuners (:1913 v1, :2393 v2).
+			self.v5_walk += 1
 			return
 		m = RE_V2PHASE.search(ln)
 		if m:
@@ -1350,7 +1356,7 @@ def walk_rate(bank, n):
 
 
 def show_v5_row(run, row, cont, qm, pr, bank=None, v5s=None,
-		num=5):
+		num=5, el=None, ph=None):
 	"""PRELUDE stage 5, shared by both arms.  num_circs is 2 for
 	full_clam in BOTH modes (PAPER_DATA.py:1877), so this ALWAYS runs,
 	and its one LOG1 line lands only at the very end."""
@@ -1376,15 +1382,53 @@ def show_v5_row(run, row, cont, qm, pr, bank=None, v5s=None,
 	# rate needs TWO scans: the log carries no clock, so the walk has
 	# no discoverable start.  The bank supplies the first (time,
 	# count) pair and every later scan sharpens the rate.
+	# How long the walk has been running.  The log carries no clock
+	# and stages 1+2 are dark, so wall minus the MEASURED tuner
+	# phases is an UPPER bound, not an equality -- it still contains
+	# the DB build and the discharge.
+	ub = None
+	if el is not None:
+		spent = sum(v for k, v in (ph or {}).items() if k != "v5")
+		ub = el - spent
+		if ub > 0:
+			cont("running <= %s   (wall %s minus the %s of measured"
+				% (secs(ub), secs(el), secs(spent)))
+			cont("tuner phases; the remainder still holds the dark")
+			cont("DB build + discharge, so this is an upper bound)")
 	r = walk_rate(bank, n) if bank is not None else None
 	if r:
-		cont("%.1f units/min" % (r * 60.0))
+		cont("%.1f units/min measured between the last two scans"
+			% (r * 60.0))
 		if tot_u and n < tot_u:
-			cont("ETA %s for the remaining %s"
+			cont("ETA %s for the remaining %s units"
 				% (secs((tot_u - n) / r), com(tot_u - n)))
 	elif bank is not None:
 		cont("rate needs a 2nd scan (no clock in the log)")
-	cont("SERIAL loop, UNCAPPED: b_walk_all=true bypasses")
+		if ub and n:
+			# A whole-walk average is available from the FIRST scan:
+			# units done over the longest the walk can have run.  ub
+			# over-states elapsed, so this UNDER-states the rate, and
+			# the remaining-time figure it feeds is correspondingly
+			# generous.  Per-unit cost varies with word length, so
+			# treat it as an estimate, not a bound.
+			avg = n / (ub / 60.0)
+			cont("so far that averages >= %.1f units/min" % avg)
+			if tot_u and n < tot_u and avg > 0:
+				cont("=> roughly %s more for the remaining %s units"
+					% (secs((tot_u - n) / (avg / 60.0)),
+						com(tot_u - n)))
+	if tot_u:
+		cont("source's own reference is %.1f s/unit (:1568, full "
+			"DLP)," % V5_REF_S_PER_UNIT)
+		cont("which at %s units would be %s for the whole walk"
+			% (com(tot_u), secs(tot_u * V5_REF_S_PER_UNIT)))
+	cont("SERIAL by NECESSITY: the Q_m gauges it reads are process")
+	cont("GLOBALS (consts.rs:207-215) and the loop is reset -> run")
+	cont("-> read, so two units at once would clobber each other.")
+	cont("This is NOT Phase 1 -- Phase 1 runs the same selection in")
+	cont("PARALLEL and logs `plan_nd_advice_pll for <file>` (:1143);")
+	cont("it can, because it never attributes a gauge to one word.")
+	cont("UNCAPPED too: b_walk_all=true bypasses")
 	cont("QM_WALK_ALL_MAX=256 (:1697).  T9903's cap is")
 	cont("aggressive-only, so both clam arms walk every unit.")
 
@@ -1413,15 +1457,30 @@ def show_prelude(run, bank):
 		asof = mt if (run.stalled() and mt) else time.time()
 		el = asof - t0
 
-	# 1. DB build.
+	# 1. DB build.  On a neo run it announces NOTHING: build_fresh_db
+	# calls build_or_load(read=false, write=true), and both candidate
+	# LOG1 lines sit behind b_read_cache -- `cache ... not found`
+	# fires only when a read was ASKED for (clam_db.rs:2601) and
+	# `loadClamDB from:` only on a hit (:2610).  print_summary is
+	# never called off this path either (only zkp_driver/stats).  So
+	# the state is INFERRED: anything downstream having run proves
+	# the DB was built.
+	later = db_done or (qm is not None) or bool(ph) or bool(
+		run.tune()[1]) or run.tune()[2] is not None
 	if db_done:
 		row("1 DB build", "done",
 			"rebuilt EVERY neo run; ref %s" % secs(LEG_DB_BUILD_S))
+	elif later:
+		row("1 DB build", "done*",
+			"INFERRED -- a neo DB build logs nothing")
+		cont("* both markers are gated on b_read_cache, "
+			"which is false here")
 	elif db_start:
 		row("1 DB build", "IN FLIGHT",
 			"ref %s; no step timing at LOG3" % secs(LEG_DB_BUILD_S))
 	else:
-		row("1 DB build", "-", "not announced yet")
+		row("1 DB build", "?",
+			"no marker exists; ref %s" % secs(LEG_DB_BUILD_S))
 
 	# v1 has no seed and no per-phase markers, so its middle rows
 	# collapse to a pointer at TUNER, which carries its round table.
@@ -1437,7 +1496,7 @@ def show_prelude(run, bank):
 			("IN FLIGHT" if rounds else "-"),
 			"%d round(s) so far -- see TUNER" % len(rounds))
 		show_v5_row(run, row, cont, True, (1 if done else None),
-			bank, None, 4)
+			bank, None, 4, el, None)
 		return L + rows
 
 	# 2+3. The DARK window.  `V2 QM SEED` is the only proof either
@@ -1480,7 +1539,8 @@ def show_prelude(run, bank):
 	else:
 		row("4 v2 probe", "-")
 
-	show_v5_row(run, row, cont, qm, pr, bank, ph.get("v5"))
+	show_v5_row(run, row, cont, qm, pr, bank, ph.get("v5"),
+		5, el, ph)
 
 	tot = sum(v for v in ph.values())
 	if ph:
@@ -1488,8 +1548,19 @@ def show_prelude(run, bank):
 		# alphabetical puts probe before the seed that precedes it.
 		names = [k for k in ("seed", "probe", "v5") if k in ph]
 		names += [k for k in sorted(ph) if k not in names]
-		rows.append("  %-22s %-10s %s" % ("TUNE TOTAL", secs(tot),
-			"%s, MEASURED" % " + ".join(names)))
+		if "v5" in ph or run.v5() is not None:
+			rows.append("  %-22s %-10s %s" % ("TUNE TOTAL", secs(tot),
+				"%s, MEASURED" % " + ".join(names)))
+		else:
+			# the walk is still running, so the measured phases are
+			# a FLOOR on what tuning will have cost.
+			rows.append("  %-22s %-10s %s" % ("TUNE SO FAR",
+				secs(tot), "%s measured; the v5 walk is still adding"
+				% " + ".join(names)))
+			if el is not None and el > tot:
+				rows.append("  %-22s %-10s %s" % ("", secs(el),
+					"of wall spent before Phase 1, all of it "
+					"uncharged"))
 	return L + rows
 
 
@@ -1718,7 +1789,7 @@ def show_markers(run):
 	_, lj, _st = run.ladder_json()
 	pre = run.prelude()
 	rows = [
-		("DB built", pre[1]),
+		("DB built", pre[1] or pre[2] is not None or bool(pre[3])),
 		("qm seed done", pre[2] is not None),
 		("tuner converged", total is not None),
 		("v5 ladder emitted", run.v5() is not None),
