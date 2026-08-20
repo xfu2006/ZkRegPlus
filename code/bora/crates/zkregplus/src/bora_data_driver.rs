@@ -389,21 +389,34 @@ pub(crate) struct Rung0Scale {
 	/// dfa_sigs AND dfa_subsigs together. They must move as a pair:
 	/// dfa_adv.rs:201 tests subsigs BEFORE :206 tests sigs, so a
 	/// subsigs-only rise relocates the decline instead of clearing it.
+	/// COSTLIEST axis: ~2.44M cs1e per unit -- dfa_adv.rs:286 sizes
+	/// the transition table subsigs x max_nibble_len, and its rows
+	/// carry 5.33 logup queries each vs 0.41 for Discharge.
 	pub(crate) dfa: usize,
+	/// perc_comp_subsigs (scc table), shared cs/igc. 1e6 keeps the
+	/// parent value: the whole 16..29 span is 2,334 R1CS, too little
+	/// to be worth a decline (att5 circ0 19,614 vs circ1 21,948).
+	pub(crate) pcomp: usize,
 }
 
 /// CLAM production, from the 1,212-word 69908 decline census, against
 /// the P_max of the 2026-08-20 FRESH tune (acc 750, pats 820,
-/// cp_uniq 1300, qm 36,400, dfa 8). Each ppm lands scale_ppm on:
-///   acc 504 | pats 573 | cp_uniq 1160 | qm 1800 | dfa 7
-/// qm 800 sat BELOW the whole demand distribution (min 1,115, mode
-/// 1,276 on 110 words = 22% of corpus work) and admitted nothing.
+/// cp_uniq 1300, qm 36,400, dfa 8, pcomp 29). Each ppm lands
+/// scale_ppm on:
+///   acc 504 | pats 573 | cp_uniq 1160 | qm 3250 | dfa 4 | pcomp 29
+/// DECIDER-BUDGETED. Attempt 5 shipped dfa 7 and measured cs1e
+/// 101,315,757 (4-job), i.e. 91.0% of the 2^28 decider domain. dfa
+/// is 82% of that: dfa 4 clears every dfa_adv::subsigs decline (the
+/// demand is exactly 4 on all 60 words) and lands 85.6%. qm is
+/// nearly free at 286 cs1e/unit, so it carries the fit instead --
+/// 3250 covers the qm demand distribution to p95 (max 9,439).
 /// pats 573 is not demand (max 401) but the acc coupling. Only
 /// P_max.qm_real_rows drifts run to run (36,860 on 08-19, 36,400 on
-/// 08-20); rung 0 clears the 1,115 floor while it stays >= 22,548.
+/// 08-20); rung 0 clears the 1,115 demand floor while it stays
+/// >= 12,489.
 pub(crate) const CLAM_RUNG0_SCALE: Rung0Scale = Rung0Scale {
-	acc: 672_000, pats: 698_780, cp_uniq: 892_308, qm: 49_451,
-	dfa: 875_000,
+	acc: 672_000, pats: 698_780, cp_uniq: 892_308, qm: 89_285,
+	dfa: 500_000, pcomp: 1_000_000,
 };
 
 /// One dataset's complete, immutable run configuration. Only the
@@ -2541,6 +2554,10 @@ fn decreased_copy_v2(p_max: &CapParams, m: &Rung0Scale, level: usize)
 	r.qm_real_rows = s(p_max.qm_real_rows, m.qm);
 	r.dfa_sigs = s(p_max.dfa_sigs, m.dfa);
 	r.dfa_subsigs = s(p_max.dfa_subsigs, m.dfa);
+	// Pinned to the parent by default. decreased_copy's 9/16 put this
+	// at 16 against demands of 17 and 23, so it became the NEXT
+	// blocker the moment qm and dfa cleared -- for 2,334 R1CS.
+	r.perc_comp_subsigs = s(p_max.perc_comp_subsigs, m.pcomp);
 	r.cp_subsigs = r.cp_subsigs.min(p_max.cp_subsigs);
 	r.subsigs = r.subsigs.min(p_max.subsigs);
 	r.levels = vec![];   // a descended rung descends no further
@@ -3940,16 +3957,17 @@ pub mod tests_bora_data_driver {
 
 	#[test]
 	fn test_scale_ppm_rounds_half_up_not_down() {
-		/// Truncation misses 3 of CLAM's 5 targets by one; the
+		/// Truncation misses 4 of CLAM's 6 targets by one; the
 		/// half-up term is what makes every ppm land exactly.
-		assert_eq!(scale_ppm(750, 672_000), 504);   // trunc 503
-		assert_eq!(scale_ppm(1300, 892_308), 1160); // trunc 1159
-		assert_eq!(scale_ppm(8, 875_000), 7);       // trunc 6
-		assert_eq!(scale_ppm(820, 698_780), 573);
-		assert_eq!(scale_ppm(36400, 49_451), 1800);
+		assert_eq!(scale_ppm(750, 672_000), 504);    // trunc 503
+		assert_eq!(scale_ppm(1300, 892_308), 1160);  // trunc 1159
+		assert_eq!(scale_ppm(820, 698_780), 573);    // trunc 572
+		assert_eq!(scale_ppm(36400, 89_285), 3250);  // trunc 3249
+		assert_eq!(scale_ppm(8, 500_000), 4);
+		assert_eq!(scale_ppm(29, 1_000_000), 29);
 		// P_max.qm_real_rows drifts; the 08-19 value must still clear
 		// the 1,115 demand floor by a wide margin.
-		assert_eq!(scale_ppm(36860, 49_451), 1823);
+		assert_eq!(scale_ppm(36860, 89_285), 3291);
 	}
 
 	#[test]
@@ -3963,17 +3981,18 @@ pub mod tests_bora_data_driver {
 		assert_eq!(r.basis_acc_states, 504, "acc");
 		assert_eq!(r.basis_pats_in_trace, 573, "pats");
 		assert_eq!(r.cp_basis_unique_states, 1160, "cp_uniq");
-		assert_eq!(r.qm_real_rows, 1800, "qm");
+		assert_eq!(r.qm_real_rows, 3250, "qm");
 		// dfa moves as a PAIR; sigs alone would relocate the decline
-		assert_eq!(r.dfa_sigs, 7, "dfa_sigs");
-		assert_eq!(r.dfa_subsigs, 7, "dfa_subsigs");
+		assert_eq!(r.dfa_sigs, 4, "dfa_sigs");
+		assert_eq!(r.dfa_subsigs, 4, "dfa_subsigs");
+		// pinned to the parent, NOT the legacy 29*9/16 = 16
+		assert_eq!(r.perc_comp_subsigs, 29, "pcomp = parent");
 		// axes v2 does NOT touch: the legacy descent, unchanged
 		assert_eq!(r.basis_unique_states, 1054, "uniq floor");
 		assert_eq!(r.subsigs, 330, "subsigs = parent");
 		assert_eq!(r.cp_subsigs, 208, "cp_subsigs = parent");
 		assert_eq!(r.perc_pats_expansion_rate, 9, "16*9/16");
 		assert_eq!(r.sigs_sed, 256, "400*16/25");
-		assert_eq!(r.perc_comp_subsigs, 16, "29*9/16");
 		assert_eq!(r.basis_acc_states_igc, 268, "acc igc floor");
 		assert_eq!(r.basis_pats_in_trace_igc, 295, "pats igc floor");
 		// F2' wrap budgets are carried, not descended
@@ -3986,6 +4005,7 @@ pub mod tests_bora_data_driver {
 		assert!(r.qm_real_rows <= p.qm_real_rows);
 		assert!(r.dfa_sigs <= p.dfa_sigs);
 		assert!(r.dfa_subsigs <= p.dfa_subsigs);
+		assert!(r.perc_comp_subsigs <= p.perc_comp_subsigs);
 		assert!(r.cp_subsigs <= p.cp_subsigs);
 		// a descended rung descends no further
 		assert!(r.levels.is_empty());
@@ -3998,7 +4018,8 @@ pub mod tests_bora_data_driver {
 		/// 2026-08-19 run at circuit build; v2 must refuse it.
 		let _g = FloorGuard::clam_fresh_tune();
 		let bad = Rung0Scale { acc: 653_333, pats: 391_463,
-			cp_uniq: 892_308, qm: 49_451, dfa: 875_000 };
+			cp_uniq: 892_308, qm: 89_285, dfa: 500_000,
+			pcomp: 1_000_000 };
 			// 750->490, 820->321: the pair that killed the run
 		decreased_copy_v2(&clam_pmax_2026_08_20(), &bad, 2);
 	}
