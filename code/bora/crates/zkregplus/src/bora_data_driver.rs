@@ -30,7 +30,8 @@ use utils::consts::{get_global_config, read_global_config,
 use crate::circs::composable_gadget_mapper::CompositeGadgetMapper;
 use crate::determine_config::{apply_caperr_bumps,
 	caps_from_params_aggr, caps_from_params_general, load_ladder,
-	parse_caperr_from_panic, probe_catching, save_ladder, CapParams};
+	capparams_from_caps_general, parse_caperr_from_panic,
+	probe_catching, save_ladder, CapParams};
 use crate::gadgets::word_extract::LEGS;
 use crate::stats_helper::{estimate_config_aggr,
 	estimated_to_capparams_aggr};
@@ -360,10 +361,48 @@ pub(crate) struct ScaleTune {
 	pub(crate) hand_seed: CapParams,
 }
 
+/// Fixed-point scale for Rung0Scale. ppm, not basis points: at
+/// 10,000ths CLAM's qm_real_rows 36,860 -> 800 rounds to 801 and NO bp
+/// value lands on 800.
+const RUNG0_PPM: usize = 1_000_000;
+
+/// `v` scaled by `ppm`, ROUND-HALF-UP. Truncation misses 3 of CLAM's 4
+/// targets by one (351 / 1126 / 799); half-up hits all four exactly.
+/// Largest operand here is 36,860 * 1e6, far inside usize.
+fn scale_ppm(v: usize, ppm: usize) -> usize {
+	(v * ppm + RUNG0_PPM / 2) / RUNG0_PPM
+}
+
+/// Rung-0 multipliers for the neo non-aggressive ladder, in PARTS PER
+/// MILLION of the rung-1 (P_max) value of the same field.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Rung0Scale {
+	/// basis_acc_states. p90 of measured demand.
+	pub(crate) acc: usize,
+	/// basis_pats_in_trace. NOT freely choosable -- it is coupled to
+	/// acc; see the assert in decreased_copy_v2.
+	pub(crate) pats: usize,
+	/// cp_basis_unique_states.
+	pub(crate) cp_uniq: usize,
+	/// qm_real_rows. Funds the other three.
+	pub(crate) qm: usize,
+}
+
+/// CLAM production, from the complete 1,212-word 69908 decline census,
+/// against the SHIPPED P_max (acc 750, pats 820, cp_uniq 1300,
+/// qm 36,860). Each ppm is chosen so scale_ppm lands EXACTLY on the
+/// target validated by the 2026-08-20 full_clam run:
+///   acc 352 | pats 400 | cp_uniq 1127 | qm 800
+/// which measured rung 0 12,767,732 with rung 1 byte-identical.
+pub(crate) const CLAM_RUNG0_SCALE: Rung0Scale = Rung0Scale {
+	acc: 469_333, pats: 487_805, cp_uniq: 866_923, qm: 21_704,
+};
+
 /// One dataset's complete, immutable run configuration. Only the
 /// DLP/DNA/CLAM consts exist; tests clone them to redirect dirs.
 #[derive(Clone)]
 #[allow(dead_code)] // fields read from B101/B102/C101 on
+
 pub struct DatasetSpec {
 	/// Dataset tag; plan dir is /tmp/bora/<name>_neo.
 	pub(crate) name: &'static str,
@@ -406,6 +445,11 @@ pub struct DatasetSpec {
 	pub(crate) b_check_lkup: bool,
 	/// Non-aggr ladder steps; len MUST be num_circs-1. Empty when aggr.
 	pub(crate) vec_decrease_level: &'static [usize],
+	/// Explicit rung-0 multipliers for the neo NON-AGGRESSIVE ladder.
+	/// Some = tune_neo_non_aggr_v2 installs CapParams.levels and
+	/// build_circs_adv consumes them instead of running decreased_copy.
+	/// None = the legacy ratio descent, entirely unchanged.
+	pub(crate) rung0_scale: Option<Rung0Scale>,
 	/// Main-decider concurrency cap (inert while b_one_proof).
 	pub(crate) n_par_snark: usize,
 	/// CP-decider concurrency cap (inert while b_one_proof).
@@ -486,6 +530,7 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	// folded without the hab22 cover check. Neo runs must check.
 	b_check_lkup: true,
 	vec_decrease_level: &[],
+	rung0_scale: None,
 	// 1/1 = legacy full_dlp, which never sets these. Inert regardless:
 	// the snark semaphores are taken past driver.rs' b_one_proof and
 	// b_folding_only returns, so only one job ever contends.
@@ -542,6 +587,7 @@ pub const SMALL_DLP: DatasetSpec = DatasetSpec {
 	b_aggressive: DLP.b_aggressive,
 	b_check_lkup: DLP.b_check_lkup,
 	vec_decrease_level: DLP.vec_decrease_level,
+	rung0_scale: DLP.rung0_scale,
 	n_par_snark: DLP.n_par_snark,
 	n_par_snark_cp: DLP.n_par_snark_cp,
 	n_par_batch_claim: DLP.n_par_batch_claim,
@@ -594,6 +640,7 @@ pub const DNA: DatasetSpec = DatasetSpec {
 	b_aggressive: false,
 	b_check_lkup: false,
 	vec_decrease_level: &[],     // single full-cap circuit
+	rung0_scale: None,
 	n_par_snark: 2,
 	n_par_snark_cp: 2,
 	n_par_batch_claim: 8,        // legacy sets 8; inert at 1 job
@@ -695,6 +742,7 @@ pub const CLAM: DatasetSpec = DatasetSpec {
 	// hand share pin 143 is NOT copied (8.1(1)) -- tune derives it.
 	b_check_lkup: true,
 	vec_decrease_level: &[2],    // num_circs = 2, both modes
+	rung0_scale: Some(CLAM_RUNG0_SCALE),
 	n_par_snark: 1,
 	n_par_snark_cp: 1,
 	n_par_batch_claim: 8,
@@ -2423,10 +2471,84 @@ fn tune_neo_non_aggr_v2(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	// legacy scalability data shows rung0/rung1 differ little. Capping
 	// the walk instead was refuted: its cost scales with num_segs and
 	// clam's corpus spans ~8,000x in file size.
+	// T9907: a spec carrying rung0_scale ships EXPLICIT levels;
+	// build_circs_adv consumes them and skips decreased_copy entirely.
+	// Specs without it keep the legacy ratio descent, unchanged.
+	let mut new = new;
+	// num_circs == 1 ships no descent at all, and build_circs_adv would
+	// never read the levels; installing them anyway would slip past A1.
+	if num_circs > 1 && spec.rung0_scale.is_some() {
+		let m = spec.rung0_scale.unwrap();
+		let mut parent = new.clone();
+		for &level in spec.vec_decrease_level.iter() {
+			let child = decreased_copy_v2(&parent, &m, level);
+			new.levels.push(child.clone());
+			parent = child;
+		}
+	}
 	if num_circs > 1 {
 		ladder_descent_preconditions(spec, &new, num_circs);
 	}
 	vec![new]
+}
+
+/// Rung 0 from rung 1 for the neo NON-AGGRESSIVE ladder only.
+///
+/// Runs the legacy descent through the real Cp/Sed/DfaCapacity
+/// ::decreased_copy, so every axis not named below stays bit-identical
+/// to what build_circs_adv would derive, then scales the four census
+/// axes off the PARENT value. Delivered via CapParams.levels, which
+/// build_circs_adv prefers (zkp_driver.rs:400-408). decreased_copy
+/// itself is UNTOUCHED -- legacy full_clamav shares it.
+fn decreased_copy_v2(p_max: &CapParams, m: &Rung0Scale, level: usize)
+	-> CapParams {
+	use utils::consts::min_subsigs_for;
+	let (cp, sed, dfa, _cp_i, sed_i) = caps_from_params_general(p_max);
+	let mut r = capparams_from_caps_general(
+		&cp.decreased_copy(level),
+		&sed.decreased_copy(level, min_subsigs_for(false)),
+		&dfa.decreased_copy(level),
+		&sed_i.decreased_copy(level, min_subsigs_for(true)));
+	// capparams_from_caps_general zeroes what the capacity structs do
+	// not carry back; restore from the parent (F2' carries wrap rows).
+	r.prod_pats_expansion = p_max.prod_pats_expansion;
+	r.prod_pats_expansion_igc = p_max.prod_pats_expansion_igc;
+	r.qm_real_rows_igc = p_max.qm_real_rows_igc;
+	r.qm_wrap_rows = p_max.qm_wrap_rows;
+	r.qm_wrap_rows_igc = p_max.qm_wrap_rows_igc;
+	r.aggr_needs_subsigs = p_max.aggr_needs_subsigs;
+
+	// The four census axes, scaled off the parent. .min(parent) on all
+	// of them: the descent floors are .max(min) with NO upper clamp, so
+	// a child can be RAISED above its parent. Live on any warmstart --
+	// ZKR_NEO_LOAD_LADDER skips the tune, so the floor write-back at
+	// :2405 never runs and rung 0 inherits the SPEC min_subsigs 368
+	// against a shipped cp_subsigs of 208, making the cheap rung's
+	// GetSig 1.77x the big rung's (108,616 vs 61,398).
+	let s = |v: usize, ppm: usize| scale_ppm(v, ppm).min(v);
+	r.basis_acc_states = s(p_max.basis_acc_states, m.acc);
+	r.basis_pats_in_trace = s(p_max.basis_pats_in_trace, m.pats);
+	r.cp_basis_unique_states =
+		s(p_max.cp_basis_unique_states, m.cp_uniq);
+	r.qm_real_rows = s(p_max.qm_real_rows, m.qm);
+	r.cp_subsigs = r.cp_subsigs.min(p_max.cp_subsigs);
+	r.subsigs = r.subsigs.min(p_max.subsigs);
+	r.levels = vec![];   // a descended rung descends no further
+
+	// COUPLING, fsm_adv.rs:1294-1320. tbl_left_join_wide joins
+	// locs_final x states_final -- sized by basis_acc_states -- into
+	// packed_trace_size, sized by basis_pats_in_trace. The gadget
+	// documents pats ~ 1.1*acc and panics above 10x, and the all-zero
+	// dummy word demands pats = acc+1. An unbalanced pair fails at
+	// CIRCUIT BUILD, so assert here rather than lose a run to it.
+	assert!(r.basis_pats_in_trace * 10 >= r.basis_acc_states * 11,
+		"decreased_copy_v2: pats {} < 1.1 x acc {}; the joinwide table \
+		 overflows and the dummy word cannot build",
+		r.basis_pats_in_trace, r.basis_acc_states);
+	assert!(r.basis_pats_in_trace <= r.basis_acc_states * 10,
+		"decreased_copy_v2: pats {} > 10 x acc {}; fsm_adv.rs:1298 \
+		 panics", r.basis_pats_in_trace, r.basis_acc_states);
+	r
 }
 
 /// T9905 preconditions for the v2 non-aggressive ladder, which
@@ -2446,9 +2568,19 @@ fn ladder_descent_preconditions(spec: &DatasetSpec, p: &CapParams,
 	// A2. An EMPTY levels vec is what selects the descent. If a future
 	// edit installs levels upstream, the descent silently stops being
 	// used and this design is off without anyone noticing.
-	assert!(p.levels.is_empty(),
-		"bora_data_driver: {} v2 ships {} measured level(s); the \
-		 descent needs levels EMPTY", spec.name, p.levels.len());
+	// Exactly one arm must be armed. A MISMATCH is the silent failure:
+	// targets set but levels empty means the run quietly ships the old
+	// floors and every measurement is off.
+	if spec.rung0_scale.is_some() {
+		assert_eq!(p.levels.len(), num_circs - 1,
+			"bora_data_driver: {} sets rung0_scale but installed {} \
+			 level(s); build_circs_adv would fall back to the ratio \
+			 descent", spec.name, p.levels.len());
+	} else {
+		assert!(p.levels.is_empty(),
+			"bora_data_driver: {} v2 ships {} measured level(s); the \
+			 descent needs levels EMPTY", spec.name, p.levels.len());
+	}
 	// A3. A descended rung can lose the DFA gadget outright --
 	// build_circs_adv drops it when dfa.subsigs == 0 -- so a rung may
 	// differ in COMPOSITION, not just size. Clam survives on
@@ -2456,13 +2588,24 @@ fn ladder_descent_preconditions(spec: &DatasetSpec, p: &CapParams,
 	// guarantee, so walk the descent and check every rung.
 	let (_, _, dfa, _, _) = caps_from_params_general(p);
 	if dfa.subsigs > 0 {
-		let mut d = dfa;
-		for (i, &lv) in spec.vec_decrease_level.iter().enumerate() {
-			d = d.decreased_copy(lv);
-			assert!(d.subsigs > 0,
-				"bora_data_driver: {} rung {} descends to 0 dfa \
-				 subsigs; it would drop the DFA gadget while the top \
-				 rung keeps it", spec.name, i + 1);
+		if spec.rung0_scale.is_some() {
+			// v2 arm: check the rungs that will actually be built, not
+			// the ratio descent they no longer come from.
+			for (i, lv) in p.levels.iter().enumerate() {
+				assert!(lv.dfa_subsigs > 0,
+					"bora_data_driver: {} rung {} ships 0 dfa subsigs; \
+					 it would drop the DFA gadget while the top rung \
+					 keeps it", spec.name, i + 1);
+			}
+		} else {
+			let mut d = dfa;
+			for (i, &lv) in spec.vec_decrease_level.iter().enumerate() {
+				d = d.decreased_copy(lv);
+				assert!(d.subsigs > 0,
+					"bora_data_driver: {} rung {} descends to 0 dfa \
+					 subsigs; it would drop the DFA gadget while the \
+					 top rung keeps it", spec.name, i + 1);
+			}
 		}
 	}
 }
@@ -3710,6 +3853,138 @@ pub fn parse_args(args: &[String]) -> Cmd {
 
 #[cfg(test)]
 pub mod tests_bora_data_driver {
+	// ---- T9907: decreased_copy_v2, the neo non-aggr rung-0 builder ----
+	use super::{decreased_copy_v2, scale_ppm, CapParams, Rung0Scale,
+		CLAM_RUNG0_SCALE, CLAM};
+
+	/// Restores every ladder floor decreased_copy_v2 reads. GlobalConfig
+	/// is PROCESS-WIDE, so without this a parallel test inherits ours.
+	struct FloorGuard([usize; 11]);
+	impl FloorGuard {
+		/// Install CLAM's spec floors plus the three subsigs floors the
+		/// tuner writes back at the end of tune_neo_non_aggr_v2 -- the
+		/// FRESH-TUNE state, which is what production descends under.
+		fn clam_fresh_tune() -> Self {
+			let g = utils::consts::read_global_config();
+			let old = [g.min_subsigs, g.min_subsigs_igc,
+				g.min_cp_subsigs, g.min_basis_unique_states,
+				g.min_basis_acc_states, g.min_basis_pats_in_trace,
+				g.min_avg_pats_per_subsig, g.min_dfa_sigs,
+				g.min_dfa_subsigs, g.min_avg_active_pats_per_subsig,
+				g.min_sigs_sed];
+			drop(g);
+			let mut c = utils::consts::get_global_config();
+			c.min_subsigs = 330;      // tuner write-back, not spec 368
+			c.min_subsigs_igc = 9;
+			c.min_cp_subsigs = 208;
+			c.min_basis_unique_states = CLAM.min_basis_unique_states;
+			c.min_basis_acc_states = CLAM.min_basis_acc_states;
+			c.min_basis_pats_in_trace = CLAM.min_basis_pats_in_trace;
+			c.min_avg_pats_per_subsig = CLAM.min_avg_pats_per_subsig;
+			c.min_dfa_sigs = CLAM.min_dfa_sigs;
+			c.min_dfa_subsigs = CLAM.min_dfa_subsigs;
+			c.min_avg_active_pats_per_subsig = 2;
+			c.min_sigs_sed = 2;
+			drop(c);
+			FloorGuard(old)
+		}
+	}
+	impl Drop for FloorGuard {
+		fn drop(&mut self) {
+			let mut c = utils::consts::get_global_config();
+			let o = self.0;
+			c.min_subsigs = o[0]; c.min_subsigs_igc = o[1];
+			c.min_cp_subsigs = o[2]; c.min_basis_unique_states = o[3];
+			c.min_basis_acc_states = o[4];
+			c.min_basis_pats_in_trace = o[5];
+			c.min_avg_pats_per_subsig = o[6]; c.min_dfa_sigs = o[7];
+			c.min_dfa_subsigs = o[8];
+			c.min_avg_active_pats_per_subsig = o[9];
+			c.min_sigs_sed = o[10];
+		}
+	}
+
+	/// The rung-1 params full_clam SHIPPED on 2026-08-20, verbatim from
+	/// the server's clam_ladder.json. Not hand_seed -- the tuner moved
+	/// cp_subsigs 580->208, subsigs 580->330, qm_real_rows 0->36860.
+	fn clam_pmax_2026_08_20() -> CapParams {
+		CapParams {
+			cp_basis_unique_states: 1300, cp_subsigs: 208,
+			cp_avg_pats: 8, subsigs: 330, avg_pats_per_subsig: 8,
+			avg_active_pats_per_subsig: 2, basis_pats_in_trace: 820,
+			perc_pats_expansion_rate: 16, prod_pats_expansion: 0,
+			qm_real_rows: 36860, qm_wrap_rows: 931,
+			qm_wrap_rows_igc: 18, sigs_sed: 400,
+			perc_comp_subsigs: 29, basis_unique_states: 1300,
+			basis_acc_states: 750, subsigs_igc: 9,
+			avg_active_pats_per_subsig_igc: 2,
+			basis_pats_in_trace_igc: 820,
+			perc_pats_expansion_rate_igc: 2,
+			prod_pats_expansion_igc: 0, qm_real_rows_igc: 8,
+			basis_acc_states_igc: 750, basis_unique_states_igc: 1300,
+			dfa_sigs: 8, dfa_subsigs: 8, aggr_needs_subsigs: 0,
+			max_word_len: 4096, acdfa_state_part_bits: 26,
+			levels: vec![],
+		}
+	}
+
+	#[test]
+	fn test_scale_ppm_rounds_half_up_not_down() {
+		/// Truncation misses 3 of CLAM's 4 targets by one; the
+		/// half-up term is what makes every ppm land exactly.
+		assert_eq!(scale_ppm(750, 469_333), 352);   // trunc 351
+		assert_eq!(scale_ppm(1300, 866_923), 1127); // trunc 1126
+		assert_eq!(scale_ppm(36860, 21_704), 800);  // trunc 799
+		assert_eq!(scale_ppm(820, 487_805), 400);
+	}
+
+	#[test]
+	fn test_clam_rung0_from_the_real_production_pmax() {
+		/// The CLAM ppm constants must turn the SHIPPED rung-1 params
+		/// into the exact rung 0 the 2026-08-20 run validated.
+		let _g = FloorGuard::clam_fresh_tune();
+		let p = clam_pmax_2026_08_20();
+		let r = decreased_copy_v2(&p, &CLAM_RUNG0_SCALE, 2);
+		// the four scaled axes -- the validated rung-0 config
+		assert_eq!(r.basis_acc_states, 352, "acc");
+		assert_eq!(r.basis_pats_in_trace, 400, "pats");
+		assert_eq!(r.cp_basis_unique_states, 1127, "cp_uniq");
+		assert_eq!(r.qm_real_rows, 800, "qm");
+		// axes v2 does NOT touch: the legacy descent, unchanged
+		assert_eq!(r.basis_unique_states, 1054, "uniq floor");
+		assert_eq!(r.subsigs, 330, "subsigs = parent");
+		assert_eq!(r.cp_subsigs, 208, "cp_subsigs = parent");
+		assert_eq!(r.perc_pats_expansion_rate, 9, "16*9/16");
+		assert_eq!(r.sigs_sed, 256, "400*16/25");
+		assert_eq!(r.perc_comp_subsigs, 16, "29*9/16");
+		assert_eq!(r.basis_acc_states_igc, 268, "acc igc floor");
+		assert_eq!(r.basis_pats_in_trace_igc, 295, "pats igc floor");
+		assert_eq!(r.dfa_sigs, 3);
+		assert_eq!(r.dfa_subsigs, 3);
+		// F2' wrap budgets are carried, not descended
+		assert_eq!(r.qm_wrap_rows, 931);
+		assert_eq!(r.qm_wrap_rows_igc, 18);
+		// no child may exceed its parent, on any axis v2 sets
+		assert!(r.basis_acc_states <= p.basis_acc_states);
+		assert!(r.basis_pats_in_trace <= p.basis_pats_in_trace);
+		assert!(r.cp_basis_unique_states <= p.cp_basis_unique_states);
+		assert!(r.qm_real_rows <= p.qm_real_rows);
+		assert!(r.cp_subsigs <= p.cp_subsigs);
+		// a descended rung descends no further
+		assert!(r.levels.is_empty());
+	}
+
+	#[test]
+	#[should_panic(expected = "joinwide")]
+	fn test_rung0_rejects_an_acc_pats_pair_that_breaks_the_join() {
+		/// acc without the coupled pats rise is what killed the
+		/// 2026-08-19 run at circuit build; v2 must refuse it.
+		let _g = FloorGuard::clam_fresh_tune();
+		let bad = Rung0Scale { acc: 653_333, pats: 391_463,
+			cp_uniq: 866_923, qm: 21_704 };   // 750->490, 820->321
+		decreased_copy_v2(&clam_pmax_2026_08_20(), &bad, 2);
+	}
+
 	use super::*;
 	use std::sync::atomic::{AtomicUsize, Ordering};
 

@@ -31266,11 +31266,15 @@ Goal 2. writing section 6
 	[d] open science stmt
 	[e] ai stmt
 	[f] bigfiles.tgz (T902)
-	[g] check references -> delay to tomorrow
+	[g] check references -> delay to tomorrow -> checked.
 Goal 3. continue to invesgitate the DB Pproblem
 	[a] study collected data and decide how to cut to ring 0 from
 		ring 1
-	[b] 
+	[b] work on decrease_cp2 (adjust parameters and nailed them)
+	[c] started collect 8:15pm --> 6 hrs ==> 
+		Check 12:30AM! verify the breakdown ratio and cs1e
+		==> 
+	[d]
 Goal 4. fix the refs one by one
 	[a] use command: hallucinator-cli check --searxng  --url-match ./bora.pdf
 
