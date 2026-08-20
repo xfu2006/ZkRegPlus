@@ -31286,9 +31286,20 @@ Goal 1. continue to test clamav
 	[a] check 7 am, checked 5am still wrong, calculation redo.
 	[b] program corrected started 6:00am --> check 12:30PM
 		-> WORNG againt 8:30AM -> redeployed 8:45AM
-	[c] === CHECK 11:00AM ===
-Goal 2. test 8job dna on 512gb
+	[c] CHECK 11:00AM first about circ size
+		then 1:00PM about breakdown -> didn't get the full breakdown
+			but it's good and will get better.
+Goal 2. test 1job dna on 512gb
+	[a] started 2:50pm 
+	[b] check 4:00pm
 Goal 3. writing Apdx A and B
+	[a] apdx A done
+	[b] apdx B.0 and B.1
+Goal 4. collect the DLP data
+	[a] collected to local ~/tmp/bora/neo_run/LARGE/data_dna_dlp.tgz
+	[b] analysis: 
+Goal 5. start fullclam on 1tb server
+	[a]
 
 --- DATA ----
 #####################################
@@ -31296,8 +31307,9 @@ Goal 3. writing Apdx A and B
 *Big server: started 08/15 4am
 #####################################
 *** LARGE SERVER ***
-[1] full_dna -> DONE
-[2] full_dlp (6:10pm 08/17) -> 
+[1] full_dna -> DONE 
+[2] full_dlp (6:10pm 08/17) -> 5:00pm 08/20. 
+[3]
 
 *** SMALL SERVER ***
 [1] 
