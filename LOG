@@ -31273,13 +31273,20 @@ Goal 3. continue to invesgitate the DB Pproblem
 	[b] work on decrease_cp2 (adjust parameters and nailed them)
 	[c] started collect 8:15pm --> 6 hrs ==> 
 		Check 12:30AM! verify the breakdown ratio and cs1e
-		==> 
+		==> still wrong! calculation skews, re do. 
 	[d]
 Goal 4. fix the refs one by one
 	[a] use command: hallucinator-cli check --searxng  --url-match ./bora.pdf
 
 	the searxng is a hybird engine that used multiple sources.
 	--url-match means don't skip url check.
+
+Thursday 08/20/2026
+Goal 1. continue to test clamav
+	[a] check 7 am, checked 5am still wrong, calculation redo.
+	[b]
+Goal 2. test 8job dna on 512gb
+Goal 3. writing Apdx A and B
 
 --- DATA ----
 #####################################
