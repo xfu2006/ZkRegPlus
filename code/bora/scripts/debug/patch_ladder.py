@@ -29,14 +29,25 @@ import sys
 #   qm 7644->1000 frees 3,388,265 ; GetSig inversion frees 500,109
 #   spend  acc 569/bp, pats 1,706/bp, cp_uniq 1,157/bp = 1,013,565
 #   net -2,874,809 cs1e, ~176,000 unspent as model margin.
-QM_RUNG0       = 1000   # was 7644.  q_m blocks 1 word in 1,212.
-ACC_STATES     = 490    # was 268 (floor).  Covers max observed demand.
-PATS_IN_TRACE  = 321    # was 295 (floor).  Covers max observed demand.
-CP_UNIQ_STATES = 1127   # was 1054 (floor). Max demand 1119.
+QM_RUNG0       = 800    # was 7644.  q_m blocks 1 word in 1,212.
+ACC_STATES     = 352    # was 268 (floor).  p90 of demand (193/214).
+PATS_IN_TRACE  = 400    # was 295 (floor).  See the COUPLING note below.
+CP_UNIQ_STATES = 1127   # was 1054 (floor). Max demand 1119 -> 138/138.
 # rung 0 inherits the 368 min_subsigs floor while P_max cp_subsigs is
 # ~40, so the CHEAP rung's GetSig is 1.77x the BIG rung's (108,616 vs
 # 61,398).  The .max(floor) rules have no upper clamp.  Pin to P_max.
 FIX_CP_SUBSIGS_INVERSION = True
+
+# COUPLING -- basis_pats_in_trace is NOT independent of basis_acc_states.
+# fsm_adv.rs:1301 joins locs_final x states_final (sized by
+# basis_acc_states) into packed_trace_size (sized by
+# basis_pats_in_trace), so raising acc raises the pats REQUIREMENT.
+# fsm_adv.rs:1294-1299 states the intended relation: pats ~ 1.1 * acc,
+# hard panic above 10x.  The original floors 295/268 are ratio 1.101 --
+# they encoded this rule.  Measured: the all-zero dummy word demands
+# pats = acc + 1 (it CapErr'd at 491 when acc was set to 490, which is
+# how attempt 2 died at circuit-build time).
+PATS_ACC_RATIO_MIN = 1.1
 
 # clam production floors (bora_data_driver.rs CLAM spec).  min_cp_subsigs
 # and min_subsigs_igc are unset, so both inherit min_subsigs = 368
@@ -101,6 +112,15 @@ def main(src, dst):
     pmax = lad[0]
     if pmax.get("levels"):
         sys.exit("source ladder already carries levels[]; nothing to do")
+
+    if PATS_IN_TRACE < ACC_STATES * PATS_ACC_RATIO_MIN:
+        sys.exit("PATS_IN_TRACE %d < %.1f x ACC_STATES %d -- the joinwide "
+                 "table would overflow and the DUMMY word fails at "
+                 "circuit build (fsm_adv.rs:1294-1320)"
+                 % (PATS_IN_TRACE, PATS_ACC_RATIO_MIN, ACC_STATES))
+    if PATS_IN_TRACE > ACC_STATES * 10:
+        sys.exit("PATS_IN_TRACE %d > 10 x ACC_STATES %d -- fsm_adv.rs:1298 "
+                 "panics" % (PATS_IN_TRACE, ACC_STATES))
 
     r0 = dec2(pmax)                        # what the run ships TODAY
     before = copy.deepcopy(r0)
