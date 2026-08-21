@@ -716,21 +716,15 @@ def pack_full_dump(base, run_logs, ts):
     return dests
 
 
-BORA_PLAN_ROOT = "/tmp/bora"   # Rust plan_dir() sandboxes live here
-
-
-def ladders_diverge(name):
-    """True when the two parts' tuned ladders differ (byte compare;
-    missing file = divergence). Identical argv must yield identical
-    ladders (C103), so divergence invalidates the combined dump."""
-    lads = []
-    for pid in (0, 1):
-        p = os.path.join(BORA_PLAN_ROOT,
-                          "%s_neo_p%d" % (name, pid), "ladder.json")
-        if not os.path.isfile(p):
-            return True
-        lads.append(open(p, "rb").read())
-    return lads[0] != lads[1]
+# 2026-08-21: the p0/p1 ladder tripwire (ladders_diverge -> rc=5) was
+# REMOVED, with BORA_PLAN_ROOT, which existed only to find its files.
+# It asserted that the two halves tune to byte-identical ladders. They
+# do not have to: the halves are INDEPENDENT concurrent processes with
+# their own plan dirs and their own DB builds, so a small tuning
+# difference between them is expected, not a defect. Measured on the
+# 2026-08-20 full_clam run: p0 qm_real 36,860 / cs1e 99,638,801 vs p1
+# 36,400 / 99,498,317 -- 0.14% apart, with a fully verified proof
+# (ind[final] verdict=PASS) that the tripwire nonetheless scored rc=5.
 
 
 # =====================================================================
@@ -983,6 +977,12 @@ def point_current_job(part1_log, part2_log):
 # the max over INDIVIDUAL reaped children and never their sum, so it
 # under-reports a parallel multi-job fold -- exactly this run's shape --
 # and it only counts children already waited for.
+# _pack_bundle's own header line, read back by JobHandle.replay:
+#   rc=5 wall_s=72970.4 peak_rss_gb=661.9 peak_idle_s=11/14400
+REPLAY_SUMMARY_RE = re.compile(
+    r"rc=(\S+) wall_s=([\d.]+) peak_rss_gb=([\d.]+) "
+    r"peak_idle_s=([\d.]+)/")
+
 RC_PREFIX = "PAPER_DATA_RC"
 RSS_PREFIX = "PAPER_DATA_PEAK_RSS_GIB"
 WALL_PREFIX = "PAPER_DATA_WALL_CLOCK_S"
@@ -1166,6 +1166,57 @@ class JobHandle:
             glob.glob(os.path.join(LOGS_DIR, "log_job_*.txt")))
         self._log_paths = []
         self._notes = []
+        # Set only by replay(): --final_pack cannot re-measure wall
+        # clock, so finish() must not report "now minus t0" seconds.
+        self._replay_wall = None
+
+    @classmethod
+    def replay(cls, key, mode, run_dir):
+        """A ctx bound to an EXISTING run dir, for --final_pack.
+
+        Built through __init__ so it can never drift from a live ctx's
+        field set; the throwaway dir __init__ makes is removed and the
+        three time-bound fields are re-pointed:
+          * _dir/_ts come from the dir NAME, so the dump and SUMMARY
+            carry the original run's timestamp, not the replay's;
+          * _t0 is that timestamp, so _job_logs() keeps the
+            log_job_*.txt written during the run and drops older ones
+            (_pre_logs is seeded with everything present, which makes
+            that mtime test the only gate);
+          * _replay_wall / peak_rss_gb / peak_idle_s are read back from
+            the run's own SUMMARY.txt -- none can be re-measured, and
+            reporting "now minus t0" would invent a wall clock.
+        """
+        obj = cls(key, mode)
+        try:
+            os.rmdir(obj._dir)       # just created, empty
+        except OSError:
+            pass
+        obj._dir = run_dir
+        obj._ts = "_".join(os.path.basename(run_dir).split("_")[2:])
+        try:
+            obj._t0 = time.mktime(
+                time.strptime(obj._ts, "%Y%m%d_%H%M%S"))
+        except ValueError:
+            obj._t0 = os.path.getmtime(run_dir)
+        obj._pre_logs = set(
+            glob.glob(os.path.join(LOGS_DIR, "log_job_*.txt")))
+        obj._log_paths = []
+        obj._replay_wall = 0.0
+        prev = os.path.join(run_dir, "SUMMARY.txt")
+        if os.path.isfile(prev):
+            m = REPLAY_SUMMARY_RE.search(
+                open(prev, errors="replace").read())
+            if m:
+                obj._replay_wall = float(m.group(2))
+                obj.peak_rss_gb = float(m.group(3))
+                obj.peak_idle_s = float(m.group(4))
+                obj.note("REPLAY of %s; original rc=%s"
+                          % (os.path.basename(run_dir), m.group(1)))
+        if not obj._notes:
+            obj.note("REPLAY of %s; no prior SUMMARY.txt"
+                      % os.path.basename(run_dir))
+        return obj
 
     def log_path(self, name):
         p = os.path.join(self._dir, "%s.log" % name)
@@ -1223,11 +1274,14 @@ class JobHandle:
                             lines.append(ln.rstrip("\n"))
         return lines
 
-    def _pack_bundle(self, rc, wall, fails):
-        os.makedirs(FAILED_TGZ_DIR, exist_ok=True)
-        tgz = os.path.join(
-            FAILED_TGZ_DIR, "paper_data_%s_%s_%s_BUNDLE.tgz" % (
-                self.key, self.mode, self._ts))
+    def write_summary(self, rc, wall, fails):
+        """Write SUMMARY.txt into the run dir and return its path.
+
+        Called by _pack_bundle on a failure, and by --final_pack on a
+        SUCCESS too: a corrected replay must overwrite the SUMMARY.txt
+        the failed run left behind, or the dir goes on asserting the
+        very verdict that was just corrected.
+        """
         summ = os.path.join(self._dir, "SUMMARY.txt")
         with open(summ, "w") as f:
             f.write("PAPER_DATA -- %s (%s)\n" % (self.key, self.mode))
@@ -1240,6 +1294,14 @@ class JobHandle:
                 f.write(ln + "\n")
             f.write("\n== failure signatures (last 40) ==\n")
             f.write(("\n".join(fails[-40:]) or "(none)") + "\n")
+        return summ
+
+    def _pack_bundle(self, rc, wall, fails):
+        os.makedirs(FAILED_TGZ_DIR, exist_ok=True)
+        tgz = os.path.join(
+            FAILED_TGZ_DIR, "paper_data_%s_%s_%s_BUNDLE.tgz" % (
+                self.key, self.mode, self._ts))
+        summ = self.write_summary(rc, wall, fails)
         with tarfile.open(tgz, "w:gz", compresslevel=6) as t:
             t.add(summ, arcname="SUMMARY.txt")
             for p in self._log_paths:
@@ -1258,16 +1320,22 @@ class JobHandle:
                            + os.path.basename(dp))
         return tgz
 
-    def finish(self, rc, b_fail_scan=True):
+    def finish(self, rc, b_fail_scan=True, b_proof_ok=False):
         # b_fail_scan=False: the leaf verdicts by rc + its own positive
         # markers (scale: EXPECTED CapErr bump-retries print panic text
         # into a successful log, which the scan would counterfeit).
         # The scan still RUNS on an rc != 0 leaf so _pack_bundle keeps
         # its "failure signatures" section -- it just gets no VOTE.
-        wall = time.time() - self._t0
+        # b_proof_ok=True: a FINAL individual proof verified, which
+        # outranks the signature scan entirely (see proof_verified).
+        # It deliberately does NOT clear rc -- a nonzero rc is a dead
+        # process or a missing marker, not a "failure message".
+        wall = self._replay_wall if self._replay_wall is not None \
+            else time.time() - self._t0
         failed = rc != 0
         fails = self._fail_lines() if (b_fail_scan or failed) else []
-        failed = failed or (b_fail_scan and bool(fails))
+        if b_fail_scan and fails and not b_proof_ok:
+            failed = True
         triage_tgz = None
         if failed:
             triage_tgz = self._pack_bundle(rc, wall, fails)
@@ -1606,6 +1674,39 @@ VERIFY_IND_RE = re.compile(r"Verify Individual Proof")
 # So this is the only thing standing between a bad proof and a PASS.
 VERIFY_FAIL_RE = re.compile(r"PROOF VERIFICATION FAILED")
 
+# The POSITIVE verdict, and the second negative one.  batch_proc.rs:795
+# ANDs the five sub-checks and prints
+#   VERIFY-FLAGS ind[final] i=0: idx=1 veval=1 vcom=1 keval=1 kzg=1
+#   verdict=PASS
+# so PASS means verify_individual() returned true.  `[final]` is the
+# real verification; `[self]` is the prover's own pre-check and EVERY
+# job emits one, so a gate that does not pin `[final]` counts 8 of
+# them.  TRAP: the negative token is REJECT, not FAIL -- a gate keyed
+# on "verdict=FAIL" is VACUOUS, which has bitten this file before.
+VERIFY_PASS_RE = re.compile(r"VERIFY-FLAGS ind\[final\].*verdict=PASS")
+VERIFY_REJECT_RE = re.compile(r"VERIFY-FLAGS \S+\[final\].*"
+                               r"verdict=REJECT")
+
+
+def proof_verified(logs):
+    """True when a FINAL individual proof verified and nothing final
+    was rejected.  This OUTRANKS the FAIL_RE signature scan: those
+    tokens fire on expected CapErr/DECLINED routing telemetry, so a
+    run that produced a verified proof must never be failed by them.
+    Safe as an override because the marker is emitted only at the very
+    end of the decider -- a crashed half can never reach it."""
+    ok = False
+    for lg in logs:
+        try:
+            text = open(lg, errors="replace").read()
+        except OSError:
+            continue
+        if VERIFY_REJECT_RE.search(text):
+            return False
+        if VERIFY_PASS_RE.search(text):
+            ok = True
+    return ok
+
 
 def dlp_missing_success(logs, num_jobs):
     """Verdict for a one_proof neo run: no job logged a verification
@@ -1617,6 +1718,11 @@ def dlp_missing_success(logs, num_jobs):
         # Checked FIRST: a bad proof outranks any marker-count reason.
         if VERIFY_FAIL_RE.search(text):
             return "PROOF VERIFICATION FAILED in %s" % os.path.basename(lg)
+        # The other spelling of a bad proof: batch_proc.rs prints
+        # verdict=REJECT and the driver's ERR line is a SEPARATE site,
+        # so a log could carry one without the other.
+        if VERIFY_REJECT_RE.search(text):
+            return "final verdict=REJECT in %s" % os.path.basename(lg)
         # per-log distinct set: two-half parts number jobs locally
         done += len({int(m.group(1))
                      for m in FOLD_OK_RE.finditer(text)})
@@ -1628,11 +1734,11 @@ def dlp_missing_success(logs, num_jobs):
     return None
 
 
-def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs, name,
+def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs,
                        b_fail_scan):
     """Shared full-run leaf body (DLP/Clamav): one process on a
-    1-socket box, two-half + p0/p1 ladder tripwire otherwise;
-    verdict = rc + positive markers; packs <base>{,.partN}.tgz."""
+    1-socket box, two-half otherwise; verdict = rc + positive
+    markers; packs <base>{,.partN}.tgz."""
     model = resolve_process_model()
     env = neo_env()
     if model.n_parts == 1:
@@ -1644,23 +1750,21 @@ def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs, name,
                                    argv_fn(mode, 2, PART_TOKEN),
                                    env, model.node_ranges)
         logs = [ctx.log_path("part1"), ctx.log_path("part2")]
-        if rc == 0 and ladders_diverge(name):
-            ctx.note("p0/p1 ladder.json diverge: dump invalid")
-            rc = 5
     if rc == 0:
         missing = dlp_missing_success(logs, num_jobs)
         if missing:
             ctx.note("success markers missing: %s" % missing)
             rc = 6
     # R1: the .tgz IS this run's full stdout/stderr log, so it is
-    # placed for EVERY outcome -- pass, fail, crash, ladder
-    # divergence, or a run that stopped at step 100 of 3000.  Whether
+    # placed for EVERY outcome -- pass, fail, crash, or a run that
+    # stopped at step 100 of 3000.  Whether
     # the run SUCCEEDED is a separate question, answered by rc and the
     # fail scan, which alone drive the failed_tgz bundle and the
     # FAILURE report.  (D1: canonical name, no backup, so a failed run
     # DOES overwrite the last good dump.)
     ctx.raw_data.extend(safe_pack_dump(ctx, base, logs, rc))
-    return ctx.finish(rc, b_fail_scan=b_fail_scan)
+    return ctx.finish(rc, b_fail_scan=b_fail_scan,
+                       b_proof_ok=proof_verified(logs))
 
 
 def run_leaf_dlp(mode, ctx):
@@ -1676,8 +1780,7 @@ def run_leaf_dlp(mode, ctx):
     # can see it. Verdict = rc + dlp_missing_success's markers, which
     # now include the PROOF VERIFICATION FAILED negative marker.
     return run_leaf_full_neo(mode, ctx, dlp_argv, "full_dlp",
-                              int(DLP_LEAF_ARGS[mode][3]), "dlp",
-                              False)
+                              int(DLP_LEAF_ARGS[mode][3]), False)
 
 
 # bora_cli full_dna constants (M103): dry = 1% DB (276 of 27,501
@@ -1715,7 +1818,8 @@ def run_leaf_dna(mode, ctx):
     # caught CapErr probe panics into the run log, so FAIL_RE would
     # counterfeit a FAIL on every successful run. Verdict = rc + the
     # positive markers above.
-    return ctx.finish(rc, b_fail_scan=False)
+    return ctx.finish(rc, b_fail_scan=False,
+                       b_proof_ok=proof_verified(logs))
 
 
 # 69801 decider-probe env (2026-08-15, "snark main fails" triage).
@@ -1944,8 +2048,125 @@ def run_leaf_clamav(mode, ctx):
     verdicts scan-free (the non-aggr tuner prints caught CapErr
     probe panics into every successful log, M103 11.4)."""
     return run_leaf_full_neo(mode, ctx, clam_argv, "full_clam",
-                              int(clam_jobs(mode)), "clam",
-                              False)
+                              int(clam_jobs(mode)), False)
+
+
+# =====================================================================
+# --final_pack: replay ONLY a finished leaf's last stage
+# =====================================================================
+# Re-runs the verdict, the dump placement and the SUMMARY write against
+# the logs a completed run left behind, spawning nothing.  It exists
+# because those three steps are cheap and the run that feeds them is
+# not: a wrong verdict used to mean repeating a 20 h fold to correct
+# the paperwork.
+#
+# Only the three neo leaves qualify -- they are the ones with a real
+# success predicate (dlp_missing_success).  zombie/reef verdict on the
+# child's exit code alone, which a replay cannot recover.
+# key -> (dump base name, jobs-for-this-mode).
+FINAL_PACK_LEAVES = {
+    "dlp":  ("full_dlp",  lambda m: int(DLP_LEAF_ARGS[m][3])),
+    "dna":  ("full_dna",  lambda m: 1),
+    "clam": ("full_clam", lambda m: int(clam_jobs(m))),
+}
+
+
+def find_run_dir(key):
+    """Newest JOB_LOG_DIR/<key>_<mode>_<ts> that still holds logs, as
+    (dir, mode).
+
+    Keyed on the TIMESTAMP, not on the basename and not on mtime.
+    Not the basename: it leads with the mode, so a lexical sort ranks
+    every `clam_dry_*` below every `clam_full_*` whatever their dates,
+    and a newer dry run would lose to a months-old full one.  Not
+    mtime: it moves whenever anything touches the dir, a previous
+    --final_pack included.
+    """
+    out = []
+    for d in glob.glob(os.path.join(JOB_LOG_DIR, "%s_*" % key)):
+        parts = os.path.basename(d).split("_")
+        if not os.path.isdir(d) or len(parts) != 4 or parts[0] != key:
+            continue                 # scale_clam etc, or a stray file
+        if glob.glob(os.path.join(d, "*.log")):
+            out.append(("%s_%s" % (parts[2], parts[3]), d, parts[1]))
+    if not out:
+        return None, None
+    out.sort()
+    return out[-1][1], out[-1][2]
+
+
+def final_pack_one(key):
+    """Replay one leaf's last stage.  Returns 0 when it ends OK."""
+    base, jobs_fn = FINAL_PACK_LEAVES[key]
+    run_dir, mode = find_run_dir(key)
+    if not run_dir:
+        log("final_pack %s: no %s/%s_*_* dir with logs -- nothing to "
+            "replay" % (key, JOB_LOG_DIR, key))
+        return 1
+    ctx = JobHandle.replay(key, mode, run_dir)
+    # Two-half runs write part1/part2; a single process writes run.log.
+    names = ["part1", "part2"] \
+        if os.path.isfile(os.path.join(run_dir, "part2.log")) else ["run"]
+    logs = [ctx.log_path(x) for x in names]
+    absent = [x for x in logs if not os.path.isfile(x)]
+    if absent:
+        log("final_pack %s: missing %s" % (key, ", ".join(absent)))
+        return 1
+    log("final_pack %s: %s (%s), logs %s"
+        % (key, run_dir, mode, ", ".join(names)))
+    rc = 0
+    missing = dlp_missing_success(logs, jobs_fn(mode))
+    if missing:
+        ctx.note("success markers missing: %s" % missing)
+        rc = 6
+    ctx.raw_data.extend(safe_pack_dump(ctx, base, logs, rc))
+    # Same verdict inputs as the live leaf: scan-free, and a verified
+    # final individual proof outranks the signature scan.
+    res = ctx.finish(rc, b_fail_scan=False,
+                      b_proof_ok=proof_verified(logs))
+    if not res.failed:
+        # _pack_bundle writes SUMMARY.txt only on a FAILURE, so a
+        # successful replay has to refresh it itself -- otherwise the
+        # run dir keeps the corrected verdict's predecessor.
+        log("final_pack %s: rewrote %s" % (
+            key, ctx.write_summary(res.rc, res.wall_s, [])))
+        stale = os.path.join(
+            FAILED_TGZ_DIR, "paper_data_%s_%s_%s_BUNDLE.tgz"
+            % (key, mode, ctx._ts))
+        if os.path.isfile(stale):
+            # Reported, never removed: it is the earlier run's own
+            # artifact and deleting other people's evidence is not
+            # this tool's call.
+            log("final_pack %s: NOTE %s is now STALE (that run is OK)"
+                % (key, stale))
+    for dp in res.raw_data_written:
+        log("final_pack %s: placed %s" % (key, dp))
+    _summary_line("%-4s   REPLAY %s rc=%s wall=%ds peak_rss=%.1fGB "
+                   "src=%s%s" % (
+                       "FAIL" if res.failed else "OK", key, res.rc,
+                       res.wall_s, res.peak_rss_gb,
+                       os.path.basename(run_dir),
+                       "  triage=%s" % res.triage_tgz
+                       if res.triage_tgz else ""))
+    return 0 if not res.failed else (res.rc or 1)
+
+
+def run_final_pack(items):
+    """--final_pack entry point.  APPENDS to SUMMARY.log; it must never
+    call reset_summary_log, or replaying one leaf would erase the
+    record of the run it is repairing."""
+    keys = _parse_items(items) if items else list(FINAL_PACK_LEAVES)
+    keys = [k for k in keys if k in FINAL_PACK_LEAVES]
+    if not keys:
+        log("--final_pack: nothing to do; valid items are %s"
+            % ", ".join(FINAL_PACK_LEAVES))
+        return 2
+    _summary_line("---- final_pack: %s ----" % ", ".join(keys))
+    worst = 0
+    for k in keys:
+        rc = final_pack_one(k)
+        worst = worst or rc
+    return worst
 
 
 # bora_cli scale_dlp counts (spec 8.10c), pin-INCLUSIVE units: each
@@ -3059,6 +3280,12 @@ def build_argparser():
                      help="print the menu and exit")
     ap.add_argument("--dry-run", action="store_true", dest="plan_only",
                      help="print the resolved plan; spawn nothing")
+    ap.add_argument("--final_pack", action="store_true",
+                     help="replay a finished leaf's LAST stage from the "
+                          "logs still in %s: re-verdict, place the "
+                          "raw_data dump, append to SUMMARY.log.  "
+                          "Spawns nothing.  Scope with --items "
+                          "(default: dlp,dna,clam)" % JOB_LOG_DIR)
     return ap
 
 
@@ -5217,6 +5444,18 @@ def main():
         _show_submenu("dry_run")
         return 0
 
+    if args.final_pack:
+        # Takes the run lock -- a replay writes raw_data/ and
+        # SUMMARY.log, which a live run owns -- but never resets
+        # SUMMARY.log, and never raises the VMA (it spawns nothing).
+        holder = acquire_run_lock()
+        if holder is not None:
+            print("REFUSED: another PAPER_DATA.py is running on this "
+                  "box (%s); --final_pack would race its raw_data "
+                  "writes." % holder)
+            return 7
+        return run_final_pack(args.items)
+
     # vm.max_map_count for EVERY top, raised here and NOT in _preflight:
     # small / figs / small_full_snark return before that gate, so a box
     # at the kernel default hits the mimalloc VMA ceiling as "memory
@@ -6210,45 +6449,13 @@ class SafePackDumpTest(unittest.TestCase):
         self.assertFalse(os.path.exists(stray))
 
 
-class LaddersDivergeTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        p = mock.patch.object(_MOD, "BORA_PLAN_ROOT", self.tmp.name)
-        p.start()
-        self.addCleanup(p.stop)
-
-    def _write(self, name, pid, blob):
-        d = os.path.join(self.tmp.name, "%s_neo_p%d" % (name, pid))
-        os.makedirs(d, exist_ok=True)
-        with open(os.path.join(d, "ladder.json"), "wb") as f:
-            f.write(blob)
-
-    def test_missing_and_differing_diverge(self):
-        """Missing part dirs or differing bytes both count as
-        divergence, per dataset name."""
-        self.assertTrue(ladders_diverge("dlp"))     # both missing
-        self._write("dlp", 0, b"{a}")
-        self.assertTrue(ladders_diverge("dlp"))     # p1 missing
-        self._write("dlp", 1, b"{b}")
-        self.assertTrue(ladders_diverge("dlp"))     # differ
-
-    def test_identical_ladders_pass(self):
-        """Byte-identical p0/p1 ladders pass; names are disjoint
-        (a clam pair must not satisfy a dlp check)."""
-        self._write("clam", 0, b"{same}")
-        self._write("clam", 1, b"{same}")
-        self.assertFalse(ladders_diverge("clam"))
-        self.assertTrue(ladders_diverge("dlp"))
-
-
 class RunLeafDlpTest(unittest.TestCase):
     def setUp(self):
         self.ctx = mock.Mock()
         self.ctx._ts = "20260810_000000"
         self.ctx.raw_data = []
         self.ctx.finish.side_effect = \
-            lambda rc, b_fail_scan=True: rc
+            lambda rc, b_fail_scan=True, b_proof_ok=False: rc
         self.ctx.log_path.side_effect = \
             lambda n: "/lp/%s.log" % n
 
@@ -6279,8 +6486,6 @@ class RunLeafDlpTest(unittest.TestCase):
                                 return_value={"E": "1"}), \
              mock.patch.object(_MOD, "run_example_two_half",
                                 return_value=0) as reth, \
-             mock.patch.object(_MOD, "ladders_diverge",
-                                return_value=False), \
              mock.patch.object(_MOD, "dlp_missing_success",
                                 return_value=None), \
              mock.patch.object(_MOD, "pack_full_dump",
@@ -6322,24 +6527,27 @@ class RunLeafDlpTest(unittest.TestCase):
              mock.patch.object(_MOD, "pack_full_dump",
                                 return_value=[]):
             run_leaf_dlp("full", self.ctx)
-        self.ctx.finish.assert_called_once_with(0, b_fail_scan=False)
+        self.ctx.finish.assert_called_once_with(
+            0, b_fail_scan=False, b_proof_ok=False)
 
-    def test_ladder_divergence_still_packs(self):
-        """R1: divergence keeps rc=5 and the note, but the log is
-        still placed -- rc, not the dump, reports the failure."""
+    def test_diverging_halves_no_longer_fail(self):
+        """2026-08-21: two halves that tuned differently are NOT a
+        failure -- they are independent processes.  The old tripwire
+        scored exactly this shape rc=5 on a verified 20 h clam run."""
         model = ProcessModel(2, ["0-3", "4-7"])
         with mock.patch.object(_MOD, "resolve_process_model",
                                 return_value=model), \
              mock.patch.object(_MOD, "neo_env", return_value={}), \
              mock.patch.object(_MOD, "run_example_two_half",
                                 return_value=0), \
-             mock.patch.object(_MOD, "ladders_diverge",
-                                return_value=True), \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None), \
              mock.patch.object(_MOD, "pack_full_dump") as pk:
-            rc = run_leaf_dlp("dry", self.ctx)
-        self.assertEqual(rc, 5)
+            rc = run_leaf_dlp("full", self.ctx)
+        self.assertEqual(rc, 0)
         pk.assert_called_once()
-        self.ctx.note.assert_called_once()
+        self.ctx.note.assert_not_called()
+        self.assertFalse(hasattr(_MOD, "ladders_diverge"))
 
     def test_missing_success_markers_still_packs(self):
         """R1: rc=6 with the note, and the dump is placed anyway."""
@@ -6452,7 +6660,7 @@ class RunLeafDnaTest(unittest.TestCase):
         self.ctx._ts = "20260810_000000"
         self.ctx.raw_data = []
         self.ctx.finish.side_effect = \
-            lambda rc, b_fail_scan=True: rc
+            lambda rc, b_fail_scan=True, b_proof_ok=False: rc
         self.ctx.log_path.side_effect = lambda n: "/lp/%s.log" % n
 
     def test_dry_wiring(self):
@@ -6476,7 +6684,8 @@ class RunLeafDnaTest(unittest.TestCase):
         self.assertEqual(self.ctx.raw_data, ["/d/full_dna.tgz"])
         # D103 pattern: the non-aggr tuner's caught CapErr probe text
         # would counterfeit a FAIL, so the leaf verdicts scan-free.
-        self.ctx.finish.assert_called_once_with(0, b_fail_scan=False)
+        self.ctx.finish.assert_called_once_with(
+            0, b_fail_scan=False, b_proof_ok=False)
 
     def test_argv_shapes(self):
         """dry/full argv are 9 tokens with numa/part pinned 1/0;
@@ -6520,7 +6729,7 @@ class RunLeafClamavTest(unittest.TestCase):
         self.ctx._ts = "20260810_000000"
         self.ctx.raw_data = []
         self.ctx.finish.side_effect = \
-            lambda rc, b_fail_scan=True: rc
+            lambda rc, b_fail_scan=True, b_proof_ok=False: rc
         self.ctx.log_path.side_effect = lambda n: "/lp/%s.log" % n
 
     def test_single_part_dry_wiring(self):
@@ -6545,11 +6754,11 @@ class RunLeafClamavTest(unittest.TestCase):
         pk.assert_called_once_with(
             "full_clam", ["/lp/run.log"], "20260810_000000")
         self.ctx.finish.assert_called_once_with(
-            0, b_fail_scan=False)
+            0, b_fail_scan=False, b_proof_ok=False)
 
     def test_two_part_full_wiring_and_argv(self):
         """Argv shapes are the locked constants; the two-half path
-        reads the CLAM ladder tripwire (name='clam')."""
+        packs both parts and verdicts on markers alone."""
         self.assertEqual(clam_argv("full", 2, PART_TOKEN),
             ["full_clam", "100", "100", "2", "8", "2", PART_TOKEN,
              "0", "0"])
@@ -6562,13 +6771,12 @@ class RunLeafClamavTest(unittest.TestCase):
              mock.patch.object(_MOD, "neo_env", return_value={}), \
              mock.patch.object(_MOD, "run_example_two_half",
                                 return_value=0), \
-             mock.patch.object(_MOD, "ladders_diverge",
-                                return_value=True) as ld, \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None), \
              mock.patch.object(_MOD, "pack_full_dump") as pk:
             rc = run_leaf_clamav("full", self.ctx)
-        self.assertEqual(rc, 5)
-        ld.assert_called_once_with("clam")
-        pk.assert_called_once()      # R1: placed despite rc=5
+        self.assertEqual(rc, 0)
+        pk.assert_called_once()
 
 
 class RunExternalPythonTest(unittest.TestCase):
@@ -7871,6 +8079,272 @@ class JobHandleFinishTest(unittest.TestCase):
         result = ctx.finish(0)
         self.assertEqual(result.peak_rss_gb, 12.3)
         self.assertEqual(result.raw_data_written, ["/x/out.dat"])
+
+
+class ProofVerifiedTest(unittest.TestCase):
+    """The POSITIVE decider verdict, and the REJECT token gates keep
+    getting wrong."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _log(self, name, text):
+        p = os.path.join(self.tmp.name, name)
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    # verbatim from the 2026-08-20 full_clam run.
+    PASS_LINE = ("[job 0] LOG1:  VERIFY-FLAGS ind[final] i=0: idx=1 "
+                 "veval=1 vcom=1 keval=1 kzg=1 verdict=PASS\n")
+    SELF_LINE = ("[job 3] LOG1:  VERIFY-FLAGS ind[self] i=0: idx=1 "
+                 "veval=1 vcom=1 keval=1 kzg=1 verdict=PASS\n")
+    REJ_LINE = ("[job 0] LOG1:  VERIFY-FLAGS ind[final] i=0: idx=1 "
+                "veval=0 vcom=1 keval=1 kzg=1 verdict=REJECT\n")
+
+    def test_final_pass_verifies(self):
+        """A final PASS is the proof; a self-only log is not."""
+        self.assertTrue(proof_verified(
+            [self._log("a.log", self.SELF_LINE + self.PASS_LINE)]))
+        self.assertFalse(proof_verified(
+            [self._log("b.log", self.SELF_LINE * 8)]))
+
+    def test_reject_outranks_pass_and_missing_files_tolerated(self):
+        """A final REJECT anywhere kills it, even beside a PASS; an
+        unreadable log is skipped, never raised."""
+        self.assertFalse(proof_verified(
+            [self._log("c.log", self.PASS_LINE + self.REJ_LINE)]))
+        self.assertFalse(proof_verified(["/no/such.log"]))
+        self.assertTrue(proof_verified(
+            ["/no/such.log", self._log("d.log", self.PASS_LINE)]))
+
+    def test_reject_fails_the_success_predicate(self):
+        """dlp_missing_success must catch verdict=REJECT: the driver's
+        ERR line is a SEPARATE print site, so a log can carry one
+        spelling without the other."""
+        lg = self._log("e.log",
+                        "Job 0 generating SNARK proof\n"
+                        "FOLDPOT Step 13. Verify Individual Proof.\n"
+                        + self.REJ_LINE)
+        self.assertIn("verdict=REJECT", dlp_missing_success([lg], 1))
+
+    def test_pass_does_not_substitute_for_missing_markers(self):
+        """A verified proof is an override for the SIGNATURE SCAN, not
+        for the structural marker counts."""
+        lg = self._log("f.log", "Job 0 generating SNARK proof\n"
+                                 + self.PASS_LINE)
+        self.assertIn("count 0 != 1", dlp_missing_success([lg], 1))
+
+
+class ProofOverridesFailScanTest(unittest.TestCase):
+    """b_proof_ok=True must silence FAIL_RE, and only FAIL_RE."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, sub in (("JOB_LOG_DIR", "jobs"),
+                           ("LOGS_DIR", "job_logs"),
+                           ("FAILED_TGZ_DIR", "failed_tgz")):
+            q = mock.patch.object(_MOD, name,
+                                   os.path.join(self.tmp.name, sub))
+            q.start()
+            self.addCleanup(q.stop)
+
+    def _handle(self):
+        h = JobHandle("clam", "full")
+        with open(h.log_path("run"), "w") as f:
+            f.write("CapErr: word 3 over cap\n")
+        return h
+
+    def test_scan_fails_without_the_proof(self):
+        self.assertTrue(self._handle().finish(0).failed)
+
+    def test_proof_silences_the_scan(self):
+        self.assertFalse(
+            self._handle().finish(0, b_proof_ok=True).failed)
+
+    def test_proof_does_not_clear_a_nonzero_rc(self):
+        """A dead process is not a 'failure message'."""
+        res = self._handle().finish(3, b_proof_ok=True)
+        self.assertTrue(res.failed)
+        self.assertIsNotNone(res.triage_tgz)
+
+
+class FinalPackTest(unittest.TestCase):
+    """--final_pack replays the last stage from a finished run dir."""
+
+    TS = "20260820_212948"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, sub in (("JOB_LOG_DIR", "jobs"),
+                           ("LOGS_DIR", "job_logs"),
+                           ("FAILED_TGZ_DIR", "failed_tgz")):
+            q = mock.patch.object(_MOD, name,
+                                   os.path.join(self.tmp.name, sub))
+            q.start()
+            self.addCleanup(q.stop)
+        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+        self.sl = mock.patch.object(_MOD, "_summary_line")
+        self.summary = self.sl.start()
+        self.addCleanup(self.sl.stop)
+
+    def _run_dir(self, key="clam", mode="full", ts=None, logs=("run",),
+                  n_jobs=8):
+        """A finished clam run dir: n_jobs fold-done markers split
+        across the parts, the single decider block in the LAST part,
+        and the CapErr noise every real clam log carries."""
+        d = os.path.join(self.tmp.name, "jobs",
+                          "%s_%s_%s" % (key, mode, ts or self.TS))
+        os.makedirs(d, exist_ok=True)
+        per = n_jobs // len(logs)
+        for i, nm in enumerate(logs):
+            body = "".join("Job %d folding done\n" % j
+                            for j in range(i * per, (i + 1) * per))
+            body += "CapErr: expected routing noise\n"
+            if i == len(logs) - 1:
+                body += ("FOLDPOT Step 13. Verify Individual Proof.\n"
+                         "[job 0] LOG1:  VERIFY-FLAGS ind[final] i=0: "
+                         "idx=1 veval=1 vcom=1 keval=1 kzg=1 "
+                         "verdict=PASS\n")
+            with open(os.path.join(d, "%s.log" % nm), "w") as f:
+                f.write(body)
+        return d
+
+    def _summary_txt(self, d, rc=5):
+        """The SUMMARY.txt the ladder tripwire used to leave behind."""
+        with open(os.path.join(d, "SUMMARY.txt"), "w") as f:
+            f.write("PAPER_DATA -- clam (full)\n"
+                    "rc=%d wall_s=72970.4 peak_rss_gb=661.9 "
+                    "peak_idle_s=11/14400\n"
+                    "p0/p1 ladder.json diverge: dump invalid\n" % rc)
+
+    def test_find_run_dir_newest_by_timestamp_with_logs(self):
+        """Newest by TIMESTAMP; empty dirs and other keys skipped."""
+        self._run_dir(ts="20260101_000000")
+        want = self._run_dir(ts=self.TS)
+        os.makedirs(os.path.join(self.tmp.name, "jobs",
+                                  "clam_full_20260901_000000"))
+        os.makedirs(os.path.join(self.tmp.name, "jobs",
+                                  "scale_clam_full_20260902_000000"))
+        d, mode = find_run_dir("clam")
+        self.assertEqual(d, want)
+        self.assertEqual(mode, "full")
+
+    def test_find_run_dir_mode_must_not_outrank_the_date(self):
+        """A NEWER dry run wins over an older full one.  Sorting the
+        basename would rank every clam_dry_* below every clam_full_*
+        ('d' < 'f') and silently replay the stale full run."""
+        self._run_dir(mode="full", ts="20260101_000000")
+        want = self._run_dir(mode="dry", ts="20260820_212948")
+        d, mode = find_run_dir("clam")
+        self.assertEqual(d, want)
+        self.assertEqual(mode, "dry")
+
+    def test_find_run_dir_none_when_empty(self):
+        self.assertEqual(find_run_dir("clam"), (None, None))
+
+    def test_replay_reads_back_the_unmeasurable_fields(self):
+        """wall/rss/idle cannot be re-measured, so they come from the
+        run's own SUMMARY.txt, and _ts stays the ORIGINAL stamp."""
+        d = self._run_dir()
+        self._summary_txt(d)
+        h = JobHandle.replay("clam", "full", d)
+        self.assertEqual(h._ts, self.TS)
+        self.assertEqual(h._dir, d)
+        self.assertAlmostEqual(h.peak_rss_gb, 661.9)
+        self.assertAlmostEqual(h._replay_wall, 72970.4)
+        self.assertIn("original rc=5", h._notes[0])
+        self.assertAlmostEqual(h.finish(0).wall_s, 72970.4)
+        # the throwaway dir __init__ made must not survive
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(self.tmp.name, "jobs"))),
+            [os.path.basename(d)])
+
+    def test_replay_without_prior_summary(self):
+        h = JobHandle.replay("clam", "full", self._run_dir())
+        self.assertIn("no prior SUMMARY.txt", h._notes[0])
+        self.assertEqual(h.peak_rss_gb, 0.0)
+
+    def test_final_pack_one_turns_a_verified_run_green(self):
+        """The 2026-08-21 case: rc=5 on a verified run, replayed to
+        OK with the dump placed and SUMMARY appended."""
+        d = self._run_dir(logs=("part1", "part2"))
+        self._summary_txt(d)
+        with mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/p1", "/d/p2"]) as pk:
+            rc = final_pack_one("clam")
+        self.assertEqual(rc, 0)
+        pk.assert_called_once_with(
+            "full_clam", [os.path.join(d, "part1.log"),
+                           os.path.join(d, "part2.log")], self.TS)
+        line = self.summary.call_args[0][0]
+        self.assertIn("OK", line)
+        self.assertIn("REPLAY clam", line)
+        self.assertIn("wall=72970s", line)
+        # the stale rc=5 SUMMARY.txt must be REPLACED, not left
+        txt = open(os.path.join(d, "SUMMARY.txt")).read()
+        self.assertIn("rc=0 wall_s=72970.4", txt)
+        self.assertNotIn("ladder", txt)
+        self.assertIn("original rc=5", txt)
+
+    def test_final_pack_one_reports_missing_markers(self):
+        d = self._run_dir()
+        with open(os.path.join(d, "run.log"), "w") as f:
+            f.write("nothing useful\n")
+        with mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=[]):
+            rc = final_pack_one("clam")
+        self.assertEqual(rc, 6)
+        self.assertIn("FAIL", self.summary.call_args[0][0])
+
+    def test_final_pack_one_no_dir(self):
+        self.assertEqual(final_pack_one("clam"), 1)
+
+    def test_run_final_pack_filters_to_replayable_leaves(self):
+        """zombie/reef have no success predicate, so they are dropped
+        rather than replayed with a made-up verdict."""
+        with mock.patch.object(_MOD, "final_pack_one",
+                                return_value=0) as f1:
+            self.assertEqual(run_final_pack("clam,zombie"), 0)
+        f1.assert_called_once_with("clam")
+        self.assertEqual(run_final_pack("zombie,reef"), 2)
+
+    def test_cli_dispatches_before_vma_and_summary_reset(self):
+        """--final_pack must take the run lock, then go STRAIGHT to
+        run_final_pack: it spawns nothing (so no sudo VMA raise) and
+        it APPENDS (so reset_summary_log must never fire, or replaying
+        one leaf erases the record of the run it repairs)."""
+        with mock.patch.object(sys, "argv",
+                                ["p", "--final_pack", "--items", "clam"]), \
+             mock.patch.object(_MOD, "acquire_run_lock",
+                                return_value=None) as lk, \
+             mock.patch.object(_MOD, "ensure_vma") as vma, \
+             mock.patch.object(_MOD, "reset_summary_log") as rs, \
+             mock.patch.object(_MOD, "run_final_pack",
+                                return_value=0) as rfp:
+            self.assertEqual(main(), 0)
+        lk.assert_called_once_with()
+        rfp.assert_called_once_with("clam")
+        vma.assert_not_called()
+        rs.assert_not_called()
+
+    def test_cli_refuses_while_a_run_holds_the_lock(self):
+        with mock.patch.object(sys, "argv", ["p", "--final_pack"]), \
+             mock.patch.object(_MOD, "acquire_run_lock",
+                                return_value="pid 42"), \
+             mock.patch.object(_MOD, "run_final_pack") as rfp:
+            self.assertEqual(main(), 7)
+        rfp.assert_not_called()
+
+    def test_run_final_pack_defaults_to_all_three(self):
+        with mock.patch.object(_MOD, "final_pack_one",
+                                return_value=0) as f1:
+            run_final_pack(None)
+        self.assertEqual([c[0][0] for c in f1.call_args_list],
+                          ["dlp", "dna", "clam"])
 
 
 class BundleCarriesDumpTest(unittest.TestCase):
@@ -10321,7 +10795,7 @@ class V101RunLoopTest(unittest.TestCase):
             def log_path(_s, _n):
                 return _s._p
 
-            def finish(_s, rc, b_fail_scan=True):
+            def finish(_s, rc, b_fail_scan=True, b_proof_ok=False):
                 _s.rss_ceiling_hit = self.rss_hit
                 return mock.Mock(rc=rc, peak_rss_gb=1.0,
                                   triage_tgz="")
