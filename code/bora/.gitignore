@@ -21,3 +21,4 @@ data/debug/sde_aggressive/
 # published crate (see that crate's Cargo.toml `exclude`), no workspace
 # member builds it, and it held the only >8MB file outside data/
 crates/data_processor/dependency/aho-corasick/benchmarks/
+data/src_sig/ms_dlp/docs/*.partial.jsonl

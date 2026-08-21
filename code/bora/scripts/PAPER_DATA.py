@@ -2736,6 +2736,63 @@ MS_DLP_SCRIPTS_DIR = os.path.join(MS_DLP_DIR, "scripts")
 ZOMBIE_LOG_NAME = "run_zombie_regex_zombie_international.log"
 ZOMBIE_DRY_PERC = 4
 
+# Zombie's crash-resume cache.  dry_run_zombie.py imports run_zombie and
+# overrides ONLY VEC_SIZE, so both modes append to these same two files
+# (run_zombie.py:1076-1077) and their sweeps overlap at size 1000 -- a
+# dry row there is then reused by a full run as a real measurement.
+# Name is derived from the log so the ruleset is stated in ONE place.
+ZOMBIE_PARTIAL_NAME = ZOMBIE_LOG_NAME[:-len(".log")] + ".partial.jsonl"
+# The two copies run_zombie writes in lockstep (:692).  Order matters:
+# _load_partial (:678) reads the /tmp primary when non-empty and only
+# then the docs mirror, so this tuple is in preference order.
+ZOMBIE_PARTIALS = (
+    os.path.join("/tmp/bora_zombie_run", ZOMBIE_PARTIAL_NAME),
+    os.path.join(MS_DLP_DIR, "docs", ZOMBIE_PARTIAL_NAME),
+)
+# Suffix the real partial wears while a dry leaf borrows its path.  Its
+# presence on entry means an earlier dry leaf was killed before it put
+# the real one back.
+ZOMBIE_HOLD_SUFFIX = ".hold"
+
+
+def zombie_recover_dry():
+    """Undo a dry leaf that was killed before it could unpark: the
+    .hold is the real cache, anything at the live path is that leaf's
+    leftovers.  Runs first in EVERY leaf, so a kill costs no resume."""
+    for p in ZOMBIE_PARTIALS:
+        hold = p + ZOMBIE_HOLD_SUFFIX
+        if os.path.exists(hold):
+            if os.path.exists(p):
+                os.remove(p)
+            os.replace(hold, p)
+
+
+def zombie_isolate_dry(b_enter):
+    """Make the dry zombie leaf hermetic: it must neither read nor
+    leave rows in the resume cache a full run trusts.  Full runs are
+    never touched -- that cache is the resume for a 5-12 h sweep."""
+    for p in ZOMBIE_PARTIALS:
+        hold = p + ZOMBIE_HOLD_SUFFIX
+        if b_enter:
+            if os.path.exists(p):
+                os.replace(p, hold)
+        else:
+            if os.path.exists(p):
+                os.remove(p)        # dry rows are never a measurement
+            if os.path.exists(hold):
+                os.replace(hold, p)
+
+
+def zombie_resume_rows():
+    """(path, rows) run_zombie will inherit as already-done, in its own
+    preference order.  Reported so a resumed sweep can never silently
+    pass inherited rows off as this run's measurements."""
+    for p in ZOMBIE_PARTIALS:
+        if os.path.isfile(p) and os.path.getsize(p) > 0:
+            with io.open(p, errors="replace") as f:
+                return p, sum(1 for ln in f if ln.strip())
+    return None, 0
+
 
 # The child's per-ruleset summary (run_zombie.py:1085) and its
 # do-nothing exit (:1118): an absent ruleset dir is only a print, after
@@ -2785,11 +2842,25 @@ def run_leaf_zombie(mode, ctx):
     regex_zombie_international/ policies. dry delegates to
     dry_run_zombie.py (evenly-spaced ZOMBIE_DRY_PERC% of policies, small
     proximity-safe VEC_SIZE); full runs run_zombie.py untouched.
+    The dry leaf runs hermetic -- see zombie_isolate_dry.
     Verdict = rc + a fresh docs log with >=1 ok measurement (the child
     exits 0 after a total failure)."""
     env = dict(os.environ)
     args = [str(ZOMBIE_DRY_PERC)] if mode == "dry" else []
-    rc = run_external_python(ctx, zombie_script(mode), args, env)
+    b_dry = mode == "dry"
+    zombie_recover_dry()               # undo any interrupted dry leaf
+    if b_dry:
+        zombie_isolate_dry(True)       # park the real resume cache
+    else:
+        src_p, n_rows = zombie_resume_rows()
+        if n_rows:
+            ctx.note("resuming from %d cached rows in %s"
+                     % (n_rows, src_p))
+    try:
+        rc = run_external_python(ctx, zombie_script(mode), args, env)
+    finally:
+        if b_dry:
+            zombie_isolate_dry(False)  # drop dry rows, put it back
     src = os.path.join(MS_DLP_DIR, "docs", ZOMBIE_LOG_NAME)
     if rc == 0:
         reason, note = zombie_missing_success(
@@ -11196,6 +11267,161 @@ class V101FalsifierNegativeTest(unittest.TestCase):
         self.assertIn("propose the commit", txt)
         self.assertIn("MANDATORY", txt)
         self.assertIn("dec_big=SKIP", txt)
+
+
+class ZombieDryIsolationTest(unittest.TestCase):
+    """zombie_isolate_dry / zombie_resume_rows: a dry leaf must not be
+    able to seed a full sweep with smoke-test rows."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp()
+        self.real = ZOMBIE_PARTIALS          # capture before patching
+        self.tmp = os.path.join(self.d, "tmp.partial.jsonl")
+        self.docs = os.path.join(self.d, "docs.partial.jsonl")
+        self.patch = mock.patch.object(
+            sys.modules[__name__], "ZOMBIE_PARTIALS",
+            (self.tmp, self.docs))
+        self.patch.start()
+
+    def tearDown(self):
+        self.patch.stop()
+        shutil.rmtree(self.d, ignore_errors=True)
+
+    def _write(self, path, text):
+        with io.open(path, "w") as f:
+            f.write(text)
+
+    def _read(self, path):
+        with io.open(path) as f:
+            return f.read()
+
+    def test_partial_name_tracks_the_log_name(self):
+        """One source of truth for the ruleset -- a renamed ruleset must
+        not leave the purge pointed at a stale path."""
+        self.assertEqual(
+            ZOMBIE_PARTIAL_NAME,
+            "run_zombie_regex_zombie_international.partial.jsonl")
+        self.assertTrue(self.real[0].startswith("/tmp/bora_zombie_run"))
+        self.assertTrue(self.real[1].endswith(
+            os.path.join("docs", ZOMBIE_PARTIAL_NAME)))
+
+    def test_preference_order_matches_load_partial(self):
+        """run_zombie._load_partial reads /tmp first, docs second; a
+        reversed tuple would report the wrong inherited cache."""
+        self._write(self.tmp, '{"a": 1}\n')
+        self._write(self.docs, '{"b": 2}\n{"c": 3}\n')
+        self.assertEqual(zombie_resume_rows(), (self.tmp, 1))
+
+    def test_empty_tmp_falls_through_to_the_docs_mirror(self):
+        """A /tmp wiped by a reboot must not read as 'nothing cached'."""
+        self._write(self.tmp, "")
+        self._write(self.docs, '{"b": 2}\n{"c": 3}\n')
+        self.assertEqual(zombie_resume_rows(), (self.docs, 2))
+
+    def test_no_cache_reports_zero(self):
+        """Cold start: no note should be emitted."""
+        self.assertEqual(zombie_resume_rows(), (None, 0))
+
+    def test_round_trip_restores_the_real_cache_and_drops_dry(self):
+        """The bug: 24 dry rows survived into a full sweep and 8 of
+        them were reused at the overlapping size 1000."""
+        self._write(self.tmp, "REAL\n")
+        self._write(self.docs, "REAL\n")
+        zombie_isolate_dry(True)
+        self.assertFalse(os.path.exists(self.tmp))
+        self.assertFalse(os.path.exists(self.docs))
+        self._write(self.tmp, "DRY\n")      # the dry leaf writes both
+        self._write(self.docs, "DRY\n")
+        zombie_isolate_dry(False)
+        self.assertEqual(self._read(self.tmp), "REAL\n")
+        self.assertEqual(self._read(self.docs), "REAL\n")
+
+    def test_dry_with_no_prior_cache_leaves_nothing_behind(self):
+        """Cold box: the dry leaf's own rows must still be removed."""
+        zombie_isolate_dry(True)
+        self._write(self.tmp, "DRY\n")
+        self._write(self.docs, "DRY\n")
+        zombie_isolate_dry(False)
+        self.assertEqual(zombie_resume_rows(), (None, 0))
+
+    def test_a_killed_dry_leaf_is_recovered_by_the_next_leaf(self):
+        """A kill leaves the real cache parked in .hold; without the
+        recover a later FULL sweep would silently restart cold."""
+        self._write(self.tmp, "REAL\n")
+        zombie_isolate_dry(True)
+        self._write(self.tmp, "DRY\n")      # killed here, no exit call
+        zombie_recover_dry()
+        self.assertEqual(self._read(self.tmp), "REAL\n")
+        self.assertFalse(os.path.exists(self.tmp + ZOMBIE_HOLD_SUFFIX))
+
+    def test_recover_is_a_noop_when_no_dry_was_interrupted(self):
+        """The common path: recover runs in every leaf and must not
+        disturb a healthy full-run cache."""
+        self._write(self.tmp, "REAL\n")
+        zombie_recover_dry()
+        self.assertEqual(self._read(self.tmp), "REAL\n")
+        self.assertEqual(zombie_resume_rows(), (self.tmp, 1))
+
+    def test_full_leaf_recovers_a_cache_stranded_by_a_killed_dry(self):
+        """End to end: the stranded cache must be back in place before
+        zombie_resume_rows reports what the sweep inherits."""
+        self._write(self.tmp, "REAL\n")
+        zombie_isolate_dry(True)             # dry parks it, then dies
+        ctx = mock.Mock()
+        ctx._t0 = 0
+        ctx.raw_data = []
+        with mock.patch.object(sys.modules[__name__],
+                               "run_external_python", return_value=9):
+            run_leaf_zombie("full", ctx)
+        self.assertEqual(self._read(self.tmp), "REAL\n")
+        self.assertTrue(any("resuming from 1 cached rows" in str(c)
+                            for c in ctx.note.call_args_list))
+
+    def test_enter_is_idempotent(self):
+        """Two entries in a row must not lose the real cache."""
+        self._write(self.docs, "REAL\n")
+        zombie_isolate_dry(True)
+        zombie_isolate_dry(True)
+        zombie_isolate_dry(False)
+        self.assertEqual(self._read(self.docs), "REAL\n")
+
+    def test_full_mode_never_touches_the_cache(self):
+        """A full sweep's partial is its 5-12 h resume -- the leaf must
+        read it and leave it exactly as found."""
+        self._write(self.tmp, "REAL\n")
+        ctx = mock.Mock()
+        ctx._t0 = 0
+        ctx.raw_data = []
+        with mock.patch.object(sys.modules[__name__],
+                               "run_external_python", return_value=9), \
+             mock.patch.object(sys.modules[__name__],
+                               "zombie_isolate_dry") as iso:
+            run_leaf_zombie("full", ctx)
+        iso.assert_not_called()
+        self.assertEqual(self._read(self.tmp), "REAL\n")
+        self.assertTrue(any("resuming from 1 cached rows" in str(c)
+                            for c in ctx.note.call_args_list))
+
+    def test_dry_mode_isolates_even_when_the_child_fails(self):
+        """A non-zero child must still get the real cache put back."""
+        ctx = mock.Mock()
+        ctx._t0 = 0
+        ctx.raw_data = []
+        self._write(self.tmp, "REAL\n")
+        with mock.patch.object(sys.modules[__name__],
+                               "run_external_python", return_value=9):
+            run_leaf_zombie("dry", ctx)
+        self.assertEqual(self._read(self.tmp), "REAL\n")
+
+    def test_dry_mode_isolates_when_the_child_raises(self):
+        """The restore is in a finally, not on the success path."""
+        self._write(self.tmp, "REAL\n")
+        ctx = mock.Mock()
+        with mock.patch.object(sys.modules[__name__],
+                               "run_external_python",
+                               side_effect=RuntimeError("boom")):
+            self.assertRaises(RuntimeError, run_leaf_zombie, "dry", ctx)
+        self.assertEqual(self._read(self.tmp), "REAL\n")
 
 
 if __name__ == "__main__":
