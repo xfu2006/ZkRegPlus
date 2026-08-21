@@ -93,6 +93,33 @@ def corpus_logs(run_dir):
             for _, _, tag in RUNS]
 
 
+def corpus_parts(path):
+    """Every log holding this corpus's rounds, newest layout first.
+
+    The batched runner writes one <tag>_c<count>.log PER ROUND as it
+    goes and only concatenates them into <tag>.log when the corpus
+    ENDS -- so a live sweep has no merged log and reading only that
+    shows an empty meter."""
+    parts = sorted(glob.glob(path[:-len(".log")] + "_c*.log"))
+    if os.path.isfile(path):
+        parts.append(path)
+    return parts
+
+
+def corpus_rounds(path):
+    """Merged round table for one corpus, from whichever logs exist."""
+    out = {}
+    for p in corpus_parts(path):
+        out.update(P.scale_rounds(p))
+    return out
+
+
+def corpus_mtime(path):
+    """Newest write across this corpus's logs."""
+    return max((os.path.getmtime(p) for p in corpus_parts(path)),
+               default=0.0)
+
+
 def live_log():
     """Absolute path CURRENT_JOB.log points at, or None."""
     try:
@@ -124,16 +151,17 @@ def round_wall(r):
 def show_corpus(tag, path, want, total, b_full, b_phases,
                 now):
     """One corpus block; returns (done, walls) for the ETA fit."""
-    if not os.path.isfile(path):
+    rounds = corpus_rounds(path)
+    if not rounds and not corpus_parts(path):
         print("  %-18s PENDING" % tag)
         return [], []
-    rounds = P.scale_rounds(path)
-    age = now - os.path.getmtime(path)
+    age = now - corpus_mtime(path)
     n_done = sum(1 for r in rounds.values() if r["done"])
     # The symlink is NOT cleared when a run ends, so it alone would
     # report a finished sweep as RUNNING (and then STALLED).
-    live = (os.path.realpath(path) == live_log()
-            and n_done < len(want))
+    live = (n_done < len(want)
+            and live_log() in [os.path.realpath(p)
+                               for p in corpus_parts(path)])
     state = "RUNNING" if live else "done"
     print("  %-18s %-7s %d/%d rounds   last write %ds ago%s"
           % (tag, state, n_done, len(want), int(age),
@@ -221,9 +249,9 @@ def project_db(seq, top):
 def growth_block(tag, path, want):
     """Per-round multipliers and the db exponent -- the question this
     sweep exists to answer: is the DB build doubling, or polynomial?"""
-    if not os.path.isfile(path):
+    if not corpus_parts(path):
         return
-    rounds = P.scale_rounds(path)
+    rounds = corpus_rounds(path)
     seq = [(c, rounds[c]) for c in want
            if c in rounds and rounds[c]["done"]]
     if len(seq) < 2:
@@ -264,7 +292,7 @@ def main():
     elapsed = now - started_at(run_dir)
 
     n_want = len(want) * len(RUNS)
-    n_have = sum(sum(1 for r in P.scale_rounds(pth).values() if r["done"])
+    n_have = sum(sum(1 for r in corpus_rounds(pth).values() if r["done"])
                  for _, pth in corpus_logs(run_dir))
     print("Scale-ClamAV  %s  [%s]  elapsed %s%s"
           % (os.path.basename(run_dir), mode, hm(elapsed),
@@ -289,7 +317,7 @@ def main():
             1, sum(c for c, _ in all_walls))
         seen = set()
         for tag, path in corpus_logs(run_dir):
-            rounds = P.scale_rounds(path) if os.path.isfile(path) else {}
+            rounds = corpus_rounds(path)
             for c in want:
                 if not rounds.get(c, {}).get("done"):
                     seen.add((tag, c))
