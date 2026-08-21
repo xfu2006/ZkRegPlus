@@ -3420,6 +3420,13 @@ pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize],
 	collect_scale_data_neo(&DLP, corpus_idx, vec_count, b_dry_run)
 }
 
+/// Tuner arm for the BARE `scale_clam` token, i.e. what a production
+/// sweep collects. v2 since 2026-08-20, matching full_clam: the dry
+/// A/B tuned 1.8-2.8x faster and shipped a 3-4% SMALLER, TIGHTER
+/// circuit (gdb count 300: Q_m 85.0% saturated vs v1's 11.3%).
+/// `scale_clam_v1` keeps the old arm for comparison.
+const SCALE_CLAM_DEFAULT_V2: bool = true;
+
 /// ClamAV scale sweep. b_dry_run is the CLI's dry token (NOT the
 /// global flag): it swaps in the dry chunk and range table, and cuts
 /// the corpus to CLAM's dry_scale_perc. `tune_v2` is the
@@ -3429,10 +3436,7 @@ pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize],
 pub fn collect_scale_clamav_neo(corpus_idx: usize,
 	vec_count: &[usize], b_dry_run: bool, tune_v2: Option<bool>) {
 	let mut spec = CLAM.clone();
-	// The bare token keeps v1, unlike full_clam's v2 default: no v2
-	// data exists for a THINNED clam DB yet. One word to flip once
-	// the A/B is green.
-	spec.b_tune_v2 = tune_v2.unwrap_or(false);
+	spec.b_tune_v2 = tune_v2.unwrap_or(SCALE_CLAM_DEFAULT_V2);
 	arm_plan_dir(&mut spec, tune_v2, "clam_v1", "clam_v1_neo",
 		"clam_v2", "clam_v2_neo");
 	collect_scale_data_neo(&spec, corpus_idx, vec_count, b_dry_run)
@@ -6316,13 +6320,18 @@ pub mod tests_bora_data_driver {
 	fn test_scale_clam_arm_dirs() {
 		let mk = |t: Option<bool>| {
 			let mut s = CLAM.clone();
-			s.b_tune_v2 = t.unwrap_or(false);
+			s.b_tune_v2 = t.unwrap_or(SCALE_CLAM_DEFAULT_V2);
 			arm_plan_dir(&mut s, t, "clam_v1", "clam_v1_neo",
 				"clam_v2", "clam_v2_neo");
 			let c = scale_spec_clone(&s);
 			(c.name, c.db_cache_dir, c.b_tune_v2)
 		};
-		assert_eq!(mk(None), ("clam_scale", "clam_neo_scale", false));
+		// the BARE token is production; its arm is the const, not a
+		// literal restated here (that drift broke this test once).
+		assert_eq!(mk(None),
+			("clam_scale", "clam_neo_scale", SCALE_CLAM_DEFAULT_V2));
+		assert!(SCALE_CLAM_DEFAULT_V2,
+			"production scale_clam collects the v2 arm");
 		assert_eq!(mk(Some(false)),
 			("clam_v1_scale", "clam_v1_neo_scale", false));
 		assert_eq!(mk(Some(true)),

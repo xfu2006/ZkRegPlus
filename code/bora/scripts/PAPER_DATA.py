@@ -1979,6 +1979,8 @@ def scale_rounds(run_log):
     LAST COST block of the round -- a bump retry emits one per fold
     attempt and only the converged one describes what shipped."""
     out, cur = {}, None
+    if not os.path.isfile(run_log):
+        return out          # arm never ran, or crashed before its first line
     for line in open(run_log, errors="replace"):
         mb = SCALE_BEGIN_RE.search(line)
         if mb:
@@ -2104,6 +2106,9 @@ def scale_ab_report(log_v1, log_v2, tag):
     the speed claim.  A round either arm left incomplete is marked PART
     and carries no verdict."""
     a, b = scale_rounds(log_v1), scale_rounds(log_v2)
+    if not a or not b:
+        return ["%s A/B: no comparison -- %s arm produced no rounds"
+                % (tag, "v1" if not a else "v2")]
     out = ["%s A/B  count      |    cost v1 |    cost v2 | d_cost  |"
            "  tune v1 |  tune v2 | speedup |   sat v1 |   sat v2"
            % tag]
@@ -2242,15 +2247,26 @@ SCALE_AB_ARMS = ("v1", "v2")
 def run_scale_ab():
     """Menu item: the DRY clam scale sweep once per tuner arm, then the
     comparison.  Writes only scale_data_*_v1/_v2.tgz, so the canonical
-    bundles gen_scale_all.py reads are untouched."""
+    bundles gen_scale_all.py reads are untouched.
+
+    BOTH arms always run: a failed v1 must not suppress v2, or there is
+    nothing to compare.  run_leaf_scale_clamav returns a LeafResult, so
+    the verdict comes off .failed -- `rc or leaf(...)` would short
+    circuit the second call the moment the first returned an object."""
     rc, logs = 0, {}
     for arm in SCALE_AB_ARMS:
         ctx = JobHandle("scale_clam_%s" % arm, "dry")
         ctx.note("mode=scale_clam A/B arm %s (dry counts %s)"
                  % (arm, SCALE_CLAM_COUNTS["dry"]))
-        rc = rc or run_leaf_scale_clamav("dry", ctx, arm=arm)
+        res = run_leaf_scale_clamav("dry", ctx, arm=arm)
         logs[arm] = {tag: ctx.log_path("%s_%s" % (tag, arm))
                      for _, _, tag in SCALE_CLAM_RUNS}
+        _summary_line("%-4s   scale_ab arm=%s rc=%s wall=%ds "
+                      "peak_rss=%.1fGB"
+                      % ("FAIL" if res.failed else "OK", arm, res.rc,
+                         int(res.wall_s), res.peak_rss_gb))
+        if res.failed:
+            rc = rc or (res.rc or 1)
     for _, _, tag in SCALE_CLAM_RUNS:
         for ln in scale_ab_report(logs["v1"][tag], logs["v2"][tag],
                                    tag):
@@ -5097,7 +5113,13 @@ def main():
         sys.stdout.flush()
         go_background()
         install_signal_handlers()
-        return run_scale_ab()
+        try:
+            return run_scale_ab()
+        except Exception:
+            # stdio is /dev/null after go_background(): without this the
+            # traceback is lost and the run just stops (V101 lesson).
+            log("scale_ab CRASHED:\n%s" % traceback.format_exc())
+            return 1
 
     if plan.top == "small_full_dlp":
         if args.plan_only:
@@ -7196,6 +7218,65 @@ class RunLeafScaleClamTest(unittest.TestCase):
         self.assertEqual(result.rc, 3)
         self.assertEqual(calls[0][3], "0")   # light=0 at full
         self.assertEqual(len(calls), 2)      # second still ran
+
+
+class RunScaleAbTest(unittest.TestCase):
+    """The A/B driver: both arms must ALWAYS run, and a missing arm log
+    must not raise.  Both were live defects on 2026-08-20 -- the leaf
+    returns a LeafResult, so `rc = rc or leaf(...)` short circuited the
+    v2 call the moment v1 returned an object, and the report then
+    opened a log that was never written."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(_MOD, "JOB_LOG_DIR",
+                               os.path.join(self.tmp.name, "logs"))
+        p.start()
+        self.addCleanup(p.stop)
+
+    @staticmethod
+    def _ok(rc=0, failed=False):
+        return _MOD.LeafResult(rc=rc, wall_s=1.0, raw_data_written=[],
+                                failed=failed, triage_tgz=None,
+                                peak_rss_gb=1.0, note="")
+
+    def test_runs_every_arm_even_after_a_failure(self):
+        seen = []
+
+        def fake(mode, ctx, arm=None):
+            seen.append(arm)
+            return self._ok(rc=7, failed=True)
+
+        with mock.patch.object(_MOD, "run_leaf_scale_clamav", fake), \
+             mock.patch.object(_MOD, "scale_ab_report",
+                                return_value=[]), \
+             mock.patch.object(_MOD, "_summary_line"), \
+             mock.patch.object(_MOD, "log"):
+            rc = _MOD.run_scale_ab()
+        self.assertEqual(seen, list(_MOD.SCALE_AB_ARMS),
+                          "a failing arm must not suppress the next")
+        self.assertNotEqual(rc, 0, "a failed arm must be reported")
+
+    def test_rc_zero_when_both_arms_pass(self):
+        with mock.patch.object(_MOD, "run_leaf_scale_clamav",
+                                lambda m, c, arm=None: self._ok()), \
+             mock.patch.object(_MOD, "scale_ab_report",
+                                return_value=[]), \
+             mock.patch.object(_MOD, "_summary_line"), \
+             mock.patch.object(_MOD, "log"):
+            self.assertEqual(_MOD.run_scale_ab(), 0)
+
+    def test_missing_arm_log_reports_instead_of_raising(self):
+        good = os.path.join(self.tmp.name, "v1.log")
+        open(good, "w").write(
+            "==== SCALE ROUND BEGIN count=1 rules=1/38875 corpus=x ====\n"
+            "==== SCALE ROUND END count=1 ====\n")
+        gone = os.path.join(self.tmp.name, "nope.log")
+        out = _MOD.scale_ab_report(good, gone, "tag")
+        self.assertEqual(len(out), 1)
+        self.assertIn("no comparison", out[0])
+        self.assertEqual(_MOD.scale_rounds(gone), {})
 
 
 def _load_dry_run_eval_reef():
