@@ -30,7 +30,7 @@ use rustomaton::dfa::DFA;
 use utils::{
 	os::{read_lines,create_new_cache_dir,write_to_file,proj_root,read,write_sigs_to_dir,file_exists},
 	timer::{Timer},
-	logger::{flog,flog_perf,LOG2,LOG1},
+	logger::{flog,flog_perf,log,LOG2,LOG1},
 	consts::{read_global_config, B_DEBUG},
 };
 use folding_schemes::{
@@ -244,6 +244,28 @@ impl SubsigPatternStore{
 	}
 	pub fn add(&mut self, item: &SubsigPatternStoreItem){
 		let subsig_id = item.subsig_id;
+		// WHY GATED, and not just switched on: the DB cache is NOT
+		// byte-stable run-to-run even with unchanged code (map_crit_pat
+		// .keys() is iterated unsorted, so the crit ACDFA gets different
+		// state numbering each build). That makes a before/after byte
+		// diff impossible, so this speedup CANNOT be certified
+		// byte-identical for a production run. full_dlp / full_clam /
+		// full_dna therefore keep the ORIGINAL path untouched and their
+		// results stay exactly as published; only the scale sweep, whose
+		// output is the R1CS-vs-rules curve, takes the fast arm.
+		// A/B measured output-IDENTICAL (COST, lkup size, r1cs rows) at
+		// counts 494 and 988. Un-gate once the build is deterministic.
+		// ZKR_DB_FAST: this duplicate check is a Vec::contains -- O(n)
+		// per add, O(n^2) over the serial add loop in build_store. The
+		// map insert below already detects a duplicate in O(1) and
+		// fires the SAME assert, so the fast arm asks it instead.
+		if std::env::var("ZKR_DB_FAST").is_ok() {
+			let prev = self.subsig_to_rec.insert(subsig_id, item.clone());
+			assert!(prev.is_none(),
+				"subsig_id already exists: {}", subsig_id);
+			self.subsig_ids.push(subsig_id);
+			return;
+		}
 		assert!(!self.subsig_ids.contains(&subsig_id), 
 			"subsig_id already exists: {}", subsig_id);
 		self.subsig_ids.push(subsig_id);	
@@ -531,6 +553,28 @@ impl SubsigStepStore{
 	}
 	pub fn add(&mut self, item: &SubsigStepStoreItem){
 		let subsig_id = item.subsig_id;
+		// WHY GATED, and not just switched on: the DB cache is NOT
+		// byte-stable run-to-run even with unchanged code (map_crit_pat
+		// .keys() is iterated unsorted, so the crit ACDFA gets different
+		// state numbering each build). That makes a before/after byte
+		// diff impossible, so this speedup CANNOT be certified
+		// byte-identical for a production run. full_dlp / full_clam /
+		// full_dna therefore keep the ORIGINAL path untouched and their
+		// results stay exactly as published; only the scale sweep, whose
+		// output is the R1CS-vs-rules curve, takes the fast arm.
+		// A/B measured output-IDENTICAL (COST, lkup size, r1cs rows) at
+		// counts 494 and 988. Un-gate once the build is deterministic.
+		// ZKR_DB_FAST: this duplicate check is a Vec::contains -- O(n)
+		// per add, O(n^2) over the serial add loop in build_store. The
+		// map insert below already detects a duplicate in O(1) and
+		// fires the SAME assert, so the fast arm asks it instead.
+		if std::env::var("ZKR_DB_FAST").is_ok() {
+			let prev = self.subsig_to_steps.insert(subsig_id, item.clone());
+			assert!(prev.is_none(),
+				"subsig_id already exists: {}", subsig_id);
+			self.subsig_ids.push(subsig_id);
+			return;
+		}
 		assert!(!self.subsig_ids.contains(&subsig_id), 
 			"subsig_id already exists: {}", subsig_id);
 		self.subsig_ids.push(subsig_id);	 //note: not sorted yet!
@@ -1038,6 +1082,28 @@ impl SubsigInfoStore{
 
 	pub fn add(&mut self, item: &SubsigInfoStoreItem){
 		let subsig_id = item.subsig_id;
+		// WHY GATED, and not just switched on: the DB cache is NOT
+		// byte-stable run-to-run even with unchanged code (map_crit_pat
+		// .keys() is iterated unsorted, so the crit ACDFA gets different
+		// state numbering each build). That makes a before/after byte
+		// diff impossible, so this speedup CANNOT be certified
+		// byte-identical for a production run. full_dlp / full_clam /
+		// full_dna therefore keep the ORIGINAL path untouched and their
+		// results stay exactly as published; only the scale sweep, whose
+		// output is the R1CS-vs-rules curve, takes the fast arm.
+		// A/B measured output-IDENTICAL (COST, lkup size, r1cs rows) at
+		// counts 494 and 988. Un-gate once the build is deterministic.
+		// ZKR_DB_FAST: this duplicate check is a Vec::contains -- O(n)
+		// per add, O(n^2) over the serial add loop in build_store. The
+		// map insert below already detects a duplicate in O(1) and
+		// fires the SAME assert, so the fast arm asks it instead.
+		if std::env::var("ZKR_DB_FAST").is_ok() {
+			let prev = self.subsig_to_rec.insert(subsig_id, item.clone());
+			assert!(prev.is_none(),
+				"subsig_id already exists: {}", subsig_id);
+			self.subsig_ids.push(subsig_id);
+			return;
+		}
 		assert!(!self.subsig_ids.contains(&subsig_id), 
 			"subsig_id already exists: {}", subsig_id);
 		self.subsig_ids.push(subsig_id);	 //note: not sorted yet!
@@ -1706,6 +1772,14 @@ impl <F:PrimeField> ClamavDB<F>{
 	{
 		//1. generate tuples to insert for each sig, and subsig object
 		let b_debug = B_DEBUG;
+		// ZKR_DB_FAST: two output-identical speedups, OFF by default so
+		// full_dlp/full_clam/full_dna keep the exact original code path.
+		// Only the scale sweep sets it (scale_env in PAPER_DATA.py).
+		let b_fast = std::env::var("ZKR_DB_FAST").is_ok();
+		// OPT 1: range2_bit is loop-invariant, but the original reads it
+		// -- taking the process-wide RwLock -- once per (sig, subsig),
+		// from every rayon thread.
+		let max_hoisted: usize = (1<<read_global_config().range2_bit) - 1;
 		let b_debug_subsig = false;
 		let set_subsig_to_debug = vec![
 			"36551681", "36598786", "36556803", "37690369", "36552705", 
@@ -1744,14 +1818,10 @@ impl <F:PrimeField> ClamavDB<F>{
 				}).flatten().collect::<HashSet<usize>>();
 				//4. from each state -> vec_word_id (but restricts to set_words)
 				let tuples = set_state_ids.iter().map(|s|{
-					//1. get the words
 					let output_word_ids = 
 						acdfa.outputs.get(s).expect("err oup")
 						.iter().map(|x| *x)
 						.collect::<HashSet<usize>>();
-
-					//2. restrict to set_words
-					//now adjust id+1
 					let mut restricted_word_ids = output_word_ids
 						.intersection(&set_word_ids)
 						.map(|x| *x+1).collect::<Vec<usize>>();
@@ -1764,7 +1834,8 @@ impl <F:PrimeField> ClamavDB<F>{
 				store_items.push(item);
 
 				//4. build the store_items for step item 
-				let max:usize = (1<<read_global_config().range2_bit) - 1;
+				let max:usize = if b_fast { max_hoisted }
+					else { (1<<read_global_config().range2_bit) - 1 };
 				let vec_bounds = if b_igc!=s.vec_subsig_obj[i].b_ignore_case{
 					vec![]
 				}else{//process it
@@ -1912,6 +1983,10 @@ impl <F:PrimeField> ClamavDB<F>{
 		cfg: &ClamavApproxConfig,  //cfg used by build_db
 	) -> BundleSubsigStore{
 		let b_debug = B_DEBUG;
+		// Step 6 splitter (ZKR_DB_PHASE). Step 6 is one number today
+		// covering both halves, twice (cs + igc); these separate them.
+		let b_probe = std::env::var("ZKR_DB_PHASE").is_ok();
+		let mut tb = Timer::new();
 		//1. read the signatures
 		let sig_names_need_ised
 			=read_lines(needs_ised_list_file).iter().filter(|s|
@@ -1965,11 +2040,22 @@ impl <F:PrimeField> ClamavDB<F>{
 			.collect::<Vec<String>>();
 		pats.sort();
 		//TODO: fix later: needs to use new_adv with igc
+		if b_probe { tb.stop(); log(0, LOG2, &format!(
+			"DEBUG USE 69210.6s: build_ised_bundle setup+ised \
+			 igc={} pats={} {} ms", b_igc, pats.len(), tb.ms()));
+			tb.clear_start(); }
 		let all_acdfa = HexACDFA::new_adv(0, &pats, b_igc);
+		if b_probe { tb.stop(); log(0, LOG2, &format!(
+			"DEBUG USE 69210.6a: build_ised_bundle new_adv \
+			 igc={} pats={} {} ms", b_igc, pats.len(), tb.ms()));
+			tb.clear_start(); }
 
 		//6.2 build the store and append it to all
 		let (store_0,map_pat_0) = Self
 			::build_store(&sig_to_id, sigs, &all_acdfa, b_igc);
+		if b_probe { tb.stop(); log(0, LOG2, &format!(
+			"DEBUG USE 69210.6b: build_ised_bundle build_store \
+			 igc={} sigs={} {} ms", b_igc, sigs.len(), tb.ms())); }
 		let names = vec![vec!["all".to_string()], sig_names_need_ised].concat();
 		let n = names.len();
 		let dfas = vec![vec![all_acdfa.clone()], vec_ised_acdfa].concat();

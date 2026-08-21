@@ -456,6 +456,13 @@ def scale_env():
     v = os.environ.get("ZKR_DB_PHASE")
     if v:
         e["ZKR_DB_PHASE"] = v
+    # ZKR_DB_FAST is ON for every sweep and reachable NOWHERE else:
+    # it swaps build_store's O(n^2) Vec::contains duplicate check
+    # for the O(1) map insert.  Measured output-identical (COST,
+    # lkup size, r1cs rows) at counts 494 and 988; gated only
+    # because the DB cache is not byte-stable run-to-run, so a
+    # byte-diff cannot certify it for the full runs.
+    e["ZKR_DB_FAST"] = os.environ.get("ZKR_DB_FAST", "1")
     return e
 
 
@@ -7402,6 +7409,11 @@ class ScaleDbProbeTest(unittest.TestCase):
             self.assertNotIn("ZKR_DB_PHASE", _MOD.neo_env())
         self.assertNotIn("ZKR_DB_PHASE", _MOD.NEO_ENV_PASS,
                           "adding it here would leak into full runs")
+        self.assertNotIn("ZKR_DB_FAST", _MOD.NEO_ENV_PASS,
+                          "the fast DB arm must stay scale-only")
+        self.assertEqual(_MOD.scale_env().get("ZKR_DB_FAST"), "1",
+                          "sweeps take the fast arm by default")
+        self.assertNotIn("ZKR_DB_FAST", _MOD.neo_env())
 
     def test_scale_env_absent_when_unset(self):
         """Unset stays unset -- no accidental always-on probes."""

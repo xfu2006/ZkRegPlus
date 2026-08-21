@@ -3775,7 +3775,7 @@ pub const USAGE: &str = "bora_cli: backend of \
 	 scale_dlp <corpus_idx> <c1,c2,...> <dry 0|1>\n \
 	   (no arm token: DLP is aggressive and never reads b_tune_v2)\n \
 	 scale_clam <corpus_idx> <c1,c2,...> <dry 0|1>\n \
-	   (bare = the v1 tuner, today's production path)\n \
+	   (bare = the v2 tuner since 2026-08-20, matching full_clam)\n \
 	 scale_clam_v1 | scale_clam_v2 <same 3 args>\n \
 	   (A/B: identical data, other tuner; own plan dir + bundle)";
 
