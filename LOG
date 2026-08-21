@@ -31313,18 +31313,25 @@ Goal 8. Writing B.4
 Friday 08/21/2026
 Goal 1. fix the scalability slow problem
 	[a] fixed
-	[b] deployed 03:50am 08/21
-	[c]
+	[b] deployed 03:50am 08/21 -> stopped 10am too slow!!!
 Goal 2. Writing
 	[a] B.5 main issues
-	[b]
+	[b] add set up
+	[c] polish issues
+	[d] another round
 Goal 3. prepare eval reef and zombie run
 	[a] write progress report
 	[b] estimate running time
 	[c] decision: after clam_run down, collect these 2 first.
+	[d] check if timing is correct.
+		--> compiling of Spartan? -> no it's not verified
+		--> it's just cpu speed is 2x slower
+		--> no parallel contention issue
+-- TODO --
 Goal 4. restart scale collection clam first 
-	[a] expected clam 9 hrs + dlp 3 hrs = 12 hrs
-	[b]
+	[a] started 10:00AM
+	[b] expected clam 9 hrs + dlp 3 hrs = 12 hrs
+	[c] checked 11:30am: 
 
 --- DATA ----
 #####################################
