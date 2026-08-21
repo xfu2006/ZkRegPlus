@@ -2657,13 +2657,20 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 	let n_sigs = read_lines_nonblank(
 		&format!("{}/{}", src_dir, spec.sig_file)).len();
 	let mut t_db = utils::timer::Timer::new();
+	// Thinning cost, billed apart from the DB build inside db_ms.
+	// The timer lives INSIDE the branch: every full run passes
+	// perc_db=100, so db_count == n_sigs and it never executes there.
+	let mut cfg_ms = 0usize;
 	if db_count < n_sigs {
+		let mut t_cfg = utils::timer::Timer::new();
 		// bound = table size minus one chunk of margin; inert at any
 		// full-shape bit (every sig fits), load-bearing only when
 		// effective_spec swapped in a dry_range2_bit.
 		create_smaller_config_bounded(&src_dir, spec.sig_file,
 			db_count, &format!("{}/config", plan_dir(spec.name, part_id)),
 			(1usize << spec.range2_bit) - spec.chunk_len * 62);
+		t_cfg.stop();
+		cfg_ms = t_cfg.ms();
 	}
 	let db = build_fresh_db(spec,
 		&config_dir_for(spec, db_count, n_sigs, part_id),
@@ -2686,6 +2693,15 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 			"PERF 1010 build_and_tune[{}] cnt={} db_ms={} \
 			 disch_ms={} tune_ms={}", spec.name, db_count,
 			t_db.ms(), t_disch.ms(), t_tune.ms()));
+	}
+	// db_ms split, behind BOTH gates: the scale-only b_log_phases and
+	// ZKR_DB_PHASE. build_ms covers build_fresh_db (its cache write
+	// included -- probe 69210.9 bills that half separately).
+	if b_log_phases && std::env::var("ZKR_DB_PHASE").is_ok() {
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"DEBUG USE 69210.10: db split cnt={} cfg_ms={} \
+			 build_ms={}", db_count, cfg_ms,
+			t_db.ms().saturating_sub(cfg_ms)));
 	}
 	// Measurement only, and only under its env gate. It lives here
 	// because the DB and the tuning set are still alive at this point
@@ -4599,6 +4615,26 @@ pub mod tests_bora_data_driver {
 	/// B101: every field apply_spec_config names, over all three part
 	/// roles. ONE test on purpose -- GlobalConfig is process-wide, so
 	/// two config tests running on parallel threads would race.
+	/// Q100: the neo FULL and neo SCALE arms must reach build_db with
+	/// identical expansion/word knobs -- only tuner floors may differ.
+	#[test]
+	fn test_scale_db_config_matches_full() {
+		// Whole-struct compare, not field-by-field: a knob added to
+		// ClamavApproxConfig later is covered without editing this.
+		for spec in [&DLP, &CLAM] {
+			let eff = effective_spec(spec, false, 100.0);
+			apply_spec_config(&eff, false, &part_role(0, 1, 1));
+			let (fc, fr) = { let c = read_global_config();
+				(c.clamav_cfg, c.range2_bit) };
+			apply_spec_config(&scale_spec_clone(&eff), false,
+				&part_role(0, 1, 1));
+			let (sc, sr) = { let c = read_global_config();
+				(c.clamav_cfg, c.range2_bit) };
+			assert_eq!(fr, sr, "{}: range2_bit diverged", spec.name);
+			assert_eq!(fc, sc, "{}: clamav_cfg diverged", spec.name);
+		}
+	}
+
 	#[test]
 	fn test_b101_apply_spec_config() {
 		use utils::consts::read_global_config;

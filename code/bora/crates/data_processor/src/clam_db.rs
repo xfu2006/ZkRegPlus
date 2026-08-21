@@ -2088,7 +2088,11 @@ impl <F:PrimeField> ClamavDB<F>{
 		needs_ised_igc_list_file: &str,
 		cfg: &ClamavApproxConfig, vlog: &mut Vec<String>)->Result<Self, Error>{
 		let log_level = LOG2;
-		let b_perf = true && log_level>=read_global_config().log_level;
+		// ZKR_DB_PHASE forces the Step 1-7 split (and the 69210 probes)
+		// on. The original condition is kept as-is (`true &&` dropped is
+		// a no-op), so an unset env leaves every caller byte-identical.
+		let b_perf = log_level>=read_global_config().log_level
+			|| std::env::var("ZKR_DB_PHASE").is_ok();
 		let b_debug = B_DEBUG;
 		let mut timer = Timer::new();
 		//1. generate all signatures
@@ -2137,6 +2141,11 @@ impl <F:PrimeField> ClamavDB<F>{
 			}
 			s
 		}).collect::<Vec<ClamavSig>>();
+		// Closes step 1a so the 69210.3 probe below bills ONLY the 1b
+		// gatekeeper; the "Step 1" line after it then reads ~0 ms.
+		if b_perf {flog_perf(0, log_level,
+			"DEBUG USE 69210.1: Build_DB Step 1a: gen + approx sigs",
+			&mut timer, vlog);}
 		//1b. aggressive shape guard + global halo span (flag-on only).
 		let mut aggressive_max_span_nibbles = 0usize;
 		if cfg.b_aggressive_sde_for_rep {
@@ -2182,6 +2191,11 @@ impl <F:PrimeField> ClamavDB<F>{
 				 max_span_nibbles={}", n_sigs, aggressive_max_span_nibbles),
 				vlog);
 		}
+		// SERIAL loop, aggressive-only (DLP yes, ClamAV no) -- the prime
+		// suspect for the scale sweep's superlinear DB build.
+		if b_perf {flog_perf(0, log_level,
+			"DEBUG USE 69210.3: Build_DB Step 1b: aggressive gatekeeper",
+			&mut timer, vlog);}
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 1: Generate signatures"), &mut timer,
 			vlog);}
 		if b_perf {flog_perf(0, log_level, &format!("Bluld_DB: Step 2: Writing signatures"), &mut timer,
@@ -2620,7 +2634,17 @@ impl <F:PrimeField> ClamavDB<F>{
 					&join(needs_ised_list_file),
 					&join(needs_ised_igc_list_file),
 					&cfg, vlog)?;
-				if effective_write_cache {db.save(cache_dir);}
+				if effective_write_cache {
+					// The cache WRITE is inside the scale sweep's db_ms but
+					// outside build_db's own Step 1-7 split, so it is
+					// invisible without this probe.
+					let b_probe = std::env::var("ZKR_DB_PHASE").is_ok();
+					let mut t_save = Timer::new();
+					db.save(cache_dir);
+					if b_probe {flog_perf(0, LOG2,
+						"DEBUG USE 69210.9: build_or_load: save cache",
+						&mut t_save, vlog);}
+				}
 				db	
 			};
 			Ok(db)

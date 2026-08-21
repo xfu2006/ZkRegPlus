@@ -445,6 +445,20 @@ def neo_env(b_show_dropped=False):
     return e
 
 
+def scale_env():
+    """neo_env() plus ZKR_DB_PHASE when the operator exported it.
+
+    Deliberately NOT added to NEO_ENV_PASS: neo_env() strips the var,
+    so a stray export can reach a SCALE sweep (the only caller of
+    this) but can never reach full_dlp/full_clam/full_dna, which call
+    neo_env() directly.  The probes it unlocks are log-only."""
+    e = neo_env()
+    v = os.environ.get("ZKR_DB_PHASE")
+    if v:
+        e["ZKR_DB_PHASE"] = v
+    return e
+
+
 def example_cmd(example_name, args):
     """`cargo run --release --example <name> -- <args>`."""
     return ["cargo", "run", "--release", "--example", example_name,
@@ -1967,8 +1981,39 @@ SCALE_COST_RE = re.compile(
     r"==== COST GRAND TOTAL over \d+ circuits = (\d+) ====")
 SCALE_BUMP_RE = re.compile(r"fold CapErr bump try \d+:")
 
+# build_db's own 7-step split and the 69210 probes.  BOTH are
+# emitted only under ZKR_DB_PHASE, so an ordinary sweep log yields
+# nothing here and every consumer sees the empty defaults.
+# "Bluld_DB" is the source's own typo on step 2 (clam_db.rs).
+# The lazy .*? before the duration is what keeps step 7's inline
+# "Lkup size: N" from being read as the timing.
+SCALE_DBSTEP_RE = re.compile(
+    r"B[a-z]+_DB:? (Step [0-9][a-z]?)\b.*?(\d+) (ms|us)\s*$")
+SCALE_DBSAVE_RE = re.compile(
+    r"DEBUG USE 69210\.9: build_or_load: save cache "
+    r"(\d+) (ms|us)\s*$")
+SCALE_DBSPLIT_RE = re.compile(
+    r"DEBUG USE 69210\.10: db split cnt=(\d+) cfg_ms=(\d+) "
+    r"build_ms=(\d+)")
+
 _SCALE_EMPTY = {"sat": "", "bumps": 0, "done": False, "db_ms": 0,
                 "disch_ms": 0, "tune_ms": 0, "fold_ms": 0, "cost": None}
+
+
+def _ms_of(val, unit):
+    """flog_perf prints us below 1 ms and ms above; normalise."""
+    return float(val) / 1000.0 if unit == "us" else float(val)
+
+
+def _scale_empty():
+    """One fresh round record.  `steps` MUST be built here: dict()
+    is a shallow copy, so a literal default would alias one dict
+    across every round in the sweep."""
+    d = dict(_SCALE_EMPTY)
+    d["steps"] = {}     # "Step 1b"/"save" -> ms (float), 69210
+    d["cfg_ms"] = 0     # thinning, split out of db_ms by 69210.10
+    d["build_ms"] = 0   # build_fresh_db + its cache write, ditto
+    return d
 
 
 def scale_rounds(run_log):
@@ -1985,7 +2030,7 @@ def scale_rounds(run_log):
         mb = SCALE_BEGIN_RE.search(line)
         if mb:
             cur = int(mb.group(1))
-            out.setdefault(cur, dict(_SCALE_EMPTY))
+            out.setdefault(cur, _scale_empty())
             continue
         if cur is None:
             continue
@@ -2002,6 +2047,18 @@ def scale_rounds(run_log):
         m = SCALE_STATS_RE.search(line)
         if m and int(m.group(1)) == cur:
             r["fold_ms"], r["sat"] = int(m.group(2)), m.group(3)
+            continue
+        m = SCALE_DBSPLIT_RE.search(line)
+        if m and int(m.group(1)) == cur:
+            r["cfg_ms"], r["build_ms"] = int(m.group(2)), int(m.group(3))
+            continue
+        m = SCALE_DBSAVE_RE.search(line)
+        if m:
+            r["steps"]["save"] = _ms_of(m.group(1), m.group(2))
+            continue
+        m = SCALE_DBSTEP_RE.search(line)
+        if m:
+            r["steps"][m.group(1)] = _ms_of(m.group(2), m.group(3))
             continue
         if SCALE_BUMP_RE.search(line):
             r["bumps"] += 1
@@ -2141,7 +2198,7 @@ def run_leaf_scale_dlp(mode, ctx):
     counts = SCALE_DLP_COUNTS[mode]
     arg = ",".join(str(c) for c in counts)
     dry = "1" if mode == "dry" else "0"
-    env = neo_env()
+    env = scale_env()
     rc = 0
     for idx, bundle, tag in SCALE_DLP_RUNS:
         # Each sweep is hours; the operator's kill must not be followed
@@ -2206,7 +2263,7 @@ def run_leaf_scale_clamav(mode, ctx, arm=None):
     arg = ",".join(str(c) for c in counts)
     light = "1" if mode == "dry" else "0"
     sub = "scale_clam" if arm is None else "scale_clam_%s" % arm
-    env = neo_env()
+    env = scale_env()
     rc = 0
     for idx, bundle, tag in SCALE_CLAM_RUNS:
         if arm is not None:
@@ -7282,6 +7339,76 @@ class RunScaleAbTest(unittest.TestCase):
         self.assertEqual(len(out), 1)
         self.assertIn("no comparison", out[0])
         self.assertEqual(_MOD.scale_rounds(gone), {})
+
+
+class ScaleDbProbeTest(unittest.TestCase):
+    """69210 probe parsing, and the guarantee that ZKR_DB_PHASE can
+    reach a scale leaf but never a full one."""
+
+    ROUND = (
+        "==== SCALE ROUND BEGIN count=987 rules=987/9861 corpus=x ====\n"
+        "[job 0] LOG1:  PERF 1010 build_and_tune[dlp_scale] cnt=987 "
+        "db_ms=205400 disch_ms=0 tune_ms=500\n"
+        "[job 0] LOG1:  DEBUG USE 69210.10: db split cnt=987 "
+        "cfg_ms=400 build_ms=205000\n"
+        "[job 0] LOG2: --  DEBUG USE 69210.3: Build_DB Step 1b: "
+        "aggressive gatekeeper 171300 ms\n"
+        "[job 0] LOG2: --  Bluld_DB: Step 2: Writing signatures 3 us\n"
+        "[job 0] LOG2: --  Build_DB: Step 7: ADD all to lkup. "
+        "Lkup size: 13600000 1000 ms\n"
+        "[job 0] LOG2: --  DEBUG USE 69210.9: build_or_load: "
+        "save cache 6900 ms\n"
+        "==== SCALE ROUND END count=987 ====\n")
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _rounds(self, text):
+        p = os.path.join(self.tmp.name, "s.log")
+        open(p, "w").write(text)
+        return _MOD.scale_rounds(p)
+
+    def test_probe_lines_parse(self):
+        """Split, per-step timings, the us unit, and step 7's inline
+        "Lkup size" number all read correctly."""
+        r = self._rounds(self.ROUND)[987]
+        self.assertEqual((r["cfg_ms"], r["build_ms"]), (400, 205000))
+        self.assertEqual(r["steps"]["Step 1b"], 171300.0)
+        self.assertEqual(r["steps"]["Step 2"], 0.003)
+        self.assertEqual(r["steps"]["Step 7"], 1000.0,
+                          "step 7's inline size must not be read as ms")
+        self.assertEqual(r["steps"]["save"], 6900.0)
+
+    def test_probe_free_log_keeps_empty_defaults(self):
+        """A sweep run without ZKR_DB_PHASE parses as it always did."""
+        bare = ("==== SCALE ROUND BEGIN count=1 rules=1/9861 corpus=x "
+                "====\n==== SCALE ROUND END count=1 ====\n")
+        r = self._rounds(bare)[1]
+        self.assertEqual((r["steps"], r["cfg_ms"], r["build_ms"]),
+                          ({}, 0, 0))
+
+    def test_steps_dict_not_shared_between_rounds(self):
+        """dict(_SCALE_EMPTY) is shallow; each round needs its own."""
+        rr = self._rounds(self.ROUND
+                          + self.ROUND.replace("987", "1973"))
+        self.assertIsNot(rr[987]["steps"], rr[1973]["steps"])
+
+    def test_scale_env_passes_db_phase_but_neo_env_strips_it(self):
+        """The isolation contract: scale leaves see the probe switch,
+        full_dlp/full_clam/full_dna cannot."""
+        with mock.patch.dict(os.environ, {"ZKR_DB_PHASE": "1"}):
+            self.assertEqual(_MOD.scale_env().get("ZKR_DB_PHASE"), "1")
+            self.assertNotIn("ZKR_DB_PHASE", _MOD.neo_env())
+        self.assertNotIn("ZKR_DB_PHASE", _MOD.NEO_ENV_PASS,
+                          "adding it here would leak into full runs")
+
+    def test_scale_env_absent_when_unset(self):
+        """Unset stays unset -- no accidental always-on probes."""
+        e = dict(os.environ)
+        e.pop("ZKR_DB_PHASE", None)
+        with mock.patch.dict(os.environ, e, clear=True):
+            self.assertNotIn("ZKR_DB_PHASE", _MOD.scale_env())
 
 
 def _load_dry_run_eval_reef():

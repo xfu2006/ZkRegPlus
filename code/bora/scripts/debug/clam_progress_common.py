@@ -261,8 +261,11 @@ RE_V2ITER = re.compile(r"v2 iter (\d+): (.+)")
 # PRELUDE, the three things that run BEFORE the tuner's first round.
 # DB build brackets itself with two LOG1 lines that both survive at
 # CLAM's LOG3; its seven `Build_DB: Step N` timings do NOT -- they are
-# gated `b_perf = LOG2 >= global.log_level` (clam_db.rs:2091), which
-# is false at LOG3.  discharge_for_tuning emits NOTHING at any level.
+# gated `b_perf = LOG2 >= global.log_level || ZKR_DB_PHASE`
+# (clam_db.rs), and a full run is at LOG3 and cannot see that env
+# (neo_env strips it).  Were they to appear, RE_DBSTART/RE_DBDONE
+# bracket the build and ignore whatever sits between them.
+# discharge_for_tuning emits NOTHING at any level.
 RE_DBSTART = re.compile(r"cache (\S+) not found or incomplete")
 RE_DBDONE = re.compile(r"==== Summary of ClamavSig Database ====")
 # v2's per-phase wall, and the ONLY tuner cost that survives a

@@ -31300,7 +31300,16 @@ Goal 4. collect the DLP data
 	[b] analysis: 
 Goal 5. start fullclam on 1tb server
 	[a] started 5:30pm
-	*** check 6:00 pm!!! ***
+	[b] check 6:00 pm -> circ size looks ok
+Goal 6. improve scalability collection
+	[a] implementaiton
+	[b] local test
+	[c] monitor progress script
+	[d] started running on small server
+Goal 7. check the lkup and effectiveness data
+	[a] lkup data discrepancy - check -> solved
+Goal 8. Writing B.4
+	[a]
 
 --- DATA ----
 #####################################
@@ -31310,7 +31319,7 @@ Goal 5. start fullclam on 1tb server
 *** LARGE SERVER ***
 [1] full_dna -> DONE 
 [2] full_dlp (6:10pm 08/17) -> 5:00pm 08/20. 
-[3]
+[3] full_clam (6:00pm 08/20) -> 
 
 *** SMALL SERVER ***
 [1] 

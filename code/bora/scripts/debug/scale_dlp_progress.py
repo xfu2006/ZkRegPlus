@@ -6,11 +6,12 @@ The leaf runs its two corpora SEQUENTIALLY, one log each, so at any
 moment one is done, one is running and the rest are pending -- this
 prints all of them rather than only the one being written.
 
-usage: scale_dlp_progress.py [--dir D] [--full]
+usage: scale_dlp_progress.py [--dir D] [--full] [--phases]
 """
 
 import argparse
 import glob
+import math
 import os
 import sys
 import time
@@ -120,7 +121,8 @@ def round_wall(r):
             + r["fold_ms"]) / 1000.0
 
 
-def show_corpus(tag, path, want, total, b_full, now):
+def show_corpus(tag, path, want, total, b_full, b_phases,
+                now):
     """One corpus block; returns (done, walls) for the ETA fit."""
     if not os.path.isfile(path):
         print("  %-18s PENDING" % tag)
@@ -159,7 +161,87 @@ def show_corpus(tag, path, want, total, b_full, now):
                  sat))
         if b_full and r["sat"]:
             print("               gauges: %s" % r["sat"])
+        if b_phases:
+            show_phases(r)
     return done, walls
+
+
+def show_phases(r):
+    """The 69210 breakdown of one round's db_ms.  Silent on a round
+    logged without ZKR_DB_PHASE, so old logs still print cleanly."""
+    if not (r["cfg_ms"] or r["build_ms"] or r["steps"]):
+        return
+    print("               db split : cfg %6.1fs   build %7.1fs"
+          "   save %6.1fs"
+          % (r["cfg_ms"] / 1000.0, r["build_ms"] / 1000.0,
+             r["steps"].get("save", 0.0) / 1000.0))
+    steps = [(k, v) for k, v in sorted(r["steps"].items())
+             if k != "save"]
+    if not steps:
+        return
+    tot = sum(v for _, v in steps)
+    print("               build_db : %s"
+          % "  ".join("%s %.1fs" % (k.replace("Step ", "S"), v / 1000.0)
+                      for k, v in steps))
+    top = max(steps, key=lambda kv: kv[1])
+    # Name the culprit rather than making the reader scan the row.
+    if tot and top[1] / tot > 0.5:
+        print("                          <- %s = %.0f%% of build"
+              % (top[0], 100.0 * top[1] / tot))
+
+
+def ratio(a, b):
+    """b/a, or 0.0 when the denominator is missing (never raises)."""
+    return (float(b) / float(a)) if a else 0.0
+
+
+def fx(v):
+    """A growth multiplier, or a dash when it could not be formed."""
+    return "-" if not v else "%.2fx" % v
+
+
+def project_db(seq, top):
+    """Top-round db under the two candidate laws, fitted on the LAST
+    pair: a power law, and a fixed multiplier per equal rule step."""
+    if len(seq) < 2:
+        return
+    (c0, r0), (c1, r1) = seq[-2], seq[-1]
+    if c1 >= top or not r0["db_ms"] or c1 <= c0:
+        return
+    rr, g = float(c1) / c0, ratio(r0["db_ms"], r1["db_ms"])
+    if rr <= 1.0 or g <= 0.0:
+        return
+    p = math.log(g) / math.log(rr)
+    pw = r1["db_ms"] * (float(top) / c1) ** p
+    ex = r1["db_ms"] * g ** ((top - c1) / float(c1 - c0))
+    print("  db @%d:  n^%.2f fit %s   |   doubling/step %s"
+          % (top, p, hm(pw / 1000.0), hm(ex / 1000.0)))
+
+
+def growth_block(tag, path, want):
+    """Per-round multipliers and the db exponent -- the question this
+    sweep exists to answer: is the DB build doubling, or polynomial?"""
+    if not os.path.isfile(path):
+        return
+    rounds = P.scale_rounds(path)
+    seq = [(c, rounds[c]) for c in want
+           if c in rounds and rounds[c]["done"]]
+    if len(seq) < 2:
+        return
+    print("\nGROWTH -- %s   (db doubling, or polynomial?)" % tag)
+    print("  %-17s %7s %8s %8s | %6s %11s"
+          % ("rules", "db", "fold", "round", "rules", "db exponent"))
+    for (c0, r0), (c1, r1) in zip(seq, seq[1:]):
+        rr = float(c1) / max(1, c0)
+        g_db = ratio(r0["db_ms"], r1["db_ms"])
+        g_fo = ratio(r0["fold_ms"], r1["fold_ms"])
+        g_rd = ratio(round_wall(r0), round_wall(r1))
+        p = (math.log(g_db) / math.log(rr)
+             if rr > 1.0 and g_db > 0.0 else None)
+        print("  %6d -> %-7d %6s %8s %8s | %5.2fx %11s"
+              % (c0, c1, fx(g_db), fx(g_fo), fx(g_rd), rr,
+                 "-" if p is None else "n^%.2f" % p))
+    project_db(seq, want[-1])
 
 
 def main():
@@ -169,6 +251,9 @@ def main():
                     help="also print every saturation gauge")
     ap.add_argument("--arm", choices=("v1", "v2"),
                     help="report an A/B arm dir instead of production")
+    ap.add_argument("--phases", action="store_true",
+                    help="per-round db split + build_db step times "
+                         "(needs a sweep run with ZKR_DB_PHASE=1)")
     a = ap.parse_args()
 
     run_dir = find_run(a.dir, a.arm)
@@ -189,7 +274,8 @@ def main():
 
     per_corpus, all_done, all_walls = [], [], []
     for tag, path in corpus_logs(run_dir):
-        d, w = show_corpus(tag, path, want, total, a.full, now)
+        d, w = show_corpus(tag, path, want, total, a.full,
+                           a.phases, now)
         per_corpus.append((tag, d))
         all_done += d
         all_walls += w
@@ -212,6 +298,8 @@ def main():
               "%d-round fit)" % (hm(left), len(all_walls)))
     # One curve PER CORPUS: the figure plots the two samples as
     # separate series, so a merged list hides which point is whose.
+    for tag, path in corpus_logs(run_dir):
+        growth_block(tag, path, want)
     for tag, pts in per_corpus:
         if not pts:
             continue
