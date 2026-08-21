@@ -2334,8 +2334,12 @@ def run_scale_batched(ctx, key, mode, runs, counts, sub_of, dry, env,
     else:
         budget = float("nan")
     order = sorted(counts, reverse=True)
-    log("%s: %d round(s)/corpus, batch k=%d, budget %.0f GB"
-        % (key, len(counts), k, budget))
+    # _summary_line, not log(): under go_background() stdout is
+    # /dev/null, so a plain log() leaves NO record of the k a run
+    # actually used -- and k is the one thing you need to know when
+    # comparing two sweeps or refreshing SCALE_PEAK_GB.
+    _summary_line("       %s: %d round(s)/corpus, batch k=%d, "
+                  "budget %.0f GB" % (key, len(counts), k, budget))
     rc = 0
     for idx, bundle, tag in runs:
         if aborted():

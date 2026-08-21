@@ -31322,7 +31322,9 @@ Goal 3. prepare eval reef and zombie run
 	[a] write progress report
 	[b] estimate running time
 	[c] decision: after clam_run down, collect these 2 first.
-Goal 4.
+Goal 4. restart scale collection clam first 
+	[a] expected clam 9 hrs + dlp 3 hrs = 12 hrs
+	[b]
 
 --- DATA ----
 #####################################
