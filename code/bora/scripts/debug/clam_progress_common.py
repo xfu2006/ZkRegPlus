@@ -582,6 +582,12 @@ class Acc(object):
 				# json turns int keys into strings; restore them.
 				if k in ("steps", "corpus", "prog", "ladder"):
 					v = {int(a): b for a, b in v.items()}
+				# steps alone is NESTED {job: {step: secs}}; without
+				# the inner restore max(done) is a str and
+				# show_position's `max(done) + 1` raises TypeError.
+				if k == "steps":
+					v = {a: {int(c): s for c, s in b.items()}
+						for a, b in v.items()}
 				setattr(self, k, v)
 
 	def scan(self, rescan=False):

@@ -46,8 +46,9 @@ fn main() {
 		}
 		Cmd::ScaleDlp { corpus_idx, vec_count, b_dry_run } =>
 			collect_scale_dlp_neo(corpus_idx, &vec_count, b_dry_run),
-		Cmd::ScaleClam { corpus_idx, vec_count, b_dry_run } =>
+		Cmd::ScaleClam { corpus_idx, vec_count, b_dry_run,
+			tune_v2 } =>
 			collect_scale_clamav_neo(corpus_idx, &vec_count,
-				b_dry_run),
+				b_dry_run, tune_v2),
 	}
 }

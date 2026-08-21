@@ -1945,6 +1945,188 @@ def scale_missing_rounds(log_path, counts):
     return None
 
 
+# =====================================================================
+# Scale per-round telemetry (emitted by bora_data_driver.rs)
+# =====================================================================
+# STATS carries the round's fold wall and its saturation: the worst
+# SINGLE-CHUNK fill/cap per gauge, read after the last SUCCESSFUL fold
+# (retry_caperr resets the gauges at the top of every try).  HIGH IS
+# GOOD -- a tight capacity is the point; a LOW reading is capacity
+# wasted on that axis, and an OVER after a passing fold is an anomaly.
+# sat_report_max omits gauges that never fired, so an empty tail is
+# legal, not a parse failure.  PERF 1010 carries the pre-fold split;
+# together they account for the whole round.
+SCALE_STATS_RE = re.compile(
+    r"==== SCALE ROUND STATS count=(\d+) fold_ms=(\d+) sat=(.*?)\s*====")
+SAT_ITEM_RE = re.compile(
+    r"(\w+) (cs|igc)=(\d+)/(\d+) \(([\d.]+)%( OVER)?\)")
+SCALE_PERF_RE = re.compile(
+    r"PERF 1010 build_and_tune\[\S+\] cnt=(\d+) db_ms=(\d+) "
+    r"disch_ms=(\d+) tune_ms=(\d+)")
+SCALE_COST_RE = re.compile(
+    r"==== COST GRAND TOTAL over \d+ circuits = (\d+) ====")
+SCALE_BUMP_RE = re.compile(r"fold CapErr bump try \d+:")
+
+_SCALE_EMPTY = {"sat": "", "bumps": 0, "done": False, "db_ms": 0,
+                "disch_ms": 0, "tune_ms": 0, "fold_ms": 0, "cost": None}
+
+
+def scale_rounds(run_log):
+    """Per-round telemetry from one sweep log, keyed by rule count.
+
+    Never raises: a truncated or malformed round still yields what was
+    parsed, because this feeds a report, not a gate.  `cost` keeps the
+    LAST COST block of the round -- a bump retry emits one per fold
+    attempt and only the converged one describes what shipped."""
+    out, cur = {}, None
+    for line in open(run_log, errors="replace"):
+        mb = SCALE_BEGIN_RE.search(line)
+        if mb:
+            cur = int(mb.group(1))
+            out.setdefault(cur, dict(_SCALE_EMPTY))
+            continue
+        if cur is None:
+            continue
+        r = out[cur]
+        m = SCALE_PERF_RE.search(line)
+        if m and int(m.group(1)) == cur:
+            r["db_ms"], r["disch_ms"], r["tune_ms"] = (
+                int(m.group(2)), int(m.group(3)), int(m.group(4)))
+            continue
+        m = SCALE_COST_RE.search(line)
+        if m:
+            r["cost"] = int(m.group(1))
+            continue
+        m = SCALE_STATS_RE.search(line)
+        if m and int(m.group(1)) == cur:
+            r["fold_ms"], r["sat"] = int(m.group(2)), m.group(3)
+            continue
+        if SCALE_BUMP_RE.search(line):
+            r["bumps"] += 1
+            continue
+        me = SCALE_END_RE.search(line)
+        if me and int(me.group(1)) == cur:
+            r["done"] = True
+    return out
+
+
+# The gauges whose >100% actually means "over budget".  Q_m records
+# the two operands CapErr compares and Q_c the quantity the theorem
+# bounds (discharge_adv_neo.rs:1993, :3995).  wrap/real/sub are a
+# DECOMPOSITION of the jointly-budgeted Q_m total -- the source calls
+# them "SPLIT gauges" -- so any one of them can read over 100% while
+# the enforced total is comfortably inside its budget.  Flagging those
+# would cry wolf on a healthy round: MEASURED 2026-08-20, gdb count
+# 300 shipped real cs=6/2 (300%) with Q_m cs=17/90 (18.9%).
+SAT_ENFORCED = ("Q_m", "Q_c")
+
+
+def sat_span(sat):
+    """(min_pct, max_pct, n_over) for one round.
+
+    min/max span EVERY gauge -- that is the capacity-utilisation range,
+    and a low min is capacity wasted on that axis.  n_over counts only
+    SAT_ENFORCED gauges, because only those bound anything."""
+    items = SAT_ITEM_RE.findall(sat)
+    if not items:
+        return None, None, 0
+    pcts = [float(p) for _, _, _, _, p, _ in items]
+    over = sum(1 for i in items if i[5] and i[0] in SAT_ENFORCED)
+    return min(pcts), max(pcts), over
+
+
+def _scale_s(ms):
+    """Milliseconds as seconds, for the report columns."""
+    return ms / 1000.0
+
+
+def scale_round_report(run_log, tag):
+    """Per-round telemetry lines plus one SUMMARY, for the run log.
+
+    ADVISORY ONLY -- it never touches a return code: saturation is a
+    quality reading, not a pass/fail."""
+    rounds = scale_rounds(run_log)
+    if not rounds:
+        return ["%s: no SCALE ROUND markers parsed from %s"
+                % (tag, run_log)]
+    lines, lo, hi, overs, n_sat = [], [], [], 0, 0
+    for cnt in sorted(rounds):
+        r = rounds[cnt]
+        a, b, o = sat_span(r["sat"])
+        if a is not None:
+            lo.append(a)
+            hi.append(b)
+            n_sat += 1
+        overs += o
+        lines.append(
+            "%s count=%-6d %s db %6.1fs disch %6.1fs tune %7.1fs "
+            "fold %7.1fs cost %-11s bumps %d  sat %s"
+            % (tag, cnt, "    " if r["done"] else "PART",
+               _scale_s(r["db_ms"]), _scale_s(r["disch_ms"]),
+               _scale_s(r["tune_ms"]), _scale_s(r["fold_ms"]),
+               "-" if r["cost"] is None else "{:,}".format(r["cost"]),
+               r["bumps"], r["sat"] or "(no gauge fired)"))
+    done = sum(1 for r in rounds.values() if r["done"])
+    lines.append(
+        "%s SUMMARY rounds %d (%d complete)  sat %s over %d round(s)"
+        "  OVER %d  pre-fold %.1fs  fold %.1fs"
+        % (tag, len(rounds), done,
+           "-" if not lo else "min %.1f%% max %.1f%%" % (min(lo),
+                                                         max(hi)),
+           n_sat, overs,
+           _scale_s(sum(r["db_ms"] + r["disch_ms"] + r["tune_ms"]
+                        for r in rounds.values())),
+           _scale_s(sum(r["fold_ms"] for r in rounds.values()))))
+    return lines
+
+
+def _scale_n(v):
+    return "-" if v is None else "{:,}".format(v)
+
+
+def _scale_delta(a, b):
+    """b vs a as a signed percent; '-' when either side is missing."""
+    if not a or b is None:
+        return "-"
+    return "%+.2f%%" % (100.0 * (b - a) / a)
+
+
+def _scale_span(sat):
+    a, b, o = sat_span(sat)
+    return "-" if a is None else "%.0f-%.0f%%%s" % (a, b,
+                                                    "!" if o else "")
+
+
+def scale_ab_report(log_v1, log_v2, tag):
+    """v1-vs-v2 per rule count.  Same DB, same corpus, same rule subset
+    -- the ONLY difference is which tuner ran, so d_cost is a QUALITY
+    reading (cost is exactly what the scale figure plots) and tune is
+    the speed claim.  A round either arm left incomplete is marked PART
+    and carries no verdict."""
+    a, b = scale_rounds(log_v1), scale_rounds(log_v2)
+    out = ["%s A/B  count      |    cost v1 |    cost v2 | d_cost  |"
+           "  tune v1 |  tune v2 | speedup |   sat v1 |   sat v2"
+           % tag]
+    for cnt in sorted(set(a) | set(b)):
+        ra, rb = a.get(cnt, _SCALE_EMPTY), b.get(cnt, _SCALE_EMPTY)
+        ok = ra["done"] and rb["done"]
+        ta, tb = _scale_s(ra["tune_ms"]), _scale_s(rb["tune_ms"])
+        out.append(
+            "%s A/B %6d %-4s | %10s | %10s | %-7s | %7.1fs | %7.1fs |"
+            " %7s | %8s | %8s"
+            % (tag, cnt, "" if ok else "PART", _scale_n(ra["cost"]),
+               _scale_n(rb["cost"]),
+               _scale_delta(ra["cost"], rb["cost"]) if ok else "-",
+               ta, tb, "%.2fx" % (ta / tb) if ok and ta and tb else "-",
+               _scale_span(ra["sat"]), _scale_span(rb["sat"])))
+    out.append("%s A/B NOTE: sat is min-max over ALL gauges;"
+               " '!' = an ENFORCED gauge (Q_m/Q_c) over budget."
+               "  A DRY sweep runs the dry shape (range2_bit 22,"
+               " chunk_len 128), so these ratios do NOT transfer to"
+               " production." % tag)
+    return out
+
+
 def run_leaf_scale_dlp(mode, ctx):
     """M102 Scale-DLP leaf: two sequential bora_cli scale_dlp sweeps,
     one per fixed corpus, the second running even if the first failed;
@@ -1981,6 +2163,9 @@ def run_leaf_scale_dlp(mode, ctx):
                 rc_i = 7
         else:
             ctx.note("%s: rc=%s" % (tag, rc_i))
+        # advisory telemetry, after the verdict so it cannot alter it
+        for ln in scale_round_report(lg, tag):
+            log(ln)
         rc = rc or rc_i
     return ctx.finish(rc, b_fail_scan=False)
 
@@ -2001,17 +2186,27 @@ SCALE_CLAM_RUNS = [(0, "scale_data_readelf.tgz", "scale_readelf"),
                    (1, "scale_data_gdb.tgz", "scale_gdb")]
 
 
-def run_leaf_scale_clamav(mode, ctx):
+def run_leaf_scale_clamav(mode, ctx, arm=None):
     """M104 Scale-ClamAV leaf: two sequential bora_cli scale_clam
     sweeps (readelf then gdb), the second running even if the first
     failed; dry passes light=1 (dry chunk shape). Bundles pack in a
-    finally, partial rounds kept."""
+    finally, partial rounds kept.
+
+    arm None = production: the bare subcommand, the canonical bundle
+    the scale figure reads.  "v1"/"v2" = a tuner A/B arm, which takes
+    its own subcommand, log tag and bundle -- so an A/B can never
+    overwrite the figure's inputs, and (via arm_plan_dir on the Rust
+    side) never shares a plan dir or DB cache with the other arm."""
     counts = SCALE_CLAM_COUNTS[mode]
     arg = ",".join(str(c) for c in counts)
     light = "1" if mode == "dry" else "0"
+    sub = "scale_clam" if arm is None else "scale_clam_%s" % arm
     env = neo_env()
     rc = 0
     for idx, bundle, tag in SCALE_CLAM_RUNS:
+        if arm is not None:
+            bundle = bundle[:-len(".tgz")] + "_%s.tgz" % arm
+            tag = "%s_%s" % (tag, arm)
         if aborted():        # see run_leaf_scale_dlp for why not `rc or`
             arc = _abort_leaf(ctx, "signal before %s" % tag)
             rc = rc or arc
@@ -2020,7 +2215,7 @@ def run_leaf_scale_clamav(mode, ctx):
         try:
             rc_i = run_rust_example(
                 ctx, "bora_cli",
-                ["scale_clam", str(idx), arg, light], env,
+                [sub, str(idx), arg, light], env,
                 log_name=tag)
         finally:
             dest = raw_data_path(bundle, server_specific=False)
@@ -2033,8 +2228,35 @@ def run_leaf_scale_clamav(mode, ctx):
                 rc_i = 7
         else:
             ctx.note("%s: rc=%s" % (tag, rc_i))
+        # advisory telemetry, after the verdict so it cannot alter it
+        for ln in scale_round_report(lg, tag):
+            log(ln)
         rc = rc or rc_i
     return ctx.finish(rc, b_fail_scan=False)
+
+
+# The tuner arms an A/B sweep compares, in report order.
+SCALE_AB_ARMS = ("v1", "v2")
+
+
+def run_scale_ab():
+    """Menu item: the DRY clam scale sweep once per tuner arm, then the
+    comparison.  Writes only scale_data_*_v1/_v2.tgz, so the canonical
+    bundles gen_scale_all.py reads are untouched."""
+    rc, logs = 0, {}
+    for arm in SCALE_AB_ARMS:
+        ctx = JobHandle("scale_clam_%s" % arm, "dry")
+        ctx.note("mode=scale_clam A/B arm %s (dry counts %s)"
+                 % (arm, SCALE_CLAM_COUNTS["dry"]))
+        rc = rc or run_leaf_scale_clamav("dry", ctx, arm=arm)
+        logs[arm] = {tag: ctx.log_path("%s_%s" % (tag, arm))
+                     for _, _, tag in SCALE_CLAM_RUNS}
+    for _, _, tag in SCALE_CLAM_RUNS:
+        for ln in scale_ab_report(logs["v1"][tag], logs["v2"][tag],
+                                   tag):
+            log(ln)
+    log("scale_ab: per-round tables -> %s" % CURRENT_JOB_LOG)
+    return rc
 
 
 MS_DLP_DIR = os.path.join(REPO, "data", "src_sig", "ms_dlp")
@@ -2458,6 +2680,12 @@ TOP_CHOICES = [
              "sizing to a 16 h budget; watch "
              "/tmp/bora/v101/V101_PROGRESS.txt, verdict + "
              "V101_BUNDLE.tgz beside it)"),
+    # scale_ab (2026-08-20): appended LAST so items 1-10 keep their
+    # numbers.  NOT a JOB_SPECS leaf -- `full_run --items all` must
+    # never reach it -- and it writes only scale_data_*_v1/_v2.tgz,
+    # so the bundles the scale figure reads are untouched.
+    ("scale_ab", "scale_clam tuner A/B, v1 vs v2 (DRY sweep twice, "
+                 "~15-30 min; own bundles, figure inputs untouched)"),
 ]
 
 LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
@@ -2550,7 +2778,7 @@ def _parse_items(items):
 
 NO_ITEM_TOPS = ("small", "figs", "small_full_snark", "clean",
                 "dna_debug", "dna_debug_full", "small_full_dlp",
-                "v101")
+                "v101", "scale_ab")
 
 
 def resolve_plan(run, items):
@@ -4853,6 +5081,23 @@ def main():
         go_background()
         install_signal_handlers()
         return run_v101()
+
+    if plan.top == "scale_ab":
+        if args.plan_only:
+            return 0
+        # Two dry sweeps back to back, same detach shape as
+        # small_full_dlp: one CURRENT_JOB.log, no part2.
+        ts = _ts()
+        print("[paper_data %s] detaching into the background "
+              "(survives logout; no nohup needed)." % ts)
+        print("[paper_data %s]   summary log:    tail -F %s"
+              % (ts, SUMMARY_LOG))
+        print("[paper_data %s]   current job:    tail -F %s"
+              % (ts, CURRENT_JOB_LOG))
+        sys.stdout.flush()
+        go_background()
+        install_signal_handlers()
+        return run_scale_ab()
 
     if plan.top == "small_full_dlp":
         if args.plan_only:

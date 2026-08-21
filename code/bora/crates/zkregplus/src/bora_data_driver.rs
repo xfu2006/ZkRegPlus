@@ -2640,8 +2640,13 @@ fn ladder_descent_preconditions(spec: &DatasetSpec, p: &CapParams,
 /// The shared tuning kernel (full x3, scale x2): thin config if asked,
 /// fresh DB, discharge, tune. The scope is the point: DB + tuning set
 /// are freed at return, before the caller folds.
+///
+/// `b_log_phases`: emit the PERF 1010 db/discharge/tune split. TRUE
+/// only from the scale sweep, whose per-round budget needs it; every
+/// full-run caller passes false so its log stays byte-identical.
 pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
-	bins: &[Vec<String>], num_circs: usize, part_id: usize)
+	bins: &[Vec<String>], num_circs: usize, part_id: usize,
+	b_log_phases: bool)
 	-> Vec<CapParams> {
 	// precondition, not re-application: tuning on stale flags would
 	// silently tune the wrong arm.
@@ -2651,6 +2656,7 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 	let src_dir = format!("{}/{}", proot, spec.config_dir);
 	let n_sigs = read_lines_nonblank(
 		&format!("{}/{}", src_dir, spec.sig_file)).len();
+	let mut t_db = utils::timer::Timer::new();
 	if db_count < n_sigs {
 		// bound = table size minus one chunk of margin; inert at any
 		// full-shape bit (every sig fits), load-bearing only when
@@ -2662,11 +2668,25 @@ pub(crate) fn build_and_tune(spec: &DatasetSpec, db_count: usize,
 	let db = build_fresh_db(spec,
 		&config_dir_for(spec, db_count, n_sigs, part_id),
 		&cache_dir_for(spec, part_id));
+	t_db.stop();
 	// spans tune as well: probe advice paths may re-discharge, and
 	// legacy holds the flag true through determine_config.
 	let _est = EstimateCapsGuard::on();
+	let mut t_disch = utils::timer::Timer::new();
 	let ts = discharge_for_tuning(spec, &db, bins);
+	t_disch.stop();
+	let mut t_tune = utils::timer::Timer::new();
 	let lad = tune(spec, &db, &ts, num_circs);
+	t_tune.stop();
+	// The pre-fold phases, split. Legacy prints the same three as
+	// `ZIP driver step 1: build DB` plus its probe trailers, so an
+	// arm-vs-arm or neo-vs-legacy comparison needs no new tooling.
+	if b_log_phases {
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"PERF 1010 build_and_tune[{}] cnt={} db_ms={} \
+			 disch_ms={} tune_ms={}", spec.name, db_count,
+			t_db.ms(), t_disch.ms(), t_tune.ms()));
+	}
 	// Measurement only, and only under its env gate. It lives here
 	// because the DB and the tuning set are still alive at this point
 	// and are dropped the moment this function returns.
@@ -3155,7 +3175,7 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	let ladder = match preload {
 		Some(l) => l,
 		None => build_and_tune(spec, db_count, &bins, num_circs,
-			part_id),
+			part_id, false),
 	};
 	save_ladder(&ladder, &format!("{}/ladder.json", pd))
 		.unwrap_or_else(|e| panic!(
@@ -3352,26 +3372,38 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 			"==== SCALE ROUND BEGIN count={} rules={}/{} corpus={} \
 			 ====", cnt, cnt, n_sigs, src));
 		utils::logger::flush_logger();
-		let mut caps = build_and_tune(&sc, cnt, &bins, 1, 0);
+		let mut caps = build_and_tune(&sc, cnt, &bins, 1, 0, true);
 		assert_eq!(caps.len(), 1,
 			"bora_data_driver: scale wants 1 rung, got {}",
 			caps.len());
+		let mut t_fold = utils::timer::Timer::new();
 		retry_caperr(&sc, &mut caps[0], |p| fold(&sc,
 			&config_dir_for(&sc, cnt, n_sigs, 0),
 			&cache_dir_for(&sc, 0), &manifests,
 			std::slice::from_ref(p), 1));
-		// forward-queue saturation of THIS fold (verification only,
-		// not plotted); retry_caperr's reset_sat isolated the gauges
-		// to the last, successful try. Port of zkp_driver.rs:7936.
-		let (fc, fcc) = (utils::consts::get_fwd(false),
-			utils::consts::get_fwd_cap(false).max(1));
-		let (fi, fic) = (utils::consts::get_fwd(true),
-			utils::consts::get_fwd_cap(true).max(1));
+		t_fold.stop();
+		// This round's post-fold record. fold_ms spans EVERY bump try
+		// (count them from the `fold CapErr bump try` lines), so with
+		// PERF 1010 above it accounts for the whole round.
+		// retry_caperr resets the gauges at the top of each try, so
+		// sat_report_max here is the last, SUCCESSFUL one: worst
+		// SINGLE chunk per gauge, gauges that never fired omitted.
+		// HIGH is GOOD -- a tight capacity is the goal, a low reading
+		// is capacity wasted on that axis. Only Q_m and Q_c BOUND
+		// anything (discharge_adv_neo.rs:1993 records the two
+		// operands CapErr compares, :3995 the quantity the theorem
+		// bounds); wrap/real/sub are that source's own "SPLIT gauges"
+		// -- a decomposition of the jointly-budgeted Q_m total, so one
+		// of them reading over 100% on a fold that PASSED is normal,
+		// not an anomaly. Replaces the FWD-QUEUE line, which read
+		// 0.0% (0/1) in EVERY neo round ever recorded here, because
+		// record_fwd's one caller is the LEGACY gadget
+		// (discharge_adv.rs:1521). zkp_driver.rs:8028 still emits it
+		// for legacy sweeps, so attic/run_collect_scale_dlp.py keeps
+		// working.
 		utils::logger::emit_stdout(format!(
-			"[{}] count={}: FWD-QUEUE SATURATION cs={:.1}% ({}/{}) \
-			 igc={:.1}% ({}/{})", sc.name, cnt,
-			100.0 * fc as f32 / fcc as f32, fc, fcc,
-			100.0 * fi as f32 / fic as f32, fi, fic));
+			"==== SCALE ROUND STATS count={} fold_ms={} sat={} ====",
+			cnt, t_fold.ms(), utils::consts::sat_report_max()));
 		utils::logger::flush_logger();
 		utils::logger::emit_stdout(format!(
 			"==== SCALE ROUND END count={} ====", cnt));
@@ -3390,11 +3422,20 @@ pub fn collect_scale_dlp_neo(corpus_idx: usize, vec_count: &[usize],
 
 /// ClamAV scale sweep. b_dry_run is the CLI's dry token (NOT the
 /// global flag): it swaps in the dry chunk and range table, and cuts
-/// the corpus to CLAM's dry_scale_perc.
+/// the corpus to CLAM's dry_scale_perc. `tune_v2` is the
+/// subcommand's tuner arm -- None for the bare `scale_clam`, Some
+/// for an explicit A/B token, which also takes its own plan dir and
+/// DB cache so the arms cannot wipe each other.
 pub fn collect_scale_clamav_neo(corpus_idx: usize,
-	vec_count: &[usize], b_dry_run: bool) {
-	collect_scale_data_neo(&CLAM, corpus_idx, vec_count,
-		b_dry_run)
+	vec_count: &[usize], b_dry_run: bool, tune_v2: Option<bool>) {
+	let mut spec = CLAM.clone();
+	// The bare token keeps v1, unlike full_clam's v2 default: no v2
+	// data exists for a THINNED clam DB yet. One word to flip once
+	// the A/B is green.
+	spec.b_tune_v2 = tune_v2.unwrap_or(false);
+	arm_plan_dir(&mut spec, tune_v2, "clam_v1", "clam_v1_neo",
+		"clam_v2", "clam_v2_neo");
+	collect_scale_data_neo(&spec, corpus_idx, vec_count, b_dry_run)
 }
 
 /// Q2 lookup-composition report, perc-driven. perc>=100 reproduces
@@ -3712,7 +3753,11 @@ pub const USAGE: &str = "bora_cli: backend of \
 	   (entire DB, pre-cut ~5% corpus, fold cost only -- no snark;\n \
 	    pass perc_samples=100, the list IS the sample)\n \
 	 scale_dlp <corpus_idx> <c1,c2,...> <dry 0|1>\n \
-	 scale_clam <corpus_idx> <c1,c2,...> <dry 0|1>";
+	   (no arm token: DLP is aggressive and never reads b_tune_v2)\n \
+	 scale_clam <corpus_idx> <c1,c2,...> <dry 0|1>\n \
+	   (bare = the v1 tuner, today's production path)\n \
+	 scale_clam_v1 | scale_clam_v2 <same 3 args>\n \
+	   (A/B: identical data, other tuner; own plan dir + bundle)";
 
 /// Parsed CLI command for examples/bora_cli.rs.
 #[derive(Debug, PartialEq)]
@@ -3739,7 +3784,9 @@ pub enum Cmd {
 	ScaleDlp { corpus_idx: usize, vec_count: Vec<usize>,
 		b_dry_run: bool },
 	ScaleClam { corpus_idx: usize, vec_count: Vec<usize>,
-		b_dry_run: bool },
+		b_dry_run: bool,
+		/// tuner arm; same contract as FullClam::tune_v2.
+		tune_v2: Option<bool> },
 }
 
 fn arg_usize(args: &[String], i: usize, name: &str) -> usize {
@@ -3863,14 +3910,19 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				vec_count: arg_counts(args, 2),
 				b_dry_run: arg_bool(args, 3, "dry") }
 		}
-		Some("scale_clam") => {
+		Some(sub @ ("scale_clam" | "scale_clam_v1"
+			| "scale_clam_v2")) => {
 			assert!(args.len() == 4,
-				"bora_data_driver: scale_clam takes 3 args, \
-				 got {}\n{}", args.len() - 1, USAGE);
+				"bora_data_driver: {} takes 3 args, \
+				 got {}\n{}", sub, args.len() - 1, USAGE);
+			// same corpus, same counts, same rule subset: the ONLY
+			// difference is which tuner runs, so an A/B needs no
+			// rebuild.
 			Cmd::ScaleClam {
 				corpus_idx: arg_usize(args, 1, "corpus_idx"),
 				vec_count: arg_counts(args, 2),
-				b_dry_run: arg_bool(args, 3, "dry") }
+				b_dry_run: arg_bool(args, 3, "dry"),
+				tune_v2: arm_of(sub) }
 		}
 		other => panic!(
 			"bora_data_driver: unknown subcommand {:?}\n{}",
@@ -4720,7 +4772,7 @@ pub mod tests_bora_data_driver {
 		// end-to-end kernel (rebuilds the tiny DB: read=false rule).
 		// num_circs=1 -> k_max=1 -> the single P_max rung, which
 		// T506's per-rung pass leaves untouched: immune to it landing.
-		let caps = build_and_tune(&spec, 2, &bins, 1, 0);
+		let caps = build_and_tune(&spec, 2, &bins, 1, 0, false);
 		assert_eq!(caps.len(), 1);
 		let p = &caps[0];
 		assert_eq!(p.max_word_len, spec.chunk_len);
@@ -4961,7 +5013,8 @@ pub mod tests_bora_data_driver {
 		let manifests =
 			write_job_manifests(&format!("{}/jobs", pd), &bins);
 		// ladder: the tuned caps; tune pins the share on the way.
-		let ladder = build_and_tune(&spec, db_count, &bins, num_circs, 0);
+		let ladder = build_and_tune(&spec, db_count, &bins, num_circs,
+			0, false);
 		// (1) tune-vs-fold population equality, end to end: the pinned
 		// share is the one the WRITTEN manifests derive. Read BEFORE
 		// folding -- a check-on aggressive fold may bump the share once
@@ -5808,7 +5861,7 @@ pub mod tests_bora_data_driver {
 			plan_corpus(&spec, 100.0, 1), 0.05);
 		assert!(bins[0][0].contains("/sample/"), "shrink must fire");
 		// build_and_tune thins the 27,501-sig config to 64 itself.
-		let caps = build_and_tune(&spec, 64, &bins, 1, 0);
+		let caps = build_and_tune(&spec, 64, &bins, 1, 0, false);
 		assert_eq!(caps.len(), 1, "non-aggr = single rung");
 		let p = &caps[0];
 		assert_eq!(p.max_word_len, spec.chunk_len);
@@ -6224,19 +6277,64 @@ pub mod tests_bora_data_driver {
 		assert_eq!(parse_args(&argv(&["scale_clam", "1", "1,300",
 			"1"])),
 			Cmd::ScaleClam { corpus_idx: 1,
-				vec_count: vec![1, 300], b_dry_run: true });
+				vec_count: vec![1, 300], b_dry_run: true,
+				tune_v2: None });
 		// the token that gates BOTH dry shape and the 5% corpus cut:
 		// a full sweep must parse it false (Python sends "0").
 		assert_eq!(parse_args(&argv(&["scale_clam", "1", "1,300",
 			"0"])),
 			Cmd::ScaleClam { corpus_idx: 1,
-				vec_count: vec![1, 300], b_dry_run: false });
+				vec_count: vec![1, 300], b_dry_run: false,
+				tune_v2: None });
 	}
 
 	#[test]
 	#[should_panic(expected = "scale_clam takes 3 args")]
 	fn test_m104_parse_scale_clam_arity() {
 		parse_args(&argv(&["scale_clam", "0", "1,300"]));
+	}
+
+	/// The three scale_clam tokens map to the three tuner arms; the
+	/// bare one is production and takes no rename.
+	#[test]
+	fn test_scale_clam_arms() {
+		for (tok, want) in [("scale_clam", None),
+			("scale_clam_v1", Some(false)),
+			("scale_clam_v2", Some(true))] {
+			match parse_args(&argv(&[tok, "1", "1,300", "0"])) {
+				Cmd::ScaleClam { tune_v2, .. } =>
+					assert_eq!(tune_v2, want, "token {}", tok),
+				other => panic!("{} parsed as {:?}", tok, other),
+			}
+		}
+	}
+
+	/// Each A/B arm owns its plan dir and DB cache after the scale
+	/// clone, and the bare token keeps the canonical pair the
+	/// production bundle collectors look under.
+	#[test]
+	fn test_scale_clam_arm_dirs() {
+		let mk = |t: Option<bool>| {
+			let mut s = CLAM.clone();
+			s.b_tune_v2 = t.unwrap_or(false);
+			arm_plan_dir(&mut s, t, "clam_v1", "clam_v1_neo",
+				"clam_v2", "clam_v2_neo");
+			let c = scale_spec_clone(&s);
+			(c.name, c.db_cache_dir, c.b_tune_v2)
+		};
+		assert_eq!(mk(None), ("clam_scale", "clam_neo_scale", false));
+		assert_eq!(mk(Some(false)),
+			("clam_v1_scale", "clam_v1_neo_scale", false));
+		assert_eq!(mk(Some(true)),
+			("clam_v2_scale", "clam_v2_neo_scale", true));
+	}
+
+	/// DLP is aggressive, so tune() never reads b_tune_v2: an arm
+	/// token there would be an inert knob. Keep it unparseable.
+	#[test]
+	#[should_panic(expected = "unknown subcommand")]
+	fn test_scale_dlp_has_no_arm() {
+		parse_args(&argv(&["scale_dlp_v2", "0", "2,494", "0"]));
 	}
 
 	/// M104 kernel: first CLAM execution of the non-aggr tuner --
@@ -6255,7 +6353,7 @@ pub mod tests_bora_data_driver {
 			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
 		apply_spec_config(&spec, true, &part_role(0, 1, 1));
 		let bins = vec![vec![spec.scale_sources[0].to_string()]];
-		let caps = build_and_tune(&spec, 40, &bins, 1, 0);
+		let caps = build_and_tune(&spec, 40, &bins, 1, 0, false);
 		assert_eq!(caps.len(), 1, "non-aggr = single rung");
 		let p = &caps[0];
 		assert_eq!(p.max_word_len, 128);
