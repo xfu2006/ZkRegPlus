@@ -13,6 +13,7 @@
 import argparse
 import contextlib
 import datetime
+import concurrent.futures
 import fcntl
 import glob
 import importlib.util
@@ -399,14 +400,22 @@ def run_external_python(ctx, script, args, env):
 
 
 def run_rust_example(ctx, example_name, args, env, log_name="run",
-                     max_wall_s=0, max_rss_gb=0):
+                     max_wall_s=0, max_rss_gb=0, label=None,
+                     b_point=True):
     """Single-process `cargo run --release --example <name> -- <args>`,
     mirrors run_external_python but for a real bora_cli-style
     binary instead of a cargo test."""
     cmd = example_cmd(example_name, args)
     run_log = ctx.log_path(log_name)
-    point_current_job(run_log, None)
-    p, t = spawn(cmd, env, run_log, ctx.key)
+    # b_point defaults True, as it always was.  The scale runner sets
+    # it False and repoints ONCE per batch from its own thread: with
+    # k rounds in flight the last starter would win the symlink and
+    # then keep it pointing at a DEAD log once that round finished.
+    if b_point:
+        point_current_job(run_log, None)
+    # label defaults to the leaf key, as it always did; the scale
+    # runner overrides it so k interleaved streams stay attributable.
+    p, t = spawn(cmd, env, run_log, label or ctx.key)
     ctx.watch(p, run_log, max_wall_s=max_wall_s,
               max_rss_gb=max_rss_gb)
     p.wait()
@@ -926,7 +935,10 @@ def _atomic_symlink(target, link_path):
     """os.symlink to a tmp name, then os.rename() over link_path, so a
     concurrent `tail -F` reader never sees a missing/half-written link."""
     os.makedirs(os.path.dirname(link_path), exist_ok=True)
-    tmp = link_path + ".tmp"
+    # Per-thread tmp name: the scale pool repoints this from N slot
+    # threads, and a shared ".tmp" lets one unlink another's link
+    # between symlink() and rename().
+    tmp = "%s.%d.tmp" % (link_path, threading.get_ident())
     if os.path.lexists(tmp):
         os.unlink(tmp)
     os.symlink(target, tmp)
@@ -2196,46 +2208,229 @@ def scale_ab_report(log_v1, log_v2, tag):
     return out
 
 
-def run_leaf_scale_dlp(mode, ctx):
-    """M102 Scale-DLP leaf: two sequential bora_cli scale_dlp sweeps,
-    one per fixed corpus, the second running even if the first failed;
-    dry passes dry=1 (22-bit range table, corpus left whole). Each log
-    is packed into its any_server bundle even on a crash (partial
-    rounds kept; 0 rounds leave the bundle untouched)."""
-    counts = SCALE_DLP_COUNTS[mode]
-    arg = ",".join(str(c) for c in counts)
-    dry = "1" if mode == "dry" else "0"
-    env = scale_env()
+# ---- concurrent scale sweeps: batches of k, longest-first ----------
+#
+# One work ITEM = one round = one bora_cli process pinned to a SLOT.
+# The slot IS the part_id: cache_dir_for's contract is already "each
+# part owns its dir because the cache writes must never race", so k
+# slots get k private plan dirs, thinned configs, DB caches and job
+# logs for free.  Nothing here can reach full_dlp/full_clam/full_dna:
+# ZKR_SCALE_SLOT is injected only by this runner, and neo_env() strips
+# every ZKR_* not in NEO_ENV_PASS (which it is NOT in).
+#
+# ONE CORPUS AT A TIME, and a batch is a BARRIER.  Both are deliberate:
+# the two corpora share a count ladder and pack_scale_bundle names
+# members log_<count>.txt.tgz on the count ALONE, so interleaving them
+# would let corpus 1 overwrite corpus 0 -- and an abort mid-flight
+# would damage BOTH committed bundles where the sequential leaf could
+# damage at most one.
+
+SCALE_BATCH = 3            # rounds in flight; k=1 == today's behaviour
+
+# Worst-case co-resident RAM for a batch, per dataset: the k largest
+# MEASURED per-round peaks of the archived legacy sweeps (log "RAM: N
+# GB", i.e. VSZ -- foldpot/utils.rs:326 is memory_stats().virtual_mem,
+# so these over-state true RSS; gdb@7775 measured 73 GB RSS against 92
+# GB VSZ).  Used ONLY to fall back to a smaller k on a small box.
+SCALE_PEAK_GB = {
+    "scale_dlp":  [149, 140, 133],
+    "scale_clam": [139, 136, 133],
+}
+# Dry rounds are a different, far smaller shape (22-bit range table,
+# cut corpus).  Measured from the same committed bundles: dlp 9 GB
+# @cnt 2 and 20 @494; clam 9-10 @1 and 12 @300.  Pricing dry off the
+# FULL table over-charged it 7-12x, which pinned every dry run to
+# k=1 -- so k>1 would never be exercised before a production sweep.
+# Worst measured peak, repeated: conservative and honest.
+SCALE_PEAK_GB_DRY = {
+    "scale_dlp":  [20, 20, 20],
+    "scale_clam": [12, 12, 12],
+}
+# Never commit the last slice of the box.
+SCALE_HOLDBACK_GB = 40.0
+
+
+def scale_batch_k(key, mode="full", want=None):
+    """Largest k <= want whose k BIGGEST rounds fit the detected RAM.
+
+    Longest-first means the k biggest are the only set that is ever
+    co-resident, so if they fit, every later batch does too.  A small
+    box, or an unreadable /proc/meminfo, yields 1 -- today's sequential
+    behaviour -- so the failure mode is "slow", never "OOM"."""
+    want = SCALE_BATCH if want is None else want
+    budget = _v101_mem_avail_gb() - SCALE_HOLDBACK_GB
+    top = (SCALE_PEAK_GB if mode == "full" else SCALE_PEAK_GB_DRY)[key]
+    k = 0
+    while k < min(want, len(top)) and sum(top[:k + 1]) <= budget:
+        k += 1
+    return max(1, k), budget
+
+
+def _reclaim_scale_cache(slot):
+    """Drop one slot's DB cache as soon as its round is done.
+
+    R1: the write itself cannot be removed -- fold() re-reads the DB
+    from that dir and fold() is shared with run_neo, the FULL path.
+    The name is anchored and the '_scale' infix is produced only by
+    scale_spec_clone, so no full-run cache dir can ever match."""
+    if not os.path.isdir(CACHE_DIR):
+        return
+    pat = re.compile(r"[A-Za-z0-9_]+_scale_p%d$" % slot)
+    for name in sorted(os.listdir(CACHE_DIR)):
+        if not pat.fullmatch(name):
+            continue
+        p = os.path.join(CACHE_DIR, name)
+        try:
+            if os.path.islink(p) or not os.path.isdir(p):
+                os.unlink(p)
+            else:
+                shutil.rmtree(p)
+        except OSError as e:
+            log("reclaim %s: %s" % (name, e))
+
+
+def _scale_round(ctx, slot, sub, idx, cnt, dry, tag, env0):
+    """One round in one slot.  Returns rc; the log path is derived by
+    the caller, so a round that RAISES still contributes its partial
+    log to the bundle.
+
+    No max_rss_gb: the sequential leaf passed none, batches are sized
+    so their worst case fits, and adding a ceiling would let a run be
+    killed where today it completes."""
+    env = dict(env0)
+    env["ZKR_SCALE_SLOT"] = str(slot)
+    # logger.rs:126 UNLINKS log_job_<tag><id>.txt on first touch, so an
+    # untagged second slot would delete the first's live log.  Set from
+    # here, never from Rust: set_var races rayon's getenv.
+    env["ZKR_LOG_TAG"] = "s%d_" % slot
+    try:
+        return run_rust_example(ctx, "bora_cli",
+                                [sub, str(idx), str(cnt), dry], env,
+                                log_name=scale_round_log(tag, cnt),
+                                label="%s_c%d" % (tag, cnt),
+                                b_point=False)
+    finally:
+        _reclaim_scale_cache(slot)
+
+
+def scale_round_log(tag, cnt):
+    """Per-(corpus, count) log name -- the unit a round is retried in."""
+    return "%s_c%d" % (tag, cnt)
+
+
+def run_scale_batched(ctx, key, mode, runs, counts, sub_of, dry, env,
+                      k=None):
+    """Every round of every corpus, one corpus at a time, in batches
+    of k, biggest count first.
+
+    Descending count is chosen for RAM, which IS monotone in count --
+    that is what makes scale_batch_k sound, since the first batch is
+    then the heaviest.  It is only ROUGHLY longest-first: measured on
+    the committed bundles, readelf's whole round is 33% LONGER at
+    count 1 than at 300.  Treat the ordering as a RAM guarantee and a
+    scheduling heuristic, not a runtime guarantee."""
+    if k is None:
+        k, budget = scale_batch_k(key, mode)
+    else:
+        budget = float("nan")
+    order = sorted(counts, reverse=True)
+    log("%s: %d round(s)/corpus, batch k=%d, budget %.0f GB"
+        % (key, len(counts), k, budget))
     rc = 0
-    for idx, bundle, tag in SCALE_DLP_RUNS:
-        # Each sweep is hours; the operator's kill must not be followed
-        # by the NEXT one.  Record first, combine after -- `rc or
-        # _abort_leaf(...)` would skip the recorder in exactly the case
-        # where sweep 1 had already failed.
+    for idx, bundle, tag in runs:
         if aborted():
+            # Record FIRST, combine after: `rc or _abort_leaf(...)`
+            # short-circuits and skips the recorder in exactly the
+            # case where the previous corpus had already failed --
+            # and with k>1 that is the NORMAL Ctrl-C path, because
+            # _on_signal calls _terminate_all() first, so every
+            # in-flight round returns -15.
             arc = _abort_leaf(ctx, "signal before %s" % tag)
             rc = rc or arc
             break
-        lg = ctx.log_path(tag)
-        try:
-            rc_i = run_rust_example(ctx, "bora_cli",
-                                     ["scale_dlp", str(idx), arg, dry],
-                                     env, log_name=tag)
-        finally:
-            dest = raw_data_path(bundle, server_specific=False)
-            if os.path.isfile(lg) and pack_scale_bundle(lg, dest):
-                ctx.raw_data.append(dest)
-        if rc_i == 0:
-            missing = scale_missing_rounds(lg, counts)
-            if missing:
-                ctx.note("%s: %s" % (tag, missing))
-                rc_i = 7
-        else:
-            ctx.note("%s: rc=%s" % (tag, rc_i))
-        # advisory telemetry, after the verdict so it cannot alter it
-        for ln in scale_round_report(lg, tag):
-            log(ln)
-        rc = rc or rc_i
+        rc = _run_one_corpus(ctx, idx, bundle, tag, sub_of(tag), counts,
+                             order, dry, env, k) or rc
+    return rc
+
+
+def _run_one_corpus(ctx, idx, bundle, tag, sub, counts, order, dry, env,
+                    k):
+    """One corpus's whole ladder, then merge + pack + verify it."""
+    rcs = {}
+    b_abort, rc_abort = False, 0
+    for i in range(0, len(order), k):
+        batch = order[i:i + k]
+        if aborted():
+            b_abort = True
+            rc_abort = _abort_leaf(ctx, "%s: signal with %d round(s) "
+                                   "left" % (tag, len(order) - i))
+            break
+        # Single writer, and it follows the batch's BIGGEST round.
+        point_current_job(ctx.log_path(scale_round_log(tag, batch[0])),
+                          None)
+        with concurrent.futures.ThreadPoolExecutor(len(batch)) as ex:
+            futs = {ex.submit(_scale_round, ctx, slot, sub, idx, cnt,
+                              dry, tag, env): cnt
+                    for slot, cnt in enumerate(batch)}
+            for f in concurrent.futures.as_completed(futs):
+                cnt = futs[f]
+                try:
+                    rcs[cnt] = f.result()
+                except Exception as e:                    # noqa: BLE001
+                    ctx.note("%s c=%d: %s" % (tag, cnt, e))
+                    rcs[cnt] = 7
+    # Merge in LADDER order, then pack exactly as the sequential leaf
+    # did.  Rounds that raised are included: a partial log still holds
+    # whatever rounds completed, and pack_scale_bundle keeps them.
+    merged = ctx.log_path(tag)
+    with open(merged, "w") as out:
+        for cnt in counts:
+            lg = ctx.log_path(scale_round_log(tag, cnt))
+            if os.path.isfile(lg):
+                with open(lg, errors="replace") as f:
+                    shutil.copyfileobj(f, out)
+    dest = raw_data_path(bundle, server_specific=False)
+    if pack_scale_bundle(merged, dest):
+        ctx.raw_data.append(dest)
+    # The END-marker check runs UNCONDITIONALLY: rounds are independent
+    # now, so one crashed round must not suppress the completeness gate
+    # for the other ten.
+    rc = 0
+    for cnt in counts:
+        if rcs.get(cnt):
+            ctx.note("%s c=%d: rc=%s" % (tag, cnt, rcs[cnt]))
+            rc = rc or rcs[cnt]
+    # The completeness gate is UNCONDITIONAL on rc -- one crashed
+    # round must not suppress it for the other ten -- but NOT on an
+    # abort: rounds the operator stopped were never attempted, and
+    # laundering a clean SIGINT into an rc=7 DATA-LOSS verdict would
+    # pack a FAIL triage bundle for a deliberate stop.
+    if b_abort:
+        rc = rc or rc_abort
+    else:
+        missing = scale_missing_rounds(merged, counts)
+        if missing:
+            ctx.note("%s: %s" % (tag, missing))
+            rc = rc or 7
+    for ln in scale_round_report(merged, tag):
+        log(ln)
+    return rc
+
+
+def run_leaf_scale_dlp(mode, ctx):
+    """M102 Scale-DLP leaf: every (corpus, count) round of both fixed
+    corpora, run over a fixed slot pool longest-first; dry passes dry=1
+    (22-bit range table, corpus left whole). Each corpus's rounds are
+    merged in ladder order and packed into its any_server bundle even
+    on a crash (partial rounds kept; 0 rounds leave the bundle alone).
+    k=1 runs the same rounds in the same order as the old sequential
+    leaf but is NOT byte-identical: one process per round, so
+    per-round logs, an s0_-tagged Rust job log, and a cache reclaimed
+    after each round rather than overwritten."""
+    counts = SCALE_DLP_COUNTS[mode]
+    rc = run_scale_batched(ctx, "scale_dlp", mode, SCALE_DLP_RUNS,
+                           counts, lambda _tag: "scale_dlp",
+                           "1" if mode == "dry" else "0", scale_env())
     return ctx.finish(rc, b_fail_scan=False)
 
 
@@ -2256,10 +2451,9 @@ SCALE_CLAM_RUNS = [(0, "scale_data_readelf.tgz", "scale_readelf"),
 
 
 def run_leaf_scale_clamav(mode, ctx, arm=None):
-    """M104 Scale-ClamAV leaf: two sequential bora_cli scale_clam
-    sweeps (readelf then gdb), the second running even if the first
-    failed; dry passes light=1 (dry chunk shape). Bundles pack in a
-    finally, partial rounds kept.
+    """M104 Scale-ClamAV leaf: every (corpus, count) round of readelf
+    and gdb over a fixed slot pool, longest-first; dry passes light=1
+    (dry chunk shape). Bundles pack per corpus, partial rounds kept.
 
     arm None = production: the bare subcommand, the canonical bundle
     the scale figure reads.  "v1"/"v2" = a tuner A/B arm, which takes
@@ -2267,40 +2461,13 @@ def run_leaf_scale_clamav(mode, ctx, arm=None):
     overwrite the figure's inputs, and (via arm_plan_dir on the Rust
     side) never shares a plan dir or DB cache with the other arm."""
     counts = SCALE_CLAM_COUNTS[mode]
-    arg = ",".join(str(c) for c in counts)
-    light = "1" if mode == "dry" else "0"
     sub = "scale_clam" if arm is None else "scale_clam_%s" % arm
-    env = scale_env()
-    rc = 0
-    for idx, bundle, tag in SCALE_CLAM_RUNS:
-        if arm is not None:
-            bundle = bundle[:-len(".tgz")] + "_%s.tgz" % arm
-            tag = "%s_%s" % (tag, arm)
-        if aborted():        # see run_leaf_scale_dlp for why not `rc or`
-            arc = _abort_leaf(ctx, "signal before %s" % tag)
-            rc = rc or arc
-            break
-        lg = ctx.log_path(tag)
-        try:
-            rc_i = run_rust_example(
-                ctx, "bora_cli",
-                [sub, str(idx), arg, light], env,
-                log_name=tag)
-        finally:
-            dest = raw_data_path(bundle, server_specific=False)
-            if os.path.isfile(lg) and pack_scale_bundle(lg, dest):
-                ctx.raw_data.append(dest)
-        if rc_i == 0:
-            missing = scale_missing_rounds(lg, counts)
-            if missing:
-                ctx.note("%s: %s" % (tag, missing))
-                rc_i = 7
-        else:
-            ctx.note("%s: rc=%s" % (tag, rc_i))
-        # advisory telemetry, after the verdict so it cannot alter it
-        for ln in scale_round_report(lg, tag):
-            log(ln)
-        rc = rc or rc_i
+    runs = SCALE_CLAM_RUNS if arm is None else [
+        (idx, b[:-len(".tgz")] + "_%s.tgz" % arm, "%s_%s" % (tag, arm))
+        for idx, b, tag in SCALE_CLAM_RUNS]
+    rc = run_scale_batched(ctx, "scale_clam", mode, runs, counts,
+                           lambda _tag: sub,
+                           "1" if mode == "dry" else "0", scale_env())
     return ctx.finish(rc, b_fail_scan=False)
 
 
@@ -6988,305 +7155,274 @@ class RunLeafEffectiveTest(unittest.TestCase):
         self.assertTrue(any("effective:" in n for n in ctx._notes))
 
 
-class RunLeafScaleDlpTest(unittest.TestCase):
+class ScaleLeafPoolTests:
+    """Shared cases for the two scale leaves, which now run their
+    rounds over a slot pool instead of one process per corpus.
+
+    A plain mixin, NOT a TestCase: unittest collects every TestCase
+    subclass, so an abstract base would run with KEY/LEAF = None."""
+
+    KEY = None          # "scale_dlp" / "scale_clam"
+    RUNS = None
+    COUNTS = None
+    LEAF = None
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        patches = [
-            mock.patch.object(_MOD, "JOB_LOG_DIR",
-                               os.path.join(self.tmp.name, "logs")),
-            mock.patch.object(_MOD, "FAILED_TGZ_DIR",
-                               os.path.join(self.tmp.name, "failed_tgz")),
-            mock.patch.object(_MOD, "LOGS_DIR",
-                               os.path.join(self.tmp.name, "job_logs")),
-            mock.patch.object(_MOD, "RAW_DATA_ROOT",
-                               os.path.join(self.tmp.name, "raw_data")),
-            _sandbox_aborted(),
-        ]
-        for p in patches:
+        for name, sub in (("JOB_LOG_DIR", "jobs"), ("FAILED_TGZ_DIR", "ft"),
+                          ("LOGS_DIR", "logs"), ("RAW_DATA_ROOT", "raw")):
+            d = os.path.join(self.tmp.name, sub)
+            os.makedirs(d, exist_ok=True)
+            p = mock.patch.object(_MOD, name, d)
             p.start()
             self.addCleanup(p.stop)
-        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
-
-    @staticmethod
-    def _round(cnt, extra=""):
-        return ("==== SCALE ROUND BEGIN count=%d rules=%d/9861 "
-                "corpus=x ====\n%s"
-                "==== SCALE ROUND END count=%d ====\n"
-                % (cnt, cnt, extra, cnt))
-
-    @staticmethod
-    def _all_rounds(extra=""):
-        """A complete sweep log for whatever dry counts are configured
-        (derived, so retuning the counts cannot rot these tests)."""
-        return "".join(
-            RunLeafScaleDlpTest._round(c, extra if i == 0 else "")
-            for i, c in enumerate(SCALE_DLP_COUNTS["dry"]))
-
-    def _fake_run(self, rcs, bodies):
-        """Stand-in run_rust_example: writes the per-call log body,
-        returns the per-call rc, records (example, args, log_name)."""
-        calls = []
-
-        def fake(ctx, name, args, env, log_name="run"):
-            i = len(calls)
-            calls.append((name, args, log_name))
-            with open(ctx.log_path(log_name), "w") as f:
-                f.write(bodies[i])
-            return rcs[i]
-        return calls, fake
-
-    def test_signal_skips_the_second_sweep(self):
-        """A2014: a kill during sweep 1 must not start sweep 2."""
-        ctx = JobHandle("scale_dlp", "dry")
-        body = self._all_rounds()
-        calls, fake = self._fake_run([0, 0], [body, body])
-
-        def abort_after_first(c, name, args, env, log_name="run"):
-            rc = fake(c, name, args, env, log_name=log_name)
-            _MOD._ABORTED = True
-            return rc
-
-        with mock.patch.object(_MOD, "run_rust_example", abort_after_first):
-            result = run_leaf_scale_dlp("dry", ctx)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(result.rc, ABORT_RC)
-        self.assertTrue(any("signal before" in n for n in ctx._notes))
-
-    def test_signal_after_a_failed_sweep_still_records_the_abort(self):
-        """`rc = rc or _abort_leaf(...)` would short-circuit the recorder
-        in exactly this case, losing the reason the sweep stopped."""
-        ctx = JobHandle("scale_dlp", "dry")
-        calls, fake = self._fake_run([5], ["broken\n"])
-
-        def abort_after_first(c, name, args, env, log_name="run"):
-            rc = fake(c, name, args, env, log_name=log_name)
-            _MOD._ABORTED = True
-            return rc
-
-        with mock.patch.object(_MOD, "run_rust_example", abort_after_first):
-            result = run_leaf_scale_dlp("dry", ctx)
-        self.assertEqual(result.rc, 5)          # the real failure wins
-        self.assertTrue(any("signal before" in n for n in ctx._notes))
-
-    def test_argv_bundles_and_order(self):
-        """Both sweeps run in order with the locked argv/log names;
-        each bundle lands in any_server with one member per round."""
-        ctx = JobHandle("scale_dlp", "dry")
-        body = self._all_rounds()
-        csv = ",".join(str(c) for c in SCALE_DLP_COUNTS["dry"])
-        calls, fake = self._fake_run([0, 0], [body, body])
-        with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_dlp("dry", ctx)
-        self.assertEqual(result.rc, 0)
-        self.assertFalse(result.failed)
-        # dry passes the dry token; full passes "0" (see the mode test)
-        self.assertEqual(
-            calls,
-            [("bora_cli", ["scale_dlp", "0", csv, "1"], "scale_2"),
-             ("bora_cli", ["scale_dlp", "1", csv, "1"], "scale_6")])
-        members = sorted("log_%d.txt.tgz" % c
-                          for c in SCALE_DLP_COUNTS["dry"])
-        for bundle in ("scale_data_dlp_2.tgz", "scale_data_dlp_6.tgz"):
-            dest = raw_data_path(bundle, server_specific=False)
-            self.assertTrue(os.path.isfile(dest))
-            with tarfile.open(dest) as t:
-                self.assertEqual(sorted(t.getnames()), members)
-        self.assertEqual(len(ctx.raw_data), 2)
-
-    def test_first_failure_does_not_skip_second(self):
-        """Failing first sweep still runs the second; its rc wins and
-        only the second's bundle is placed (0 rounds -> untouched)."""
-        ctx = JobHandle("scale_dlp", "dry")
-        calls, fake = self._fake_run(
-            [3, 0], ["no rounds\n", self._all_rounds()])
-        with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_dlp("dry", ctx)
-        self.assertEqual(len(calls), 2)          # second still ran
-        self.assertEqual(result.rc, 3)
-        self.assertTrue(result.failed)
-        self.assertFalse(os.path.isfile(raw_data_path(
-            "scale_data_dlp_2.tgz", server_specific=False)))
-        self.assertTrue(os.path.isfile(raw_data_path(
-            "scale_data_dlp_6.tgz", server_specific=False)))
-
-    def test_missing_round_end_is_rc7(self):
-        """rc=0 but one count lacks its ROUND END marker -> rc=7 with
-        a note; the partial round is still packed into the bundle."""
-        ctx = JobHandle("scale_dlp", "dry")
-        top = SCALE_DLP_COUNTS["dry"][-1]
-        partial = self._round(SCALE_DLP_COUNTS["dry"][0]) + \
-            "==== SCALE ROUND BEGIN count=%d rules=%d/9861 " \
-            "corpus=x ====\n" % (top, top)
-        _, fake = self._fake_run([0, 0], [partial, self._all_rounds()])
-        with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_dlp("dry", ctx)
-        self.assertEqual(result.rc, 7)
-        self.assertIn("scale_2: no ROUND END for counts [%d]" % top,
-                       result.note)
-        # the partial round is still packed (legacy crash tolerance)
-        self.assertTrue(os.path.isfile(raw_data_path(
-            "scale_data_dlp_2.tgz", server_specific=False)))
-
-    def test_expected_caperr_noise_not_a_fail(self):
-        """Expected bump-retry panic/CapErr text in a SUCCESSFUL log
-        must not counterfeit a FAIL verdict (the fail-scan is off)."""
-        ctx = JobHandle("scale_dlp", "dry")
-        noise = "thread 'main' panicked at 'CapErr: StepFwdPrf'\n"
-        body = self._all_rounds(noise)
-        _, fake = self._fake_run([0, 0], [body, body])
-        with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_dlp("dry", ctx)
-        self.assertEqual(result.rc, 0)
-        self.assertFalse(result.failed)          # fail-scan is off
-
-    def test_pack_runs_even_if_launch_raises(self):
-        """A Python-level launch exception still packs the completed
-        rounds (the finally block), then propagates to the caller."""
-        ctx = JobHandle("scale_dlp", "dry")
-        rounds = self._round(2)
-
-        def boom(ctx2, name, args, env, log_name="run"):
-            with open(ctx2.log_path(log_name), "w") as f:
-                f.write(rounds)
-            raise RuntimeError("launch died")
-        with mock.patch.object(_MOD, "run_rust_example", boom):
-            with self.assertRaises(RuntimeError):
-                run_leaf_scale_dlp("dry", ctx)
-        self.assertTrue(os.path.isfile(raw_data_path(
-            "scale_data_dlp_2.tgz", server_specific=False)))
-
-    def test_full_mode_passes_dry_token_zero(self):
-        """full sweeps must send dry=0 -- the real range table and the
-        whole corpus, whatever the dry shape is tuned to."""
-        ctx = JobHandle("scale_dlp", "full")
-        csv = ",".join(str(c) for c in SCALE_DLP_COUNTS["full"])
-        body = "".join(self._round(c)
-                        for c in SCALE_DLP_COUNTS["full"])
-        calls, fake = self._fake_run([0, 0], [body, body])
-        with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_dlp("full", ctx)
-        self.assertEqual(result.rc, 0)
-        self.assertEqual([c[1] for c in calls],
-                          [["scale_dlp", "0", csv, "0"],
-                           ["scale_dlp", "1", csv, "0"]])
-
-    def test_counts_pin_inclusive(self):
-        """Count constants are pin-INCLUSIVE (spec 8.10c: legacy +1
-        each; top 9861 = the complete rule set)."""
-        # dry top = half the full step (986/2 = 493) + the pin.
-        self.assertEqual(SCALE_DLP_COUNTS["dry"], [2, 494])
-        self.assertEqual(SCALE_DLP_COUNTS["full"],
-                          [2, 987, 1973, 2959, 3945, 4931, 5917, 6903,
-                           7889, 8875, 9861])
-
-    def test_finish_fail_scan_toggle(self):
-        """finish(0, b_fail_scan=False) ignores FAIL_RE log text;
-        True (the default for every other leaf) still flags it."""
-        for b_scan, want_failed in ((True, True), (False, False)):
-            ctx = JobHandle("scale_dlp", "dry")
-            with open(ctx.log_path("run"), "w") as f:
-                f.write("FATAL: boom\n")
-            res = ctx.finish(0, b_fail_scan=b_scan)
-            self.assertEqual(res.failed, want_failed)
-
-
-class RunLeafScaleClamTest(unittest.TestCase):
-    def setUp(self):
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        patches = [
-            mock.patch.object(_MOD, "JOB_LOG_DIR",
-                               os.path.join(self.tmp.name, "logs")),
-            mock.patch.object(_MOD, "FAILED_TGZ_DIR",
-                               os.path.join(self.tmp.name,
-                                             "failed_tgz")),
-            mock.patch.object(_MOD, "LOGS_DIR",
-                               os.path.join(self.tmp.name,
-                                             "job_logs")),
-            mock.patch.object(_MOD, "RAW_DATA_ROOT",
-                               os.path.join(self.tmp.name,
-                                             "raw_data")),
-            _sandbox_aborted(),
-        ]
-        for p in patches:
-            p.start()
-            self.addCleanup(p.stop)
-        os.makedirs(os.path.join(self.tmp.name, "job_logs"))
+        # one slot: the pool must be exercised, but deterministically
+        p = mock.patch.object(_MOD, "scale_batch_k",
+                              lambda key, want=None: (2, 999.0))
+        p.start()
+        self.addCleanup(p.stop)
+        p = mock.patch.object(_MOD, "_reclaim_scale_cache", lambda s: None)
+        p.start()
+        self.addCleanup(p.stop)
+        p = mock.patch.object(_MOD, "point_current_job",
+                              lambda a, b: None)
+        p.start()
+        self.addCleanup(p.stop)
+        _MOD._ABORTED = False
+        self.addCleanup(lambda: setattr(_MOD, "_ABORTED", False))
 
     @staticmethod
     def _round(cnt):
-        return ("==== SCALE ROUND BEGIN count=%d rules=%d/38875 "
-                "corpus=x ====\n"
-                "==== SCALE ROUND END count=%d ====\n"
-                % (cnt, cnt, cnt))
+        return ("==== SCALE ROUND BEGIN count=%d rules=%d/9 corpus=x ====\n"
+                "==== SCALE ROUND END count=%d ====\n" % (cnt, cnt, cnt))
 
-    def test_signal_skips_the_second_sweep(self):
-        """A2014: same gate as scale_dlp, on the clam sweep loop."""
-        ctx = JobHandle("scale_clam", "dry")
-        body = "".join(self._round(c) for c in SCALE_CLAM_COUNTS["dry"])
+    def _fake(self, rc_of=None, body_of=None):
+        """Stand-in run_rust_example.  Records (args, log_name) per call
+        and writes a one-round log matching the count it was given."""
         calls = []
+        self.tagged = {}
 
-        def fake(c, name, args, env, log_name="run"):
-            calls.append(log_name)
-            with open(c.log_path(log_name), "w") as f:
+        def fake(ctx, name, args, env, log_name="run", max_wall_s=0,
+                 max_rss_gb=0, label=None, b_point=True):
+            cnt = int(args[2])
+            slot = env.get("ZKR_SCALE_SLOT")
+            self.tagged.setdefault(slot, set()).add(
+                env.get("ZKR_LOG_TAG"))
+            calls.append((tuple(args), log_name, slot, cnt))
+            body = body_of(cnt) if body_of else self._round(cnt)
+            with open(ctx.log_path(log_name), "w") as f:
                 f.write(body)
+            return rc_of(cnt) if rc_of else 0
+        return calls, fake
+
+    def test_one_process_per_round_longest_first(self):
+        """Each (corpus, count) is its own process, biggest charge first,
+        and every round is charged the number it is killed at."""
+        ctx = JobHandle(self.KEY, "dry")
+        calls, fake = self._fake()
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            res = self.LEAF("dry", ctx)
+        self.assertEqual(res.rc, 0)
+        self.assertFalse(res.failed)
+        self.assertEqual(len(calls), len(self.COUNTS) * len(self.RUNS))
+        per_corpus = {}
+        for args, _lg, _slot, cnt in calls:
+            per_corpus.setdefault(args[1], []).append(cnt)
+        for _idx, cnts in per_corpus.items():
+            self.assertEqual(cnts, sorted(cnts, reverse=True),
+                              "each corpus runs longest-first")
+        self.assertEqual(len(per_corpus), len(self.RUNS))
+        self.assertTrue({c[2] for c in calls} <= {"0", "1"})
+        for slot, tags in self.tagged.items():
+            self.assertEqual(tags, {"s%s_" % slot},
+                              "each slot must carry its own "
+                              "ZKR_LOG_TAG or it unlinks the "
+                              "other's live Rust job log")
+
+    def test_each_corpus_gets_its_own_bundle_with_every_count(self):
+        """Both corpora share one count ladder and pack_scale_bundle keys
+        members on the count ALONE, so a merged log would let corpus 1
+        overwrite corpus 0."""
+        ctx = JobHandle(self.KEY, "dry")
+        _calls, fake = self._fake()
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            self.LEAF("dry", ctx)
+        want = sorted("log_%d.txt.tgz" % c for c in self.COUNTS)
+        self.assertEqual(len(ctx.raw_data), len(self.RUNS))
+        for dest in ctx.raw_data:
+            self.assertTrue(os.path.isfile(dest))
+            with tarfile.open(dest) as t:
+                self.assertEqual(sorted(t.getnames()), want)
+
+    def test_one_failed_round_does_not_skip_the_rest(self):
+        ctx = JobHandle(self.KEY, "dry")
+        bad = self.COUNTS[0]
+        calls, fake = self._fake(rc_of=lambda c: 3 if c == bad else 0,
+                                 body_of=lambda c: ("broken\n" if c == bad
+                                                    else self._round(c)))
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            res = self.LEAF("dry", ctx)
+        self.assertEqual(len(calls), len(self.COUNTS) * len(self.RUNS))
+        self.assertEqual(res.rc, 3)
+
+    def test_missing_round_is_caught_even_when_rc_is_zero(self):
+        """A round that exits 0 without its END marker is still a loss."""
+        ctx = JobHandle(self.KEY, "dry")
+        bad = self.COUNTS[-1]
+        _c, fake = self._fake(body_of=lambda c: ("" if c == bad
+                                                 else self._round(c)))
+        with mock.patch.object(_MOD, "run_rust_example", fake):
+            res = self.LEAF("dry", ctx)
+        self.assertEqual(res.rc, 7)
+        self.assertTrue(any("missing" in n.lower() or str(bad) in n
+                            for n in ctx._notes))
+
+    def test_signal_stops_admitting_and_records_the_abort(self):
+        """A2014, restated for the pool: a kill must stop NEW rounds and
+        the reason must reach the summary even if a round already failed."""
+        ctx = JobHandle(self.KEY, "dry")
+        calls, fake = self._fake()
+
+        def abort_after_first(c, name, args, env, log_name="run",
+                              max_wall_s=0, max_rss_gb=0, label=None,
+                              b_point=True):
+            rc = fake(c, name, args, env, log_name=log_name)
             _MOD._ABORTED = True
-            return 0
+            return rc
 
+        with mock.patch.object(_MOD, "run_rust_example", abort_after_first):
+            res = self.LEAF("dry", ctx)
+        self.assertLessEqual(len(calls), 2,
+                              "no BATCH may start after a signal")
+        self.assertEqual(res.rc, ABORT_RC)
+        self.assertTrue(any("signal" in n for n in ctx._notes))
+
+
+class ScaleBatchSizingTest(unittest.TestCase):
+    """scale_batch_k picks k from DETECTED RAM and falls back safely."""
+
+    def _k(self, avail, key="scale_dlp", mode="full", want=None):
+        with mock.patch.object(_MOD, "_v101_mem_avail_gb",
+                                lambda: avail):
+            return _MOD.scale_batch_k(key, mode, want)[0]
+
+    def test_big_box_takes_the_full_batch(self):
+        self.assertEqual(self._k(476.0), 3)
+        self.assertEqual(self._k(476.0, "scale_clam"), 3)
+
+    def test_small_box_and_unreadable_meminfo_fall_back_to_one(self):
+        """The failure mode must be 'slow', never 'OOM'."""
+        self.assertEqual(self._k(125.0), 1)
+        self.assertEqual(self._k(0.0), 1)
+        self.assertEqual(self._k(-1.0), 1)
+
+    def test_k_never_exceeds_what_the_biggest_rounds_fit(self):
+        """Sum of the k biggest measured peaks must clear the budget."""
+        for key in ("scale_dlp", "scale_clam"):
+            for avail in (476.0, 300.0, 200.0, 125.0):
+                k = self._k(avail, key)
+                top = _MOD.SCALE_PEAK_GB[key][:k]
+                if k > 1:
+                    self.assertLessEqual(
+                        sum(top), avail - _MOD.SCALE_HOLDBACK_GB,
+                        "%s @%.0f GB: k=%d over-commits" % (key, avail, k))
+
+    def test_dry_is_priced_off_the_dry_table(self):
+        """Pricing dry off the FULL table over-charged it 7-12x and
+        pinned every dry run to k=1, so k>1 was never exercised."""
+        self.assertEqual(self._k(115.0, "scale_dlp", "dry"), 3)
+        self.assertEqual(self._k(115.0, "scale_dlp", "full"), 1)
+
+    def test_want_caps_k(self):
+        self.assertEqual(self._k(476.0, want=2), 2)
+        self.assertEqual(self._k(476.0, want=1), 1)
+
+
+class ScaleReclaimCacheTest(unittest.TestCase):
+    """The reclaim regex decides what gets rmtree'd -- pin it hard."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(_MOD, "CACHE_DIR", self.tmp.name)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _mk(self, *names):
+        for n in names:
+            os.makedirs(os.path.join(self.tmp.name, n), exist_ok=True)
+
+    def test_reclaims_only_this_slot(self):
+        self._mk("dlp_neo_scale_p0", "dlp_neo_scale_p1",
+                  "clam_neo_scale_p0")
+        _MOD._reclaim_scale_cache(0)
+        left = sorted(os.listdir(self.tmp.name))
+        self.assertEqual(left, ["dlp_neo_scale_p1"])
+
+    def test_never_touches_a_full_run_cache(self):
+        """'_scale' is produced ONLY by scale_spec_clone, so no full-run
+        dir can match -- this is what keeps R4 true for the reclaim."""
+        keep = ["dlp_neo_p0", "clam_neo_p0", "dna_neo_p0", "full_data",
+                 "dlp_corpus_aggr", "logs", "main", "dlp_small_neo_p0"]
+        self._mk(*keep)
+        _MOD._reclaim_scale_cache(0)
+        self.assertEqual(sorted(os.listdir(self.tmp.name)), sorted(keep))
+
+    def test_symlink_is_unlinked_not_followed(self):
+        outside = os.path.join(self.tmp.name, "outside")
+        os.makedirs(outside)
+        os.symlink(outside, os.path.join(self.tmp.name,
+                                          "dlp_neo_scale_p2"))
+        _MOD._reclaim_scale_cache(2)
+        self.assertTrue(os.path.isdir(outside), "must not follow the link")
+        self.assertFalse(os.path.lexists(
+            os.path.join(self.tmp.name, "dlp_neo_scale_p2")))
+
+    def test_missing_cache_dir_is_not_an_error(self):
+        with mock.patch.object(_MOD, "CACHE_DIR",
+                                os.path.join(self.tmp.name, "nope")):
+            _MOD._reclaim_scale_cache(0)          # must not raise
+
+
+class RunLeafScaleDlpTest(ScaleLeafPoolTests, unittest.TestCase):
+    KEY = "scale_dlp"
+    RUNS = SCALE_DLP_RUNS
+    COUNTS = SCALE_DLP_COUNTS["dry"]
+    LEAF = staticmethod(run_leaf_scale_dlp)
+
+    def test_subcommand_is_the_bare_token(self):
+        ctx = JobHandle("scale_dlp", "dry")
+        calls, fake = self._fake()
         with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_clamav("dry", ctx)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(result.rc, ABORT_RC)
-        self.assertTrue(any("signal before" in n for n in ctx._notes))
+            self.LEAF("dry", ctx)
+        self.assertTrue(all(c[0][0] == "scale_dlp" for c in calls))
 
-    def test_argv_light_bundles_and_scan_free(self):
-        """Dry sweeps pass light=1, run readelf then gdb, place the
-        legacy bundle names, and verdict scan-free."""
+
+class RunLeafScaleClamTest(ScaleLeafPoolTests, unittest.TestCase):
+    KEY = "scale_clam"
+    RUNS = SCALE_CLAM_RUNS
+    COUNTS = SCALE_CLAM_COUNTS["dry"]
+    LEAF = staticmethod(run_leaf_scale_clamav)
+
+    def test_arm_takes_its_own_subcommand_tag_and_bundle(self):
+        """An A/B arm must never overwrite the figure's inputs."""
         ctx = JobHandle("scale_clam", "dry")
-        body = self._round(1) + self._round(300)
-        calls = []
-
-        def fake(c, name, args, env, log_name="run"):
-            calls.append((name, args, log_name))
-            with open(c.log_path(log_name), "w") as f:
-                f.write(body)
-            return 0
+        calls, fake = self._fake()
         with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_clamav("dry", ctx)
-        self.assertEqual(result.rc, 0)
-        self.assertFalse(result.failed)
-        self.assertEqual(calls, [
-            ("bora_cli", ["scale_clam", "0", "1,300", "1"],
-             "scale_readelf"),
-            ("bora_cli", ["scale_clam", "1", "1,300", "1"],
-             "scale_gdb")])
-        for bundle in ("scale_data_readelf.tgz",
-                        "scale_data_gdb.tgz"):
-            self.assertTrue(os.path.isfile(raw_data_path(
-                bundle, server_specific=False)))
-        self.assertEqual(len(ctx.raw_data), 2)
+            self.LEAF("dry", ctx, arm="v2")
+        self.assertTrue(all(c[0][0] == "scale_clam_v2" for c in calls))
+        self.assertTrue(all("_v2" in c[1] for c in calls))
+        for dest in ctx.raw_data:
+            self.assertIn("_v2.tgz", os.path.basename(dest))
 
-    def test_counts_and_full_is_heavy(self):
-        """Counts keep legacy cardinality (CLAM pins nothing);
-        full passes light=0 and a failing rc wins."""
-        self.assertEqual(SCALE_CLAM_COUNTS["dry"], [1, 300])
-        self.assertEqual(SCALE_CLAM_COUNTS["full"],
-                          [1, 3888, 7775, 11663, 15550, 19438,
-                           23325, 27213, 31100, 34988, 38875])
-        ctx = JobHandle("scale_clam", "full")
-        calls = []
-
-        def fake(c, name, args, env, log_name="run"):
-            calls.append(args)
-            with open(c.log_path(log_name), "w") as f:
-                f.write("")
-            return 3
+    def test_bare_arm_keeps_the_production_bundle_names(self):
+        ctx = JobHandle("scale_clam", "dry")
+        _c, fake = self._fake()
         with mock.patch.object(_MOD, "run_rust_example", fake):
-            result = run_leaf_scale_clamav("full", ctx)
-        self.assertEqual(result.rc, 3)
-        self.assertEqual(calls[0][3], "0")   # light=0 at full
-        self.assertEqual(len(calls), 2)      # second still ran
+            self.LEAF("dry", ctx)
+        names = sorted(os.path.basename(d) for d in ctx.raw_data)
+        self.assertEqual(names, sorted(b for _i, b, _t in SCALE_CLAM_RUNS))
 
 
 class RunScaleAbTest(unittest.TestCase):

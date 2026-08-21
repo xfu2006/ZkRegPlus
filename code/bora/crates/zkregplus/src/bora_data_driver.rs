@@ -3315,6 +3315,22 @@ fn scale_spec_clone(spec: &DatasetSpec) -> DatasetSpec {
 	s
 }
 
+/// Concurrent-sweep slot, from ZKR_SCALE_SLOT. The slot IS the
+/// part_id: cache_dir_for's own contract is that each part owns its
+/// dir because "the cache writes must never race", which is exactly
+/// what N concurrent sweeps need. Unset -> 0, the literal every
+/// sequential sweep and every FULL run passes today, so this is inert
+/// off the scale path. ZKR_LOG_TAG is set by the LAUNCHER, not here:
+/// std::env::set_var races rayon's getenv and must land before the
+/// first job log opens (logger.rs:126 unlinks on first touch).
+fn scale_slot() -> usize {
+	match std::env::var("ZKR_SCALE_SLOT") {
+		Err(_) => 0,
+		Ok(v) => v.parse().unwrap_or_else(|_| panic!(
+			"bora_data_driver: ZKR_SCALE_SLOT not a usize: {:?}", v)),
+	}
+}
+
 /// Scale sweep (port of collect_scale_data_dlp, zkp_driver.rs:7671):
 /// ONE fixed corpus, ascending pin-INCLUSIVE rule counts; per count a
 /// fresh thinned DB -> tune -> folding-only fold with CapErr
@@ -3355,6 +3371,10 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 	// unreachable either way.
 	let eff = effective_spec(spec, b_dry_run, 100.0);
 	let sc = scale_spec_clone(&eff);
+	// One local covers every path a round writes: plan dir, thinned
+	// config, DB cache. part_role below stays literal 0 -- that is
+	// the decider role, not the sandbox, and it asserts < numa_num.
+	let slot = scale_slot();
 	apply_spec_config(&sc, b_dry_run, &part_role(0, 1, 1));
 	{
 		// One write scope, AFTER apply_spec_config (which zeroes the
@@ -3367,7 +3387,7 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 	}
 	utils::consts::SCALE_DUMP_FWD
 		.store(true, std::sync::atomic::Ordering::Relaxed);
-	let pd = reset_part_dir(&sc, 0);
+	let pd = reset_part_dir(&sc, slot);
 	// count-invariant: one bin, one file, written once.
 	let bins = vec![vec![src.to_string()]];
 	// dry folds a spec-owned byte prefix: fold work is linear in
@@ -3388,14 +3408,14 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 			"==== SCALE ROUND BEGIN count={} rules={}/{} corpus={} \
 			 ====", cnt, cnt, n_sigs, src));
 		utils::logger::flush_logger();
-		let mut caps = build_and_tune(&sc, cnt, &bins, 1, 0, true);
+		let mut caps = build_and_tune(&sc, cnt, &bins, 1, slot, true);
 		assert_eq!(caps.len(), 1,
 			"bora_data_driver: scale wants 1 rung, got {}",
 			caps.len());
 		let mut t_fold = utils::timer::Timer::new();
 		retry_caperr(&sc, &mut caps[0], |p| fold(&sc,
-			&config_dir_for(&sc, cnt, n_sigs, 0),
-			&cache_dir_for(&sc, 0), &manifests,
+			&config_dir_for(&sc, cnt, n_sigs, slot),
+			&cache_dir_for(&sc, slot), &manifests,
 			std::slice::from_ref(p), 1));
 		t_fold.stop();
 		// This round's post-fold record. fold_ms spans EVERY bump try
