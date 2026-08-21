@@ -3137,18 +3137,22 @@ def install_signal_handlers():
 # gb None = never measured. Every row below is measured: one `--items
 # all` run on 2026-08-11 on a 32-core / 125 GiB box, 8/8 rc=0, 4015s
 # total. RSS is tree-wide peak in GiB (watch_rss divides by 1024^2).
-#   zombie ran genuinely COLD here -- its partial cache
-#   (/tmp/bora_zombie_run + the docs/ mirror) was cleared first, so 6.8
-#   min is a from-scratch figure. It still resumes instantly when that
-#   cache survives, hence the "cold" note.
-#   CAVEAT: zombie's 26.4 GiB is over the 24 GiB dry budget. It is
+#   EXCEPT zombie and reef, re-measured 2026-08-21 on zkregplus-large
+#   (128-core / 961 GiB) from SUMMARY.log: zombie 932 s / 30.3 GB, reef
+#   1912 s / 28.5 GB.  Both ran after zombie_isolate_dry landed, so
+#   zombie is COLD BY CONSTRUCTION now -- the dry leaf can no longer
+#   read the resume cache, which is part of why it is above the 2026-
+#   08-11 figure.  The two boxes differ, so do not read the delta as a
+#   regression.  It still resumes instantly in FULL mode, where the
+#   cache is untouched, hence the "cold" note.
+#   CAVEAT: zombie's 30.3 GiB is over the 24 GiB dry budget. It is
 #   recorded as measured; the pool/concurrency retune is pending.
 DRY_COST = [
     ("dlp",        "DLP",           2.4,  6.5,  ""),
     ("dna",        "Dna",           7.0,  15.9, ""),
     ("clam",       "Clamav",        8.7,  17.1, ""),
-    ("zombie",     "Zombie",        6.8,  26.4, " cold"),
-    ("reef",       "Reef",          23.0, 28.4, ""),
+    ("zombie",     "Zombie",        15.5, 30.3, " cold"),
+    ("reef",       "Reef",          31.9, 28.5, ""),
     ("lkup",       "Analyze lkup",  3.5,  8.3,  ""),
     ("scale_clam", "Scale-ClamAV",  7.3,  5.2,  ""),
     ("scale_dlp",  "Scale-DLP",     8.5,  13.0, ""),
@@ -3253,10 +3257,17 @@ _LEAF_KEYS = [k for k, _ in LEAF_CHOICES]     # canonical order (2.2)
 # 8555 s, peak_rss 70.8 GB on both.  The identical peak is
 # expected, not a meter artifact -- each leaf builds the same
 # three DBs (Mal/Dna/Dlp) and that build is the peak.
+# 2026-08-21: dlp and clam re-measured from the NEO production runs on
+# the 1 TB box, superseding the legacy harvest for those two rows --
+# dlp end-to-end wall 70.81 hr against legacy's 121.2 (1.71x), clam's
+# two-half run inside a day.  Both are rounded UP so the menu quotes a
+# budget, not a best case.  peak_rss is UNCHANGED: neo was never
+# metered for a tree peak, and a guessed RAM number would be worse
+# than a stale measured one.
 FULL_COST = [
-    ("dlp",        119.2, 262,  " x2 parts"),
+    ("dlp",        72.0,  262,  " x2 parts"),
     ("dna",        5.4,   533,  ""),
-    ("clam",       19.4,  531,  " x2 parts"),
+    ("clam",       20.0,  531,  " x2 parts"),
     ("zombie",     5.2,   None, ""),
     ("reef",       5.2,   None, ""),
     ("lkup",       2.3,   71,   ""),
@@ -9165,7 +9176,7 @@ class DryCostRollupTest(unittest.TestCase):
         self.assertEqual(dict(LEAF_CHOICES)["dlp"],
                           "DLP [dry ~2.4min, ~6.5GB]")
         self.assertEqual(dict(LEAF_CHOICES)["zombie"],
-                          "Zombie [dry ~6.8min cold, ~26.4GB]")
+                          "Zombie [dry ~15.5min cold, ~30.3GB]")
 
     def test_rollup_appears_on_layer_1_and_on_all(self):
         """The same rollup shows on the top menu's dry_run row and on
@@ -9185,7 +9196,8 @@ class DryCostRollupTest(unittest.TestCase):
             _show_submenu("full_run")
         out = buf.getvalue()
         self.assertIn("Dna [full ~5.4h, ~533GB]", out)
-        self.assertIn("DLP [full ~5d x2 parts, ~262GB]", out)
+        self.assertIn("DLP [full ~3d x2 parts, ~262GB]", out)
+        self.assertIn("Clamav [full ~20h x2 parts, ~531GB]", out)
         self.assertIn("Analyze lkup [full ~2.3h, ~71GB]", out)
         self.assertIn("Effectiveness [full ~2.4h, ~71GB]", out)
         self.assertNotIn("dry", out)

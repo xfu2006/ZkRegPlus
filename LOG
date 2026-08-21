@@ -31327,11 +31327,31 @@ Goal 3. prepare eval reef and zombie run
 		--> compiling of Spartan? -> no it's not verified
 		--> it's just cpu speed is 2x slower
 		--> no parallel contention issue
+Goal 4. collect clam -> DONE -> working and fixed a bug
+	[a] the verificaiton is actually successful, wrong fail report
+	[b] update PAPER_DATA.py to regenerate
 -- TODO --
 Goal 4. restart scale collection clam first 
 	[a] started 10:00AM
 	[b] expected clam 9 hrs + dlp 3 hrs = 12 hrs
 	[c] checked 11:30am: 
+	[d] almost completing
+	[e] scale_clam finished 3pm
+	[f] scale_dlp finished
+Goal 5. reef and zombie run
+	[a] found zombie only has 186 sigs
+	[b] there are dry-run records
+	[c] patch PAPER_DATA.py to clear dry-run data or stamp it
+		-> re-run on server
+		-> dry-run first.
+	[d] 
+
+=== NEW RUN 21:29:45 | full_run | host=zkregplus-large ===
+[21:29:45] START  clam   (full_run/full)
+[17:45:59] FAIL   clam   rc=5 wall=72970s peak_rss=661.9GB idle=10s/14400s
+[17:45:59]        triage: /media/volume/zkregplus_large/ZkRegPlus/code/bora/data/paper_data/run_data/data/raw_data/failed_tgz/paper_data_clam_full_20260820_212948_BUNDLE.tgz
+[17:45:59] DONE   overall_rc=1
+
 
 --- DATA ----
 #####################################

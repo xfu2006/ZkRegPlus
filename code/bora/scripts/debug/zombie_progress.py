@@ -126,21 +126,28 @@ def find_ref(explicit):
     return None
 
 
-def read_ref(path):
+def read_ref(path, b_explicit=False):
     """Reference from `path`, else the EMBEDDED constant.
 
-    An on-disk log WINS: once this box has produced its own run, that
-    output is what you want the live column measured against.
+    An on-disk log WINS -- once this box has produced its own run that
+    is what the live column should be measured against -- UNLESS it is
+    a DRY sweep.  `--run dry_run` overwrites the raw_data mirror, and
+    a dry log prices the ETA against the wrong workload.  Only an
+    explicit --ref may select one.
     """
+    skipped = None
     if path:
         try:
             ref = parse_ref_text(open(path, errors="replace").read())
-            ref["path"] = path
-            return ref
+            if b_explicit or not ref_is_dry(ref):
+                ref["path"] = path
+                return ref
+            skipped = path
         except OSError:
             pass
     ref = parse_ref_text(REF_EMBED)
     ref["path"] = EMBED_TAG
+    ref["skipped_dry"] = skipped
     return ref
 
 
@@ -675,6 +682,9 @@ def show_ref_head(ref):
     if tag == "DRY":
         print("          !! DRY sweep -- these are NOT the paper's "
               "numbers")
+    if ref.get("skipped_dry"):
+        print("          ignored a DRY log (pass --ref to force it):")
+        print("          %s" % ref["skipped_dry"])
 
 
 # =====================================================================
@@ -1313,7 +1323,7 @@ def main():
             print("no state file at %s" % STATE)
         return 0
 
-    ref = read_ref(find_ref(a.ref))
+    ref = read_ref(find_ref(a.ref), bool(a.ref))
     while True:
         log = find_log(a.log)
         now = time.time()
