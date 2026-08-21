@@ -2720,17 +2720,22 @@ _LEAF_KEYS = [k for k, _ in LEAF_CHOICES]     # canonical order (2.2)
 # 373+531 GB -> the 1 TB box).  dna's 533 GB is a true time -v tree
 # peak; the dlp/clam/scale figures are in-log "RAM: N GB" step
 # samples, which the 08-14 calibration showed under-report the tree
-# peak by up to ~1.3x.
+# peak by up to ~1.3x.  lkup/effective are the only rows the
+# runner MEASURED itself rather than harvested: the 2026-08-20
+# full_run on zkreglus-small (512 GB), SUMMARY.log wall 8385 s /
+# 8555 s, peak_rss 70.8 GB on both.  The identical peak is
+# expected, not a meter artifact -- each leaf builds the same
+# three DBs (Mal/Dna/Dlp) and that build is the peak.
 FULL_COST = [
     ("dlp",        119.2, 262,  " x2 parts"),
     ("dna",        5.4,   533,  ""),
     ("clam",       19.4,  531,  " x2 parts"),
     ("zombie",     5.2,   None, ""),
     ("reef",       5.2,   None, ""),
-    ("lkup",       None,  None, ""),
+    ("lkup",       2.3,   71,   ""),
     ("scale_clam", 10.9,  139,  ""),
     ("scale_dlp",  1.3,   149,  ""),
-    ("effective",  None,  None, ""),
+    ("effective",  2.4,   71,   ""),
 ]
 
 
@@ -8349,7 +8354,7 @@ class DryCostRollupTest(unittest.TestCase):
         self.assertIn("(A) All %s" % tag, buf.getvalue())
 
     def test_full_run_shows_measured_production_costs(self):
-        """full_run's submenu quotes the paper-artifact figures, never
+        """full_run's submenu quotes the measured full figures, never
         the dry tags, and its All carries the measured rollup."""
         buf = io.StringIO()
         with mock.patch("sys.stdout", buf):
@@ -8357,7 +8362,8 @@ class DryCostRollupTest(unittest.TestCase):
         out = buf.getvalue()
         self.assertIn("Dna [full ~5.4h, ~533GB]", out)
         self.assertIn("DLP [full ~5d x2 parts, ~262GB]", out)
-        self.assertIn("Analyze lkup [full: not measured]", out)
+        self.assertIn("Analyze lkup [full ~2.3h, ~71GB]", out)
+        self.assertIn("Effectiveness [full ~2.4h, ~71GB]", out)
         self.assertNotIn("dry", out)
         hrs, gb, n_un = full_total()
         self.assertIn("(A) All [measured ~%sd, ~%dGB peak; %d leaves "
