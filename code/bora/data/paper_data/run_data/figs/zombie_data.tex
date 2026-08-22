@@ -4,38 +4,29 @@
 % Per-block totals over all 'ok' international SIT regex instances. The unit cost
 % u = (total prove time) / (L_T * total regex bytes) is the price of one
 % input-byte x one regex-byte; it is reused in tab:compare-zombie-bora to
-% project the full Mal/Dna/Dlp corpora. Rows are whichever STR_LENGTHs are
-% actually in the log (see _detect_str_lens); if UNIT_STR_LEN=2000 isn't
-% among them (e.g. a dry-run sweep), it's linearly interpolated from the
-% 1000B row -- see _linear_interp() -- and marked with a dagger.
+% project the full Mal/Dna/Dlp corpora.
 \begin{table*}[t]
   \centering
   \small
   \caption{Zombie prover cost on the MS-DLP international SIT rules
   (Spartan NIZK, two-pattern proximity circuit), totalled over all
-  8 regex instances (the 8 \textsc{Sit} rules of
+  194 regex instances (the 136 \textsc{Sit} rules of
   Table~\ref{tab:datasets}, expanded into their comb variants) at each
   scanned document length $L_T$. The total regex size (sum of pattern $+$
   keyword bytes over all instances, each sub-pattern counted once) is fixed
-  at 9,600\,B. The last row
+  at 213,232\,B. The last row
   derives the unit cost $u = t_{\text{prove}} / (L_T \cdot \sum s)$ in seconds
-  per (input-byte $\times$ regex-byte). Rows marked $^\dagger$ have no real
-  measurement at that length in this log (e.g.\ a dry-run sweep with a
-  smaller \texttt{VEC\_SIZE}) -- all four totals are linearly
-  interpolated from the 1{,}000\,B row, under a linear-growth
-  assumption matching Zombie's per-byte circuit complexity; treat them
-  as illustrative, not measured.}
+  per (input-byte $\times$ regex-byte).}
   \label{tab:zombie-data}
   \begin{tabular}{r r r r r}
     \toprule
     $L_T$ (B) & Total constraints & Prove (s) & Verify (s) & Proof (MB) \\
     \midrule
-    700 & 1,572,864 & 9.4 & 5.0 & 0.21 \\
-    800 & 1,703,936 & 11.8 & 6.4 & 0.23 \\
-    1,000 & 1,703,936 & 16.9 & 9.8 & 0.25 \\
-    2,000$^\dagger$ & 3,407,872 & 33.8 & 19.6 & 0.50 \\
+    1,000 & 38,731,776 & 654.8 & 336.4 & 6.16 \\
+    2,000 & 77,463,552 & 2169.0 & 1281.9 & 7.48 \\
+    4,000 & 154,927,104 & 8730.7 & 5618.9 & 9.90 \\
     \midrule
-    \multicolumn{5}{l}{Unit $u = t/(L_T\cdot\sum s)$ at $L_T=700 / 800 / 1,000 / 2,000$: $1.39 \times 10^{-6} / 1.53 \times 10^{-6} / 1.76 \times 10^{-6} / 1.76 \times 10^{-6}$ s\,B$^{-2}$} \\
+    \multicolumn{5}{l}{Unit $u = t/(L_T\cdot\sum s)$ at $L_T=1,000 / 2,000 / 4,000$: $3.07 \times 10^{-6} / 5.09 \times 10^{-6} / 1.02 \times 10^{-5}$ s\,B$^{-2}$} \\
     \bottomrule
   \end{tabular}
 \end{table*}

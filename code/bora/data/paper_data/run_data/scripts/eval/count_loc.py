@@ -24,17 +24,23 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-# Root of the code tree. Resolved from the location of THIS file, never from
-# the cwd or a hardcoded absolute path -- same convention as
-# data/src_sig/ms_dlp/scripts/common.py:get_proj_root() and scripts/INSTALL.py.
-# This file lives at
-#   <root>/data/paper_data/run_data/scripts/eval/count_loc.py
-# so the code root is parents[5]:
-#   [0]=eval [1]=scripts [2]=run_data [3]=paper_data [4]=data [5]=<root>
-# This also drops the old new_zkregplus/bora name probe: whatever the root
-# directory is called, this script sits inside it, so the name is irrelevant.
-# Override still wins via --code-root or $BORA_CODE_ROOT.
-CODE_ROOT = Path(__file__).resolve().parents[5]
+# Absolute root of the code tree. Override with --code-root or $BORA_CODE_ROOT.
+# The code dir was renamed new_zkregplus -> bora; prefer new_zkregplus when it
+# exists, else fall back to bora (keep the legacy name for the not-found error).
+_CODE_BASE = Path(
+    "/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code"
+)
+
+
+def _default_code_root() -> Path:
+    for name in ("new_zkregplus", "bora"):
+        cand = _CODE_BASE / name
+        if cand.is_dir():
+            return cand
+    return _CODE_BASE / "new_zkregplus"
+
+
+CODE_ROOT = _default_code_root()
 
 
 @dataclass(frozen=True)

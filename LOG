@@ -31337,14 +31337,95 @@ Goal 4. restart scale collection clam first
 	[c] checked 11:30am: 
 	[d] almost completing
 	[e] scale_clam finished 3pm
-	[f] scale_dlp finished
+	[f] expeced completion time:
+		###############################
+			scale_dlp: 10:05pm
+			lkup: 12:15pm
+			effictive: 2:40am
+		###############################
+
 Goal 5. reef and zombie run
 	[a] found zombie only has 186 sigs
 	[b] there are dry-run records
 	[c] patch PAPER_DATA.py to clear dry-run data or stamp it
 		-> re-run on server
 		-> dry-run first.
-	[d] 
+	[d] estimated completion time:
+		################################# (actually already have all)
+		zombie: 2:00pm 08/22
+		reef: 7:20pm 08/22
+		dna: 1:20am 08/23
+		#################################
+Goal 6. apdx new B (original C)
+	[a] major issues
+		c1-c4 -> solved
+		c12 -> done
+Goal 7. prepare to assemble data
+	[a] any_server (there are some txt file which 	
+		do NOT belong to any server)
+	[b] create task *** T920 *** prepare data and saved the work table
+		for any_data.
+
+Sat 08/22/2026
+Goal 1. T920 assemble data
+	[a] collect small server: scale_clam, scale_dlp, lkup, effective
+	[b] any_server:
+	data/paper_data/run_data/data/raw_data/any_server/WORK_table.md
+
+  ┌────────────────────────┬─────────────────────────────────────────┐
+  │          File          │                 Status                  │
+  ├────────────────────────┼─────────────────────────────────────────┤
+  │ corpus.tgz             │ GIT TRACKED - DO NOT OVERWRITE          │
+  ├────────────────────────┼─────────────────────────────────────────┤
+  │ eval_effective.txt     │ SRC: small, timestamp: 2026-08-22 00:21 │
+  ├────────────────────────┼─────────────────────────────────────────┤
+  │ lookup_stats.dat       │ SRC: small, timestamp: 2026-08-21 22:29 │
+  ├────────────────────────┼─────────────────────────────────────────┤
+  │ scale_data_gdb.tgz     │ SRC: small, timestamp: 2026-08-21 16:58 │
+  ├────────────────────────┼─────────────────────────────────────────┤
+  │ scale_data_readelf.tgz │ SRC: small, timestamp: 2026-08-21 11:50 │
+  ├────────────────────────┼─────────────────────────────────────────┤
+  │ scale_data_dlp_6.tgz   │ SRC: small, timestamp: 2026-08-21 20:38 │
+  ├────────────────────────┼─────────────────────────────────────────┤
+  │ scale_data_dlp_2.tgz   │ SRC: small, timestamp: 2026-08-21 18:23 │
+  └────────────────────────┴─────────────────────────────────────────┘
+
+jet1tb/WORK_table.md — 7 files
+
+  ┌───────────────────────────────────────────┬─────────────────────────────────────────┐
+  │                   File                    │                 Status                  │
+  ├───────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ full_clam.part1.tgz                       │ SRC: large, timestamp: 2026-08-21 14:45 │
+  ├───────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ full_clam.part2.tgz                       │ SRC: large, timestamp: 2026-08-21 14:45 │
+  ├───────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ full_dlp.part1.tgz                        │ SRC: large, timestamp: 2026-08-20 16:58 │
+  ├───────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ full_dlp.part2.tgz                        │ SRC: large, timestamp: 2026-08-20 16:58 │
+  ├───────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ full_dna.tgz                              │ SRC: large, timestamp: 2026-08-16 19:21 │
+  ├───────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ reef_sample_run.log                       │ SRC: paper, timestamp: 2026-06-24 08:07 │
+  ├───────────────────────────────────────────┼─────────────────────────────────────────┤
+  │ run_zombie_regex_zombie_international.log │ SRC: paper, timestamp: 2026-07-02 08:19 │
+  └───────────────────────────────────────────┴─────────────────────────────────────────┘
+
+Goal 2. prepare the permanent data
+	[a] upload Zonobe link
+	[b] check if anonymous
+	[c] double check
+	[d] regenerate data pack
+	[e] upload to Zenodo
+	[f] update INSTALL.py
+	[g] update open science
+
+Goal 2. revise apdx B
+	[a] small grammar fix
+	[b] revise
+
+Goal 3. major issue of apdx C <-- NEEDS DATA FIRST.
+	[a] major issues
+
 
 === NEW RUN 21:29:45 | full_run | host=zkregplus-large ===
 [21:29:45] START  clam   (full_run/full)
@@ -31355,8 +31436,8 @@ Goal 5. reef and zombie run
 
 --- DATA ----
 #####################################
-*Small server: started 08/14 6am
-*Big server: started 08/15 4am
+*Small server: started 08/14 6am -> 08/22 4:23am
+*Big server: started 08/15 4am -> 
 #####################################
 *** LARGE SERVER ***
 [1] full_dna -> DONE 

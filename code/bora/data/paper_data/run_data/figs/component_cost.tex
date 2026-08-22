@@ -18,13 +18,15 @@
 Dataset & Circ & (B)   & R1CS   & $c_1$ (CP) & $c_2$ (SDE) & $c_3$ (DFA)
         & $c_4$ (frwk) & share \\
 \midrule
-\textsc{Mal} & $0$ & 3{,}968 & 380{,}454 & 9.3\,(29.0) & 18.6\,(57.1) & 4.5\,(4.8) & 63.5\,(5.0) & 3.6\% \\
- & $1$ & 3{,}968 & 435{,}331 & 10.4\,(27.9) & 27.0\,(72.0) & 4.5\,(4.7) & 67.9\,(5.1) & 96.4\% \\
+\textsc{Mal} & $0$ & 127{,}131 & 15{,}124{,}235 & 10.4\,(32.1) & 21.3\,(65.1) & 5.2\,(5.5) & 82.1\,(16.3) & 69.5\% \\
+ & $1$ & 127{,}131 & 24{,}119{,}409 & 10.9\,(30.2) & 52.5\,(134.7) & 8.2\,(8.5) & 118.1\,(16.3) & 30.5\% \\
 \midrule
-\textsc{Dna} & $0$ & 7{,}936 & 885{,}871 & 28.7\,(63.9) & 22.6\,(45.4) & 0.0\,(0.0) & 60.4\,(2.4) & 100.0\% \\
+\textsc{Dna} & $0$ & 126{,}976 & 13{,}913{,}921 & 28.7\,(64.0) & 22.4\,(45.1) & 0.0\,(0.0) & 58.5\,(0.6) & 100.0\% \\
 \midrule
-\textsc{Dlp} & $0$ & 1{,}984 & 80{,}140 & 2.8\,(6.8) & 9.2\,(22.6) & 0.0\,(0.0) & 28.4\,(11.0) & 49.2\% \\
- & $1$ & 1{,}984 & 103{,}675 & 2.9\,(5.6) & 17.8\,(35.6) & 0.0\,(0.0) & 31.6\,(11.0) & 50.8\% \\
+\textsc{Dlp} & $0$ & 1{,}984 & 138{,}606 & 5.5\,(10.2) & 23.5\,(43.9) & 0.0\,(0.0) & 40.9\,(15.8) & 92.6\% \\
+ & $1$ & 1{,}984 & 1{,}513{,}906 & 5.5\,(7.1) & 571.4\,(740.2) & 0.0\,(0.0) & 186.2\,(15.8) & 6.5\% \\
+ & $2$ & 1{,}984 & 6{,}631{,}976 & 5.6\,(7.0) & 2654.7\,(3319.9) & 0.0\,(0.0) & 682.4\,(15.8) & 0.8\% \\
+ & $3$ & 1{,}984 & 17{,}189{,}459 & 5.6\,(7.0) & 6915.4\,(8641.2) & 0.0\,(0.0) & 1743.0\,(15.8) & 0.1\% \\
 \bottomrule
 \end{tabular}
 \caption{Per-circuit cost profile. Each dataset is discharged by a small set of circuits. \emph{input} is the bytes processed per folding step. Each $c_i \in (c_1,c_2,c_3,c_4)$ is the per-input-byte R1CS constraints of the four components of a circuit.Each $c_i$ is shown as \emph{raw\,(adjusted)}: the \emph{adjusted} value moves the \emph{measured} log-up query cost in $c_4$ and charges it to each tier in  proportion to its data-column size, so $c_1/c_2/c_3$ reflect the  all-in per-byte cost and $c_4$ retains only folding overhead  and the processing of Logup share of lookup table. }\label{tbl:component-cost}

@@ -8,17 +8,17 @@
 \cmidrule(lr){3-4}\cmidrule(lr){5-6}\cmidrule(lr){7-8}
 Component & Purpose & M & \% & M & \% & M & \% \\
 \midrule
-range table$^\dagger$ & range proof e.g. for pattern distance & 67.1 & 85.9 & 134.2 & 98.4 & 33.6 & 99.6 \\
-AC-DFA / CP & transition rules & 3.2 & 4.2 & 1.1 & 0.8 & 0.1 & 0.2 \\
-SDE & subsig step pattern distance constraints & 7.7 & 9.9 & 1.1 & 0.8 & 0.1 & 0.2 \\
-DFA (4/0/0) & transition rules & 0.1 & 0.1 & 0.0 & 0.0 & 0.0 & 0.0 \\
-sig-DB & DNF combinations / tri-logic truth table & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 & 0.0 \\
+range table$^\dagger$ & range proof e.g. for pattern distance & 67.1 & 27.3 & 134.2 & 81.6 & 33.6 & 28.2 \\
+AC-DFA / CP & transition rules & 54.8 & 22.3 & 14.8 & 9.0 & 0.3 & 0.2 \\
+SDE & subsig keyword AC-DFA + step distance bounds & 122.0 & 49.5 & 15.3 & 9.3 & 82.8 & 69.6 \\
+DFA (35/0/0) & transition rules & 2.0 & 0.8 & 0.0 & 0.0 & 0.0 & 0.0 \\
+sig-DB & DNF combinations / tri-logic truth table & 0.3 & 0.1 & 0.1 & 0.0 & 2.3 & 1.9 \\
 \midrule
-TOTAL populated & & 78.2 & 29.1 & 136.4 & 50.8 & 33.7 & 12.6 \\
-\#signatures & & \multicolumn{2}{c}{1,944} & \multicolumn{2}{c}{1,375} & \multicolumn{2}{c}{494} \\
+TOTAL populated & & \multicolumn{2}{c}{246.2} & \multicolumn{2}{c}{164.4} & \multicolumn{2}{c}{118.9} \\
+\#signatures & & \multicolumn{2}{c}{38,875} & \multicolumn{2}{c}{27,500} & \multicolumn{2}{c}{9,861} \\
 \bottomrule
 \end{tabular}
-\caption{Lookup-table composition across datasets. Column \emph{M} is millions of entries. Each \% is of that dataset's populated entries; TOTAL \% is of the $2^{28}$ capacity. $^\dagger$range table $=2^{\text{range2\_bit}}$ (26 / 27 / 25 for \textsc{Mal}/\textsc{Dna}/\textsc{Dlp}), sized by the maximum document offset. The $(\cdot/\cdot/\cdot)$ after \emph{DFA} is the number of DFAs folded in for rules that frequently fail SDE, per dataset.
+\caption{Lookup-table composition across datasets. Column \emph{M} is millions of entries. Each \% is of that dataset's populated entries. $^\dagger$range table $=2^{\text{range2\_bit}}$ (26 / 27 / 25 for \textsc{Mal}/\textsc{Dna}/\textsc{Dlp}), sized by the maximum document offset. The $(\cdot/\cdot/\cdot)$ after \emph{DFA} is the number of DFAs folded in for rules that frequently fail SDE, per dataset.
 BORA re-writes \ttt{(kw1|...kwn).\{0,N\}pat} in \textsc{Dlp} to disjunction of $n$ rules for improved SDE accuracy, thus expanding from $136$ to $9861$.}
 \label{tbl:lkup}
 \end{table*}

@@ -14,7 +14,8 @@ Reads:
 Writes:
   <paper_root>/figs/lookup.tex -- a self-contained booktabs table: the five
   lookup categories x three datasets, each cell = entries (millions) and %
-  of that dataset's populated entries, plus TOTAL (% of 2^28 capacity) and a
+  of that dataset's populated entries, plus a TOTAL row (entries only; the
+  table capacity varies per dataset, so no %-of-capacity is shown) and a
   #signatures row.
 """
 
@@ -28,7 +29,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common import get_paper_root, any_server_file
 
-CAP = 1 << 28                       # lookup-table capacity (2^28)
 DATASETS = ["Mal", "Dna", "Dlp"]    # column order (matches §7.6 stubs)
 
 # Per-dataset correction to the reported #signatures. Dna's sig DB carries one
@@ -39,7 +39,10 @@ SIG_ADJUST = {"Dna": -1}
 CATS = [
     ("range",      r"range table$^\dagger$", "range proof e.g. for pattern distance"),
     ("AC-DFA(CP)", r"AC-DFA / CP",           "transition rules"),
-    ("SDE",        r"SDE",                   "subsig step pattern distance constraints"),
+    # The SDE block is dominated (~98%) by the bag-of-words AC-DFA over all
+    # subsig keywords (add_bundle_subsig_to_lkup -> add_acdfa_to_lkup, ~18
+    # entries/state x 6.4M states for Mal); the step/info stores are a sliver.
+    ("SDE",        r"SDE",                   "subsig keyword AC-DFA + step distance bounds"),
     ("DFA",        r"DFA",                   "transition rules"),
     ("sig-DB",     r"sig-DB",                "DNF combinations / tri-logic truth table"),
 ]
@@ -111,8 +114,10 @@ def build_table(data: dict[str, dict]) -> str:
             for d in DATASETS)
         rows.append(f"{label} & {purpose} & {body} \\\\")
 
+    # entries only -- the table capacity varies per dataset, so a
+    # %-of-capacity figure would be misleading.
     total_row = "TOTAL populated & & " + " & ".join(
-        f"{_m(tot[d])} & {_pct(tot[d], CAP)}" for d in DATASETS) + r" \\"
+        f"\\multicolumn{{2}}{{c}}{{{_m(tot[d])}}}" for d in DATASETS) + r" \\"
     sig_row = r"\#signatures & & " + " & ".join(
         f"\\multicolumn{{2}}{{c}}{{{data[d]['sigs'] + SIG_ADJUST.get(d, 0):,}}}"
         for d in DATASETS) + r" \\"
@@ -120,8 +125,8 @@ def build_table(data: dict[str, dict]) -> str:
 
     return "\n".join([
         # table* spans both columns; such floats cannot be [H]-pinned, so
-        # [t] floats it to a page top near §7.4 (stfloats in the paper
-        # source also permits [b]).
+        # [t] floats it to a page top near §7.4 (stfloats in fu.tex also
+        # permits [b]).
         r"\begin{table*}[t]",
         r"\centering",
         r"\small",
@@ -141,8 +146,8 @@ def build_table(data: dict[str, dict]) -> str:
         r"\end{tabular}",
         r"\caption{Lookup-table composition across datasets. Column "
         r"\emph{M} is millions of entries. Each \% is of "
-        r"that dataset's populated entries; TOTAL \% is of the $2^{28}$ "
-        r"capacity. $^\dagger$range table $=2^{\text{range2\_bit}}$ "
+        r"that dataset's populated entries. "
+        r"$^\dagger$range table $=2^{\text{range2\_bit}}$ "
         f"({r2} for \\textsc{{Mal}}/\\textsc{{Dna}}/\\textsc{{Dlp}}), sized by "
         r"the maximum document offset. The "
         r"$(\cdot/\cdot/\cdot)$ after \emph{DFA} is the number of "

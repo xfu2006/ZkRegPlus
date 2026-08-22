@@ -14,17 +14,14 @@
   \small
   \caption{End-to-end prover cost of Zombie~\cite{Zombie23},
   Reef~\cite{Reef}, and BORA on the three datasets of
-  Table~\ref{tab:datasets}; the last two columns give BORA's speedup over
-  each. Zombie costs are projected from the unit cost
-  $u=1.76 \times 10^{-6}$~s\,B$^{-2}$ (Table~\ref{tab:zombie-data}). For
-  \textsc{Dna}, Reef's as-implemented cost is shown with its optimistic
-  floor in parentheses. Values marked $^{*}$ are projected from Reef's
-  cheapest measured per-run cost on \textsc{Dna}
-  ($5.09$\,s, the \texttt{proj\_512k} bucket):
-  the \textsc{Dna} floor as that cost per signature, and Reef
+  Table~\ref{tab:datasets}. Zombie costs are projected from the unit cost
+  $u=5.09 \times 10^{-6}$~s\,B$^{-2}$ (Table~\ref{tab:zombie-data}).
+  Values marked $^{*}$ are projected from Reef's cheapest measured
+  per-run cost on \textsc{Dna} ($7.33$\,s, the \texttt{proj\_512k}
+  bucket): the \textsc{Dna} floor as that cost per signature, and Reef
   \textsc{Mal}/\textsc{Dlp} as that cost per signature per corpus byte
-  (Table~\ref{tab:dna-reef-bora}). \textsc{Mal} BORA is the total net cost summed over $2$ parallel jobs. \textsc{Dlp} BORA is the total net cost summed over $2$ parallel jobs. Cells shown as ``??'' have no
-  audited measurement yet.}
+  (Table~\ref{tab:dna-reef-bora}); the \textsc{Dna} cells pair Reef's
+  as-implemented cost with that floor in parentheses. \textsc{Mal} and \textsc{Dlp} BORA costs are net totals summed over $8$ parallel jobs.}
   \label{tab:compare-all}
   \begin{tabular}{l r r r r r}
     \toprule
@@ -33,9 +30,9 @@
     \cmidrule(lr){5-6}
     & & & & vs Zombie & vs Reef \\
     \midrule
-    \textsc{Mal} & 497.7\,yr & 4.8\,Myr$^{*}$ & 0.11\,hr & $39\text{M}\times$ & $378\text{B}\times^{*}$ \\
-    \textsc{Dna} & 6.6\,yr & 235.6\,d (38.88\,hr$^{*}$) & 0.07\,hr & $803{,}435\times$ & $78{,}869\times$ ($542\times^{*}$) \\
-    \textsc{Dlp} & 278.2\,d & 31{,}175\,yr$^{*}$ & 0.04\,hr & $190{,}658\times$ & $8\text{B}\times^{*}$ \\
+    \textsc{Mal} & 1436.9\,yr & 6.9\,Myr$^{*}$ & 117.00\,hr & $107{,}661\times$ & $518\text{M}\times^{*}$ \\
+    \textsc{Dna} & 19.0\,yr & 300.9\,d (2.3\,d$^{*}$) & 3.16\,hr & $52{,}589\times$ & $2{,}284\times$ ($18\times^{*}$) \\
+    \textsc{Dlp} & 48.8\,yr & 44{,}894\,yr$^{*}$ & 507.94\,hr & $843\times$ & $774{,}773\times^{*}$ \\
     \bottomrule
   \end{tabular}
 \end{table*}

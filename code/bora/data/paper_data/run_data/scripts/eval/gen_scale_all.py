@@ -46,7 +46,6 @@ Writes: <paper_root>/figs/scale.tex   (label fig:scale-regex)
 from __future__ import annotations
 
 import re
-import shutil
 import statistics
 import sys
 import tarfile
@@ -338,9 +337,6 @@ def main() -> None:
                 print(f"  SKIP {dataset['key']}/{key}: bundle not found ({e})")
                 continue
             work = raw / "extracted" / f"scale_{key}"
-            # derived cache: extractall never cleans, so stale members
-            # from a prior bundle version would union with the new ones
-            shutil.rmtree(work, ignore_errors=True)
             pts = collect(path, work)
             resolved[key] = (label, marker, pts)
             print(f"  {dataset['key']}/{key}: {len(pts)} points "

@@ -11,14 +11,23 @@
 # Zenodo deposit (DOI 10.5281/zenodo.21911045).  Both are sha256-verified.
 # All scratch lives under /tmp/bora_install and is removed on completion.
 #
+# The paper_data entry is not a corpus either: it fetches the recorded
+# run logs behind the paper's tables from their Zenodo deposit (DOI
+# 10.5281/zenodo.22057943), keeps the .tgz beside data/paper_data/ as a
+# backup, and clears the derived extracted/ caches and figs/*.tex so
+# PAPER_DATA.py's "generate list of figures" rebuilds them from
+# scratch.  It builds no PDF itself.
+#
 # The zombie entry is not a corpus: it clones the NSDI'24 Zombie baseline
 # (gitignored, unlicensed upstream) and installs the extra apt/pip/rustup
 # deps its CirC build needs.  PAPER_DATA.py's zombie leaf fails without it.
 #
 # Run from anywhere:
-#   python3 INSTALL.py             menu: ALL / email / dna / binexec / zombie
+#   python3 INSTALL.py             menu: ALL / email / dna / binexec /
+#                                  zombie / paper_data
 #   python3 INSTALL.py --data all  non-interactive
-#                                  (all|email|dna|binexec|zombie)
+#                                  (all|email|dna|binexec|zombie|
+#                                   paper_data)
 #
 # NOTE: python file generated under the instruction of paper author.
 #   code reviewed and tested manually by paper author.
@@ -444,6 +453,18 @@ def empty_dir(d):
             os.remove(p)
 
 
+# Delete every child of d except .gitkeep (the tracked dir marker).
+def keep_only_gitkeep(d):
+    for n in os.listdir(d):
+        if n == ".gitkeep":
+            continue
+        p = os.path.join(d, n)
+        if os.path.isdir(p) and not os.path.islink(p):
+            shutil.rmtree(p)
+        else:
+            os.remove(p)
+
+
 # Move every child of src_dir into dst_dir (kept); src_dir left empty.
 def move_children(src_dir, dst_dir):
     os.makedirs(dst_dir, exist_ok=True)
@@ -496,6 +517,28 @@ DNA_SHA256 = ("fd83ee6bcde431037ce986b0b52a7597000b439a0"
               "4461cf74a420c4892a2d0ca")
 REEF_DIR   = os.path.join(SRC_SIG_DIR, "chr17_variants", "reef")
 REEF_BIN   = os.path.join(REEF_DIR, "target", "release", "reef")
+
+# ---- paper_data (recorded paper runs) Zenodo deposit ----------------
+# PAPER_DATA_DOI is the CONCEPT doi (cite this; it follows the newest
+# version); PAPER_DATA_URL pins the version record so the bytes cannot
+# move under PAPER_DATA_SHA256.  The archive carries ONLY the two raw
+# run-log folders plus a README -- no scripts, no figs -- so the
+# project's own generators under run_data/scripts/ are what run.
+PAPER_DATA_DOI    = "https://doi.org/10.5281/zenodo.22057943"
+PAPER_DATA_URL    = ("https://zenodo.org/records/22057944/files/"
+                     "bora_paper_data.tgz?download=1")
+PAPER_DATA_SHA256 = ("851bf9434c450af2696a2add9e55189764f3f4d6e"
+                     "8f4607bd5dda77aefab7bb0")
+# The .tgz stays HERE, not in TMP_DIR: cleanup_temp() wipes TMP_DIR on
+# exit, and this copy is the offline backup beside data/paper_data/.
+PAPER_DATA_TGZ    = os.path.join(DATA_DIR, "bora_paper_data.tgz")
+PAPER_RUN_DATA    = os.path.join(DATA_DIR, "paper_data", "run_data")
+PAPER_RAW_DATA    = os.path.join(PAPER_RUN_DATA, "data", "raw_data")
+PAPER_FIGS_DIR    = os.path.join(PAPER_RUN_DATA, "figs")
+# Whitelist: only these members are unpacked, so a future revision of
+# the archive can never write into run_data/scripts/ or the code base.
+PAPER_DATA_PREFIX = "paper_data/run_data/data/raw_data/"
+PAPER_DATA_README = "BORA_PAPER_DATA_README.txt"
 
 # ---- oversized in-repo fixtures (the bigfiles pack) -----------------
 # anonymous.4open.science refuses to serve any file over 8 MB, and it gives
@@ -1269,6 +1312,72 @@ def install_dataset_zombie():
         print("        run_zombie.py; pass --build-zombie to do it now.")
 
 
+# =====================================================================
+# paper_data  (the recorded run logs behind the paper's tables)
+# =====================================================================
+
+# Empty every target the paper_data install writes, plus the two derived
+# caches and the LaTeX fragments they feed.  Every step is guarded on
+# isdir(): a fresh checkout has no extracted/ tree, so absence is normal
+# and never an error.
+#
+# figs/*.tex is cleared ON PURPOSE.  RUNALL.sh treats a failing
+# generator as non-fatal, so a fragment left in place would keep its
+# committed content and the rebuilt PDF would still show the paper's
+# numbers with nothing having regenerated them.  Deleting them turns
+# that silent false pass into a missing file.  Restore with
+# `git checkout -- data/paper_data/run_data/figs/`.
+def clean_paper_data():
+    for name in ("jet1tb", "any_server"):
+        d = os.path.join(PAPER_RAW_DATA, name)
+        if os.path.isdir(d):
+            keep_only_gitkeep(d)
+    for d in (os.path.join(PAPER_RAW_DATA, "extracted"),
+              os.path.join(PAPER_RAW_DATA, "jet1tb", "extracted")):
+        shutil.rmtree(d, ignore_errors=True)
+    if os.path.isdir(PAPER_FIGS_DIR):
+        for n in sorted(os.listdir(PAPER_FIGS_DIR)):
+            if n.endswith(".tex"):
+                os.remove(os.path.join(PAPER_FIGS_DIR, n))
+
+
+# Download the Zenodo archive, verify it, keep it as the backup copy,
+# and unpack the two raw-run folders.  The archive carries the full
+# relative path, so it expands straight into data/.  No PDF is built
+# here -- that is PAPER_DATA.py's "generate list of figures".
+def install_dataset_paper_data():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    print("  download bora_paper_data.tgz (37 MB) <- %s"
+          % PAPER_DATA_DOI)
+    http_download(PAPER_DATA_URL, PAPER_DATA_TGZ)
+    got = sha256_file(PAPER_DATA_TGZ)
+    if got != PAPER_DATA_SHA256:
+        os.remove(PAPER_DATA_TGZ)
+        raise RuntimeError("archive digest mismatch:\n  expected %s\n"
+                           "  got      %s" % (PAPER_DATA_SHA256, got))
+    print("    archive sha256 OK")
+
+    with tarfile.open(PAPER_DATA_TGZ, "r:gz") as tf:
+        members, n = [], 0
+        for m in tf.getmembers():
+            name = os.path.normpath(m.name)
+            anc = m.isdir() and PAPER_DATA_PREFIX.startswith(name + "/")
+            if not (name == PAPER_DATA_README
+                    or name.startswith(PAPER_DATA_PREFIX) or anc):
+                raise RuntimeError("archive member outside the "
+                                   "paper_data tree: %r" % m.name)
+            members.append(m)
+            if m.isfile():
+                n += 1
+        try:
+            tf.extractall(DATA_DIR, members=members, filter="data")
+        except TypeError:
+            tf.extractall(DATA_DIR, members=members)   # py < 3.12
+    print("    %d file(s) -> %s" % (n, PAPER_RAW_DATA))
+    print("    backup tgz  -> %s" % PAPER_DATA_TGZ)
+    print("    next: python3 scripts/PAPER_DATA.py --run figs")
+
+
 # Registry in menu order: (key, label, est. installed GB, clean, install).
 DATASETS = [
     ("email",   "email (Enron)",          3.8,
@@ -1286,6 +1395,11 @@ DATASETS = [
     # circ copy add several GB under /tmp at evaluation time, not here.
     ("zombie",  "zombie (NSDI'24)",       0.04,
      clean_zombie,  install_dataset_zombie),
+    # APPENDED, never inserted (same reason as zombie above): the menu
+    # numbers options from this order.  0.05 GB of recorded run logs --
+    # the raw inputs behind every table and figure in the paper.
+    ("paper_data", "paper_data (recorded runs)", 0.05,
+     clean_paper_data, install_dataset_paper_data),
 ]
 
 

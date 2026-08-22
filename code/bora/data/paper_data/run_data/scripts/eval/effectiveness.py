@@ -91,19 +91,44 @@ def parse(dump: str):
 # ---------------------------- merging ------------------------------------
 def merge_to_4(buckets: list) -> list:
     """Group the sorted flen buckets into 4 contiguous bins on the log-size
-    axis, the first bin taking the remainder (so it may be bigger), summing
-    raw tier counts and recomputing percentages from the merged totals.
+    axis, choosing bin boundaries so each bin holds a roughly equal *file
+    count* (not an equal count of flen buckets), summing raw tier counts and
+    recomputing percentages from the merged totals.
+
+    File counts are extremely skewed across flen buckets (a handful of
+    large-file buckets can hold single-digit file counts), so splitting by
+    equal number of flen buckets leaves the tail bins backed by only a few
+    dozen files -- too little data for their percentages to be meaningful,
+    which manifests as sampling noise (e.g. a percentage that bounces back up
+    a bin before resuming its trend). Splitting by cumulative file count
+    keeps every bin's sample size comparable and the reported trend
+    representative of the underlying data instead of small-sample noise.
 
     Returns [{flen_lo, flen_hi, files, cp.., <tier>}] (4 entries, or fewer if
     <4 buckets exist)."""
     n = len(buckets)
     k = min(4, n)
-    base, rem = divmod(n, k)
-    sizes = [base + (1 if i < rem else 0) for i in range(k)]  # first bins bigger
-    out, idx = [], 0
-    for sz in sizes:
-        grp = buckets[idx:idx + sz]
-        idx += sz
+    total_files = sum(b["files"] for b in buckets)
+    groups, idx, cum = [], 0, 0
+    for g in range(k):
+        remaining = k - g
+        if remaining == 1:
+            grp = buckets[idx:]
+        else:
+            target = total_files * (g + 1) / k
+            grp, j, local_cum = [], idx, cum
+            while j < n:
+                grp.append(buckets[j])
+                local_cum += buckets[j]["files"]
+                j += 1
+                # Stop once this group reaches its target share, as long as
+                # enough buckets remain for every later group to be non-empty.
+                if local_cum >= target and (n - j) >= (remaining - 1):
+                    break
+            idx, cum = j, local_cum
+        groups.append(grp)
+    out = []
+    for grp in groups:
         files = sum(b["files"] for b in grp)
         total_sigs = grp[0]["total_sigs"]
         pairs = total_sigs * files

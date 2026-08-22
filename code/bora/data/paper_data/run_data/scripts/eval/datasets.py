@@ -50,7 +50,10 @@ class Dataset:
     ruleset: str        # ruleset name + version
     rules: int          # rule count
     regex_size: str     # on-disk size of the regex/signature set (LaTeX)
-    rule_shape: str     # rule-shape description (LaTeX)
+    rule_shape: str     # rule-shape description (LaTeX); NO LONGER emitted in
+                        # the table (column dropped) -- kept as the live source
+                        # of the shape facts now stated in the §7.2 prose
+                        # (e.g. Mal PCRE count, Dna literal-length range).
 
 
 # All three rows (Mal, Dna, Dlp) are now built live in main() from their
@@ -225,8 +228,7 @@ def build_row(d: Dataset) -> str:
     return (
         f"    \\textsc{{{d.label}}} & {d.corpus} & {tex_int(d.docs)} & "
         f"{d.nbytes} & {d.doc_size}\n"
-        f"        & {d.ruleset} & {tex_int(d.rules)} & {d.regex_size}\n"
-        f"        & {d.rule_shape} \\\\"
+        f"        & {d.ruleset} & {tex_int(d.rules)} & {d.regex_size} \\\\"
     )
 
 
@@ -255,7 +257,8 @@ def build_table(datasets: list[Dataset], dna_note: str = "") -> str:
 % main.dat + binexec_merged128k, Dna from chr17_variants, Dlp from the raw
 % Enron maildir + MS-DLP regex_zombie/. Locked layout:
 % label stub outside both groups; two \multicolumn spans (Document corpus |
-% Regex set); descriptive only -- NO tier (CP/SDE/DFA) columns, NO PCRE column.
+% Regex set); descriptive only -- NO tier (CP/SDE/DFA) columns, NO PCRE column,
+% NO rule-shape column (shape facts moved to the §7.2 prose).
 %
 % CentOS version: the table reports the neutral "CentOS 7" only. Binary
 % provenance in the corpus points to the CentOS 7.9 update stream -- bundled
@@ -267,16 +270,15 @@ def build_table(datasets: list[Dataset], dna_note: str = "") -> str:
   \centering
   \footnotesize
   \caption{Evaluation datasets: \textsc{Mal} (malware scanning), \textsc{Dna}
-  (genomic variants), and \textsc{Dlp} (e-mail DLP). The \emph{Rule shape}
-  column summarizes the form and variety of the regexes.}
+  (genomic variants), and \textsc{Dlp} (e-mail DLP).}
   \label{tab:datasets}
-  \begin{tabular}{@{}l l r r l l r r p{3.2cm}@{}}
+  \begin{tabular}{@{}l l r r l l r r@{}}
     \toprule
      & \multicolumn{4}{c}{Document corpus}
-       & \multicolumn{4}{c}{Regex set} \\
-    \cmidrule(lr){2-5} \cmidrule(lr){6-9}
+       & \multicolumn{3}{c}{Regex set} \\
+    \cmidrule(lr){2-5} \cmidrule(lr){6-8}
      & Corpus & Docs & Size & Per-doc (min/med/max)
-       & Ruleset (ver.) & Rules & Size & Rule shape \\
+       & Ruleset (ver.) & Rules & Size \\
     \midrule
 """ + body + r"""
     \bottomrule
