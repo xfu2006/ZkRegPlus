@@ -443,9 +443,19 @@ def extract_7z(archive, out_dir):
 
 
 # Remove the CONTENTS of d but keep the directory itself (item-4 rule).
-def empty_dir(d):
+# Names that must survive any wipe: version-controlled, shipped in no
+# archive, and not regenerable. chr17_variants/scripts was destroyed this
+# way in ad2f76d4 (deploy_chr17 wipes the dir; the Zenodo dna archive
+# carries corpora only) and restored in 9d47d38b.
+PROTECTED_NAMES = {"scripts", ".gitignore", ".gitkeep"}
+
+
+def empty_dir(d, keep=()):
     os.makedirs(d, exist_ok=True)
+    skip = PROTECTED_NAMES | set(keep)
     for n in os.listdir(d):
+        if n in skip:
+            continue
         p = os.path.join(d, n)
         if os.path.isdir(p) and not os.path.islink(p):
             shutil.rmtree(p)

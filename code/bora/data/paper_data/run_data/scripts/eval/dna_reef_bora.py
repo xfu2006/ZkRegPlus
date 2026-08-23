@@ -39,6 +39,12 @@ BUCKET_TEX = {b: b.replace("_", r"\_") for b in BUCKETS}
 def parse_reef_log(path: Path) -> dict:
     """Return {bucket: {count, share, mean, std, ...}} from reef log."""
     text = path.read_text()
+    n_runs = len(re.findall(r"^# Reef non-match sample run\s*$", text,
+                            re.MULTILINE))
+    if n_runs != 1:
+        raise RuntimeError(
+            f"parse_reef_log: expected exactly 1 run, found {n_runs}. "
+            f"A concatenated log silently yields the LAST run's numbers.")
     out: dict[str, dict] = {b: {} for b in BUCKETS}
 
     pop_re = re.compile(
@@ -179,7 +185,8 @@ def build_table(buckets: dict, bora_cost: float) -> str:
   cost, excluding the Groth16 IVC proof compression as well as setup and
   commitment. Estimate1 uses each bucket's measured per-run mean times its
   population count; Estimate2 uses the minimum measured per-run mean
-  (proj\_512k) times bucket count as a counterfactual floor.}
+  (proj\_512k) times bucket count as a counterfactual floor. Each per-run
+  mean is over $n=10$ sampled runs; $\pm$ is their population s.d.}
   \label{tab:dna-reef-bora}
   \begin{tabular}{l r r r r}
     \toprule

@@ -31418,14 +31418,37 @@ Goal 2. prepare the permanent data
 	[e] upload to Zenodo
 	[f] update INSTALL.py
 	[g] update open science
+	--> DONE 
 
 Goal 2. revise apdx B
 	[a] small grammar fix
 	[b] revise
-
-Goal 3. major issue of apdx C <-- NEEDS DATA FIRST.
-	[a] major issues
-
+		-> B1.
+		-> B2.
+		-> B2.3
+		-> B2.4
+	[c] revise section 5 presentation
+		-> min and step queue redefined
+		-> Qr and Qr' redefined
+		-> revise example
+	[d] min_i chain algorithm.
+		
+Sunday 08/23/2026
+Goal 1. inspect remaining tasks of paper -> cleared
+Goal 2. move the extra footnote links -> DONE
+-- TODO --
+Goal 3. Apdx C.1 and C.2
+	[a] check tables -> Table 7, and Table 8
+	[b] Figure 8, Table 9, Table 10, Table 11
+	[c] Table 9 inspection
+	[d] Table 10 inspection
+	[e] Figure 8
+	[f] refine text apdx C.
+		-> C.1.
+		-> C.2
+		-> C.3
+Goal 3. clear symbol issues
+	[a]
 
 === NEW RUN 21:29:45 | full_run | host=zkregplus-large ===
 [21:29:45] START  clam   (full_run/full)

@@ -28,9 +28,9 @@ logs, so printing them would be a hard-coded number.
 
 DLP detail carried over: the DLP fold uses config-gated catchable-CapErr bump
 retries, so a round may print SEVERAL ``==== COST circN ...`` blocks (one per
-fold attempt). parse_log appends them all, so we DEDUP to the LAST block per
-circuit id (the converged fold is emitted last). This dedup is a no-op for
-ClamAV (one block per id) so it is applied uniformly.
+fold attempt), the earlier ones FAILED. We therefore ask parse_log for the
+LAST block per circuit id (dedup="last"); the converged fold is emitted last.
+This is a no-op for ClamAV (one block per id) so it is applied uniformly.
 
 Difficulty is a rule x document property, so each dataset is swept over two
 corpora: a dense one whose anchors recur (SDE saturates) and a sparse one
@@ -108,14 +108,11 @@ def per_step_metrics(text: str) -> tuple[float, float, int]:
     """(share-weighted per-step R1CS, median per-step proof ms, input bytes).
 
     Dedup COST blocks to the LAST per circuit id: bump retries emit one COST
-    block per fold attempt and parse_cost appends them; the converged fold is
-    printed last. No-op when there is one block per id (ClamAV)."""
-    info = parse_cost(text)
-    last_by_id: dict[int, dict] = {}
-    for c in info["circuits"]:
-        last_by_id[c["id"]] = c
-    circuits = list(last_by_id.values())
-    r1cs = sum(info["shares"][c["id"]] * c["total"] for c in circuits)
+    block per fold attempt and the earlier ones FAILED with CapErr; only the
+    last converged. No-op where there is one block per id (ClamAV, and the
+    DLP sparse sweep)."""
+    info = parse_cost(text, dedup="last")
+    r1cs = sum(info["shares"][c["id"]] * c["total"] for c in info["circuits"])
 
     pc = _PAIRCYCLE.search(text)
     pc_stmt = int(pc.group(1)) if pc else None

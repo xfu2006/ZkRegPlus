@@ -63,6 +63,15 @@ _NIBBLE = re.compile(r"max_nibble_len:\s*(\d+)")
 _PHASE1_WL = re.compile(
     r"Phase 1 step 1:.*?total_word_len:\s*(\d+) packed fields")
 _NSTEPS = re.compile(r"n_steps:\s*(\d+)")
+# Phase 1 step 5 prints n_steps AND total_word_len on ONE line, so the two are
+# guaranteed to come from the SAME job. Prefer it. The two-search fallback
+# below takes the first match of each pattern independently, and in a combined
+# multi-job log those land in DIFFERENT jobs -- for Mal, total_word_len from
+# job 1 (3358720) paired with n_steps from job 0 (819), giving 4101.0 fields
+# per step instead of the true 4096.0 and inflating input_bytes to 127131 B
+# instead of 126976 B.
+_PHASE1_PAIR = re.compile(
+    r"Phase 1 step 5:.*?n_steps:\s*(\d+):\s*total_word_len:\s*(\d+)")
 _COST_HEAD = re.compile(
     r"==== COST circ(\d+) \(R1CS constraints\) ====\s+total = (\d+)")
 # `datacol = N` is the per-component data-column/var size (Σ witness-var deltas).
@@ -82,8 +91,15 @@ _PAIRCYCLE = re.compile(r"paircycle'[^\n]*\(stmt\s+(\d+)")
 _PROVE = re.compile(r"prove_step cost: i: \d+, circ_id: (\d+), stmt_len: (\d+)")
 
 
-def parse_log(text: str) -> dict:
-    """Return {input_bytes, circuits: [profile...], shares: {id: frac}}."""
+def parse_log(text: str, dedup: str = "first") -> dict:
+    """Return {input_bytes, circuits: [profile...], shares: {id: frac}}.
+
+    ``dedup`` picks which COST block survives when one circuit id emits
+    several. "first" (default) is for a NUMA two-half combined dump, where
+    the blocks are two jobs' copies of the same circuit. "last" is for a
+    CapErr bump-retry sweep, where the earlier blocks are FAILED fold
+    attempts and only the last one converged.
+    """
     nib = _NIBBLE.search(text)
     if nib:
         input_bytes = int(nib.group(1)) // NIBBLES_PER_BYTE
@@ -92,12 +108,19 @@ def parse_log(text: str) -> dict:
         # from the Phase-1 main folding: per-step packed fields =
         # total_word_len / n_steps, each field = 31 bytes. This equals
         # max_word_len*31 == max_nibble_len/2, so the two paths agree.
-        wl = _PHASE1_WL.search(text)
-        ns = _NSTEPS.search(text)
-        if not (wl and ns):
-            raise RuntimeError(
-                "neither max_nibble_len nor Phase-1 word-len found in log")
-        per_step_fields = int(wl.group(1)) / int(ns.group(1))
+        pair = _PHASE1_PAIR.search(text)
+        if pair:
+            n_steps, word_len = int(pair.group(1)), int(pair.group(2))
+        else:
+            # Legacy logs without the step-5 line only. UNSAFE on a combined
+            # multi-job log: the two searches can straddle two jobs.
+            wl = _PHASE1_WL.search(text)
+            ns = _NSTEPS.search(text)
+            if not (wl and ns):
+                raise RuntimeError(
+                    "neither max_nibble_len nor Phase-1 word-len found in log")
+            word_len, n_steps = int(wl.group(1)), int(ns.group(1))
+        per_step_fields = word_len / n_steps
         input_bytes = round(per_step_fields * BYTES_PER_FIELD)
 
     # COST blocks: accumulate per-component R1CS between '==== COST circN ...'
@@ -140,14 +163,20 @@ def parse_log(text: str) -> dict:
     if not circuits:
         raise RuntimeError("no COST circ blocks found in log")
 
-    # A NUMA two-half combined dump emits the SAME per-circuit COST block
-    # from each process (identical circuit definitions); keep one per id so
-    # the table is not duplicated. A single-process dump has one per id, so
-    # this is a no-op there. shares aggregate prove-steps across ALL jobs
-    # below, so they need no dedup.
+    # A NUMA two-half combined dump emits a per-circuit COST block from each
+    # process; keep one per id so the table is not duplicated. The two halves'
+    # blocks need NOT be equal (Mal's differ by ~0.04%/0.24%), so the choice
+    # matters: "first" keeps the part-1 circuits the table has always shown.
+    # A single-process dump has one per id, so this is a no-op there. shares
+    # aggregate prove-steps across ALL jobs below, so they need no dedup.
+    # dedup="last" serves the CapErr bump-retry logs of the DLP scale sweep,
+    # where the earlier blocks are FAILED attempts (see gen_scale_all.py).
+    if dedup not in ("first", "last"):
+        raise ValueError(f"dedup must be 'first' or 'last', got {dedup!r}")
     seen: dict[int, dict] = {}
     for c in circuits:
-        seen.setdefault(c["id"], c)
+        if dedup == "last" or c["id"] not in seen:
+            seen[c["id"]] = c
     circuits = [seen[k] for k in sorted(seen)]
 
     # sanity: the four layers must reconcile with the header total.
