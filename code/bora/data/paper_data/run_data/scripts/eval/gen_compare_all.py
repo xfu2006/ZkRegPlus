@@ -106,11 +106,17 @@ def fmt_hr(seconds: float) -> str:
 def fmt_speed(x: float) -> str:
     """Speedup factor as a ``$...$`` cell. Small factors get LaTeX thousands
     separators (``$4{,}241\\times$``); large ones use an M/B suffix
-    (``$125\\text{M}\\times$``) so the cell stays compact."""
+    (``$125\\text{M}\\times$``) so the cell stays compact. Factors below 100
+    keep TWO decimals: integer rounding discards real precision there -- the
+    Dna floor printed $18\\times$ where tab:dna-reef-bora prints
+    $17.71\\times$ for the same quantity. All three sites (this table,
+    tab:dna-reef-bora, and apdx:comparison) must read alike."""
     if x >= 1e9:
         return f"${x / 1e9:,.0f}".replace(",", "{,}") + r"\text{B}\times$"
     if x >= 1e6:
         return f"${x / 1e6:,.0f}".replace(",", "{,}") + r"\text{M}\times$"
+    if x < 100:
+        return f"${x:.2f}" + r"\times$"
     return f"${x:,.0f}".replace(",", "{,}") + r"\times$"
 
 

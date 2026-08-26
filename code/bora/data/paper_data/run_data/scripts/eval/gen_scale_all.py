@@ -173,7 +173,15 @@ def _panel(dataset: dict, show_ylabel: bool = True) -> tuple[list[str], dict]:
         if dens:
             max_pr = max(max_pr, max(v for _, v in dens))
             vals = [v for _, v in dens]
-            corpus_stats[key] = (label, max(vals), vals[-1])
+            # Caption endpoints: quote the SWEEP, first sampled step -> full
+            # set, not peak -> final.  Peak->final describes only the
+            # descending tail and reads as amortization even where the net
+            # movement is upward (ClamAV gdb runs 0.45 -> 0.76 over the sweep
+            # but 0.94 -> 0.76 from its peak).  Start at the first >=10% step:
+            # the sub-1% points are single-rule-scale probes (email1's is
+            # 0.000, email2's 323.59) and are far too noisy to headline.
+            steps = [v for n, v in dens if n / total >= 0.095]
+            corpus_stats[key] = (label, steps[0], steps[-1])
 
     floor_m = f"{floor / 1e6:.2f}"
     abs_lines.append(rf"  \addplot[gray, densely dotted, thick] coordinates "
@@ -252,12 +260,14 @@ def _panel(dataset: dict, show_ylabel: bool = True) -> tuple[list[str], dict]:
 
 
 def _corpus_phrase(corpus_stats: dict) -> str:
-    """`from a peak of A to B (x) and C to D (y)` over the corpora, derived."""
+    """`A to B (x) and C to D (y)` over the corpora, derived.
+
+    A is the first sampled step (>=10% of the ruleset), B the full set."""
     frags = []
-    for _, (label, peak, final) in corpus_stats.items():
+    for _, (label, first, final) in corpus_stats.items():
         # label like "gdb (dense)" -> bare token for \ttt{}
         tok = label.split(" ")[0]
-        frags.append(rf"${peak:.2f}\times10^{{-3}}$ to ${final:.2f}\times10^{{-3}}$ "
+        frags.append(rf"${first:.2f}\times10^{{-3}}$ to ${final:.2f}\times10^{{-3}}$ "
                      rf"(\ttt{{{tok}}})")
     return " and ".join(frags)
 
@@ -295,9 +305,10 @@ def build_figure(datasets: list[tuple[dict, list, dict]]) -> str:
         rf"slower than the rule count. \emph{{Bottom:}} net circuit cost "
         rf"\emph{{per rule per input byte}}---"
         rf"cumulative R1CS above the floor divided by cumulative rule count times "
-        rf"per-step input length---falling from {clam_phrase} R1CS per rule-byte "
+        rf"per-step input length---moving from {clam_phrase} R1CS per rule-byte "
         rf"(\textsc{{ClamAV}}) and {dlp_phrase} R1CS per rule-byte "
-        rf"(\textsc{{MS-DLP}}) at the full set. For the "
+        rf"(\textsc{{MS-DLP}}) between $10\%$ of the ruleset and the full "
+        rf"set. For the "
         rf"same \textsc{{MS-DLP}} ruleset, \textsc{{Zombie}} emits ${z_r1cs_tex}$ "
         rf"R1CS in total; dividing by the ${ZOMBIE_STR_LEN}$-byte input and the "
         rf"same ${dlp['total_tex']}$ rules gives $\sim$${z_prb_tex}$ R1CS per "

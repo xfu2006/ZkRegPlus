@@ -14,12 +14,8 @@ For each dataset (Mal/Dna/Dlp) we read a FoldPot run log and emit one row:
         Sel.        : circuit selection   = Phase-1 steps {1,2}
         Commit wit. : commit fixed witness= Phase-1 steps {3,4}
         Fold        : folding             = Phase-1 steps {5,6,7}
-    and Total = Sel + Commit + Fold.
-  - Wall   : TRUE wall-clock = the slowest single job (the jobs run in
-    parallel), from per-job [job N] attribution of the Phase-1 step
-    durations.  NOT Total/Jobs: that balanced-job mean under-reports the
-    wall by the job imbalance (5.9% on Mal, 3.3% on Dlp).  Agrees with
-    common.py bora_cost_breakdown's max(jobs) by an independent path.
+    and Total = Sel + Commit + Fold.  With balanced parallel jobs the
+    wall-clock is approximately Total / Jobs.
   - Stage 2 (Compression): a single per-job tail = build main decider +
     main-circuit SNARK proof + cyclepair fold + build cyclepair + second
     SNARK proof.  The two Groth16 key-generations are one-time setup and are
@@ -135,11 +131,7 @@ def parse_log(text: str) -> dict:
                  for v, u in _CORPUS.findall(text))
 
     # Stage 1: bucket each (job, Phase-1 step) duration, summed over jobs.
-    # Also accumulate PER JOB, so the true wall-clock (the slowest single
-    # job, since the jobs run in parallel) can be reported instead of the
-    # balanced-job approximation Total/Jobs.
     stage1 = {k: 0.0 for k in STAGE1_BUCKETS}
-    stage1_by_job: dict[str, float] = {}
     for line in lines:
         sm = _P1STEP.search(line)
         if not sm:
@@ -150,10 +142,6 @@ def parse_log(text: str) -> dict:
         for bucket, members in STAGE1_BUCKETS.items():
             if step in members:
                 stage1[bucket] += dur
-                jm = _JOB.search(line)
-                if jm is not None:
-                    job = jm.group(1)
-                    stage1_by_job[job] = stage1_by_job.get(job, 0.0) + dur
                 break
 
     # Stage 2: ONE per-job compression tail. The log holds one tail per job;
@@ -197,10 +185,7 @@ def parse_log(text: str) -> dict:
     ngroth = len(set(_GROTH.findall(text))) or None
 
     total = stage1["sel"] + stage1["commit"] + stage1["fold"]
-    # True wall-clock = slowest single job (jobs run in parallel). Falls back
-    # to the Total/Jobs mean only if the log carries no [job N] attribution.
-    wall = max(stage1_by_job.values()) if stage1_by_job else None
-    return {"corpus": corpus, "jobs": jobs, "steps": steps, "wall": wall,
+    return {"corpus": corpus, "jobs": jobs, "steps": steps,
             "sel": stage1["sel"], "commit": stage1["commit"],
             "fold": stage1["fold"], "total": total, "compress": compress,
             "decider": decider, "proof_bytes": proof_bytes,
@@ -259,10 +244,8 @@ def build_table(per_dataset: dict) -> str:
         assert abs(info["total"] - (info["sel"] + info["commit"]
                                     + info["fold"])) < 1e-6, \
             f"{ds}: Total != Sel+Commit+Fold"
-        wall = info.get("wall")
-        if wall is None:
-            wall = info["total"] / info["jobs"] if info["jobs"] else info["total"]
-        # Total CPU-time / wall-clock (= the slowest single job),
+        wall = info["total"] / info["jobs"] if info["jobs"] else info["total"]
+        # Total CPU-time / wall-clock (= Total/Jobs under balanced jobs),
         # with the job count in parentheses. For single-job datasets the
         # two coincide, so we print one value and "(1)".
         if info["jobs"] > 1:
@@ -323,8 +306,8 @@ def build_table(per_dataset: dict) -> str:
         r"chunk to $128$\,KB. \emph{Stage 1} (main folding) is the corpus-scaling "
         r"cost: circuit selection $+$ commit fixed witness $+$ folding. "
         r"\emph{Total\,/\,Wall (jobs)} reports the summed CPU-time over the "
-        r"parallel jobs and the wall-clock time, i.e.\ the slowest single job, "
-        r"since the jobs run in parallel. \emph{Stage 2: Compression} computes "
+        r"parallel jobs and the wall-clock time; for balanced jobs the wall-clock "
+        r"is ${\approx}\,$Total$/$Jobs. \emph{Stage 2: Compression} computes "
         r"the main-circuit SNARK proof, the QA-NIZK proof, the cycle-pairing fold, "
         r"and the resulting batch proof. It is a fixed per-job cost, and all "
         r"timings exclude the one-time key setup. The bottom row shows the size "

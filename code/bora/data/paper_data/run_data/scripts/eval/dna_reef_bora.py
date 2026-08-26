@@ -188,6 +188,7 @@ def build_table(buckets: dict, bora_cost: float) -> str:
   (proj\_512k) times bucket count as a counterfactual floor. Each per-run
   mean is over $n=10$ sampled runs; $\pm$ is their population s.d.}
   \label{tab:dna-reef-bora}
+  \setlength{\tabcolsep}{3pt}
   \begin{tabular}{l r r r r}
     \toprule
     Bucket & Count & Per-run net cost (s) & Estimate1 (s) & Estimate2 (s) \\

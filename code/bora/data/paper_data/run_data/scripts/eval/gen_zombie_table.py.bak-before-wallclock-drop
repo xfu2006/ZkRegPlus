@@ -119,7 +119,7 @@ def build_table_a(rows: list) -> str:
   constraints, prove and verify time, and proof size are all summed over
   these instances. The total regex size is fixed
   at """ + f"{regex_total:,}" + r"""\,B. The last row
-  derives the unit cost $u = t_{\text{prove}} / (L_T \cdot \sum_{r \in \hat{R}} |r|)$ in seconds
+  derives the unit cost $u = t_{\text{prove}} / (L_T \cdot \sum_{r \in R} |r|)$ in seconds
   per (input-byte $\times$ regex-byte).}
   \label{tab:zombie-data}
   \begin{tabular}{r r r r r}
@@ -128,7 +128,7 @@ def build_table_a(rows: list) -> str:
     \midrule
 """ + "\n".join(body) + r"""
     \midrule
-    \multicolumn{5}{l}{Unit $u = t/(L_T\cdot\sum_{r \in \hat{R}}|r|)$ at $L_T=""" + \
+    \multicolumn{5}{l}{Unit $u = t/(L_T\cdot\sum_{r \in R}|r|)$ at $L_T=""" + \
         f"{lens}" + r"""$: $""" + units.replace("$", "") + \
         r"""$ s\,B$^{-2}$} \\
     \bottomrule
@@ -154,7 +154,9 @@ def build_table_b(unit: float, rows: list) -> str:
             if b["n_jobs"] > 1:
                 notes.append(
                     f"The {label} BORA cost ${b['net'] / 3600:.2f}$\\,hr is the "
-                    f"total over its ${b['n_jobs']}$ parallel jobs."
+                    f"total over its ${b['n_jobs']}$ parallel jobs; the "
+                    f"wall-clock time is ${b['wall'] / 3600:.2f}$\\,hr (the "
+                    f"slowest job)."
                 )
         else:
             bora_cell = "--- (no data)"

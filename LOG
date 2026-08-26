@@ -31436,7 +31436,6 @@ Goal 2. revise apdx B
 Sunday 08/23/2026
 Goal 1. inspect remaining tasks of paper -> cleared
 Goal 2. move the extra footnote links -> DONE
--- TODO --
 Goal 3. Apdx C.1 and C.2
 	[a] check tables -> Table 7, and Table 8
 	[b] Figure 8, Table 9, Table 10, Table 11
@@ -31447,30 +31446,65 @@ Goal 3. Apdx C.1 and C.2
 		-> C.1.
 		-> C.2
 		-> C.3
-Goal 3. clear symbol issues
-	[a]
+Goal 4. Section 6
+	[a] Table 1 - Table 4
+	[b] merge footnotes.
+	[c] section 6 text (data part). 
+Goal 5. other sections
+	[a] abstract
+	[b] sec1
+	[c] sec2
+	[d] sec3
+	[e] sec4
+	[f] sec5 to 7.
+-- TODO --
 
-=== NEW RUN 21:29:45 | full_run | host=zkregplus-large ===
-[21:29:45] START  clam   (full_run/full)
-[17:45:59] FAIL   clam   rc=5 wall=72970s peak_rss=661.9GB idle=10s/14400s
-[17:45:59]        triage: /media/volume/zkregplus_large/ZkRegPlus/code/bora/data/paper_data/run_data/data/raw_data/failed_tgz/paper_data_clam_full_20260820_212948_BUNDLE.tgz
-[17:45:59] DONE   overall_rc=1
+Monday 08/24/2026
+Goal 1. coi check
+Goal 2. clear symbol issues
+	[a] A3
+	[b] A4 - A9.
+	[c] A10 - A16
+Goal 3. check references
+Goal 4. check speeling
+Goal 5. 2nd round revision
+	[a] abstract. -> DONE
+	[b] sec1 -> 
+	[c] overview
+		-> T921
+	
+Tuesday 08/25/2026
+Goal 1. incorporate Winderica changes -> DONE
+Goal 2. 0.96% claim -> DONE
+Goal 3. check Sigma-IR1CS definition -> DONE
+Goal 4. check 5 million R1CS  -> DONE
+Goal 5. sigma-ir1cs claim compared with IR1CS -> DONE
+Goal 6. conflicts of interests PC ->  DONE
+	-- related PC
+	Alex Ozdemir
+	Jonathan Katz
+	Josepha Bonneau
+	Chenkai Weng
+	Dimitrios Papadopoulos
+Goal 7: 4.3 -> DONE
+Goal 8: 4.4 -> DONE
+Goal 9. 5.0-5.1 -> DONE
+Goal 10. 5.3 and apdx B.
+Goal 11. Submission
+
+Wed 08/26/2026
+Goal 1. start clean up code
+	[a] clean debug code
+	[b] requirement.txt
 
 
 --- DATA ----
 #####################################
-*Small server: started 08/14 6am -> 08/22 4:23am
-*Big server: started 08/15 4am -> 
+*Small server: started 08/14 6am -> 08/22 4:23am (8 days)
+*Big server: started 08/15 4am -> 08/24 0am (almost 9 days!)
+COST: 80k (135.8k - 80k) ==> remaining 57.3k credits!!!
+	===> ACTUAL remaining: 58983 credits.
 #####################################
-*** LARGE SERVER ***
-[1] full_dna -> DONE 
-[2] full_dlp (6:10pm 08/17) -> 5:00pm 08/20. 
-[3] full_clam (6:00pm 08/20) -> 
-
-*** SMALL SERVER ***
-[1] 
-
------ ACTIVE GOALS -----
 Setting: https://anonymous.4open.science/r/bora_sec27
 	https://github.com/xfu2006/borasub49001
 	(for code anonymous release)

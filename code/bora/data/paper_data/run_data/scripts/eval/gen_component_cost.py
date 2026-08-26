@@ -303,8 +303,8 @@ def build_table(per_dataset: dict) -> str:
         r" raw (adjusted)}",
         r"        & corpus \\",
         r"\cmidrule(lr){5-8}",
-        r"Dataset & Circ & (B)   & R1CS   & $c_1$ (CP) & $c_2$ (SDE) & $c_3$ (DFA)",
-        r"        & $c_4$ (frwk) & share \\",
+        r"Dataset & Circ & (B)   & R1CS   & $\cost_\cp$ & $\cost_\sde$ & $\cost_\dfa$",
+        r"        & $\cost_{\texttt{FRWK}}$ & share \\",
         r"\midrule",
         *rows,
         r"\bottomrule",
@@ -312,13 +312,13 @@ def build_table(per_dataset: dict) -> str:
         r"\caption{Per-circuit cost profile. Each dataset is discharged by a "
         r"small set of circuits. \emph{input} is the bytes processed per "
         r"folding step. "
-		r"Each $c_i \in (c_1,c_2,c_3,c_4)$ is the "
+		r"Each $\cost_t \in (\cost_\cp,\cost_\sde,\cost_\dfa,\cost_{\texttt{FRWK}})$ is the "
         r"per-input-byte R1CS constraints of the four components of a circuit."
-        r"Each $c_i$ is shown as \emph{raw\,(adjusted)}: the \emph{adjusted} "
-        r"value moves the \emph{measured} log-up query cost in $c_4$"
+        r"Each $\cost_t$ is shown as \emph{raw\,(adjusted)}: the \emph{adjusted} "
+        r"value moves the \emph{measured} log-up query cost in $\cost_{\texttt{FRWK}}$"
         r" and charges it to each tier in "
-        r" proportion to its data-column size, so $c_1/c_2/c_3$ reflect the "
-        r" all-in per-byte cost and $c_4$ retains only folding overhead "
+        r" proportion to its data-column size, so $\cost_\cp/\cost_\sde/\cost_\dfa$ reflect the "
+        r" all-in per-byte cost and $\cost_{\texttt{FRWK}}$ retains only folding overhead "
 		r" and the processing of Logup share of lookup table. }"
         r"\label{tbl:component-cost}",
         r"\end{table*}",

@@ -707,8 +707,8 @@ def bora_net_cost(dump_file) -> float:
     This is the sum of the eight Phase-1 sub-steps (circuit selection, commit
     to witness, main folding, ...) per job -- identical to the ``net`` used in
     the Reef comparison (tab:dna-reef-bora). Works for both the single-job DNA
-    dump (-> 5.61 hr) and the 8-job full-ClamAV dump (-> 344.95 hr, the sum
-    over the 8 jobs). Reuses ``get_cost``.
+    dump (-> 3.16 hr) and the 8-job full-ClamAV dump (-> 117.00 hr, the sum
+    over the 8 jobs; Dlp is likewise 8 jobs -> 507.94 hr). Reuses ``get_cost``.
     """
     _, agg = get_cost(dump_file)
     total = agg["phase1_main_folding"]["total"]
@@ -977,14 +977,50 @@ def zombie_regex_bytes(dataset: str) -> int:
     return _dataset_facts(dataset)["ruleset_bytes"]
 
 
+_dlp_clean_cache: dict | None = None
+
+
+def _dlp_clean_corpus() -> dict:
+    """Step-1 (RE2-screened) clean Dlp corpus -- the emails actually evaluated.
+
+    tab:datasets reports this basis (eval/datasets.py applies it), so every
+    downstream table must use it too. Reading the raw maildir instead made
+    tab:compare-zombie-bora and tab:compare-all overstate the Dlp speedup by
+    3.26% (843x vs the correct 816x). impl.tex pins the clean corpus at
+    "96.85% by size" of the raw maildir: 1,376,362,308 / 1,421,183,736.
+
+    Loaded lazily by path: eval/datasets.py imports this module, so a
+    top-level import here would be circular, and `eval` is not a package.
+    """
+    global _dlp_clean_cache
+    if _dlp_clean_cache is None:
+        import importlib.util
+        import sys as _sys
+        # resolve next to this file so it works from both paper roots:
+        # usenix27/data/scripts/ and bora/.../run_data/scripts/
+        p = Path(__file__).resolve().parent / "eval" / "datasets.py"
+        spec = importlib.util.spec_from_file_location("_bora_datasets", p)
+        mod = importlib.util.module_from_spec(spec)
+        # dataclasses resolves annotations via sys.modules[cls.__module__];
+        # register before exec or @dataclass in datasets.py raises.
+        _sys.modules["_bora_datasets"] = mod
+        spec.loader.exec_module(mod)
+        _dlp_clean_cache = mod.dlp_step1_corpus(get_paper_root(), get_proj_root())
+    return _dlp_clean_cache
+
+
 def dataset_corpus_bytes(dataset: str) -> int:
     """Total document-corpus bytes for `dataset`, as tab:datasets reports it:
       mal -> sum of CentOS corpus file sizes   (total_bytes)
       dna -> chr17 file size                    (doc_bytes)
-      dlp -> sum of Enron maildir file sizes    (total_bytes)
+      dlp -> step-1 RE2-clean Enron set        (total_bytes; NOT the raw
+             maildir -- see _dlp_clean_corpus)
     """
+    d = dataset.lower()
+    if d == "dlp":
+        return _dlp_clean_corpus()["total_bytes"]
     facts = _dataset_facts(dataset)
-    return facts["doc_bytes"] if dataset.lower() == "dna" else facts["total_bytes"]
+    return facts["doc_bytes"] if d == "dna" else facts["total_bytes"]
 
 
 def dataset_rule_count(dataset: str) -> int:
@@ -1013,68 +1049,31 @@ def zombie_totals(log_file, str_len: int) -> dict:
     total_r1cs, total_prove_s, total_verify_s, total_proof_bytes, and
     unit_cost = total_prove_s / (str_len * total_regex_bytes), i.e. seconds
     per (input-byte x regex-byte).
-
-    If the requested block is missing or empty (e.g. a dry-run log),
-    falls back to the highest available block with 'ok' rows and
-    extrapolates the two linear-in-length totals (r1cs, prove_s) by
-    str_len/src_len -- exact for the per-byte consumers; the result
-    then carries "extrapolated_from". total_verify_s and
-    total_proof_bytes are NOT scaled (sublinear in the input length).
     """
     text = Path(log_file).read_text()
+    start = re.search(rf"== STR_LENGTH = {str_len} ==", text)
+    if not start:
+        raise RuntimeError(f"zombie_totals: no block for STR_LENGTH={str_len}")
+    rest = text[start.end():]
+    end = re.search(r"^== STR_LENGTH", rest, re.MULTILINE)
+    block = rest[: end.start()] if end else rest
 
-    def block_of(sl):
-        start = re.search(rf"== STR_LENGTH = {sl} ==", text)
-        if not start:
-            return None
-        rest = text[start.end():]
-        end = re.search(r"^== STR_LENGTH", rest, re.MULTILINE)
-        return rest[: end.start()] if end else rest
-
-    def totals_of(block):
-        n = regex = r1cs = prove_ms = ver_ms = proof = 0
-        rules = set()
-        for m in _ZOMBIE_ROW.finditer(block):
-            policy = m.group(1)
-            pat, kws, cons, pms, vms, pb = map(int, m.groups()[1:])
-            regex += pat + kws
-            r1cs += cons
-            prove_ms += pms
-            ver_ms += vms
-            proof += pb
-            rules.add(policy.split("/")[0])   # top-level SIT defn
-            n += 1
-        return n, regex, r1cs, prove_ms, ver_ms, proof, rules
-
-    src_len = str_len
-    block = block_of(str_len)
     n = regex = r1cs = prove_ms = ver_ms = proof = 0
     rules = set()
-    if block is not None:
-        n, regex, r1cs, prove_ms, ver_ms, proof, rules = totals_of(block)
+    for m in _ZOMBIE_ROW.finditer(block):
+        policy = m.group(1)
+        pat, kws, cons, pms, vms, pb = map(int, m.groups()[1:])
+        regex += pat + kws
+        r1cs += cons
+        prove_ms += pms
+        ver_ms += vms
+        proof += pb
+        rules.add(policy.split("/")[0])   # top-level SIT defn (combs collapse)
+        n += 1
     if n == 0:
-        avail = sorted({int(s) for s in re.findall(
-            r"== STR_LENGTH = (\d+) ==", text)}, reverse=True)
-        for cand in avail:
-            if cand == str_len:
-                continue
-            n, regex, r1cs, prove_ms, ver_ms, proof, rules = \
-                totals_of(block_of(cand))
-            if n:
-                src_len = cand
-                break
-        if n == 0:
-            raise RuntimeError(
-                f"zombie_totals: no usable STR_LENGTH block for "
-                f"{str_len} (available: {avail})")
-        f = str_len / src_len
-        r1cs = round(r1cs * f)
-        prove_ms = prove_ms * f
-        print(f"zombie_totals: WARN no STR_LENGTH={str_len} block in "
-              f"{Path(log_file).name}; extrapolated linearly from "
-              f"{src_len} (x{f:.3g})")
+        raise RuntimeError(f"zombie_totals: no 'ok' rows for STR_LENGTH={str_len}")
     prove_s = prove_ms / 1000.0
-    out = {
+    return {
         "str_len": str_len,
         "n": n,                 # measured regex instances (comb variants)
         "n_rules": len(rules),  # distinct top-level SIT rules
@@ -1085,9 +1084,6 @@ def zombie_totals(log_file, str_len: int) -> dict:
         "total_proof_bytes": proof,
         "unit_cost": prove_s / (str_len * regex),
     }
-    if src_len != str_len:
-        out["extrapolated_from"] = src_len
-    return out
 
 
 def dlp_patkws_bytes() -> int:
@@ -1101,16 +1097,5 @@ def dlp_patkws_bytes() -> int:
     twice (the bidirectional proximity form) plus regex grouping/syntax, so it
     is NOT used for Dlp. (Mal/Dna keep their on-disk file sizes, which carry no
     such bidirectional duplication.)
-
-    total_regex_bytes is IDENTICAL across every STR_LENGTH block (it sums
-    pat_len+kws_len per policy, independent of the scanned document length),
-    so this reads whichever block is actually in the log instead of assuming
-    2000 is present -- a dry-run sweep may use an entirely different VEC_SIZE
-    (e.g. [700,800,1000]).
     """
-    log = server_file(_ZOMBIE_LOG)
-    text = Path(log).read_text()
-    m = re.search(r"== STR_LENGTH = (\d+) ==", text)
-    if not m:
-        raise RuntimeError(f"dlp_patkws_bytes: no STR_LENGTH block in {log}")
-    return zombie_totals(log, int(m.group(1)))["total_regex_bytes"]
+    return zombie_totals(server_file(_ZOMBIE_LOG), 2000)["total_regex_bytes"]
