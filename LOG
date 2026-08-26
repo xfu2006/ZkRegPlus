@@ -31570,7 +31570,8 @@ Goal 8. T6008: clean the crates
 		shall we move any files to tidy it up? Give me the list
 		and give me the suggestions. The point is to make it
 		tidy to avoid reviewers be picky.
-		(Cost: 5$ , Now: 50.55)
+		(Cost: 5$ , Now: 50.55 -> 52.29 -> $8)
+		-> only 2 more interactions costed 3 dollars! 
 	[b] apply the changes and test with small_data
 
 --- DATA ----
