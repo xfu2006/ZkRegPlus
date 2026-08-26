@@ -57,8 +57,10 @@ bora/
   vendored arkworks/Sonobe forks are bound to it).
 - `lld` linker (required for reasonable link times).
 - Python 3 (for `scripts/INSTALL.py` and `scripts/PAPER_DATA.py`).
-- Python packages: `pip install -r requirements.txt` (core dep: `gdown`;
-  the rest are optional, only for regenerating the signature corpora).
+- Python packages: **no manual step needed** — the reproduction path
+  needs none. `scripts/INSTALL.py` installs `tqdm` itself when the CirC
+  baseline is selected; `requirements.txt` declares the optional tooling
+  for regenerating the signature corpora.
 - Linux. `numactl` is used by the large NUMA runs (optional otherwise).
 
 **Hardware (per experiment)**
@@ -82,7 +84,7 @@ build needs **~250 GB RAM** (see the commented dependency in
 
 ```bash
 # from the repo root
-python3 scripts/INSTALL.py --data all     # or: email | dna | binexec
+python3 scripts/INSTALL.py --data all   # or: email|dna|binexec|zombie|paper_data
 python3 scripts/INSTALL.py --toolchain    # install the pinned rust 1.76.0
 ```
 
@@ -149,8 +151,8 @@ RUSTFLAGS="-C link-args=-fuse-ld=lld -Awarnings" \
   cargo test -p zkregplus --release --lib -- \
   zkp_driver::tests_zkp_driver::test_zkreg_main --exact --nocapture
 ```
-Runs the `small_data` end-to-end ZK proof in ~30–40 s (~7 GB RAM) and
-writes a report under `data/small_data_set/reports/`. This is what
+Runs the `small_data` end-to-end ZK proof in ~30–40 s (~7 GB RAM),
+printing its per-job timings and verification verdicts to stdout. This is what
 `python3 scripts/PAPER_DATA.py --run small` wraps; run it directly to
 skip the runner's logging and triage-bundle machinery.
 

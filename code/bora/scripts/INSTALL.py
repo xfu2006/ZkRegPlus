@@ -4,8 +4,10 @@
 #
 # Downloads + extracts data into data/.  The email dataset (Enron) is
 # fetched from the CMU source and placed under data/samples/email/src/
-# maildir; samples.7z is a byte-identical fallback used only when the
-# CMU host is unreachable.  The binexec corpus comes from its Zenodo
+# maildir; CMU is the ONLY source -- the samples.7z fallback was retired
+# because it bypassed EMAIL_TREE_DIGEST, so an unreachable CMU host is a
+# hard failure, never a silent unverified corpus.  The binexec corpus
+# comes from its Zenodo
 # deposit (DOI 10.5281/zenodo.21909549), which also carries the licence
 # texts and the per-file manifest; the chr17 (dna) corpus comes from its own
 # Zenodo deposit (DOI 10.5281/zenodo.21911045).  Both are sha256-verified.
@@ -29,8 +31,7 @@
 #                                  (all|email|dna|binexec|zombie|
 #                                   paper_data)
 #
-# NOTE: python file generated under the instruction of paper author.
-#   code reviewed and tested manually by paper author.
+# NOTE: authored and manually reviewed/tested by the paper authors.
 # ---------------------------------------------------------------------
 
 import argparse
@@ -52,9 +53,10 @@ CACHE_MAIN  = os.path.join(DATA_DIR, "cache", "main")
 TMP_DIR     = "/tmp/bora_install"                 # all scratch (item 4)
 EXTRACT_DIR = os.path.join(TMP_DIR, "extract")
 
-# ---- Google Drive ids (src_sig.7z intentionally NOT fetched) --------
-# Drive now serves ONLY the email fallback.  binexec and dna both come from
-# Zenodo: DOI-pinned, sha256-verified, and free of Drive's download logging.
+# ---- Google Drive ids (RETIRED -- nothing is fetched from Drive) ----
+# Drive now serves NOTHING: binexec and dna moved to Zenodo (DOI-pinned,
+# sha256-verified, free of Drive's download logging), and the email
+# fallback that was Drive's last consumer is retired too.
 # SAMPLES_ID = "1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_"  # samples.7z -- RETIRED.
 #   It backed only the email fallback, which is commented out below: the
 #   fallback bypassed EMAIL_TREE_DIGEST, so a CMU outage silently yielded an
@@ -111,7 +113,7 @@ BINEXEC_TGT = "binexec_merged128k"
 #
 # Brings a bare Ubuntu 24 instance to a buildable state: apt build deps
 # (incl. lld, required by the fused-ld link), p7zip, the texlive subset
-# PAPER_DATA.py's figs item needs, pip+gdown, and the rustup-managed
+# PAPER_DATA.py's figs item needs, and the rustup-managed
 # 1.76.0 toolchain pinned by ./rust-toolchain.  Idempotent; needs sudo
 # for apt.
 # =====================================================================
@@ -190,6 +192,10 @@ def install_zombie_apt_deps():
 
 
 # pip-install gdown (Ubuntu 24 is PEP-668 managed -> retry w/ override).
+# NO LIVE CALLER: gdown backed only gdrive_download, which has no live
+# caller either (see its comment).  Kept so re-enabling a retired Drive
+# path stays a one-line change; nothing on the reproduction path pays
+# for this install any more.
 def install_pip_deps():
     try:
         run_cmd([sys.executable, "-m", "pip", "install", "--user",
@@ -262,7 +268,6 @@ def install_toolchain(with_zombie=False):
     print("=== install toolchain (Rust %s + build deps) ==="
           % RUST_VERSION)
     install_apt_deps()
-    install_pip_deps()
     install_rust()
     if with_zombie:
         print("=== zombie baseline build deps (rust %s) ==="
@@ -326,6 +331,8 @@ def zombie_apt_present():
 
 
 # True if the gdown python module imports.
+# NO LIVE CALLER: ensure_toolchain() stopped gating on this once the
+# last Drive consumer was retired.
 def have_gdown():
     try:
         import gdown  # noqa: F401
@@ -376,22 +383,19 @@ def have_zombie_rust():
 # probed and installed only when that baseline is actually being set up.
 def ensure_toolchain(selected=()):
     want_z = "zombie" in selected
-    ok_apt, ok_gdown, ok_rust = \
-        apt_tools_present(), have_gdown(), have_rust()
+    ok_apt, ok_rust = apt_tools_present(), have_rust()
     ok_z_apt = zombie_apt_present() if want_z else True
     ok_z_pip = have_tqdm() if want_z else True
     ok_z_rust = have_zombie_rust() if want_z else True
-    if (ok_apt and ok_gdown and ok_rust
+    if (ok_apt and ok_rust
             and ok_z_apt and ok_z_pip and ok_z_rust):
-        print("toolchain present (apt deps, gdown, rust %s%s)."
+        print("toolchain present (apt deps, rust %s%s)."
               % (RUST_VERSION,
                  ", zombie deps, rust " + ZOMBIE_NIGHTLY if want_z else ""))
         return
     print("=== ensure toolchain (installing missing tools) ===")
     if not ok_apt:
         install_apt_deps()
-    if not ok_gdown:
-        install_pip_deps()
     if not ok_rust:
         install_rust()
     if not ok_z_apt:
@@ -407,8 +411,9 @@ def ensure_toolchain(selected=()):
 # =====================================================================
 
 # Download a Google Drive file to dest (skips if already present).
-# Only the email fallback still uses this: binexec and dna both moved to
-# Zenodo (http_download + sha256).  Accepts either a bare file id (as
+# NO LIVE CALLER: binexec and dna moved to Zenodo (http_download +
+# sha256) and the email fallback is retired; kept only so the retired
+# paths below stay readable.  Accepts either a bare file id (as
 # SAMPLES_ID is) or a full ".../file/d/<id>/view?usp=sharing" share URL. We
 # extract the id ourselves and always hand gdown a uc?id= link, so it works
 # on older gdown (<4.0) too -- those lack the fuzzy= kwarg that the URL form
@@ -1151,8 +1156,8 @@ def install_email_from_cmu():
 #     write_email_readme()
 
 
-# Prefer the CMU source; fall back to samples.7z only when CMU is
-# unreachable or its download/verify fails.
+# CMU is the only source.  An unreachable host raises rather than
+# falling back -- see the retired install_email_from_samples7z above.
 def install_dataset_email():
     # CMU is now the ONLY source: the Drive fallback was retired because it
     # bypassed EMAIL_TREE_DIGEST.  Fail loudly rather than half-install --

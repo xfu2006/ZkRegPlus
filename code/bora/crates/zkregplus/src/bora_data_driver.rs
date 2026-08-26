@@ -583,8 +583,9 @@ pub const DLP: DatasetSpec = DatasetSpec {
 /// sampler (subset()) draws uniformly, so a 5% draw would miss the
 /// known over-cap files and collapse the ladder to 3 rungs, losing
 /// circ3 -- the rung that sets cs1e, decider size and peak RAM. The
-/// list is pre-cut instead (scripts/debug/gen_small_full_dlp_list.py)
-/// and folded whole at perc_samples 100, so no sampler runs at all.
+/// list is pre-cut instead
+/// (attic/scripts/debug/gen_small_full_dlp_list.py) and folded whole
+/// at perc_samples 100, so no sampler runs at all.
 ///
 /// db_cache_dir MUST differ from DLP's: the tuned ladder.json and
 /// warmstart_caps.json are corpus-shaped, and sharing the dir would
@@ -5589,7 +5590,7 @@ pub mod tests_bora_data_driver {
 		let files = read_path_list(SMALL_DLP.master_sources[0]);
 		assert!(files.len() > 20_000,
 			"small_full_dlp corpus only {} files -- regenerate with \
-			 scripts/debug/gen_small_full_dlp_list.py", files.len());
+			 attic/scripts/debug/gen_small_full_dlp_list.py", files.len());
 		// watson-k/e_mail_bin/379 is the worst known word (115M prod
 		// fan-out). Lose it and the ladder can drop to 3 rungs.
 		assert!(files.iter().any(|f|

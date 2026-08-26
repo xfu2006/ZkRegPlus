@@ -3452,7 +3452,8 @@ def run_small():
     if res.failed:
         log("small: FAILED -- triage: %s" % res.triage_tgz)
         return 1
-    log("small: report -> %s" % SMALL_REPORT)
+    if os.path.isfile(SMALL_REPORT):
+        log("small: report -> %s" % SMALL_REPORT)
     return 0
 
 

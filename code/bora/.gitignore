@@ -22,3 +22,7 @@ data/debug/sde_aggressive/
 # member builds it, and it held the only >8MB file outside data/
 crates/data_processor/dependency/aho-corasick/benchmarks/
 data/src_sig/ms_dlp/docs/*.partial.jsonl
+
+# the repo-root .gitignore's `*.txt` would otherwise keep this out of
+# `git archive`, which is how prepare_open4s builds the artifact tarball
+!/requirements.txt

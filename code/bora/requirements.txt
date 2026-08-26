@@ -1,0 +1,42 @@
+# Python dependencies for the BORA artifact.
+#
+# Reproducing the paper's results does NOT require this file.
+# `scripts/INSTALL.py` installs what the reproduction path needs on its
+# own (ensure_toolchain -> install_pip_deps), including the PEP-668
+# fallback below.  This file exists so the environment can be recreated
+# in one step, and so the optional corpus-regeneration tooling has a
+# declared dependency set.
+#
+# Install with:
+#     pip install --user -r requirements.txt
+# On PEP-668 "externally managed" distributions (Ubuntu 24.04+):
+#     pip install --user --break-system-packages -r requirements.txt
+
+# ---------------------------------------------------------------------
+# Retired -- listed for completeness, needed by nothing.
+# ---------------------------------------------------------------------
+# Backed the Google Drive download helper (gdrive_download), which has
+# no live caller: every corpus now comes from Zenodo over plain urllib
+# + sha256.  INSTALL.py no longer installs it.  Needed only if you
+# re-enable one of the retired Drive paths.
+gdown
+
+# ---------------------------------------------------------------------
+# Optional -- ONLY for regenerating / evaluating the signature corpora.
+# The artifact already ships these corpora pre-generated, so reproducing
+# the paper's results does NOT require anything below.
+# ---------------------------------------------------------------------
+# data/src_sig/ms_dlp/scripts/eval_dlp.py -- RE2 match engine (imports `re2`).
+google-re2
+# data/src_sig/clamav/scripts/gen_data.py -- Aho-Corasick (imports `ahocorasick`).
+pyahocorasick
+# data/src_sig/ms_dlp/scripts/test_compress_regex.py -- dev tests + regex
+# oracle.  The >=4 floor is the top-level `parse` entry point that script
+# imports; the tests skip cleanly when greenery is absent.
+greenery>=4
+pytest
+# CirC baseline toolchain only (vendored circ/driver.py); installed by
+# INSTALL.py when the `zombie` dataset is selected.  Must match
+# ZOMBIE_PIP in scripts/INSTALL.py:163 -- check_zombie_dep_drift() warns
+# when the downloader's pin drifts from it.
+tqdm==4.63.0
