@@ -7,6 +7,12 @@
 # C (leaf registry) -> B (sequencer) -> A (CLI/menu), landing shared
 # infra first with stub leaves before any leaf gets a real
 # implementation.
+# TOP_CHOICES holds 11 tops but the menu -- and `--list`, which prints
+# the same thing -- shows only the first 6: the five debug/tuner tops
+# named in HIDDEN_TOPS stay hidden yet reachable, as `--run <key>` and
+# as their unchanged numeric shortcuts 7..11.  The full-run costs the
+# menu quotes come from FULL_COST (~160 h == ~6.7 d run in sequence,
+# ~952 GB peak, set by zombie).
 # Prepared by Opus 5 under guidance of paper authors.
 # ---------------------------------------------------------------------
 
@@ -3173,6 +3179,19 @@ DRY_COST = [
 SNARK_COST_MIN = 113.4     # 6804.8 s, whole leaf including cargo build
 SNARK_COST_GIB = 433.2     # tree-wide peak RSS across the 4 jobs
 
+# small is MEASURED too, from the runner's own trailer on the
+# 2026-08-26 demo run: `small: rc=0 wall=80s peak_rss=3.0GB`.  The wall
+# is the LEAF wall -- 80.2 s, log open to last write -- against 34.7 s
+# of `=== ALL JOBS ===`; the remainder is the cargo build check, the DB
+# build and teardown, and a reviewer's clock sees the leaf wall.
+# peak_rss is the runner's metered tree RSS, which is why it sits BELOW
+# the run log's "RAM: 7 GB" step samples: those are virtual_mem
+# (foldpot/utils.rs), not RSS.  Quoted from a LAPTOP on purpose -- this
+# entry exists to be runnable anywhere, so a laptop figure is the
+# honest one to advertise.
+SMALL_COST_MIN = 1.3       # 80 s leaf wall
+SMALL_COST_GIB = 3.0       # runner-metered tree peak
+
 
 def _fmt_min(m):
     """9.0 -> '9', 2.5 -> '2.5' (no trailing .0 in the menu)."""
@@ -3196,89 +3215,62 @@ def dry_total():
     return mins, gb
 
 
-TOP_CHOICES = [
-    ("small", "small data"),
-    ("small_full_snark", "small sample, one full SNARK proof %s"
-                         % _cost_tag(SNARK_COST_MIN, SNARK_COST_GIB,
-                                     lead="measured ")),
-    ("dry_run", "dry_run %s" % _cost_tag(*dry_total(), lead="")),
-    ("full_run", "full_run"),
-    # clean sits at #5 BY REQUEST (2026-08-14), renumbering figs to #6.
-    ("clean", "clean generated data (raw_data/*, pdf/*)"),
-    ("figs", "generate list of figures"),
-    # 69801 debug probes (2026-08-15): appended LAST so items 1-6 keep
-    # their numbers.  Both arm the decider instrumentation and stop
-    # after the main snark (no CyclePair phase).
-    ("dna_debug", "dna DEBUG probes (small fold, FULL-WIDTH non-light "
-                  "decider, ~1.5h)"),
-    ("dna_debug_full", "dna DEBUG probes (FULL shape 328 steps, stops "
-                       "after main snark, ~5h)"),
-    # small_full_dlp (2026-08-17): appended LAST so items 1-8 keep
-    # their numbers.  Deliberately NOT a JOB_SPECS leaf -- a leaf would
-    # be reachable from `full_run --items all`, and this entry must
-    # never alter a full_run.  It writes nothing into raw_data/.
-    ("small_full_dlp", "small_full_dlp (ENTIRE dlp DB, ~5% corpus + "
-                       "hard core, FOLD COST ONLY, ~8.5h/~230GB)"),
-    # V101 (2026-08-17): the whole tuner test suite in ONE unattended
-    # run.  Appended LAST so items 1-9 keep their numbers.  NOT a
-    # JOB_SPECS leaf -- `full_run --items all` must never reach it,
-    # it writes nothing into raw_data/.
-    ("v101", "V101 tuner test suite (all tests, unattended, self-"
-             "sizing to a 16 h budget; watch "
-             "/tmp/bora/v101/V101_PROGRESS.txt, verdict + "
-             "V101_BUNDLE.tgz beside it)"),
-    # scale_ab (2026-08-20): appended LAST so items 1-10 keep their
-    # numbers.  NOT a JOB_SPECS leaf -- `full_run --items all` must
-    # never reach it -- and it writes only scale_data_*_v1/_v2.tgz,
-    # so the bundles the scale figure reads are untouched.
-    ("scale_ab", "scale_clam tuner A/B, v1 vs v2 (DRY sweep twice, "
-                 "~15-30 min; own bundles, figure inputs untouched)"),
-]
-
-LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
-                 for k, name, mins, gb, note in DRY_COST]
-_LEAF_KEYS = [k for k, _ in LEAF_CHOICES]     # canonical order (2.2)
-
-# Full-run cost per leaf, MEASURED from the paper's production
-# artifacts (ZkregPlusPaper .../raw_data, READ-ONLY; extracted
-# 2026-08-14): (key, wall_hours, peak_rss_gb, note); None = never
-# measured.  SOURCES: dlp/clam the part logs' ALL-JOBS trailers, dna
-# its /usr/bin/time -v block (wall 5:22:56, maxrss 559,310,200 kB),
-# zombie/reef the docs logs' per-policy sums (582 runs / 60 samples),
-# scale the nested per-round trailers summed.  CAVEATS: dlp and clam
-# run their two halves CONCURRENTLY -- the leaf wall is the slower
-# part, but the box holds BOTH parts at once (dlp 262+260, clam
-# 373+531 GB -> the 1 TB box).  dna's 533 GB is a true time -v tree
-# peak; the dlp/clam/scale figures are in-log "RAM: N GB" step
-# samples, which the 08-14 calibration showed under-report the tree
-# peak by up to ~1.3x.  lkup/effective are the only rows the
-# runner MEASURED itself rather than harvested: the 2026-08-20
-# full_run on zkreglus-small (512 GB), SUMMARY.log wall 8385 s /
-# 8555 s, peak_rss 70.8 GB on both.  The identical peak is
-# expected, not a meter artifact -- each leaf builds the same
-# three DBs (Mal/Dna/Dlp) and that build is the peak.
-# 2026-08-21: dlp and clam re-measured from the NEO production runs on
-# the 1 TB box, superseding the legacy harvest for those two rows --
-# dlp end-to-end wall 70.81 hr against legacy's 121.2 (1.71x), clam's
-# two-half run inside a day.  Both are rounded UP so the menu quotes a
-# budget, not a best case.  peak_rss is UNCHANGED: neo was never
-# metered for a tree peak, and a guessed RAM number would be worse
-# than a stale measured one.
+# Full-run cost per leaf: (key, wall_hours, peak_rss_gb, note); None =
+# never measured.  Every wall is a MEASURED leaf wall -- log open to
+# last write -- so it covers the cargo build, corpus/regex prep, DB
+# build, the two-half stagger, folding, the Groth16 decider and
+# teardown: exactly what SUMMARY.log reports as wall=.  Seconds/3600
+# rounded to 0.1 h; RSS to the NEAREST GB, because _full_tag prints it
+# with %d and truncates (reef's 28.5 is stored as 29 so the menu does
+# not read 28).
+# SOURCES:
+#   * zkregplus-large (1 TB), full_run of 2026-08-23/24, SUMMARY.log:
+#     zombie 156,741 s / 952.4 GB, reef 18,129 s / 28.5 GB, dna
+#     20,946 s / 528.8 GB;
+#   * zkreglus-small (512 GB), full_run of 2026-08-21/22, SUMMARY.log:
+#     scale_clam 25,665 s / 147.9 GB, scale_dlp 13,212 s / 165.0 GB,
+#     lkup 6,623 s / 73.1 GB, effective 6,720 s / 72.7 GB;
+#   * dlp and clam predate this runner's meter, so their walls come
+#     from the NEO part logs on the 1 TB box -- log header to last
+#     write gives dlp 254,949 s (70.82 h) and clam 72,970 s (20.27 h).
+#     Validated on dna, where the same method reproduces the metered
+#     20,946 s to within one second.
+# The two boxes differ in cores and RAM, so a cross-box wall delta is
+# not a regression signal.  lkup and effective land on the same RSS
+# because each builds the same three DBs (Mal/Dna/Dlp) and that build
+# is the peak -- expected, not a meter artifact.
+# scale_* are batch-k=3 WALLS, not serial fold sums: the archived
+# per-round fold_ms totals are higher by construction (scale_clam
+# 11.6 h, scale_dlp 4.5 h).  The superseded 1.3 h for scale_dlp was
+# worse than stale -- it summed only the dlp_2 corpus and ignored
+# dlp_6, under-quoting by ~3x.
+# dlp/clam RSS is an ESTIMATE, not a metered tree peak: no part log
+# carries a peak_rss trailer.  From the parts' own "RAM: N GB" traces
+# the concurrent peak is max(fold1+fold2, part2_decider) -- ~508 GB
+# for dlp (255+253 vs 505) and ~695 GB for clam (357+338 vs 553).
+# part2's decider is gated behind part1's EXIT (run_rust_two_half
+# creates FLAG only after p1.wait()), so its 505/553 GB spike never
+# coexists with part1: the superseded "373+531" added two peaks that
+# cannot overlap.  Scaling by the in-log-to-tree factor (dna: metered
+# 528.8 against in-log 426 = 1.24x; the 08-14 calibration said up to
+# 1.3x) gives ~660 GB for dlp and ~904 GB for clam, rounded to 700 and
+# 900.  Read them as provisioning floors.  Neither sets the rollup
+# peak -- zombie's metered 952 GB does.
 FULL_COST = [
-    ("dlp",        72.0,  262,  " x2 parts"),
-    ("dna",        5.4,   533,  ""),
-    ("clam",       20.0,  531,  " x2 parts"),
-    ("zombie",     5.2,   None, ""),
-    ("reef",       5.2,   None, ""),
-    ("lkup",       2.3,   71,   ""),
-    ("scale_clam", 10.9,  139,  ""),
-    ("scale_dlp",  1.3,   149,  ""),
-    ("effective",  2.4,   71,   ""),
+    ("dlp",        70.8,  700,  " x2 parts"),
+    ("dna",         5.8,  529,  ""),
+    ("clam",       20.3,  900,  " x2 parts"),
+    ("zombie",     43.5,  952,  ""),
+    ("reef",        5.0,   29,  ""),
+    ("lkup",        1.8,   73,  ""),
+    ("scale_clam",  7.1,  148,  ""),
+    ("scale_dlp",   3.7,  165,  ""),
+    ("effective",   1.9,   73,  ""),
 ]
 
 
 def _full_tag(hours, gb, note=""):
-    """'[full ~5.4h, ~533GB]'; days past 48h; '[full: not measured]'
+    """'[full ~5.8h, ~529GB]'; days past 48h; '[full: not measured]'
     when the leaf has no production artifact."""
     if hours is None:
         return "[full: not measured]"
@@ -3297,6 +3289,77 @@ def full_total():
     n_un = sum(1 for c in FULL_COST if c[1] is None)
     return hrs, gb, n_un
 
+
+def full_rollup_tag():
+    """The `--items all` full cost, rendered ONCE so the top menu's
+    full_run row and the submenu's (A) All can never disagree.  n_un
+    is deliberately not printed: every row is measured, and a leaf
+    that is not would show its own [full: not measured] on the row."""
+    hrs, gb, _n_un = full_total()
+    return "[measured ~%sd, ~%dGB peak]" % (_fmt_min(hrs / 24.0), gb)
+
+
+TOP_CHOICES = [
+    ("small", "small data %s"
+               % _cost_tag(SMALL_COST_MIN, SMALL_COST_GIB,
+                           lead="measured ")),
+    ("small_full_snark", "small sample, one full SNARK proof %s"
+                         % _cost_tag(SNARK_COST_MIN, SNARK_COST_GIB,
+                                     lead="measured ")),
+    ("dry_run", "dry_run %s" % _cost_tag(*dry_total(), lead="")),
+    ("full_run", "full_run %s" % full_rollup_tag()),
+    # clean sits at #5 BY REQUEST (2026-08-14), renumbering figs to #6.
+    ("clean", "clean generated data (raw_data/*, pdf/*)"),
+    ("figs", "generate list of figures"),
+    # 69801 debug probes (2026-08-15).  HIDDEN from the menu (see
+    # HIDDEN_TOPS) but still in the list: reach them as
+    # `--run dna_debug` / `--run dna_debug_full`, or as the unchanged
+    # numeric shortcuts 7 and 8.  Both arm the decider instrumentation
+    # and stop after the main snark (no CyclePair phase).
+    ("dna_debug", "dna DEBUG probes (small fold, FULL-WIDTH non-light "
+                  "decider, ~1.5h)"),
+    ("dna_debug_full", "dna DEBUG probes (FULL shape 328 steps, stops "
+                       "after main snark, ~5h)"),
+    # small_full_dlp (2026-08-17).  HIDDEN from the menu (see
+    # HIDDEN_TOPS); reach it as `--run small_full_dlp` or as shortcut
+    # 9.  Deliberately NOT a JOB_SPECS leaf -- a leaf would be
+    # reachable from `full_run --items all`, and this entry must never
+    # alter a full_run.  It writes nothing into raw_data/.
+    ("small_full_dlp", "small_full_dlp (ENTIRE dlp DB, ~5% corpus + "
+                       "hard core, FOLD COST ONLY, ~8.5h/~230GB)"),
+    # V101 (2026-08-17): the whole tuner test suite in ONE unattended
+    # run.  HIDDEN from the menu (see HIDDEN_TOPS); reach it as
+    # `--run v101` or as shortcut 10.  NOT a JOB_SPECS leaf --
+    # `full_run --items all` must never reach it, it writes nothing
+    # into raw_data/.
+    ("v101", "V101 tuner test suite (all tests, unattended, self-"
+             "sizing to a 16 h budget; watch "
+             "/tmp/bora/v101/V101_PROGRESS.txt, verdict + "
+             "V101_BUNDLE.tgz beside it)"),
+    # scale_ab (2026-08-20).  HIDDEN from the menu (see HIDDEN_TOPS);
+    # reach it as `--run scale_ab` or as shortcut 11.  NOT a JOB_SPECS
+    # leaf -- `full_run --items all` must never reach it -- and it
+    # writes only scale_data_*_v1/_v2.tgz, so the bundles the scale
+    # figure reads are untouched.
+    ("scale_ab", "scale_clam tuner A/B, v1 vs v2 (DRY sweep twice, "
+                 "~15-30 min; own bundles, figure inputs untouched)"),
+]
+
+# Tops the menu does NOT print (2026-08-26): debug probes and tuner
+# harnesses no reviewer should pick by accident -- one of them is a
+# 16 h unattended suite.  DISPLAY ONLY: they keep their slots in
+# TOP_CHOICES, so `--run <key>`, the numeric shortcuts and --run's
+# argparse choices are all unchanged, and `--items all` still cannot
+# reach them (none is a JOB_SPECS leaf).  Held as KEYS rather than a
+# count so a rename fails the selftest loudly instead of silently
+# hiding a neighbouring row, and so a 12th entry is visible by
+# default.
+HIDDEN_TOPS = ("dna_debug", "dna_debug_full", "small_full_dlp",
+               "v101", "scale_ab")
+
+LEAF_CHOICES = [(k, "%s %s" % (name, _cost_tag(mins, gb, note)))
+                 for k, name, mins, gb, note in DRY_COST]
+_LEAF_KEYS = [k for k, _ in LEAF_CHOICES]     # canonical order (2.2)
 
 FULL_LEAF_CHOICES = [
     (k, "%s %s" % (name, _full_tag(h, gb, fnote)))
@@ -3372,8 +3435,13 @@ def build_argparser():
 
 
 def _show_menu():
+    """Prints the documented tops only.  HIDDEN_TOPS are skipped but
+    keep their numbers, so their shortcuts still work for whoever
+    knows them; --list prints this same menu."""
     print("PAPER_DATA -- select a run:")
-    for i, (_, label) in enumerate(TOP_CHOICES, 1):
+    for i, (key, label) in enumerate(TOP_CHOICES, 1):
+        if key in HIDDEN_TOPS:
+            continue
         print("  (%d) %s" % (i, label))
 
 
@@ -3388,9 +3456,7 @@ def _show_submenu(top):
     if top == "dry_run":
         print("  (A) All %s" % _cost_tag(*dry_total(), lead=""))
     else:
-        hrs, gb, n_un = full_total()
-        print("  (A) All [measured ~%sd, ~%dGB peak; %d leaves "
-              "unmeasured]" % (_fmt_min(hrs / 24.0), gb, n_un))
+        print("  (A) All %s" % full_rollup_tag())
 
 
 def interactive_select():
@@ -3440,8 +3506,9 @@ SMALL_REPORT = os.path.join(REPO, "data", "small_data_set",
 
 def run_small():
     """Menu item #1: one-process cargo test of the small_data_set
-    end-to-end ZK proof (~40 s, ~7 GB). Foreground like figs -- far too
-    short to be worth daemonizing."""
+    end-to-end ZK proof (~80 s leaf wall, ~3 GB metered peak RSS; the
+    log's own "RAM: 7 GB" samples are virtual_mem, not RSS).
+    Foreground like figs -- far too short to be worth daemonizing."""
     ctx = JobHandle("small", "demo")
     ctx.note("mode=small_data (single proc)")
     ctx.reports.append(SMALL_REPORT)
@@ -3515,7 +3582,7 @@ def run_small_full_snark():
 
 
 # =====================================================================
-# Layer A -- small_full_dlp (last menu item: DLP fold cost on a small
+# Layer A -- small_full_dlp (hidden top: DLP fold cost on a small
 # corpus with the FULL database)
 # =====================================================================
 
@@ -3545,9 +3612,10 @@ SMALL_DLP_ARGS = ["small_full_dlp", "100", "100", "4", SMALL_DLP_JOBS,
 
 
 def run_small_full_dlp():
-    """Last menu item: fold the ~5%-plus-hard-core DLP corpus against
-    the entire DLP database and stop before the decider, to price fold
-    cost per step at production circuit width."""
+    """Hidden top `--run small_full_dlp`: fold the ~5%-plus-hard-core
+    DLP corpus against the entire DLP database and stop before the
+    decider, to price fold cost per step at production circuit
+    width."""
     ctx = JobHandle("small_dlp", "full")
     ctx.note("mode=small_full_dlp (single proc; entire DB, pre-cut "
              "corpus, b_folding_only=true -> no snark)")
@@ -3574,7 +3642,7 @@ def run_small_full_dlp():
 
 
 # =====================================================================
-# Layer A -- V101 tuner test suite (last menu item: every V101 test in
+# Layer A -- V101 tuner test suite (hidden top: every V101 test in
 # one unattended run, self-sizing against a fixed run budget)
 # =====================================================================
 #
@@ -9139,6 +9207,41 @@ class VmaTargetTest(unittest.TestCase):
         self.assertGreaterEqual(VMA_TARGET, 21_518_560)
 
 
+class HiddenTopsTest(unittest.TestCase):
+    """HIDDEN_TOPS is DISPLAY-ONLY.  The menu stops printing those
+    rows; nothing else about them may change."""
+
+    def test_hidden_keys_are_real_top_choices(self):
+        """A rename in TOP_CHOICES must fail here, not silently hide
+        the neighbouring row."""
+        keys = [k for k, _ in TOP_CHOICES]
+        for k in HIDDEN_TOPS:
+            self.assertIn(k, keys)
+
+    def test_hidden_tops_still_resolve_and_parse(self):
+        """The whole point of hiding rather than removing: --run and
+        the numeric shortcuts keep working."""
+        ap = build_argparser()
+        for k in HIDDEN_TOPS:
+            self.assertEqual(resolve_plan(k, None),
+                             ResolvedPlan(k, None, []))
+            self.assertEqual(ap.parse_args(["--run", k]).run, k)
+
+    def test_menu_omits_hidden_rows_but_keeps_the_numbering(self):
+        """Every visible row keeps the exact slot it had before the
+        hide; every hidden row is absent."""
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            _show_menu()
+        out = buf.getvalue()
+        for i, (k, label) in enumerate(TOP_CHOICES, 1):
+            line = "  (%d) %s" % (i, label)
+            if k in HIDDEN_TOPS:
+                self.assertNotIn(line, out)
+            else:
+                self.assertIn(line, out)
+
+
 class CleanTopResolutionTest(unittest.TestCase):
     def test_clean_needs_no_items_and_sits_at_5(self):
         """clean resolves top-only, and holds menu slot 5 by request."""
@@ -9196,16 +9299,24 @@ class DryCostRollupTest(unittest.TestCase):
         with mock.patch("sys.stdout", buf):
             _show_submenu("full_run")
         out = buf.getvalue()
-        self.assertIn("Dna [full ~5.4h, ~533GB]", out)
-        self.assertIn("DLP [full ~3d x2 parts, ~262GB]", out)
-        self.assertIn("Clamav [full ~20h x2 parts, ~531GB]", out)
-        self.assertIn("Analyze lkup [full ~2.3h, ~71GB]", out)
-        self.assertIn("Effectiveness [full ~2.4h, ~71GB]", out)
+        self.assertIn("Dna [full ~5.8h, ~529GB]", out)
+        self.assertIn("DLP [full ~2.9d x2 parts, ~700GB]", out)
+        self.assertIn("Clamav [full ~20.3h x2 parts, ~900GB]", out)
+        self.assertIn("Analyze lkup [full ~1.8h, ~73GB]", out)
+        self.assertIn("Effectiveness [full ~1.9h, ~73GB]", out)
         self.assertNotIn("dry", out)
-        hrs, gb, n_un = full_total()
-        self.assertIn("(A) All [measured ~%sd, ~%dGB peak; %d leaves "
-                      "unmeasured]" % (_fmt_min(hrs / 24.0), gb, n_un),
-                      out)
+        self.assertIn("(A) All %s" % full_rollup_tag(), out)
+
+    def test_full_rollup_appears_on_layer_1_and_on_all(self):
+        """The full rollup shows on the top menu's full_run row and on
+        the full submenu's (A) All -- one renderer, so they cannot
+        drift apart."""
+        tag = full_rollup_tag()
+        self.assertIn(tag, dict(TOP_CHOICES)["full_run"])
+        buf = io.StringIO()
+        with mock.patch("sys.stdout", buf):
+            _show_submenu("full_run")
+        self.assertIn("(A) All %s" % tag, buf.getvalue())
 
     def test_full_cost_mirrors_leaf_keys(self):
         """FULL_COST rows pair 1:1 with DRY_COST -- a new leaf must
@@ -9215,11 +9326,18 @@ class DryCostRollupTest(unittest.TestCase):
     def test_full_tag_forms(self):
         """Hours under 48 print as h, above as d; missing RSS drops
         the GB field; missing wall says not measured."""
-        self.assertEqual(_full_tag(5.4, 533), "[full ~5.4h, ~533GB]")
+        self.assertEqual(_full_tag(5.8, 529), "[full ~5.8h, ~529GB]")
         self.assertEqual(_full_tag(119.2, 262, " x2 parts"),
                           "[full ~5d x2 parts, ~262GB]")
         self.assertEqual(_full_tag(5.2, None), "[full ~5.2h]")
         self.assertEqual(_full_tag(None, None), "[full: not measured]")
+
+    def test_small_label_is_measured_not_dry(self):
+        """Menu #1 quotes its own run trailer, like menu #2, so a
+        reviewer can size the demo before starting it."""
+        label = dict(TOP_CHOICES)["small"]
+        self.assertIn("[measured ~1.3min, ~3.0GB]", label)
+        self.assertNotIn("dry", label)
 
     def test_snark_label_is_measured_not_dry(self):
         """Menu #2 quotes its own run trailer, so its tag must say

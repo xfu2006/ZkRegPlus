@@ -21,23 +21,29 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-# Absolute root of the code tree. Override with --code-root or $BORA_CODE_ROOT.
-# The code dir was renamed new_zkregplus -> bora; prefer new_zkregplus when it
-# exists, else fall back to bora (keep the legacy name for the not-found error).
-_CODE_BASE = Path(
-    "/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code"
-)
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from common import get_proj_root          # noqa: E402
 
 
+# Root of the code tree. Override with --code-root or $BORA_CODE_ROOT.
 def _default_code_root() -> Path:
-    for name in ("new_zkregplus", "bora"):
-        cand = _CODE_BASE / name
-        if cand.is_dir():
-            return cand
-    return _CODE_BASE / "new_zkregplus"
+    """Locate the code tree without hardcoding anyone's home directory.
+
+    get_proj_root() is the shared helper and knows both paper layouts
+    (bora's run_data mirror and the usenix27 repo), but it resolves from
+    the CWD and raises when this runs from outside the paper root.  Fall
+    back to this file's own location -- scripts/eval/count_loc.py sits
+    five levels under the code root -- which is cwd-independent and
+    survives the new_zkregplus -> bora rename by construction.
+    """
+    try:
+        return get_proj_root()
+    except RuntimeError:
+        return Path(__file__).resolve().parents[5]
 
 
 CODE_ROOT = _default_code_root()
