@@ -1,26 +1,20 @@
 # T6007 (2026-08-26).  The subdirectories below hold scratch, generated, or
 # superseded fixtures that NO code path reads -- verified by a reference
-# sweep over crates/, vendor/, scripts/ and data/**/*.py.  Their contents
-# are untracked so the 4open export ships the directory skeleton only,
-# while a local working tree keeps the files.  Everything else under
-# debug/ IS tracked on purpose: 17 of the 24 tracked subdirectories are
-# read by the Rust test suite and must stay.
+# sweep over crates/, vendor/, scripts/ and data/**/*.py.  They are
+# untracked ENTIRELY, so the 4open export omits them; a local working
+# tree keeps the files.  Everything else under debug/ IS tracked on
+# purpose: 17 of the 24 tracked subdirectories are read by the Rust test
+# suite and must stay.
 #
 # t602_probe_scratch_* are WRITE targets -- probe_t602.rs regenerates them
-# via create_smaller_config(), so the committed copies were stale output.
+# via create_smaller_config(), which fs::create_dir_all()s the directory,
+# so neither the files nor the folder needs to ship.
 
-full_debug/*
-!full_debug/.gitkeep
-gandcrab_repro/*
-!gandcrab_repro/.gitkeep
-small_debug_set/*
-!small_debug_set/.gitkeep
-small_repro_aggr/*
-!small_repro_aggr/.gitkeep
-t602_probe_scratch_2000/*
-!t602_probe_scratch_2000/.gitkeep
-t602_probe_scratch_400/*
-!t602_probe_scratch_400/.gitkeep
-watson_seg5/*
-!watson_seg5/.gitkeep
+full_debug/
+gandcrab_repro/
+small_debug_set/
+small_repro_aggr/
+t602_probe_scratch_2000/
+t602_probe_scratch_400/
+watson_seg5/
 test1.bin

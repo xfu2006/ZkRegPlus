@@ -31525,7 +31525,7 @@ Goal 4. T6004: make PAPER_DATA.py tidy
 
 INFO: reference_artifact_eval_checklist.md
 Goal 5. T6006. double check prepare.py submitted scripts folder
--- TODO --
+
 Goal 6. T6007. move paper data
 	#before: 20.0$
 	[a] Q1: can we simply establihs a symboli link of paper
@@ -31563,6 +31563,13 @@ Goal 6. T6007. move paper data
 			and do NOT delete tracked figs/*.tex, approve the change.
 	
 
+-- TODO --
+Goal 8. T6008: clean the crates
+	[a] perform a careful scan of the crates/ folder, use
+		good rust software engineering principle to evaluate it,
+		shall we move any files to tidy it up? Give me the list
+		and give me the suggestions. The point is to make it
+		tidy to avoid reviewers be picky.
 
 --- DATA ----
 #####################################
