@@ -31523,10 +31523,11 @@ Goal 4. T6004: make PAPER_DATA.py tidy
 	[d] Make sure it DOES NOT change the RUN BEHAVIOR of the program,
 		on the menu items are dropped.
 
--- TODO --
 INFO: reference_artifact_eval_checklist.md
 Goal 5. T6006. double check prepare.py submitted scripts folder
+-- TODO --
 Goal 6. T6007. move paper data
+	#before: 20.0$
 	[a] Q1: can we simply establihs a symboli link of paper
 		data which points to the paper_dat/ folder in the data/
 		folder? as data folder has many more items than it's necessary
@@ -31535,7 +31536,31 @@ Goal 6. T6007. move paper data
 		going to break code. shall I simply rename it so that artifact
 		reviewer do not peek into it? or do it in README to 
 		recommend not to look into it but just paper_data?
+		-> 21.0$
 	[b] then action on it.
+		-> 27.01$
+	[c] response
+		D1: approve, but please verify INSTALL.py works
+		D2: then you need to somehow exclude it in .git or exclude
+			in prepare.py so that it's not included in open4sence,
+			but instead relying on INSTALL.py to do it
+		D3: then put gen_mered128k_email.py into attic.
+		D4: then in README for data/ do NOT anything related
+			to attic/ at all, README is for external reviewer.
+			So no need for listing attic/ files
+		D5:  for debug/ keep the dir structure, but ignore
+			all its contents. In open4science, only keep
+			the debug/ empty folder structure (but make a double check
+			this empty folder structure will not crash any 
+			functions related to INSTALL.py and PAPER_DATA.py
+		D6: since we do not track debug/ and do not ship its contents 
+			in open4science version, I believe these .orig and .bak
+			will not be tracked or shipped anymore. 
+		I7: after you clean up I'll commit
+		I8: yes, you should add it if it does not exist
+		I9: confirm, it is necessary
+		I10: so if you are suggestoin: do NOT perform reinstall,
+			and do NOT delete tracked figs/*.tex, approve the change.
 	
 
 

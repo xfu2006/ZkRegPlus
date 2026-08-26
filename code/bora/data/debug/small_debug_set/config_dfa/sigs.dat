@@ -1,8 +1,0 @@
-#filler: long 16-hex-digit-covering pattern from small_data — needed because hex_acdfa.rs:423 asserts alphabet_len==17, and the 5 suspect sigs alone don't cover all 16 digits. Specific 16-byte pattern → won't spuriously match merged_217.
-cp_cs_igc;Engine:51-255,Target:1;0|1;09afcdeb1928374650123457890abcdef::i;0123498765423afedcb
-#suspect sigs (verbatim from data/debug/full_clamav/config/main.dat)
-Email.Phishing.VOF1-6295244-1;Engine:81-255,Container:CL_TYPE_MAIL,FileSize:5120-15360,Target:0;2;0:504b;0:4d5a;0|1/[A-Z]{2}[A-Z0-9]{4,20}\.js/
-Email.Phishing.VOF1-6295260-1;Engine:81-255,Container:CL_TYPE_MAIL,FileSize:81920-153600,Target:0;1;0:504b;0/P[\d]{5,10}\.zip/
-Win.Exploit.CVE_2017_3036-6309463-0;Engine:81-255,Target:0;1;0:0A0501{1}00000000;0/\x0A\x05\x01.\x00\x00\x00\x00.{57}[\x80-\xFF]/
-Email.Phishing.VOF1-6313995-0;Engine:81-255,Container:CL_TYPE_MAIL,Target:0;1;0:504b;0/[a-zA-Z]{5}\s\-\s[a-zA-Z0-9]{23}\.exe/
-Win.Exploit.CVE_2017_0062-6012405-0;Engine:51-255,Target:0;0&1=0;0:01000000{36}20454d46{14}0000????????00000000;0:01000000{36}20454d46{14}00000000000000000000

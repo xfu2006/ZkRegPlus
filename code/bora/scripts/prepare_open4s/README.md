@@ -38,7 +38,7 @@ such files.
 | 1 | `preflight` | Python/git/lzma present, **no `.git/index.lock`**, HEAD reported, dirty-tree warning |
 | 2 | `export` | `git archive HEAD:code/bora` → staging |
 | 3 | `prune` | delete `attic/`, **this tool**, editor swap files, `__pycache__` |
-| 4 | `pack` | build `data/bigfiles.tar.xz`, drop the loose originals, extend `data/.gitignore` |
+| 4 | `pack` | build `data/bigfiles/bigfiles.tar.xz`, drop the loose originals, extend `data/.gitignore` |
 | 5 | `verify` | full inspection of the staging tree — hard-fails the run |
 | 6 | `initrepo` | `git init`, branch `artifact-sec27`, **one** squashed commit, reconciliation |
 | 7 | `manifest` | record the local manifest (kept **outside** the artifact) |
@@ -131,7 +131,7 @@ the list is oversized (which means the list has gone stale).
 
 The originals are deleted only **after** the archive is written, its member
 list is checked against `PACK_MEMBERS`, and per-file SHA-256 digests are
-recorded in `data/bigfiles.sha256`.
+recorded in `data/bigfiles/bigfiles.sha256`.
 
 ### 3. Nothing is regenerated or recompressed in place
 
@@ -197,7 +197,7 @@ Implemented: `read_bigfiles_sums()` + `restore_bigfiles()`, called at the top of
 `main()` before `install_toolchain()` and the dataset loop. `lzma` and
 `tarfile` are stdlib, so `APT_PACKAGES` and `requirements.txt` are unchanged.
 
-**Expected digests are read from `data/bigfiles.sha256`, never hardcoded.** tar
+**Expected digests are read from `data/bigfiles/bigfiles.sha256`, never hardcoded.** tar
 records mtimes, so rebuilding the pack from identical inputs yields a different
 sha256; a constant in `INSTALL.py` would drift silently the first time the
 snapshot was rebuilt. `prepare.py` writes that file in step 4 — the pack digest
@@ -231,7 +231,7 @@ Rust `DatasetSpec` `CLAM.sig_file` is one of them.
 appends them), so a reviewer's clone stays clean after install.
 
 > Rebuilding the snapshot after any `INSTALL.py` change also rebuilds the pack,
-> and its sha256 will differ — that is expected, and `data/bigfiles.sha256` is
+> and its sha256 will differ — that is expected, and `data/bigfiles/bigfiles.sha256` is
 > regenerated alongside it.
 
 ---

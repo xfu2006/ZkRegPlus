@@ -44,8 +44,8 @@ bora/
 │   ├── dependency/      arkworks forks (pairing-in-R1CS cherry-picks)
 │   └── sonobe_mod/      Sonobe fork adding the `foldpot` folding scheme
 ├── scripts/         PAPER_DATA.py (run menu), INSTALL.py (data install)
-├── data/            signatures, samples, per-experiment configs
-├── attic/           retired / superseded files (safe to delete)
+├── data/            inputs: signatures, samples, per-experiment configs
+│   └── paper_data/      the paper's results (every table and figure)
 ├── Cargo.toml  Cargo.lock  rust-toolchain
 └── docs/
 ```
@@ -179,5 +179,4 @@ Third-party components keep their own licenses:
 
 The GPL-3.0 `circom` and unlicensed `noname` circuit frontends that Sonobe
 ships were **removed** (they were unused here) so the artifact is free of
-strong-copyleft / unlicensed code; the removed sources are retained under
-`attic/removed_gpl_unlicensed_frontends/`.
+strong-copyleft / unlicensed code.

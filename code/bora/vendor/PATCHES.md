@@ -42,8 +42,7 @@ license**). Both were removed (the `pub mod circom;`/`pub mod noname;`
 lines in `folding-schemes/src/frontend/mod.rs`, the `ark-circom`/
 `ark-noname`/`noname` dependencies, and the corresponding example
 targets) so the artifact is free of strong-copyleft / unlicensed code.
-The `FCircuit` trait (the only part used here) is unaffected. The removed
-sources are kept under `attic/removed_gpl_unlicensed_frontends/`.
+The `FCircuit` trait (the only part used here) is unaffected.
 
 ## 3. ClamAV-pipeline forks (`crates/data_processor/dependency/`)
 

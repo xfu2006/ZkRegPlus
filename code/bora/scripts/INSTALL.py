@@ -49,6 +49,12 @@ ROOT        = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DATA_DIR    = os.path.join(ROOT, "data")
 SAMPLES_DIR = os.path.join(DATA_DIR, "samples")
 SRC_SIG_DIR = os.path.join(DATA_DIR, "src_sig")
+# data/ root holds only README.md and .gitignore; everything else
+# lives in a subfolder so a reviewer opening data/ sees directories,
+# not a pile of loose files.
+DATA_SCRIPTS_DIR = os.path.join(DATA_DIR, "scripts")
+PAPER_BACKUP_DIR = os.path.join(DATA_DIR, "paper_data_backup")
+BIGFILES_DIR     = os.path.join(DATA_DIR, "bigfiles")
 CACHE_MAIN  = os.path.join(DATA_DIR, "cache", "main")
 TMP_DIR     = "/tmp/bora_install"                 # all scratch (item 4)
 EXTRACT_DIR = os.path.join(TMP_DIR, "extract")
@@ -517,7 +523,7 @@ BINEXEC_SHA256 = ("7d7cd1ca57895d3649dfa7320d7b91605772ea771a"
                   "86954e43ecda4dd2591d4d")
 LICENSES_DIR   = os.path.join(DATA_DIR, "licenses")
 MANIFEST_DIR   = os.path.join(DATA_DIR, "manifest")
-BINEXEC_DOC    = os.path.join(DATA_DIR, "DATASET_BINEXEC.md")
+BINEXEC_DOC    = os.path.join(MANIFEST_DIR, "DATASET_BINEXEC.md")
 
 # ---- dna (chr17 x NCBI ClinVar) Zenodo deposit ----------------------
 # DNA_DOI is the CONCEPT doi (always resolves to the newest version, cite
@@ -545,8 +551,10 @@ PAPER_DATA_URL    = ("https://zenodo.org/records/22057944/files/"
 PAPER_DATA_SHA256 = ("851bf9434c450af2696a2add9e55189764f3f4d6e"
                      "8f4607bd5dda77aefab7bb0")
 # The .tgz stays HERE, not in TMP_DIR: cleanup_temp() wipes TMP_DIR on
-# exit, and this copy is the offline backup beside data/paper_data/.
-PAPER_DATA_TGZ    = os.path.join(DATA_DIR, "bora_paper_data.tgz")
+# exit, and this copy is the offline backup of data/paper_data/.  It
+# lives in its own folder (with a README) so that a reviewer browsing
+# data/ can tell the backup apart from the results themselves.
+PAPER_DATA_TGZ    = os.path.join(PAPER_BACKUP_DIR, "bora_paper_data.tgz")
 PAPER_RUN_DATA    = os.path.join(DATA_DIR, "paper_data", "run_data")
 PAPER_RAW_DATA    = os.path.join(PAPER_RUN_DATA, "data", "raw_data")
 PAPER_FIGS_DIR    = os.path.join(PAPER_RUN_DATA, "figs")
@@ -572,8 +580,8 @@ PAPER_DATA_README = "BORA_PAPER_DATA_README.txt"
 #
 # A full git checkout has these files loose and no pack, so this is a no-op
 # there.  Both absent is a broken artifact and raises.
-BIGFILES_PACK = os.path.join(DATA_DIR, "bigfiles.tar.xz")
-BIGFILES_SUMS = os.path.join(DATA_DIR, "bigfiles.sha256")
+BIGFILES_PACK = os.path.join(BIGFILES_DIR, "bigfiles.tar.xz")
+BIGFILES_SUMS = os.path.join(BIGFILES_DIR, "bigfiles.sha256")
 
 # ---- zombie (NSDI'24 baseline) tree ---------------------------------
 # A gitignored upstream clone, not an archive we deploy: the repo carries
@@ -629,7 +637,7 @@ def http_download(url, dest):
 # bigfiles pack -- restore the fixtures 4open.science will not serve
 # =====================================================================
 
-# Parse data/bigfiles.sha256 -> (pack_digest, {repo-rel path: digest}).
+# Parse data/bigfiles/bigfiles.sha256 -> (pack_digest, {repo-rel: digest}).
 # Format is `sha256␣␣name`, first line the pack itself, the rest members.
 def read_bigfiles_sums():
     pack_sha, members = None, {}
@@ -654,7 +662,7 @@ def read_bigfiles_sums():
     return pack_sha, members
 
 
-# Restore the 13 oversized fixtures from data/bigfiles.tar.xz.
+# Restore the 13 oversized fixtures from data/bigfiles/bigfiles.tar.xz.
 #
 # Idempotent: returns early when every member is already present and
 # correct, so re-running INSTALL.py costs one pass of hashing and nothing
@@ -781,13 +789,19 @@ def install_binexec_from_zenodo(verify_all=False):
     # fresh checkout.  deploy_samples() used to plant the corrected master
     # there, but the Zenodo path no longer goes through samples.7z -- so
     # plant it here or install_binexec() runs a file that does not exist.
-    shutil.copy2(os.path.join(DATA_DIR, "gen_data.py"),
+    shutil.copy2(os.path.join(DATA_SCRIPTS_DIR, "gen_data.py"),
                  os.path.join(SAMPLES_DIR, "gen_data.py"))
     empty_dir(BINEXEC_DIR)
     move_children(os.path.join(root, "samples"), BINEXEC_DIR)
-    for src, dst in ((os.path.join(root, "licenses"), LICENSES_DIR),
-                     (os.path.join(root, "manifest"), MANIFEST_DIR)):
-        empty_dir(dst)
+    # DATASET_BINEXEC.md is TRACKED and now lives inside manifest/, so it
+    # has to survive this wipe.  The shutil.move below rewrites it from
+    # the archive's README.md anyway, but keeping it means an install that
+    # fails in between can never leave the tree missing a committed file.
+    for src, dst, keep in (
+            (os.path.join(root, "licenses"), LICENSES_DIR, ()),
+            (os.path.join(root, "manifest"), MANIFEST_DIR,
+             (os.path.basename(BINEXEC_DOC),))):
+        empty_dir(dst, keep=keep)
         move_children(src, dst)
     shutil.move(os.path.join(root, "README.md"), BINEXEC_DOC)
     print("    binexec  -> %s" % BINEXEC_DIR)
@@ -882,9 +896,10 @@ def deploy_samples(extract_root):
     shutil.copytree(src, SAMPLES_DIR, dirs_exist_ok=True,
                     ignore=shutil.ignore_patterns(".gitignore"))
     # samples.7z ships a stale gen_data.py (the -16 split-size semantics);
-    # overwrite it with the corrected master under data/ (-100KiB headroom)
-    # so install_binexec runs the right version, not the archived one.
-    shutil.copy2(os.path.join(DATA_DIR, "gen_data.py"),
+    # overwrite it with the corrected master under data/scripts/ (-100KiB
+    # headroom) so install_binexec runs the right version, not the archived
+    # one.
+    shutil.copy2(os.path.join(DATA_SCRIPTS_DIR, "gen_data.py"),
                  os.path.join(SAMPLES_DIR, "gen_data.py"))
 
 
@@ -1362,6 +1377,7 @@ def clean_paper_data():
 # here -- that is PAPER_DATA.py's "generate list of figures".
 def install_dataset_paper_data():
     os.makedirs(DATA_DIR, exist_ok=True)
+    os.makedirs(PAPER_BACKUP_DIR, exist_ok=True)
     print("  download bora_paper_data.tgz (37 MB) <- %s"
           % PAPER_DATA_DOI)
     http_download(PAPER_DATA_URL, PAPER_DATA_TGZ)
@@ -1372,24 +1388,38 @@ def install_dataset_paper_data():
                            "  got      %s" % (PAPER_DATA_SHA256, got))
     print("    archive sha256 OK")
 
+    # The archive carries the run folders under paper_data/..., which
+    # expand straight into data/.  Its top-level README describes the
+    # TARBALL, not the results, so it is unpacked next to the tarball in
+    # paper_data_backup/ instead of landing loose in data/.
+    def _extract(tf, dest, members):
+        try:
+            tf.extractall(dest, members=members, filter="data")
+        except TypeError:
+            tf.extractall(dest, members=members)   # py < 3.12
+
     with tarfile.open(PAPER_DATA_TGZ, "r:gz") as tf:
-        members, n = [], 0
+        members, readme, n = [], [], 0
         for m in tf.getmembers():
             name = os.path.normpath(m.name)
             anc = m.isdir() and PAPER_DATA_PREFIX.startswith(name + "/")
-            if not (name == PAPER_DATA_README
-                    or name.startswith(PAPER_DATA_PREFIX) or anc):
+            if name == PAPER_DATA_README:
+                readme.append(m)
+                continue
+            if not (name.startswith(PAPER_DATA_PREFIX) or anc):
                 raise RuntimeError("archive member outside the "
                                    "paper_data tree: %r" % m.name)
             members.append(m)
             if m.isfile():
                 n += 1
-        try:
-            tf.extractall(DATA_DIR, members=members, filter="data")
-        except TypeError:
-            tf.extractall(DATA_DIR, members=members)   # py < 3.12
+        _extract(tf, DATA_DIR, members)
+        if readme:
+            _extract(tf, PAPER_BACKUP_DIR, readme)
     print("    %d file(s) -> %s" % (n, PAPER_RAW_DATA))
     print("    backup tgz  -> %s" % PAPER_DATA_TGZ)
+    if readme:
+        print("    tgz README  -> %s"
+              % os.path.join(PAPER_BACKUP_DIR, PAPER_DATA_README))
     print("    next: python3 scripts/PAPER_DATA.py --run figs")
 
 

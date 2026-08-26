@@ -8,11 +8,12 @@ paper_data/run_data/data/raw_data/failed_tgz/*
 # of the scan file it just wrote, derived from proj_root().  It is rewritten
 # before it is read, so the committed copy was never an input -- and it
 # embedded the author's home directory.  Ignore the file only; the other
-# 353 tracked fixtures under debug/ are real inputs and must stay.
+# 318 tracked fixtures under debug/ are real inputs and must stay (see
+# debug/.gitignore for the 8 scratch subdirectories that are not).
 debug/neo_hard_aggr_set/binexec.dat
 # Licence texts for the binexec corpus: bulk boilerplate (52 files) that
 # INSTALL.py restores verbatim from the Zenodo deposit, so it is not kept
-# in git.  DATASET_BINEXEC.md and manifest/ ARE tracked -- they are what a
-# reviewer reads to see what the corpus holds and to check licence
+# in git.  manifest/ (including its DATASET_BINEXEC.md) IS tracked -- it is
+# what a reviewer reads to see what the corpus holds and to check licence
 # compliance BEFORE downloading 327 MB.
 licenses/

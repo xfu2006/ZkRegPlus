@@ -125,12 +125,24 @@ NEUTRAL_EPOCH = int(datetime.datetime.strptime(
 PRUNE_PATHS = [
     "attic",
     "scripts/prepare_open4s",
+    # 37 MB offline backup of data/paper_data/, far over 4open's 8 MB
+    # ceiling and too big to fit the bigfiles pack.  INSTALL.py
+    # re-downloads it from the pinned Zenodo record when it is absent
+    # (install_dataset_paper_data), so pruning it costs a reviewer
+    # nothing.  data/paper_data_backup/README.md is NOT pruned: it stays
+    # to explain what the folder holds and where the bytes come from.
+    "data/paper_data_backup/bora_paper_data.tgz",
     "vendor/sonobe_mod/.rust-toolchain.swp",
     "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/.circuits_super.rs.swo",
 ]
 
-# Pruned wherever they appear.  Deliberately only vim swap files: tracked
-# *.orig / *.bak files in this repo are real fixtures and scan clean.
+# Pruned wherever they appear.  Deliberately only vim swap files.  Tracked
+# *.orig / *.bak files are NOT all fixtures: data/debug/full_dlp_sample/
+# scan_exp.dat.bak and src_sig/clamav/new_src/main.ldb.original are real
+# inputs, but paper_data/run_data/scripts/eval/*.bak-before-* are editor
+# backups of runnable generators whose wall-clock numbers differ from the
+# paper.  They scan clean for identity, so nothing here blocks -- flagged
+# for a human decision, not auto-pruned.
 PRUNE_SUFFIXES = (".swp", ".swo", ".swn")
 
 # 4open.science refuses to serve files larger than this.
@@ -172,12 +184,14 @@ PACK_MEMBERS = [
     "data/debug/small_data_set2/config_dfa/discharge_main_binexec.dat",
 ]
 
-PACK_PATH = "data/bigfiles.tar.xz"
-PACK_SHA_PATH = "data/bigfiles.sha256"
+# data/ root holds only README.md and .gitignore, so the pack and its
+# digest list get their own folder.  step_pack makedirs() the parent.
+PACK_PATH = "data/bigfiles/bigfiles.tar.xz"
+PACK_SHA_PATH = "data/bigfiles/bigfiles.sha256"
 
 GITIGNORE_BLOCK_HEADER = """
 # ---------------------------------------------------------------------
-# Restored by scripts/INSTALL.py from data/bigfiles.tar.xz.
+# Restored by scripts/INSTALL.py from data/bigfiles/bigfiles.tar.xz.
 #
 # anonymous.4open.science refuses to serve any file over 8 MB, so the 13
 # fixtures below ship inside one 3.5 MB xz archive instead of as loose
@@ -216,6 +230,11 @@ INSTALL_PROVIDED_ROOTS = [
     "data/samples/",
     "data/src_sig/chr17_variants/",
     "data/cache/",
+    # bora_paper_data.tgz is pruned from the snapshot (PRUNE_PATHS): it is
+    # 36.5 MB, over SIZE_LIMIT, and cannot join the pack.  INSTALL.py
+    # re-downloads it from the pinned Zenodo record, so a required path
+    # under here is "expected but unverifiable", not a gap.
+    "data/paper_data_backup/",
 ]
 
 
@@ -1231,7 +1250,7 @@ def step_github(ctx):
     action(4, 4, "Eyeball it on github.com", """
         [ ] the branch shows ONE commit
         [ ] the author reads "%s"
-        [ ] data/bigfiles.tar.xz is present, about 3.5 MB
+        [ ] data/bigfiles/bigfiles.tar.xz is present, about 3.5 MB
         [ ] no file is over 8 MB
 
         Leave this repository in place. 4open does not copy your code -- it
@@ -1683,7 +1702,7 @@ STEPS = [
     ("preflight", "environment, git state, staging dir", step_preflight),
     ("export", "git archive HEAD:%s into staging" % SOURCE_SUBDIR, step_export),
     ("prune", "delete attic/ and swap files, inline symlinks", step_prune),
-    ("pack", "build data/bigfiles.tar.xz, drop loose originals", step_pack),
+    ("pack", "build data/bigfiles/bigfiles.tar.xz, drop originals", step_pack),
     ("verify", "inspect the staging tree", step_verify),
     ("initrepo", "git init + one squashed commit + reconciliation", step_initrepo),
     ("manifest", "record the local manifest", step_manifest),
