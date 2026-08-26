@@ -31561,7 +31561,7 @@ Goal 6. T6007. move paper data
 		I9: confirm, it is necessary
 		I10: so if you are suggestoin: do NOT perform reinstall,
 			and do NOT delete tracked figs/*.tex, approve the change.
-	
+		=> 45.83! (costed 25 dollars!)
 
 -- TODO --
 Goal 8. T6008: clean the crates
@@ -31570,6 +31570,8 @@ Goal 8. T6008: clean the crates
 		shall we move any files to tidy it up? Give me the list
 		and give me the suggestions. The point is to make it
 		tidy to avoid reviewers be picky.
+		(Cost: 5$ , Now: 50.55)
+	[b] apply the changes and test with small_data
 
 --- DATA ----
 #####################################
