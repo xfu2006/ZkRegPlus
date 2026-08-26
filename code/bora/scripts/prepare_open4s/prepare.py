@@ -1752,6 +1752,12 @@ def main():
     here = os.path.dirname(os.path.abspath(__file__))
     repo = git(["rev-parse", "--show-toplevel"], here)
     stage = os.path.abspath(args.stage)
+    # step_export rmtree()s the stage before extracting into it, so a
+    # stage inside the repo would delete tracked source.  Refuse here,
+    # before any step runs.
+    if stage == repo or stage.startswith(repo + os.sep):
+        die("--stage must be outside the repo (%s): step_export "
+            "deletes the stage directory before writing to it" % repo)
     ctx = {
         "repo": repo,
         "stage": stage,

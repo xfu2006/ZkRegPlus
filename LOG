@@ -31500,7 +31500,7 @@ Goal 2. T6002: clear requirement.txt
 Goal 3. T6003: INSTALL.py
 	[a] make sure that the data source in the comments are correct
 	[b] make sure paper_data is installed by the all menu
----
+-- TODO --
 Goal 4. T6004: make PAPER_DATA.py tidy
 	[a] drop the debug menus in the interactive menu list,
 		but do NOT drop their corresponding functions and
