@@ -1371,6 +1371,40 @@ def clean_paper_data():
                 os.remove(os.path.join(PAPER_FIGS_DIR, n))
 
 
+# F3 guard.  clean_paper_data() deletes figs/*.tex ON PURPOSE (see above),
+# and those fragments are git-TRACKED -- the only tracked files any clean_*
+# removes.  Snapshot them first so a FAILED install does not leave the
+# working tree short of tracked files with nothing installed in exchange.
+# Deliberately NOT restored on success: that would undo the design, which
+# is to turn a silently-stale fragment into a missing file.
+def snapshot_paper_figs():
+    if not os.path.isdir(PAPER_FIGS_DIR):
+        return None
+    snap = os.path.join(TMP_DIR, "paper_figs")
+    shutil.rmtree(snap, ignore_errors=True)
+    os.makedirs(snap)
+    n = 0
+    for name in sorted(os.listdir(PAPER_FIGS_DIR)):
+        if name.endswith(".tex"):
+            shutil.copy2(os.path.join(PAPER_FIGS_DIR, name),
+                         os.path.join(snap, name))
+            n += 1
+    print("  saved %d figs/*.tex fragment(s) (restored only on failure)" % n)
+    return snap
+
+
+def restore_paper_figs(snap):
+    if snap is None or not os.path.isdir(snap):
+        return
+    os.makedirs(PAPER_FIGS_DIR, exist_ok=True)
+    n = 0
+    for name in sorted(os.listdir(snap)):
+        shutil.copy2(os.path.join(snap, name),
+                     os.path.join(PAPER_FIGS_DIR, name))
+        n += 1
+    print("  install FAILED -- restored %d figs/*.tex fragment(s)" % n)
+
+
 # Download the Zenodo archive, verify it, keep it as the backup copy,
 # and unpack the two raw-run folders.  The archive carries the full
 # relative path, so it expands straight into data/.  No PDF is built
@@ -1424,6 +1458,55 @@ def install_dataset_paper_data():
 
 
 # Registry in menu order: (key, label, est. installed GB, clean, install).
+# F3.  A REAL --verify: inspect what is already installed and report.
+# Reads only -- no download, no clean_*, no install_*, no deletion.  The
+# old --verify was not a mode at all: it set _VERIFY_ALL and fell through
+# into the install loop, which with a non-tty stdin selected ALL and
+# reinstalled every dataset, deleting tracked figs/*.tex on the way.
+def verify_installed():
+    print("\n" + "=" * 64)
+    print("  verify installed data (read-only)")
+    print("=" * 64)
+    checks = [
+        ("email (Enron)",        EMAIL_DIR),
+        ("dna (chr17 scripts)",  CHR17_SCRIPTS),
+        ("binexec corpus",       BINEXEC_DIR),
+        ("binexec manifest",     MANIFEST_DIR),
+        ("zombie clone",         ZOMBIE_DIR),
+        ("paper_data raw runs",  PAPER_RAW_DATA),
+    ]
+    missing = []
+    for label, path in checks:
+        if os.path.isdir(path) and os.listdir(path):
+            print("  OK      %-22s present" % label)
+        else:
+            missing.append(label)
+            print("  ABSENT  %-22s (install it with --data)" % label)
+
+    mlist = os.path.join(MANIFEST_DIR, "manifest.list")
+    if os.path.isdir(BINEXEC_DIR) and os.path.isfile(mlist):
+        print("  verify binexec against manifest.list")
+        try:
+            verify_manifest(BINEXEC_DIR, mlist)
+        except RuntimeError as exc:
+            print("  FAIL    binexec: %s" % exc)
+            return 1
+    else:
+        print("  skip    binexec digests (corpus or manifest.list absent)")
+
+    n_figs = 0
+    if os.path.isdir(PAPER_FIGS_DIR):
+        n_figs = len([n for n in os.listdir(PAPER_FIGS_DIR)
+                      if n.endswith(".tex")])
+    print("  info    figs/*.tex fragments present: %d" % n_figs)
+
+    if missing:
+        print("  info    %d dataset(s) not installed: %s"
+              % (len(missing), ", ".join(missing)))
+    print("  verify complete -- nothing downloaded, deleted or rebuilt")
+    return 0
+
+
 DATASETS = [
     ("email",   "email (Enron)",          3.8,
      clean_email,   install_dataset_email),
@@ -1473,8 +1556,16 @@ def select_datasets():
     for i, d in enumerate(DATASETS, start=2):
         if choice in (str(i), d[0]):
             return [d[0]]
-    print("unrecognized choice %r; installing ALL." % choice)
-    return all_keys
+    # Do NOT fall through to all_keys.  The install loop runs clean_fn()
+    # BEFORE install_fn(), so escalating an unrecognized answer to ALL
+    # wipes datasets the reviewer never asked about -- clean_email()
+    # alone rmtree()s 3.8 GB -- and then re-downloads 5.8 GB.  An empty
+    # answer or "1" still means ALL: that is the advertised default.  A
+    # typo is not consent, so it aborts having changed nothing.
+    sys.exit("unrecognized choice %r; nothing was installed.\n"
+             "  valid: 1 or 'all', 2-%d, or a name (%s)"
+             % (choice, len(DATASETS) + 1,
+                ", ".join(d[0] for d in DATASETS)))
 
 
 def main():
@@ -1487,9 +1578,14 @@ def main():
                     help="install Rust 1.76 + system build deps, then "
                          "exit (unless --data is also given)")
     ap.add_argument("--verify", action="store_true",
-                    help="binexec: check all 2702 files against "
-                         "manifest.list after download (the archive's "
-                         "own sha256 is always checked)")
+                    help="VERIFY-ONLY MODE: report what is installed and "
+                         "digest-check the binexec corpus, then exit. "
+                         "Downloads nothing, deletes nothing, installs "
+                         "nothing.")
+    ap.add_argument("--verify-download", action="store_true",
+                    help="binexec: during an INSTALL, check all 2702 files "
+                         "against manifest.list after download (the "
+                         "archive's own sha256 is always checked)")
     ap.add_argument("--skip-reef-build", action="store_true",
                     help="dna: deploy the corpus but do NOT run "
                          "`cargo build` for Reef (the baseline binary will "
@@ -1506,7 +1602,7 @@ def main():
     args = ap.parse_args()
 
     global _VERIFY_ALL, _SKIP_REEF_BUILD, _FORCE_ZOMBIE, _BUILD_ZOMBIE
-    _VERIFY_ALL = args.verify
+    _VERIFY_ALL = args.verify_download
     _SKIP_REEF_BUILD = args.skip_reef_build
     _BUILD_ZOMBIE = args.build_zombie
     _FORCE_ZOMBIE = args.force_zombie or args.build_zombie
@@ -1518,6 +1614,12 @@ def main():
     # clean_* function touches these paths, so restoring once here is not
     # undone by the loop below.
     restore_bigfiles()
+
+    # F3: verify-only exits HERE -- before select_datasets(), so a non-tty
+    # run can no longer escalate to "install ALL", and before
+    # ensure_toolchain(), since verifying needs no compiler.
+    if args.verify:
+        sys.exit(verify_installed())
 
     if args.toolchain:
         # --toolchain runs BEFORE the dataset selection, so the only
@@ -1542,8 +1644,14 @@ def main():
         for key in selected:
             _, label, _gb, clean_fn, install_fn = by_key[key]
             print("=== install %s ===" % label)
+            figs_snap = (snapshot_paper_figs() if key == "paper_data"
+                         else None)
             clean_fn()                            # empty targets (item 4)
-            install_fn()
+            try:
+                install_fn()
+            except BaseException:
+                restore_paper_figs(figs_snap)
+                raise
     finally:
         cleanup_temp()
 

@@ -139,10 +139,9 @@ PRUNE_PATHS = [
 # Pruned wherever they appear.  Deliberately only vim swap files.  Tracked
 # *.orig / *.bak files are NOT all fixtures: data/debug/full_dlp_sample/
 # scan_exp.dat.bak and src_sig/clamav/new_src/main.ldb.original are real
-# inputs, but paper_data/run_data/scripts/eval/*.bak-before-* are editor
-# backups of runnable generators whose wall-clock numbers differ from the
-# paper.  They scan clean for identity, so nothing here blocks -- flagged
-# for a human decision, not auto-pruned.
+# inputs, so a blanket *.bak / *.orig rule here would silently drop them.
+# The paper_data/run_data/scripts/eval/*.bak-before-* editor backups that
+# used to need a human decision were deleted from the tree on 2026-08-26.
 PRUNE_SUFFIXES = (".swp", ".swo", ".swn")
 
 # 4open.science refuses to serve files larger than this.

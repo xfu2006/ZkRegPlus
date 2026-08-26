@@ -3,8 +3,8 @@
 # sweep over crates/, vendor/, scripts/ and data/**/*.py.  Their contents
 # are untracked so the 4open export ships the directory skeleton only,
 # while a local working tree keeps the files.  Everything else under
-# debug/ IS tracked on purpose: 17 of the 25 subdirectories are read by
-# the Rust test suite and must stay.
+# debug/ IS tracked on purpose: 17 of the 24 tracked subdirectories are
+# read by the Rust test suite and must stay.
 #
 # t602_probe_scratch_* are WRITE targets -- probe_t602.rs regenerates them
 # via create_smaller_config(), so the committed copies were stale output.

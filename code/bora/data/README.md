@@ -28,8 +28,6 @@ debug: per-experiment test FIXTURES (DFA tables and scan configs) read by
 	the Rust code and its tests.  Despite the name these are real
 	inputs, not throwaway debug output -- 318 of them are tracked on
 	purpose, spread over 17 subdirectories.
-	-- 8 further subdirectories ship as empty placeholders: they held
-	--  scratch or regenerated files that no code path reads.
 manifest: per-file provenance for the binexec corpus (sha256, originating
 	RPM, upstream URL) plus PACKAGES.tsv mapping each source package to
 	its licence and source RPM. Installed by INSTALL.py.

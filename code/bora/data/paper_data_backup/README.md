@@ -19,6 +19,6 @@ bora_paper_data.tgz
 	The tarball also carries its own BORA_PAPER_DATA_README.txt, which
 	INSTALL.py unpacks into this folder.
 
-Note for artifact reviewers: this folder is omitted from the anonymous
-4open.science snapshot -- at 37 MB the tarball is far over what that
-service will serve, and INSTALL.py fetches it from Zenodo instead.
+Note for artifact reviewers: at 37 MB the tarball is far over what
+anonymous 4open.science will serve, so only this README ships there.
+INSTALL.py fetches the tarball from Zenodo.
