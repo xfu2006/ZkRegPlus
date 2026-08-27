@@ -249,8 +249,8 @@ GITIGNORE_BLOCK_HEADER = """
 # ---------------------------------------------------------------------
 # Restored by scripts/INSTALL.py from data/bigfiles/bigfiles.tar.xz.
 #
-# anonymous.4open.science refuses to serve any file over 8 MB, so the 13
-# fixtures below ship inside one 3.5 MB xz archive instead of as loose
+# anonymous.4open.science refuses to serve any file over 8 MB, so the 9
+# fixtures below ship inside one 3.0 MB xz archive instead of as loose
 # files.  They are byte-identical to what the archive restores -- nothing
 # is regenerated or re-encoded.  Same pattern as licenses/ above.
 # ---------------------------------------------------------------------"""

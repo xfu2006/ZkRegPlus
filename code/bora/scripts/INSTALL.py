@@ -569,7 +569,7 @@ PAPER_DATA_README = "BORA_PAPER_DATA_README.txt"
 
 # ---- oversized in-repo fixtures (the bigfiles pack) -----------------
 # anonymous.4open.science refuses to serve any file over 8 MB, and it gives
-# no warning when it drops one -- the file is simply absent.  Thirteen
+# no warning when it drops one -- the file is simply absent.  Nine
 # tracked fixtures exceed that, so the anonymous snapshot ships them inside
 # one xz archive instead of as loose files and restores them here.
 #

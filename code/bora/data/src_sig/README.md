@@ -11,7 +11,7 @@ artifact's file count but only ~12% of its bytes.
 | `ms_dlp/regex_bora_international/` | 10,458 | 2.25 MB | BORA-format regexes, one directory per Purview SIT |
 | `ms_dlp/regex_zombie_international/` | 194 | 431 KB | the same policies in the Zombie baseline's format |
 | `ms_dlp/regex_pat_zombie_international/` | 194 | 6.9 KB | generated intermediate; kept for debugging |
-| `ms_dlp/scripts/`, `ms_dlp/docs/` | 19 | 10.0 MB | generators and provenance logs |
+| `ms_dlp/scripts/`, `ms_dlp/docs/` | 22 | 10.1 MB | generators and provenance logs |
 | `chr17_variants/` | 6 | 113 KB | scripts only -- 1.8 GB of data arrives via `INSTALL.py` |
 
 ## Provenance and terms, per dataset

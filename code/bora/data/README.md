@@ -40,7 +40,7 @@ licenses: licence texts for every redistributed component of the binexec
 	in git.
 cache: cache files for DFA and keys. Not included in git
 bigfiles: present only in the anonymous 4open snapshot.  Holds the xz
-	pack of the 13 fixtures that are over 4open's 8 MB serving limit,
+	pack of the 9 fixtures that are over 4open's 8 MB serving limit,
 	plus their sha256 list; INSTALL.py restores them from it.  A normal
 	git checkout has those fixtures loose and no bigfiles/ at all.
 scripts: the data-preparation generators.  INSTALL.py copies gen_data.py

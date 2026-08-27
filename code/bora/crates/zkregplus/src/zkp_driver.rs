@@ -9061,8 +9061,9 @@ range2_bit={}", ds, b, nu, rb);
 		assert!(all_zero, "M1 gate leaked with b_estimate_caps=false");
 	}
 
-	/// `cargo test -p zkregplus -- tests_estimator_coverage --nocapture`
+	/// `cargo test -p zkregplus -- tests_estimator_coverage --nocapture --ignored`
 	#[test]
+	#[ignore = "needs dlp_config_C{1,2}.json, produced only by a full --items dlp run"]
 	pub fn tests_estimator_coverage(){
 		estimator_regress_nonaggr("small_data",
 			"data/debug/small_data_set/config_dfa", "sigs.dat", "dfa.dat",
