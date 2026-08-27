@@ -31618,6 +31618,8 @@ Goal 11. check workflow
 	[d] phase3 -> running environment
 		[d1] jet2stream server name
 		[d2] vm path docker path
+	[e] phase4 -> dry run.
+		[e1] update to the site.
 
 --- DATA ----
 #####################################
