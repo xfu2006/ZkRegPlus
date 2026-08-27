@@ -3,7 +3,7 @@ to extract: sigtool -u cvd/main.cvd
 or run ./extract.sh in cvd
 
 ############################################################
-We removed the following (13) signatures, becasue (when target chaned to 0) it raises
+We removed the following (14) signatures, because (when target changed to 0) it raises
 false flags on vmlinuz-3.10.0-1160.76.1.el7.x86_64 
 clamscan -r -d categories/removed.ldb ../binexec | grep FOUND
 note that clamscan only reports the first found (so try out the two sigs one by one)

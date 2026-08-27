@@ -9,8 +9,9 @@ paper_data/run_data/data/raw_data/failed_tgz/*
 # before it is read, so the committed copy was never an input -- and it
 # embedded the author's home directory.  Ignore the file only; the other
 # 318 tracked fixtures under debug/ are real inputs and must stay (see
-# debug/.gitignore for the 7 scratch subdirectories and one stray file
-# that are not).
+# debug/.gitignore for the 7 scratch subdirectories that are not; the
+# one stray file it used to list, test1.bin, turned out to be read by
+# three manifests and is tracked again).
 debug/neo_hard_aggr_set/binexec.dat
 # Licence texts for the binexec corpus: bulk boilerplate (52 files) that
 # INSTALL.py restores verbatim from the Zenodo deposit, so it is not kept

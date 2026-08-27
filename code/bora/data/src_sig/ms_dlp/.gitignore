@@ -10,3 +10,19 @@ zombie/
 # locally; provenance (source_url/etag/Last-Modified) is in each record and in
 # docs/retrieve_record.log.
 raw_data_records/
+
+# Provenance logs the scripts above cite by name.  The repo-root `*.log`
+# rule would otherwise drop them, leaving every provenance pointer in this
+# pipeline dangling in the shipped artifact.
+#
+# download_zombie.log had two absolute toolchain paths under the packing
+# account's home directory -- an IDENTITY_PATTERNS hit that would have made
+# prepare.py's step_verify die().  Those two lines now read `~/.cargo/...`.
+# The redaction is at source, not in the exporter, because CONTENT_FIXES
+# only reaches files ending in ARCHIVE_SUFFIXES; step_scrub skips loose
+# files.  Nothing is lost: the record is that cargo/rustc were FOUND, not
+# where, and the load-bearing fact (the pinned upstream commit) is
+# unaffected and is also restated in ../README.md.
+!docs/retrieve_record.log
+!docs/reg_pat_samples.log
+!docs/download_zombie.log

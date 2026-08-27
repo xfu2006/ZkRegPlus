@@ -1,0 +1,56 @@
+# zombie source retrieval
+date:    2026-06-05
+command: /usr/bin/python3 download_zombie.py --verify-build
+
+[machine config]
+os:              Linux 6.17.0-23-generic
+logical_cores:   32
+cpu_model:       13th Gen Intel(R) Core(TM) i9-13950HX
+cpu_mhz:         800.000
+cpu_count_proc:  32
+ram_total:       125.4 GiB
+
+repo:    https://github.com/PepperSieve/Zombie
+dest:    zombie/   (full clone, .git retained)
+status:  OK
+commit:  ae5ae94828aca2fb0d84e46c323b18a405f3309e
+license: NONE (all rights reserved) -- local research use only, do not redistribute
+size:    1668 files, 28.3 MiB
+
+[patches]  (applied to make the clone build standalone)
+  P1 circ/third_party/curve-constraint-tests -> curves/curve-constraint-tests (symlink)
+  P2 circ/src/witnesses/mod.rs: commented dangling `pub mod tmp;`
+  P3 circ/Cargo.toml: [lib] name "circ_zkmb" -> "circ"
+  note: build circ OUT of any parent Cargo workspace (--locked, committed lock); see verify_build
+
+[build verification]  2/2 components compiled
+  [OK  ] regex/TestRegex (make)                       built bin/TestRegex
+  [OK  ] circ (cargo, out-of-workspace --locked, system-libs) compiled circ example
+
+[dependencies]  13/13 present (report only, nothing installed)
+  [OK  ] git                /usr/bin/git
+         needed for: clone the repo
+  [OK  ] g++                /usr/bin/g++
+         needed for: build regex/TestRegex and CirC native bits
+  [OK  ] make               /usr/bin/make
+         needed for: build regex/TestRegex
+  [OK  ] gmpxx.h (GMP)      ok
+         needed for: TestRegex links -lgmpxx -lgmp
+  [OK  ] mpfr.h (MPFR)      ok
+         needed for: CirC gmp-mpfr-sys system-libs build (avoids bundled MPFR make-check fail)
+  [OK  ] mpc.h (MPC)        ok
+         needed for: CirC gmp-mpfr-sys system-libs build (avoids bundled MPFR make-check fail)
+  [OK  ] cargo              ~/.cargo/bin/cargo
+         needed for: build circ / middlebox
+  [OK  ] rustc              ~/.cargo/bin/rustc
+         needed for: build circ / middlebox
+  [OK  ] rust nightly-2023-02-01 installed
+         needed for: circ pins this nightly in rust-toolchain.toml
+  [OK  ] cvc4               /usr/bin/cvc4
+         needed for: CirC SMT backend
+  [OK  ] cbc (coinor)       /usr/bin/cbc
+         needed for: CirC ILP backend
+  [OK  ] python3            /usr/bin/python3
+         needed for: circ driver.py
+  [OK  ] tqdm==4.63.0       import ok
+         needed for: circ driver.py

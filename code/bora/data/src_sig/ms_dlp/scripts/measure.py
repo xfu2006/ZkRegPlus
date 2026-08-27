@@ -1,4 +1,9 @@
 # -------------------------------------------
+# SUPERSEDED -- use measure_v2.py instead.  This script's cost model is
+# known to be wrong (it under-measured the corpus worst case by ~16x); the
+# header of measure_v2.py explains the three specific errors.  Kept only so
+# the earlier numbers remain reproducible.  Nothing in the pipeline runs it.
+# -------------------------------------------
 # Creator: BORA Author
 # Date: 06/04/2026
 # Purpose: measure how densely the in-force MS-DLP policy keywords occur in the

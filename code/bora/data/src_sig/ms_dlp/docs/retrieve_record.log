@@ -1,0 +1,487 @@
+# ms_dlp SIT retrieval log
+date:    2026-06-10
+command: /usr/bin/python3 retrieve_ms_dlp.py
+
+[machine config]
+os:              Linux 6.17.0-23-generic
+logical_cores:   32
+cpu_model:       13th Gen Intel(R) Core(TM) i9-13950HX
+cpu_mhz:         1047.574
+cpu_count_proc:  32
+ram_total:       125.4 GiB
+
+index_url:  https://learn.microsoft.com/en-us/purview/sit-sensitive-information-type-entity-definitions
+records_in: raw_data_records/
+
+== WHY SITs ARE DROPPED (rejected for ANY of these reasons) ==
+  (a) no pattern section     : no usable Pattern prose
+  (b) no proximity spec      : no patternsProximity / 'within N characters'
+  (c) no keyword list        : no positive keyword bullet
+  (d) ML/named-entity        : trainable / named-entity / exact-data-match
+  (e) non-English keyword(s) : at least one non-ASCII keyword
+  (f) Func_* classifier      : Pattern names a Func_* fn, no literal format
+  (g) verified non-matching  : hardcoded remove list; regex matches no real
+                               sample (see docs/reg_pat_samples.log)
+
+== HARDCODED REMOVE LIST (verified non-matching; criterion g) ==
+These SITs are force-excluded regardless of criteria (a)-(f); see docs/reg_pat_samples.log.
+  - sit-defn-australia-medical-account-number
+  - sit-defn-azure-service-bus-connection-string
+  - sit-defn-italy-fiscal-code
+  - sit-defn-malaysia-identification-card-number
+  - sit-defn-sweden-tax-identification-number
+  - sit-defn-uk-drivers-license-number
+
+== PER-SIT RESULTS (strict / English batch) ==
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-aba-routing  ->  raw_data_records/sit-defn-aba-routing.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-all-creds  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-all-full-names  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-all-medical-terms-conditions  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-all-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-amazon-s3-client-secret-access-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-argentina-national-identity-numbers  (non-English keyword(s): cédula, documento número)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-argentina-unique-tax-identification-key  (non-English keyword(s): Clave Única de Identificación Tributaria, Número de Identificación Fiscal, número de contribuyente)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-asp-net-machine-key  (no proximity spec)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-australia-bank-account-number  ->  raw_data_records/sit-defn-australia-bank-account-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-australia-business-number  ->  raw_data_records/sit-defn-australia-business-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-australia-drivers-license-number  ->  raw_data_records/sit-defn-australia-drivers-license-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-australia-medical-account-number  (verified to not match real samples via web crawling (regex translation cannot represent the real-world format; see docs/reg_pat_samples.log))
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-australia-passport-number  ->  raw_data_records/sit-defn-australia-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-australia-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-australia-tax-file-number  ->  raw_data_records/sit-defn-australia-tax-file-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-austria-drivers-license-number  (no pattern section; non-English keyword(s): führerschein, Führerscheine, Führerscheinnummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-austria-identity-card  (non-English keyword(s): personalausweis republik österreich)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-austria-passport-number  (non-English keyword(s): reisepässe)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-austria-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-austria-social-security-number  ->  raw_data_records/sit-defn-austria-social-security-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-austria-tax-identification-number  (non-English keyword(s): österreich)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-austria-value-added-tax  ->  raw_data_records/sit-defn-austria-value-added-tax.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-ad-client-access-token  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-ad-client-secret  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-ad-user-credentials  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-app-service-deployment-password  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-batch-shared-access-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-bot-framework-secret-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-bot-service-app-secret  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-cognitive-search-api-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-cognitive-service-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-container-registry-access-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-cosmos-db-account-access-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-databricks-personal-access-token  (no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-devops-app-secret  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-devops-personal-access-token  (no proximity spec)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-document-db-auth-key  ->  raw_data_records/sit-defn-azure-document-db-auth-key.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-eventgrid-access-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-function-master-api-key  (no proximity spec)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string  ->  raw_data_records/sit-defn-azure-iaas-database-connection-string-azure-sql-connection-string.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-iot-connection-string  ->  raw_data_records/sit-defn-azure-iot-connection-string.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-iot-shared-access-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-logic-app-shared-access-signature  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-machine-learning-web-service-api-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-maps-subscription-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-publish-setting-password  (no pattern section)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-redis-cache-connection-string  ->  raw_data_records/sit-defn-azure-redis-cache-connection-string.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-redis-cache-connection-string-password  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-sas  (no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-service-bus-connection-string  (verified to not match real samples via web crawling (regex translation cannot represent the real-world format; see docs/reg_pat_samples.log))
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-service-bus-shared-access-signature  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-shared-access-key-web-hook-token  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-signalr-access-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-sql-connection-string  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-storage-account-access-key  (no proximity spec)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-storage-account-key  ->  raw_data_records/sit-defn-azure-storage-account-key.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-storage-account-key-generic  (no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-storage-account-shared-access-signature  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-storage-account-shared-access-signature-high-risk-resources  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-azure-subscription-management-certificate  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-drivers-license-number  (no pattern section; non-English keyword(s): führerschein, führerscheinnummer, füehrerscheinnummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-national-number  (non-English keyword(s): carte d'identité, identité, numéro d'assuré)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-passport-number  (non-English keyword(s): numéro passeport)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-value-added-tax-number  (non-English keyword(s): nº tva, numéro t.v.a)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-blood-test-terms  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-brand-medication-names  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-brazil-cpf-number  (non-English keyword(s): Cadastro de Pessoas Físicas, Identificação, Inscrição)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-brazil-legal-entity-number  (non-English keyword(s): Cadastro Nacional da Pessoa Jurídica, Pessoa jurídica, Pessoas jurídicas)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-brazil-national-identification-card  (no pattern section; non-English keyword(s): Cédula de identidade, número de rregistro)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-brazil-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-bulgaria-drivers-license-number  (no pattern section; non-English keyword(s): свидетелство за управление на мпс, свидетелство за управление на моторно превозно средство, сумпс)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-bulgaria-passport-number  (no pattern section; non-English keyword(s): номер на паспорта, номер на паспорт, паспорт №)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-bulgaria-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-bulgaria-uniform-civil-number  (non-English keyword(s): егн#, егн, единен граждански номер)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-canada-bank-account-number  ->  raw_data_records/sit-defn-canada-bank-account-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-canada-drivers-license-number  ->  raw_data_records/sit-defn-canada-drivers-license-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-canada-health-service-number  (no pattern section)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-canada-passport-number  (non-English keyword(s): パスポート, パスポート番号, パスポートのNum)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-canada-personal-health-identification-number  (no pattern section)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-canada-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-canada-social-insurance-number  (non-English keyword(s): numéro d’assurance social, numéro d’assurance sociale, carte d’assurance sociale)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-chile-identity-card-number  (non-English keyword(s): cédula de identidad, identificación, número de identificación nacional)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-china-resident-identity-card-number  (non-English keyword(s): 身份证, 居民 身份证, 居民身份证)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-client-secret-api-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-credit-card-number  (non-English keyword(s): numéro de sécurité, kreditkartenprüfnummer, prüfziffer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-croatia-drivers-license-number  (no pattern section; non-English keyword(s): vozačka dozvola, vozačke dozvole)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-croatia-identity-card-number  (non-English keyword(s): majstorski broj građana)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-croatia-passport-number  (no pattern section)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-croatia-personal-identification-number  (non-English keyword(s): majstorski broj građana)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-croatia-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-cyprus-drivers-license-number  (no pattern section; non-English keyword(s): άδεια οδήγησης, αριθμό άδειας οδήγησης, άδειες οδήγησης)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-cyprus-identity-card  (no pattern section; non-English keyword(s): ταυτοτητασ)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-cyprus-passport-number  (non-English keyword(s): αριθμό διαβατηρίου, Αριθμός Διαβατηρίου, κυπριακό διαβατήριο)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-cyprus-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-cyprus-tax-identification-number  (non-English keyword(s): vergi kimlik numarası, αριθμός φορολογικού μητρώου, κωδικός φορολογικού μητρώου)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-czech-drivers-license-number  (non-English keyword(s): řidičský prúkaz, řidičské průkazy, číslo řidičského průkazu)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-czech-passport-number  (non-English keyword(s): cestovní pas, číslo pasu, cestovní pasu)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-czech-personal-identity-number  (non-English keyword(s): daňové číslo, identifikační číslo, osobní číslo)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-czech-republic-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-denmark-drivers-license-number  (no pattern section; non-English keyword(s): kørekort, kørekortnummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-denmark-passport-number  (no pattern section; non-English keyword(s): Passeport n°)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-denmark-personal-identification-number  ->  raw_data_records/sit-defn-denmark-personal-identification-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-denmark-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-diseases  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-drug-enforcement-agency-number  ->  raw_data_records/sit-defn-drug-enforcement-agency-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ecuador-unique-identification-number  (non-English keyword(s): número de seguro Nacional, Identificación nacional)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-estonia-drivers-license-number  ->  raw_data_records/sit-defn-estonia-drivers-license-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-estonia-passport-number  ->  raw_data_records/sit-defn-estonia-passport-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-estonia-personal-identification-code  ->  raw_data_records/sit-defn-estonia-personal-identification-code.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-estonia-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-eu-debit-card-number  (non-English keyword(s): cartao de crédito, cartao de débito, carte de crédit)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-eu-drivers-license-number  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-eu-national-identification-number  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-eu-passport-number  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-eu-social-security-number-equivalent-identification  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-eu-tax-identification-number  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-finland-drivers-license-number  (non-English keyword(s): körkort, körkortnummer, förare lic.)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-finland-european-health-insurance-number  (non-English keyword(s): finska sjukförsäkringskort, hälsokort, sjukförsäkring nummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-finland-national-id  (non-English keyword(s): ainutlaatuinen henkilökohtainen tunnus, henkilökohtainen tunnus, henkilötunnus)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-finland-passport-number  ->  raw_data_records/sit-defn-finland-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-finland-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-drivers-license-number  (non-English keyword(s): numéros de licence)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-health-insurance-number  (non-English keyword(s): carte d'assuré social)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-national-id-card  (non-English keyword(s): carte nationale d'identité, numéro d'assurance maladie, numéro de carte vitale)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-passport-number  (non-English keyword(s): numéro de passeport, passeport n °, passeportn °)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-social-security-number  (non-English keyword(s): code sécu, d'identité nationale, le numéro d'identification nationale)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-tax-identification-number  (non-English keyword(s): numéro d'identification fiscale)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-france-value-added-tax-number  (non-English keyword(s): siren identification no numéro d'identification taxe sur valeur ajoutée, taxe valeur ajoutée, taxe sur la valeur ajoutée)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-general-password  (no pattern section; no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-general-symmetric-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-generic-medication-names  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-germany-drivers-license-number  (non-English keyword(s): ausstellende behöde, führerschein, führerscheinnummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-germany-identity-card-number  (non-English keyword(s): persönliche id nummer, persönliche identifikationsnummer, persönliche-id-nummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-germany-passport-number  (non-English keyword(s): reisepässe)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-germany-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-germany-tax-identification-number  ->  raw_data_records/sit-defn-germany-tax-identification-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-germany-value-added-tax-number  ->  raw_data_records/sit-defn-germany-value-added-tax-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-github-personal-access-token  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-google-api-key  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-greece-drivers-license-number  (no pattern section; non-English keyword(s): δεια οδήγησης, Άδεια οδήγησης, Δίπλωμα οδήγησης)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-greece-national-id-card  (non-English keyword(s): ταυτότητα, ταυτότητας)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-greece-passport-number  (non-English keyword(s): αριθμός διαβατηρίου, αριθμούς διαβατηρίου, αριθμός διαβατηριο)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-greece-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-greece-social-security-number  (non-English keyword(s): Αριθμού Μητρώου Κοινωνικής Ασφάλισης)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-greece-tax-identification-number  (no pattern section; non-English keyword(s): aφμ|aφμ αριθμός, aφμ, αριθμός φορολογικού μητρώου)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hong-kong-identity-card-number  (non-English keyword(s): 香港身份證, 香港永久性居民身份證, 身份證)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-http-authorization-header  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-drivers-license-number  (non-English keyword(s): vezetői engedély, vezetői engedélyek)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-passport-number  (non-English keyword(s): útlevél száma, Útlevelek száma, útlevél szám)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-personal-identification-number  (non-English keyword(s): személyazonosító igazolvány, személyi igazolvány)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-social-security-number  (no pattern section; non-English keyword(s): áfa, közösségi adószám, általános forgalmi adó szám)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-tax-identification-number  (non-English keyword(s): adóazonosító szám, adóhatóság szám, adószám)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-value-added-tax-number  (non-English keyword(s): value added tax áfa, közösségi adószám, általános forgalmi adó szám)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-iceland-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-impairments-us-disability-evaluation-under-social-security  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-india-drivers-license-number  ->  raw_data_records/sit-defn-india-drivers-license-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-india-gst-number  ->  raw_data_records/sit-defn-india-gst-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-india-permanent-account-number  ->  raw_data_records/sit-defn-india-permanent-account-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-india-unique-identification-number  (non-English keyword(s): आधार)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-india-voter-id-card  ->  raw_data_records/sit-defn-india-voter-id-card.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-indonesia-drivers-license-number  ->  raw_data_records/sit-defn-indonesia-drivers-license-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-indonesia-identity-card-number  ->  raw_data_records/sit-defn-indonesia-identity-card-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-indonesia-passport-number  ->  raw_data_records/sit-defn-indonesia-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-international-banking-account-number  (no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-international-classification-of-diseases-icd-10-cm  (no pattern section; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-international-classification-of-diseases-icd-9-cm  (no pattern section; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ip-address  (no pattern section; non-English keyword(s): IP-כתובת ה)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ip-address-v4  (no pattern section; non-English keyword(s): IP-כתובת ה)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ip-address-v6  (no pattern section; non-English keyword(s): IP-כתובת ה)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ireland-drivers-license-number  (non-English keyword(s): ceadúnas tiomána, ceadúnais tiomána, IP-כתובת ה)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ireland-passport-number  (no pattern section; non-English keyword(s): uimhir cárta, uimhir chárta)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ireland-personal-public-service-number  (non-English keyword(s): phearsanta seirbhíse poiblí, seirbhís aitheantais cliant, uimhir aitheantais chánach)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ireland-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-israel-bank-account-number  (non-English keyword(s): מספר חשבון בנק)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-israel-national-identification-number  (non-English keyword(s): תעודת זהות, .ת.ז, מספר זיהוי)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-italy-drivers-license-number  ->  raw_data_records/sit-defn-italy-drivers-license-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-italy-fiscal-code  (verified to not match real samples via web crawling (regex translation cannot represent the real-world format; see docs/reg_pat_samples.log))
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-italy-passport-number  (non-English keyword(s): numéro passeport)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-italy-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-italy-value-added-tax-number  ->  raw_data_records/sit-defn-italy-value-added-tax-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-bank-account-number  (non-English keyword(s): 口座番号, 銀行口座, 銀行口座番号)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-drivers-license-number  (non-English keyword(s): 運転免許証, 運転免許, 免許証)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-my-number-corporate  (non-English keyword(s): マイナンバー, 共通番号, マイナンバーカード)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-my-number-personal  (non-English keyword(s): マイナンバー, 個人番号, 共通番号)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-passport-number  (non-English keyword(s): パスポート, パスポート番号, パスポートナンバー)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-residence-card-number  (non-English keyword(s): 在留カード番号, 在留カード, 在留番号)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-resident-registration-number  (non-English keyword(s): 外国人登録証明書番号, 証明書番号, 登録番号)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-japan-social-insurance-number  (non-English keyword(s): 健康保険被保険者番号, 健保番号, 基礎年金番号)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-lab-test-terms  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-latvia-drivers-license-number  (non-English keyword(s): autovadītāja apliecība, autovadītāja apliecības, vadītāja apliecība)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-latvia-passport-number  (non-English keyword(s): n° du Passeport)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-latvia-personal-code  (non-English keyword(s): alvas nē, identifikācijas numurs, nacionālais id)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-latvia-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-liechtenstein-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-lifestyles-relate-to-medical-conditions  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-lithuania-drivers-license-number  (no pattern section; non-English keyword(s): vairuotojo pažymėjimas, vairuotojo pažymėjimo numeris, vairuotojo pažymėjimo numeriai)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-lithuania-passport-number  ->  raw_data_records/sit-defn-lithuania-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-lithuania-personal-code  (non-English keyword(s): mokesčių id, mokesčių identifikavimas numeris, mokesčių identifikavimo numeris)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-lithuania-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-drivers-license-number  (no pattern section; non-English keyword(s): Führerschäin)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-national-identification-number-natural-persons  (non-English keyword(s): numéro d'identification personnel, persönliche identifikationsnummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-national-identification-number-non-natural-persons  (non-English keyword(s): carte de sécurité sociale, étain non, étain#)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-passport-number  (non-English keyword(s): numéro de passeport, reisepässe)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-malaysia-identification-card-number  (verified to not match real samples via web crawling (regex translation cannot represent the real-world format; see docs/reg_pat_samples.log))
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-malaysia-passport-number  ->  raw_data_records/sit-defn-malaysia-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-malta-drivers-license-number  (non-English keyword(s): liċenzja tas-sewqan, liċenzji tas-sewwieq)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-malta-identity-card-number  (non-English keyword(s): kodiċi numerali personali, numru ta' identità uniku, numru tas-servizz taċ-ċittadin)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-malta-passport-number  (no pattern section)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-malta-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-malta-tax-identification-number  (non-English keyword(s): kodiċi numerali personali, numru ta' identità uniku, numru tas-servizz taċ-ċittadin)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-medical-specialities  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-medicare-beneficiary-identifier-card  ->  raw_data_records/sit-defn-medicare-beneficiary-identifier-card.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-mexico-unique-population-registry-code  (non-English keyword(s): Clave Única de Registro de Población, clave única, ClaveÚnica)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-microsoft-bing-maps-key  (no proximity spec)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-netherlands-citizens-service-number  ->  raw_data_records/sit-defn-netherlands-citizens-service-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-netherlands-drivers-license-number  (no pattern section)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-netherlands-passport-number  ->  raw_data_records/sit-defn-netherlands-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-netherlands-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-netherlands-tax-identification-number  (no pattern section; non-English keyword(s): hollânske tax identification)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-netherlands-value-added-tax-number  (non-English keyword(s): btw nûmer)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-new-zealand-bank-account-number  ->  raw_data_records/sit-defn-new-zealand-bank-account-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-new-zealand-drivers-license-number  ->  raw_data_records/sit-defn-new-zealand-drivers-license-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-new-zealand-inland-revenue-number  ->  raw_data_records/sit-defn-new-zealand-inland-revenue-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-new-zealand-ministry-of-health-number  ->  raw_data_records/sit-defn-new-zealand-ministry-of-health-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-new-zealand-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-new-zealand-social-welfare-number  ->  raw_data_records/sit-defn-new-zealand-social-welfare-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-norway-identification-number  (non-English keyword(s): Fødselsnummer)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-norway-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-philippines-national-identification-number  ->  raw_data_records/sit-defn-philippines-national-identification-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-philippines-passport-number  ->  raw_data_records/sit-defn-philippines-passport-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-philippines-unified-multi-purpose-identification-number  ->  raw_data_records/sit-defn-philippines-unified-multi-purpose-identification-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-poland-drivers-license-number  ->  raw_data_records/sit-defn-poland-drivers-license-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-poland-identity-card  (non-English keyword(s): Dowód osobisty, Nazwa i nr dowodu tożsamości, Dowód Tożsamości)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-poland-national-id  (non-English keyword(s): dowód osobisty, dowódosobisty, tożsamości narodowej)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-poland-passport-number  (non-English keyword(s): numery paszportów, nr paszportów, n° passeport)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-poland-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-poland-regon-number  ->  raw_data_records/sit-defn-poland-regon-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-poland-tax-identification-number  (no pattern section)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-citizen-card-number  (non-English keyword(s): cartão de cidadão, documento de identificação, número bi de portugal)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-drivers-license-number  (non-English keyword(s): carteira de habilitação, carteira habilitação, número de licença)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-passport-number  (non-English keyword(s): número do passaporte, passaporte nº, passeport nº)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-tax-identification-number  (non-English keyword(s): número de identificação fisca)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-qatari-id-card-number  ->  raw_data_records/sit-defn-qatari-id-card-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-romania-drivers-license-number  ->  raw_data_records/sit-defn-romania-drivers-license-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-romania-passport-number  ->  raw_data_records/sit-defn-romania-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-romania-personal-numeric-code  (non-English keyword(s): identificarea fiscală nr#, număr identificare personal, număr identitate)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-romania-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-russia-passport-number-domestic  (non-English keyword(s): паспорт нет, паспорт id, pоссийской паспорт)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-russia-passport-number-international  (non-English keyword(s): паспорт нет, паспорт id, pоссийской паспорт)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-saudi-arabia-national-id  (non-English keyword(s): الوطنية الهوية بطاقة رقم)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-singapore-national-registration-identity-card-number  (non-English keyword(s): 身份证, 身份證)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slack-access-token  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovakia-drivers-license-number  (non-English keyword(s): vodičský preukaz, vodičské preukazy, vodičského preukazu)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovakia-passport-number  (non-English keyword(s): číslo pasu, čísla pasov, pas č.)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovakia-personal-number  (non-English keyword(s): azonosító szám, číslo národnej identifikačnej karty, číslo občianského preukazu)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovakia-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-drivers-license-number  (no pattern section; non-English keyword(s): vozniško dovoljenje, vozniška številka licence, vozniških dovoljenj)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-passport-number  (non-English keyword(s): številka potnega lista, številke potnih listov)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-tax-identification-number  (non-English keyword(s): davčna številka, identifikacijska številka davka, številka davčne datoteke)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-unique-master-citizen-number  (non-English keyword(s): edinstvena številka glavnega državljana, emšo, enotna maticna številka obcana)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-south-africa-identification-number  ->  raw_data_records/sit-defn-south-africa-identification-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-south-korea-drivers-license-number  (non-English keyword(s): 운전면허번호, 운전면허 번호, 운전 면허 번호)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-south-korea-passport-number  (non-English keyword(s): 여권 번호, 한국어 여권, 여권 번호)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-south-korea-resident-registration-number  (non-English keyword(s): 주민등록번호)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-spain-dni  (non-English keyword(s): carné de identidad, dninúmero#, identidad único)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-spain-drivers-license-number  (non-English keyword(s): permiso de conducción, permiso conducción)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-spain-passport-number  (non-English keyword(s): número pasaporte, españa pasaporte, números de pasaporte)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-spain-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-spain-social-security-number  (non-English keyword(s): número de la seguridad social)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-spain-tax-identification-number  (non-English keyword(s): cifnúmero#, número de contribuyente, número de identificación fiscal)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-sql-server-connection-string  ->  raw_data_records/sit-defn-sql-server-connection-string.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-surgical-procedures  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-sweden-drivers-license-number  (non-English keyword(s): körkort, numărul permisului de conducere, שאָפער דערלויבעניש נומער)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-sweden-national-id  ->  raw_data_records/sit-defn-sweden-national-id.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-sweden-passport-number  (non-English keyword(s): Numéro de passeport, passeport n °, passeportn °)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-sweden-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-sweden-tax-identification-number  (verified to not match real samples via web crawling (regex translation cannot represent the real-world format; see docs/reg_pat_samples.log))
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-swift-code  (non-English keyword(s): le numéro de swift, swift numéro d'acheminement, le numéro BIC)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-switzerland-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-switzerland-ssn-ahv-number  (non-English keyword(s): einzigartige identität nicht, numéro de sécurité sociale)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-taiwan-national-identification-number  (non-English keyword(s): 身份證字號, 身份證, 身份證號碼)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-taiwan-passport-number  (non-English keyword(s): 护照, 中華民國護照, Zhōnghuá Mínguó hùzhào)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-taiwan-resident-certificate-number  (non-English keyword(s): 居留證, 外僑居留證, 台灣地區居留證)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-thai-population-identification-code  (non-English keyword(s): บัตรประชาชน, รหัสบัตรประชาชน, บัตรประชาชน)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-turkey-national-identification-number  (no pattern section; non-English keyword(s): TC Kimlik numarası, Vatandaşlık numarası, Vatandaşlık no)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-turkey-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-types-of-medication  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-uae-identity-card-number  (non-English keyword(s): التأمين رقم, التأمينرقم#, رقم الهوية)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-uae-passport-number  (non-English keyword(s): جواز سفر, جواز سفر#)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-uk-drivers-license-number  (verified to not match real samples via web crawling (regex translation cannot represent the real-world format; see docs/reg_pat_samples.log))
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-uk-electoral-roll-number  ->  raw_data_records/sit-defn-uk-electoral-roll-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-uk-national-health-service-number  ->  raw_data_records/sit-defn-uk-national-health-service-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-uk-national-insurance-number  ->  raw_data_records/sit-defn-uk-national-insurance-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-uk-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-uk-unique-taxpayer-reference-number  (no pattern section)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ukraine-passport-domestic  (no pattern section; non-English keyword(s): паспорт України, номер паспорта, персональний)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-ukraine-passport-international  (non-English keyword(s): паспорт України, номер паспорта)
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-us-bank-account-number  ->  raw_data_records/sit-defn-us-bank-account-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-us-drivers-license-number  ->  raw_data_records/sit-defn-us-drivers-license-number.txt
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-us-individual-taxpayer-identification-number  ->  raw_data_records/sit-defn-us-individual-taxpayer-identification-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-us-physical-addresses  (no pattern section; no proximity spec; no keyword list)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-us-social-security-number  (pattern defined by a Purview Func_* classifier function (not a literal format; not regex-translatable))
+[ACCEPT] https://learn.microsoft.com/en-us/purview/sit-defn-us-uk-passport-number  ->  raw_data_records/sit-defn-us-uk-passport-number.txt
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-user-login-credentials  (no proximity spec)
+[REJECT] https://learn.microsoft.com/en-us/purview/sit-defn-x-509-certificate-private-key  (no proximity spec)
+
+== SUMMARY (strict / English batch) ==
+scanned:  313
+accepted: 60
+rejected: 253
+rejected by reason (a SIT may fail several):
+  (a) no pattern section     92
+  (b) no proximity spec      99
+  (c) no keyword list        64
+  (d) ML/named-entity        0
+  (e) non-English keyword    134
+  (f) Func_*                 1
+  (g) verified to not match real samples 6
+
+== INTERNATIONAL SUPERSET (relaxes (e): keep if >=1 English keyword survives) ==
+records_in: raw_data_records_international/   (= strict batch + foreign rules with non-English keywords stripped)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-argentina-national-identity-numbers  (rescued; stripped non-English: cédula, documento número)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-argentina-unique-tax-identification-key  (rescued; stripped non-English: Clave Única de Identificación Tributaria, Número de Identificación Fiscal, número de contribuyente)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-austria-identity-card  (rescued; stripped non-English: personalausweis republik österreich)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-austria-passport-number  (rescued; stripped non-English: reisepässe)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-austria-tax-identification-number  (rescued; stripped non-English: österreich)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-national-number  (rescued; stripped non-English: carte d'identité, identité, numéro d'assuré)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-passport-number  (rescued; stripped non-English: numéro passeport)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-belgium-value-added-tax-number  (rescued; stripped non-English: nº tva, numéro t.v.a)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-brazil-cpf-number  (rescued; stripped non-English: Cadastro de Pessoas Físicas, Identificação, Inscrição)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-brazil-legal-entity-number  (rescued; stripped non-English: Cadastro Nacional da Pessoa Jurídica, Pessoa jurídica, Pessoas jurídicas)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-bulgaria-uniform-civil-number  (rescued; stripped non-English: егн#, егн, единен граждански номер)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-canada-passport-number  (rescued; stripped non-English: パスポート, パスポート番号, パスポートのNum)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-canada-social-insurance-number  (rescued; stripped non-English: numéro d’assurance social, numéro d’assurance sociale, carte d’assurance sociale)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-chile-identity-card-number  (rescued; stripped non-English: cédula de identidad, identificación, número de identificación nacional)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-china-resident-identity-card-number  (rescued; stripped non-English: 身份证, 居民 身份证, 居民身份证)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-credit-card-number  (rescued; stripped non-English: numéro de sécurité, kreditkartenprüfnummer, prüfziffer)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-croatia-identity-card-number  (rescued; stripped non-English: majstorski broj građana)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-croatia-personal-identification-number  (rescued; stripped non-English: majstorski broj građana)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-cyprus-passport-number  (rescued; stripped non-English: αριθμό διαβατηρίου, Αριθμός Διαβατηρίου, κυπριακό διαβατήριο)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-cyprus-tax-identification-number  (rescued; stripped non-English: vergi kimlik numarası, αριθμός φορολογικού μητρώου, κωδικός φορολογικού μητρώου)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-czech-drivers-license-number  (rescued; stripped non-English: řidičský prúkaz, řidičské průkazy, číslo řidičského průkazu)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-czech-passport-number  (rescued; stripped non-English: cestovní pas, číslo pasu, cestovní pasu)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-czech-personal-identity-number  (rescued; stripped non-English: daňové číslo, identifikační číslo, osobní číslo)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-ecuador-unique-identification-number  (rescued; stripped non-English: número de seguro Nacional, Identificación nacional)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-eu-debit-card-number  (rescued; stripped non-English: cartao de crédito, cartao de débito, carte de crédit)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-finland-drivers-license-number  (rescued; stripped non-English: körkort, körkortnummer, förare lic.)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-finland-european-health-insurance-number  (rescued; stripped non-English: finska sjukförsäkringskort, hälsokort, sjukförsäkring nummer)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-finland-national-id  (rescued; stripped non-English: ainutlaatuinen henkilökohtainen tunnus, henkilökohtainen tunnus, henkilötunnus)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-france-drivers-license-number  (rescued; stripped non-English: numéros de licence)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-france-health-insurance-number  (rescued; stripped non-English: carte d'assuré social)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-france-national-id-card  (rescued; stripped non-English: carte nationale d'identité, numéro d'assurance maladie, numéro de carte vitale)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-france-passport-number  (rescued; stripped non-English: numéro de passeport, passeport n °, passeportn °)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-france-social-security-number  (rescued; stripped non-English: code sécu, d'identité nationale, le numéro d'identification nationale)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-france-tax-identification-number  (rescued; stripped non-English: numéro d'identification fiscale)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-france-value-added-tax-number  (rescued; stripped non-English: siren identification no numéro d'identification taxe sur valeur ajoutée, taxe valeur ajoutée, taxe sur la valeur ajoutée)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-germany-drivers-license-number  (rescued; stripped non-English: ausstellende behöde, führerschein, führerscheinnummer)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-germany-identity-card-number  (rescued; stripped non-English: persönliche id nummer, persönliche identifikationsnummer, persönliche-id-nummer)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-germany-passport-number  (rescued; stripped non-English: reisepässe)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-greece-national-id-card  (rescued; stripped non-English: ταυτότητα, ταυτότητας)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-greece-passport-number  (rescued; stripped non-English: αριθμός διαβατηρίου, αριθμούς διαβατηρίου, αριθμός διαβατηριο)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-greece-social-security-number  (rescued; stripped non-English: Αριθμού Μητρώου Κοινωνικής Ασφάλισης)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-hong-kong-identity-card-number  (rescued; stripped non-English: 香港身份證, 香港永久性居民身份證, 身份證)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-drivers-license-number  (rescued; stripped non-English: vezetői engedély, vezetői engedélyek)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-passport-number  (rescued; stripped non-English: útlevél száma, Útlevelek száma, útlevél szám)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-personal-identification-number  (rescued; stripped non-English: személyazonosító igazolvány, személyi igazolvány)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-tax-identification-number  (rescued; stripped non-English: adóazonosító szám, adóhatóság szám, adószám)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-hungary-value-added-tax-number  (rescued; stripped non-English: value added tax áfa, közösségi adószám, általános forgalmi adó szám)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-india-unique-identification-number  (rescued; stripped non-English: आधार)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-ireland-drivers-license-number  (rescued; stripped non-English: ceadúnas tiomána, ceadúnais tiomána, IP-כתובת ה)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-ireland-personal-public-service-number  (rescued; stripped non-English: phearsanta seirbhíse poiblí, seirbhís aitheantais cliant, uimhir aitheantais chánach)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-israel-bank-account-number  (rescued; stripped non-English: מספר חשבון בנק)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-israel-national-identification-number  (rescued; stripped non-English: תעודת זהות, .ת.ז, מספר זיהוי)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-italy-passport-number  (rescued; stripped non-English: numéro passeport)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-bank-account-number  (rescued; stripped non-English: 口座番号, 銀行口座, 銀行口座番号)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-drivers-license-number  (rescued; stripped non-English: 運転免許証, 運転免許, 免許証)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-my-number-corporate  (rescued; stripped non-English: マイナンバー, 共通番号, マイナンバーカード)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-my-number-personal  (rescued; stripped non-English: マイナンバー, 個人番号, 共通番号)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-passport-number  (rescued; stripped non-English: パスポート, パスポート番号, パスポートナンバー)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-residence-card-number  (rescued; stripped non-English: 在留カード番号, 在留カード, 在留番号)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-resident-registration-number  (rescued; stripped non-English: 外国人登録証明書番号, 証明書番号, 登録番号)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-japan-social-insurance-number  (rescued; stripped non-English: 健康保険被保険者番号, 健保番号, 基礎年金番号)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-latvia-drivers-license-number  (rescued; stripped non-English: autovadītāja apliecība, autovadītāja apliecības, vadītāja apliecība)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-latvia-passport-number  (rescued; stripped non-English: n° du Passeport)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-latvia-personal-code  (rescued; stripped non-English: alvas nē, identifikācijas numurs, nacionālais id)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-lithuania-personal-code  (rescued; stripped non-English: mokesčių id, mokesčių identifikavimas numeris, mokesčių identifikavimo numeris)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-national-identification-number-natural-persons  (rescued; stripped non-English: numéro d'identification personnel, persönliche identifikationsnummer)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-national-identification-number-non-natural-persons  (rescued; stripped non-English: carte de sécurité sociale, étain non, étain#)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-luxemburg-passport-number  (rescued; stripped non-English: numéro de passeport, reisepässe)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-malta-drivers-license-number  (rescued; stripped non-English: liċenzja tas-sewqan, liċenzji tas-sewwieq)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-malta-identity-card-number  (rescued; stripped non-English: kodiċi numerali personali, numru ta' identità uniku, numru tas-servizz taċ-ċittadin)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-malta-tax-identification-number  (rescued; stripped non-English: kodiċi numerali personali, numru ta' identità uniku, numru tas-servizz taċ-ċittadin)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-mexico-unique-population-registry-code  (rescued; stripped non-English: Clave Única de Registro de Población, clave única, ClaveÚnica)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-netherlands-value-added-tax-number  (rescued; stripped non-English: btw nûmer)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-norway-identification-number  (rescued; stripped non-English: Fødselsnummer)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-poland-identity-card  (rescued; stripped non-English: Dowód osobisty, Nazwa i nr dowodu tożsamości, Dowód Tożsamości)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-poland-national-id  (rescued; stripped non-English: dowód osobisty, dowódosobisty, tożsamości narodowej)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-poland-passport-number  (rescued; stripped non-English: numery paszportów, nr paszportów, n° passeport)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-citizen-card-number  (rescued; stripped non-English: cartão de cidadão, documento de identificação, número bi de portugal)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-drivers-license-number  (rescued; stripped non-English: carteira de habilitação, carteira habilitação, número de licença)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-passport-number  (rescued; stripped non-English: número do passaporte, passaporte nº, passeport nº)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-portugal-tax-identification-number  (rescued; stripped non-English: número de identificação fisca)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-romania-personal-numeric-code  (rescued; stripped non-English: identificarea fiscală nr#, număr identificare personal, număr identitate)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-russia-passport-number-domestic  (rescued; stripped non-English: паспорт нет, паспорт id, pоссийской паспорт)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-russia-passport-number-international  (rescued; stripped non-English: паспорт нет, паспорт id, pоссийской паспорт)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-saudi-arabia-national-id  (rescued; stripped non-English: الوطنية الهوية بطاقة رقم)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-singapore-national-registration-identity-card-number  (rescued; stripped non-English: 身份证, 身份證)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-slovakia-drivers-license-number  (rescued; stripped non-English: vodičský preukaz, vodičské preukazy, vodičského preukazu)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-slovakia-passport-number  (rescued; stripped non-English: číslo pasu, čísla pasov, pas č.)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-slovakia-personal-number  (rescued; stripped non-English: azonosító szám, číslo národnej identifikačnej karty, číslo občianského preukazu)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-passport-number  (rescued; stripped non-English: številka potnega lista, številke potnih listov)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-tax-identification-number  (rescued; stripped non-English: davčna številka, identifikacijska številka davka, številka davčne datoteke)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-slovenia-unique-master-citizen-number  (rescued; stripped non-English: edinstvena številka glavnega državljana, emšo, enotna maticna številka obcana)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-south-korea-drivers-license-number  (rescued; stripped non-English: 운전면허번호, 운전면허 번호, 운전 면허 번호)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-south-korea-passport-number  (rescued; stripped non-English: 여권 번호, 한국어 여권, 여권 번호)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-south-korea-resident-registration-number  (rescued; stripped non-English: 주민등록번호)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-spain-dni  (rescued; stripped non-English: carné de identidad, dninúmero#, identidad único)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-spain-drivers-license-number  (rescued; stripped non-English: permiso de conducción, permiso conducción)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-spain-passport-number  (rescued; stripped non-English: número pasaporte, españa pasaporte, números de pasaporte)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-spain-social-security-number  (rescued; stripped non-English: número de la seguridad social)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-spain-tax-identification-number  (rescued; stripped non-English: cifnúmero#, número de contribuyente, número de identificación fiscal)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-sweden-drivers-license-number  (rescued; stripped non-English: körkort, numărul permisului de conducere, שאָפער דערלויבעניש נומער)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-sweden-passport-number  (rescued; stripped non-English: Numéro de passeport, passeport n °, passeportn °)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-swift-code  (rescued; stripped non-English: le numéro de swift, swift numéro d'acheminement, le numéro BIC)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-switzerland-ssn-ahv-number  (rescued; stripped non-English: einzigartige identität nicht, numéro de sécurité sociale)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-taiwan-passport-number  (rescued; stripped non-English: 护照, 中華民國護照, Zhōnghuá Mínguó hùzhào)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-taiwan-resident-certificate-number  (rescued; stripped non-English: 居留證, 外僑居留證, 台灣地區居留證)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-thai-population-identification-code  (rescued; stripped non-English: บัตรประชาชน, รหัสบัตรประชาชน, บัตรประชาชน)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-uae-identity-card-number  (rescued; stripped non-English: التأمين رقم, التأمينرقم#, رقم الهوية)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-uae-passport-number  (rescued; stripped non-English: جواز سفر, جواز سفر#)
+[INTL-ADD ] https://learn.microsoft.com/en-us/purview/sit-defn-ukraine-passport-international  (rescued; stripped non-English: паспорт України, номер паспорта)
+[INTL-DROP] https://learn.microsoft.com/en-us/purview/sit-defn-taiwan-national-identification-number  (no English keyword left after stripping)
+
+== SUMMARY (international superset) ==
+scanned:               313
+international accepted: 170   (strict 60 + rescued foreign 110)
+still rejected:        143
+rejected by reason (a SIT may fail several; (e) non-English relaxed):
+  (a) no pattern section     92
+  (b) no proximity spec      99
+  (c) no English keyword     65
+  (d) ML/named-entity        0
+  (f) Func_*                 1
+  (g) verified to not match real samples 6

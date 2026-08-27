@@ -169,6 +169,27 @@ PRUNE_PATHS = [
     # BOTH a dirty tar header and a "# dataset: /home/<user>/..." line in
     # its member content, so pruning removes two hits at once.
     "data/src_sig/ms_dlp/docs/clean_email_list_email_regex_zombie.txt.tgz",
+    # The two survivors of the same Enron cleanup that already prunes
+    # enron_list.tar.tgz above.  Nothing reads either: stats_helper.rs
+    # only WRITES *_clean_enron_list.txt, and the two runcfgs that name
+    # the uncompressed .txt are themselves unread.  Both carry a dirty
+    # tar header, so pruning also drops two step_scrub dependencies.
+    "data/src_sig/ms_dlp/docs/enron_list/full_clean_enron_list.txt.tgz",
+    "data/src_sig/ms_dlp/docs/enron_list/pass_clean_enron_list.txt.tgz",
+    # Four data/debug fixtures with no reader anywhere in the tree
+    # (audited 2026-08-27).  They were in PACK_MEMBERS only because they
+    # exceed 4open's 8 MB ceiling -- i.e. they were being compressed and
+    # shipped for their own sake.  pass_/accept_needs_rank.tsv appear
+    # solely as `report_out` WRITE targets in runcfg_{pass,accept}scan.
+    # json; binexec5.dat's only mention in the whole tree was the packing
+    # list itself; discharge_main_binexec.dat is a captured console log
+    # (22,910 lines of "[job 0] LOG1: ...") sitting in a report dir that
+    # zkp_driver.rs:2371 overwrites.  Removed from PACK_MEMBERS in the
+    # same change -- a pruned path must never stay in the pack list.
+    "data/debug/full_dlp_sample/config/pass_needs_rank.tsv",
+    "data/debug/full_dlp_sample/config/accept_needs_rank.tsv",
+    "data/debug/small_email/config/binexec5.dat",
+    "data/debug/small_data_set2/config_dfa/discharge_main_binexec.dat",
 ]
 
 # Pruned wherever they appear.  Deliberately only vim swap files.  Tracked
@@ -210,12 +231,13 @@ PACK_MEMBERS = [
     "data/src_sig/clamav/new_src/main.ldb.original",
     "data/src_sig/clamav/categories/pm_reg.dat",
     # --- the Enron-corpus path indexes, mutually similar ---
+    # file_needs_rank.tsv stays: build_scan500.py:5 and
+    # numa_probe/build_np_corpus.py:46 both read it.  Its three former
+    # neighbours here (pass_/accept_needs_rank.tsv, binexec5.dat) and the
+    # captured discharge_main_binexec.dat log had no reader at all and
+    # moved to PRUNE_PATHS on 2026-08-27; the pack shrinks accordingly, so
+    # the 3.50 MB figure measured above predates that removal.
     "data/debug/full_dlp_sample/config/file_needs_rank.tsv",
-    "data/debug/full_dlp_sample/config/pass_needs_rank.tsv",
-    "data/debug/full_dlp_sample/config/accept_needs_rank.tsv",
-    "data/debug/small_email/config/binexec5.dat",
-    # --- a captured log ---
-    "data/debug/small_data_set2/config_dfa/discharge_main_binexec.dat",
 ]
 
 # data/ root holds only README.md and .gitignore, so the pack and its

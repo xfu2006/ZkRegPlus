@@ -1,6 +1,8 @@
 # T6007 (2026-08-26).  The subdirectories below hold scratch, generated, or
-# superseded fixtures that NO code path reads -- verified by a reference
-# sweep over crates/, vendor/, scripts/ and data/**/*.py.  They are
+# superseded fixtures that no code path reads -- from a reference sweep
+# over crates/, vendor/, scripts/ and data/**/*.py.  (That sweep missed
+# test1.bin, which three tracked manifests DO read; it is re-included at
+# the bottom of this file.)  They are
 # untracked ENTIRELY, so the 4open export omits them; a local working
 # tree keeps the files.  Everything else under debug/ IS tracked on
 # purpose: this rule dropped 7 of the 24 subdirectories that used to be
@@ -18,4 +20,26 @@ small_repro_aggr/
 t602_probe_scratch_2000/
 t602_probe_scratch_400/
 watson_seg5/
-test1.bin
+
+# ---------------------------------------------------------------------
+# INVARIANT: if a test opens it, it must be TRACKED.  A fresh
+# `git archive` export must pass, with no INSTALL.py step, every
+# `cargo test` that does not itself require an INSTALL.py-downloaded
+# dataset.
+#
+# These are fixture INPUTS that a blanket rule elsewhere would otherwise
+# untrack, making the shipped artifact fail its own test suite while the
+# working tree passes (the working tree has them, untracked).  A deeper
+# .gitignore overrides the repo root, so these re-include past `*.txt`.
+#
+#   test1.bin        <- small_data_set/config/binexec.dat:1,
+#                       small_data_set2/config/binexec.dat:1,
+#                       small_dna/config/binexec.dat:1
+#   sed/simple/*.txt <- clam_db.rs build_db_from_dir() reads needs_dfa /
+#                       needs_ised / needs_ised_igc; fsm_adv.rs:2439
+#                       reads word.txt
+#   dfa/simple/*.txt <- same three, plus dfa_adv.rs:1422 word2.txt
+# ---------------------------------------------------------------------
+!test1.bin
+!sed/simple/*.txt
+!dfa/simple/*.txt
