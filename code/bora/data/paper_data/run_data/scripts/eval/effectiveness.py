@@ -17,7 +17,9 @@ Writes:
                                                    4 merged rows
   <paper_root>/figs/effectiveness_size_dlp.tex  -- Table 6 body: Dlp by size,
                                                    4 merged rows
-All are \\input by figs/fig_effectiveness.fig (layout + captions hand-kept).
+The Table 2 body is \\input by figs/fig_effectiveness.fig; the two by-size
+bodies moved to the appendix and are \\input by src/apdx_eval_data.tex
+(layout + captions hand-kept in both).
 
 The per-bucket lines carry raw tier *counts* ("cp: <count> (<pct>%)"), so the
 size tables merge buckets by summing counts and recomputing the percentages

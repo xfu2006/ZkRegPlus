@@ -2,7 +2,9 @@
 # ----------------------------------------------------------------------------
 # Run every evaluation script in data/scripts/eval, then the data-provenance
 # check last. Each generator reads the raw run logs (server-specific ones via
-# common.SERVER_TO_USE) and writes a LaTeX fragment under ../../../figs/.
+# common.SERVER_TO_USE) and writes a LaTeX fragment under ../../../figs/ --
+# except count_loc.py and the closing check_data_server.py, which write no
+# fragment and only print.
 #
 # Usage:  bash RUNALL.sh        (run from anywhere; it cd's to its own folder)
 #
