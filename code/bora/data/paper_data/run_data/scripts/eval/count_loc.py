@@ -78,7 +78,15 @@ MODULES: list[Module] = [
         exclude_dirs=("data_to_move", "scripts_to_move", ".claude"),
     ),
     Module("Common utils", "utils/src"),
-    Module("Paper-data generator", "paper_data_gen/src"),
+    # The retired paper_data_gen crate is deliberately NOT counted.  It is
+    # tracked only under attic/crates/, which the published snapshot prunes,
+    # so counting it raised FileNotFoundError there and made
+    # `PAPER_DATA.py --run figs` report a failing generator.  It is also dead
+    # code: driver.rs (837 lines) is declared by no `mod` and never compiles;
+    # clam_data.rs (429) was ported into zkregplus/src/stats_helper.rs; and
+    # main.rs reads data/paper_data/debug_config/, which no longer exists.
+    # Excluding it moves the total from 99,754 to 98,379; the paper's "99k"
+    # was computed before this removal and still includes these 1,375 lines.
     Module(
         "FoldPot framework",
         "sonobe_mod/folding-schemes/src/folding/foldpot",
@@ -104,9 +112,11 @@ MODULES: list[Module] = [
 
 
 # Layout prefixes. bora relocated the flat new_zkregplus tree into crates/
-# (the workspace: data_processor/utils/zkregplus), vendor/ (sonobe_mod), and
-# attic/crates/ (the retired paper_data_gen). Try the flat path first for
-# new_zkregplus back-compat, then bora's relocations. First existing wins.
+# (the workspace: data_processor/utils/zkregplus) and vendor/ (sonobe_mod).
+# attic/crates/ is retained only so a module retired to the attic would still
+# resolve in a full checkout; no entry in MODULES uses it today. Try the flat
+# path first for new_zkregplus back-compat, then bora's relocations. First
+# existing wins.
 _BASE_PREFIXES = ("", "crates", "vendor", "attic/crates")
 
 

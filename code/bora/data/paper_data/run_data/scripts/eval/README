@@ -39,7 +39,7 @@ gen_overall_perf.py   Section 7.5 (overall_perf.tex): stage-level performance
                       breakdown (select / commit / fold and compression parts)
                       per dataset.
 
-gen_scale.py          Section 7.5 (fig:scale-regex): regex-set scalability
+gen_scale_all.py      Section 7.5 (fig:scale-regex): regex-set scalability
                       figure -- per-step circuit size and proof time vs the
                       fraction of the regex set, from the any_server scale
                       bundle (scale_data_gdb.tgz).
@@ -58,6 +58,15 @@ gen_compare_all.py    tab:compare-all: the consolidated main-body comparison of
 
 count_loc.py          Implementation/eval: counts author-owned Rust lines in
                       new_zkregplus by module (vendored/upstream code excluded).
+
+extract_acc_state_rate.py
+                      Off-path analysis tool, not run by RUNALL.sh: the
+                      AC-DFA accepting-state density rho behind the "sparse
+                      match locations" remark (Complexity, Section 6.4).  It
+                      writes no LaTeX fragment -- it prints a per-dataset
+                      summary.  Its input, any_server/dump_acc_state_ratio.txt,
+                      is not shipped; regenerate it first (see the recipe in
+                      the script docstring and zkp_driver.rs:8748-8753).
 
 check_data_server.py  Data-provenance check (run last by RUNALL.sh): verifies
                       every file under raw_data/{gcpm1,jet1tb} was collected on

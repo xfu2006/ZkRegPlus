@@ -3,8 +3,9 @@
 # sweep over crates/, vendor/, scripts/ and data/**/*.py.  They are
 # untracked ENTIRELY, so the 4open export omits them; a local working
 # tree keeps the files.  Everything else under debug/ IS tracked on
-# purpose: 17 of the 24 tracked subdirectories are read by the Rust test
-# suite and must stay.
+# purpose: this rule dropped 7 of the 24 subdirectories that used to be
+# tracked; the 17 that remain are all read by the Rust test suite and
+# must stay.
 #
 # t602_probe_scratch_* are WRITE targets -- probe_t602.rs regenerates them
 # via create_smaller_config(), which fs::create_dir_all()s the directory,

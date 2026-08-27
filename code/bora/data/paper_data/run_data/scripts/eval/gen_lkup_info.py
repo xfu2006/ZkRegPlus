@@ -125,8 +125,8 @@ def build_table(data: dict[str, dict]) -> str:
 
     return "\n".join([
         # table* spans both columns; such floats cannot be [H]-pinned, so
-        # [t] floats it to a page top near §7.4 (stfloats in fu.tex also
-        # permits [b]).
+        # [t] floats it to a page top near §7.4 (the paper preamble loads
+        # stfloats, which also permits [b]).
         r"\begin{table*}[t]",
         r"\centering",
         r"\small",

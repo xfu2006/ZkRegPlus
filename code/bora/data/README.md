@@ -26,8 +26,10 @@ samples: sample files to be scanned (CentOS binary execs and Enron
 	emails).  Installed by INSTALL.py; not kept in git.
 debug: per-experiment test FIXTURES (DFA tables and scan configs) read by
 	the Rust code and its tests.  Despite the name these are real
-	inputs, not throwaway debug output -- 318 of them are tracked on
-	purpose, spread over 17 subdirectories.
+	inputs, not throwaway debug output -- 318 fixtures are tracked on
+	purpose, spread over 17 subdirectories.  (`git ls-files data/debug`
+	lists 320: those 318 plus debug/.gitignore and debug/README.md.)
+	-- see debug/README.md for the group-by-group breakdown.
 manifest: per-file provenance for the binexec corpus (sha256, originating
 	RPM, upstream URL) plus PACKAGES.tsv mapping each source package to
 	its licence and source RPM. Installed by INSTALL.py.
