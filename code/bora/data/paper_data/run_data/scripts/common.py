@@ -1042,7 +1042,14 @@ _ZOMBIE_ROW = re.compile(
 _ZOMBIE_LOG = "run_zombie_regex_zombie_international.log"
 
 
-def zombie_totals(log_file, str_len: int) -> dict:
+def zombie_str_lens(log_file) -> list:
+    """Every STR_LENGTH block present in the Zombie log, ascending."""
+    return sorted({int(m) for m in re.findall(
+        r"== STR_LENGTH = (\d+) ==", Path(log_file).read_text())})
+
+
+def zombie_totals(log_file, str_len: int,
+                  allow_nearest: bool = False) -> dict:
     """Aggregate the Zombie log block for one STR_LENGTH over all 'ok' policies.
 
     Returns: n, str_len, total_regex_bytes (sum of pat_len+kws_len),
@@ -1053,7 +1060,21 @@ def zombie_totals(log_file, str_len: int) -> dict:
     text = Path(log_file).read_text()
     start = re.search(rf"== STR_LENGTH = {str_len} ==", text)
     if not start:
-        raise RuntimeError(f"zombie_totals: no block for STR_LENGTH={str_len}")
+        # A thinned run (PAPER_DATA.py --run dry_run) overwrites this log with
+        # shorter STR_LENGTH blocks.  Callers that only need *a* unit cost pass
+        # allow_nearest=True and report the length actually used; callers that
+        # need a specific length still fail, now saying what is available.
+        avail = sorted({int(m) for m in
+                        re.findall(r"== STR_LENGTH = (\d+) ==", text)})
+        if allow_nearest and avail:
+            want = str_len
+            str_len = min(avail, key=lambda v: (abs(v - want), -v))
+            start = re.search(rf"== STR_LENGTH = {str_len} ==", text)
+            print(f"  note: STR_LENGTH={want} absent in the log, using "
+                  f"{str_len} instead (available: {avail})")
+        else:
+            raise RuntimeError(f"zombie_totals: no block for "
+                               f"STR_LENGTH={str_len}; available: {avail}")
     rest = text[start.end():]
     end = re.search(r"^== STR_LENGTH", rest, re.MULTILINE)
     block = rest[: end.start()] if end else rest
@@ -1098,4 +1119,5 @@ def dlp_patkws_bytes() -> int:
     is NOT used for Dlp. (Mal/Dna keep their on-disk file sizes, which carry no
     such bidirectional duplication.)
     """
-    return zombie_totals(server_file(_ZOMBIE_LOG), 2000)["total_regex_bytes"]
+    return zombie_totals(server_file(_ZOMBIE_LOG), 2000,
+                         allow_nearest=True)["total_regex_bytes"]

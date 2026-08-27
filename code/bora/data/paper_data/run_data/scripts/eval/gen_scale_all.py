@@ -291,7 +291,8 @@ def build_figure(datasets: list[tuple[dict, list, dict]]) -> str:
     # Report per rule-byte (total R1CS / input length / ruleset size) so the unit
     # matches the figure's delta and the in-text comparison; the ruleset size is
     # the BORA MS-DLP rule count, the same total plotted on the DLP x-axis.
-    z = zombie_totals(server_file(_ZOMBIE_LOG), ZOMBIE_STR_LEN)
+    z = zombie_totals(server_file(_ZOMBIE_LOG), ZOMBIE_STR_LEN,
+                      allow_nearest=True)
     z_r1cs_tex = f"{z['total_r1cs']:,}".replace(",", "{,}")
     z_prb_tex = f"{z['total_r1cs'] / z['str_len'] / dlp['total']:.2f}"  # R1CS/rule-byte
 
@@ -311,7 +312,7 @@ def build_figure(datasets: list[tuple[dict, list, dict]]) -> str:
         rf"(\textsc{{MS-DLP}}) between $10\%$ of the ruleset and the full "
         rf"set. For the "
         rf"same \textsc{{MS-DLP}} ruleset, \textsc{{Zombie}} emits ${z_r1cs_tex}$ "
-        rf"R1CS in total; dividing by the ${ZOMBIE_STR_LEN}$-byte input and the "
+        rf"R1CS in total; dividing by the ${z['str_len']}$-byte input and the "
         rf"same ${dlp['total_tex']}$ rules gives $\sim$${z_prb_tex}$ R1CS per "
         rf"rule-byte, the same normalization applied to BORA.}}")
 

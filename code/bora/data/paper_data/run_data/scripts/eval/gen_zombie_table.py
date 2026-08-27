@@ -27,7 +27,8 @@ from pathlib import Path
 
 # common.py lives in the parent scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common import (get_paper_root, zombie_totals, zombie_regex_bytes,
+from common import (get_paper_root, zombie_totals, zombie_str_lens,
+                    zombie_regex_bytes,
                     dataset_corpus_bytes, bora_cost_breakdown,
                     resolve_server_dump, server_file)
 
@@ -139,7 +140,8 @@ def build_table_a(rows: list) -> str:
 
 # ------------------------ Table B: project vs BORA -----------------------
 
-def build_table_b(unit: float, rows: list) -> str:
+def build_table_b(unit: float, rows: list,
+                  unit_str_len: int = UNIT_STR_LEN) -> str:
     """Project the Zombie unit cost across datasets and compare with BORA."""
     body = []
     notes = []
@@ -176,7 +178,7 @@ def build_table_b(unit: float, rows: list) -> str:
 %   dataset corpus + regex sizes via common extractors (same as tab:datasets)
 %
 % Est. Zombie = u * (corpus bytes) * (regex-set bytes), the full doc x regex
-% cross product, with u the """ + f"{UNIT_STR_LEN}" + r"""-byte unit cost from
+% cross product, with u the """ + f"{unit_str_len}" + r"""-byte unit cost from
 % tab:zombie-data (closest to BORA's folding step size). This UNDER-estimates
 % Zombie at MB-scale documents (Spartan prove is super-linear in constraints),
 % so it is charitable to Zombie. BORA = phase-1 main-circuit folding net
@@ -187,7 +189,7 @@ def build_table_b(unit: float, rows: list) -> str:
   \small
   \caption{Projected Zombie cost (unit $u =
   """ + fmt_sci(unit, sig=4).replace("$", "") + r"""$ s\,B$^{-2}$, taken at $L_T=""" + \
-        f"{UNIT_STR_LEN:,}" + r"""$) vs.\ BORA's net main-circuit folding
+        f"{unit_str_len:,}" + r"""$) vs.\ BORA's net main-circuit folding
   cost. $\text{Est.\ Zombie} = u \cdot (\text{corpus})\cdot
   (\text{regex set})$, a full document~$\times$~regex cross product. Regex-set
   size is on-disk rule-file bytes for \textsc{Mal}/\textsc{Dna}; for
@@ -213,13 +215,20 @@ def main() -> None:
     figs = root / "figs"
     figs.mkdir(exist_ok=True)
 
-    zrows = [zombie_totals(server_file(ZOMBIE_LOG), n) for n in STR_LENS]
-    unit = next(r["unit_cost"] for r in zrows if r["str_len"] == UNIT_STR_LEN)
+    # A thinned run leaves only shorter blocks; use whichever of STR_LENS the
+    # log actually carries, and fall back for the unit cost.
+    avail = zombie_str_lens(server_file(ZOMBIE_LOG))
+    lens = [n for n in STR_LENS if n in avail] or avail
+    zrows = [zombie_totals(server_file(ZOMBIE_LOG), n) for n in lens]
+    urow = zombie_totals(server_file(ZOMBIE_LOG), UNIT_STR_LEN,
+                         allow_nearest=True)
+    unit = urow["unit_cost"]
 
     (figs / "zombie_data.tex").write_text(build_table_a(zrows))
     print(f"wrote {figs / 'zombie_data.tex'}")
 
-    (figs / "compare_zombie_bora.tex").write_text(build_table_b(unit, DATASETS))
+    (figs / "compare_zombie_bora.tex").write_text(
+        build_table_b(unit, DATASETS, urow["str_len"]))
     print(f"wrote {figs / 'compare_zombie_bora.tex'}")
 
 

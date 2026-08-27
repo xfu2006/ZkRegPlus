@@ -263,7 +263,7 @@ def fmt_job_note(notes: list) -> str:
             f" parallel jobs.")
 
 
-def build_table(unit: float, rd: dict) -> str:
+def build_table(unit: float, rd: dict, unit_str_len: int = UNIT_STR_LEN) -> str:
     notes: list = []
     rows = [render_row(label, key, dump, unit, rd, notes)
             for (label, key, dump) in DATASETS]
@@ -279,7 +279,7 @@ def build_table(unit: float, rd: dict) -> str:
 % the main-body role of tab:compare-zombie-bora.
 %
 % Provenance (all cells reuse the Table 1/3/4 extractors -- see module docstring):
-%   Zombie (all):  u (zombie_totals @ """ + f"{UNIT_STR_LEN}" + r""" B) * corpus * regex set.
+%   Zombie (all):  u (zombie_totals @ """ + f"{unit_str_len}" + r""" B) * corpus * regex set.
 %   Reef Dna:      parse_reef_log -- Estimate1 (as-impl) / Estimate2 (floor).
 %   Reef Mal/Dlp:  cheapest measured Dna per-run cost * rule count * corpus.
 %   BORA all:      bora_cost_breakdown net (8-job sum / single); wall = slowest.
@@ -320,11 +320,13 @@ def main() -> None:
     figs = root / "figs"
     figs.mkdir(exist_ok=True)
 
-    unit = zombie_totals(server_file(ZOMBIE_LOG), UNIT_STR_LEN)["unit_cost"]
+    z = zombie_totals(server_file(ZOMBIE_LOG), UNIT_STR_LEN,
+                      allow_nearest=True)
+    unit = z["unit_cost"]
     rd = reef_data()
 
     out = figs / "compare_all.tex"
-    out.write_text(build_table(unit, rd))
+    out.write_text(build_table(unit, rd, z["str_len"]))
     print(f"wrote {out}")
 
 
