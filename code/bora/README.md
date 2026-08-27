@@ -165,6 +165,12 @@ R1CS) and a Sonobe fork (adding the `foldpot` folding scheme). What each
 fork changes and why is documented in
 [`vendor/PATCHES.md`](vendor/PATCHES.md).
 
+One dependency is fetched from GitHub rather than vendored: Espresso
+Systems' `subroutines` crate (the sumcheck protocol), used by the Sonobe
+fork. Its exact revision is pinned in the committed `Cargo.lock`
+(`8698369`), so the build is deterministic, but the first build needs
+network access.
+
 ## 9. License
 
 This project's own code (`crates/`, `scripts/`, docs, data configs) is

@@ -3,10 +3,11 @@
 // Design by the BORA paper author. Code implemented by Claude Opus.
 // Code reviewed by the paper author and unit tested.
 //
-// M3 coexistence stub for the Appendix G.1 constant-queue SDE. This
-// stub delegates every SigmaGadget method to DischargeAdvGadget, so the
-// neo path is byte-identical to the legacy SDE. The real G.1
-// certificates (C/FP/BP/SP over StepQueueNeo) replace the body in M4-M7.
+// Constant-queue SDE discharge gadget (the "neo" path): the C/FP/BP/SP
+// certificates over StepQueueNeo. `discharge_adv.rs` is the legacy
+// variant, still live -- the mappers select between them per algorithm,
+// and its cost constants (FWD_COST/RES_LARGE_COST) are shared. See the
+// row-class legend below for the Q_m vocabulary.
 
 // ============================================================
 //  Q_m row-class + lookup-target legend (shared vocabulary)

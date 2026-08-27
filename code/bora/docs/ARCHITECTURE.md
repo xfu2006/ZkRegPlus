@@ -41,7 +41,7 @@
    commitments on the BN254 side and Pedersen on Grumpkin. Curve types are
    plumbed through as generics `C1=Projective (BN254)`,
    `C2=Projective2 (Grumpkin)`, `GC1=GVar`, `GC2=GVar2` — see
-   `crates/zkregplus/examples/main.rs` for the canonical parameterization.
+   `crates/zkregplus/examples/bora_cli.rs` for the canonical parameterization.
 
 ## Capacity structs
 

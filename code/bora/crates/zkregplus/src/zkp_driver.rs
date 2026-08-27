@@ -5319,6 +5319,7 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 
 
 	#[test]
+	#[ignore]
 	pub fn test_full_clam_bisect(){
 		full_clam_bisect::<Fr>();
 		utils::logger::flush_logger();
@@ -6260,8 +6261,9 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 	/// Discharge-approach stats over the paper_data debug bundle.
 	/// TEMP (gen dlp list -- remove after): discharge the clean Enron emails
 	/// against the DLP-international bora regex and write pass/fail lists.
-	/// `cargo test -p zkregplus -- test_gen_dlp_list --show-output --nocapture`
+	/// `cargo test -p zkregplus -- test_gen_dlp_list --show-output --nocapture --ignored`
 	#[test]
+	#[ignore]
 	pub fn test_gen_dlp_list(){
 		std::env::set_var("ZKR_DLP_LIST_DIR",
 			"data/paper_data/dlp/cfg");
@@ -7076,6 +7078,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 	/// data/debug/numa_probe corpus. For numa_probe.py per-step fold ms
 	/// under a numactl matrix. full_dlp() itself is left untouched.
 	#[test]
+	#[ignore]
 	pub fn numa_probe_dlp(){
 		use crate::determine_config::caps_from_params_aggr;
 		use crate::stats_helper::{estimate_config_aggr,
@@ -8612,6 +8615,7 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 	/// run determine_config once on the 500k workload, then point this at the
 	/// resulting C1/C2 jsons (RunCfg.config_c1/c2) to prove.
 	#[test]
+	#[ignore]
 	pub fn full_enron(){
 		use crate::determine_config::{caps_from_params_aggr, CapParams};
 		use folding_schemes::folding::foldpot::sigma_ir1cs
@@ -8655,6 +8659,7 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 	///   debug_config (range_bits=26): wall=577s(9:36), RAM_peak=46.1GB
 	///   dna/config   (range_bits=27): wall=112s(1:52), RAM_peak=26.3GB
 	#[test]
+	#[ignore]
 	pub fn test_db_bundle(){
 		let b_cache = false;
 		let b_quick = true;
@@ -8712,8 +8717,9 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 
 	/// ZK discharge of the full clean chr17 sample (light-test,
 	/// single job). HEAVY — expect hours / large RAM. Invoke via:
-	/// `cargo test -p zkregplus -- test_full_dna --show-output --nocapture`
+	/// `cargo test -p zkregplus -- test_full_dna --show-output --nocapture --ignored`
 	#[test]
+	#[ignore]
 	pub fn test_full_dna(){
 		full_dna::<Fr>(false);
 	}

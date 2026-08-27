@@ -2,7 +2,6 @@
 name = "zkregplus"
 version = "0.1.0"
 edition = "2021"
-resolver = "2"
 description = "The BORA proof system: circuits, gadgets and the folding driver."
 license = "MIT"
 
@@ -21,7 +20,6 @@ ark-crypto-primitives = { version = "^0.4.0", default-features = false, features
 ark-grumpkin = {version="0.4.0", features=["r1cs"]}
 ark-poly-commit = "^0.4.0"
 ark-relations = { version = "^0.4.0", default-features = false }
-#ark-relations = {path="../../vendor/dependency/ark-relations"}
 ark-r1cs-std = { version = "0.4.0", default-features = false } # this is patched at the workspace level
 ark-snark = { version = "^0.4.0"}
 ark-serialize = "^0.4.0"
