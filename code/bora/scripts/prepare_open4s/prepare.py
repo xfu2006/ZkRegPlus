@@ -125,6 +125,13 @@ NEUTRAL_EPOCH = int(datetime.datetime.strptime(
 PRUNE_PATHS = [
     "attic",
     "scripts/prepare_open4s",
+    # Deferred-defect list.  It lives at the REPO ROOT (../../TODO.md),
+    # outside SOURCE_SUBDIR, so `git archive HEAD:code/bora` cannot reach
+    # it and this entry is a no-op today -- step_prune just logs "absent
+    # (already clean)".  It is here as defence in depth: the file names
+    # known bugs and their probabilities, so it must never ship, and if
+    # anyone ever moves it beside the code this rule catches it.
+    "TODO.md",
     # 37 MB offline backup of data/paper_data/, far over 4open's 8 MB
     # ceiling and too big to fit the bigfiles pack.  INSTALL.py
     # re-downloads it from the pinned Zenodo record when it is absent

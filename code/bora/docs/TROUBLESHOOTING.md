@@ -11,7 +11,7 @@ raised (a stock kernel ships 65,530). Fix (free, no memory cost):
 ```bash
 sudo sysctl -w vm.max_map_count=1073741824          # now
 echo 'vm.max_map_count=1073741824' | sudo tee \
-  /etc/sysctl.d/99-zkregplus.conf && sudo sysctl --system   # persist
+  /etc/sysctl.d/99-bora.conf && sudo sysctl --system   # persist
 ```
 
 No root? `export ZKR_SKIP_MAP_COUNT_CHECK=1` bypasses the gate —

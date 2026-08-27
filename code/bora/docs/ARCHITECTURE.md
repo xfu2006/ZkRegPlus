@@ -43,6 +43,11 @@ style augmented circuit), `cyclepair.rs` (CycleFold-side gadget),
 `capacity_planner.rs` (circuit sizing). Curves: BN254 (KZG) paired
 with Grumpkin (Pedersen); `bora_cli.rs` shows the canonical generic
 parameterization.
+Every FoldPot number in the paper comes from `mod_super.rs`
+(`FoldPotSuper`) with `circuits_super.rs`, reached through
+`driver::foldpot_main` from `zkp_driver.rs:46`. The older
+single-instance `FoldPot` in `mod.rs` is superseded: it is not
+compiled into any measured run and produces no reported number.
 
 **Invariants.** (1) Circuit shape is driven by *capacity structs*
 (`CpCapacity`, `SedCapacity`, ...), declared by the runner, never by
@@ -89,7 +94,8 @@ one `figs/*.tex` fragment.
 
 **Terminology concordance.** Paper **SDE** (Single-Thread Distance
 Encoding) ≡ code prefix `sed_` — there is no "SDE" identifier in the
-code. **CP = Critical Pattern** (never commit-and-prove). **BORA** ≡
-crate `zkregplus`; the problem it solves is **zk-BuNR** (bulk regex
+code. **CP = Critical Pattern** (never commit-and-prove). BORA's ZK
+framework crate is `crates/zkregplus/`; the problem it solves is
+**zk-BuNR** (bulk regex
 zero-knowledge non-match). Paper **discharge** ≡
 `data_processor::discharge_prover` (non-ZK) re-verified in-circuit.

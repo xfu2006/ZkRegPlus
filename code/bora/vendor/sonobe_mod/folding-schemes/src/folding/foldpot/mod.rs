@@ -1,11 +1,86 @@
-use std::sync::Arc;
-/// Implements the scheme described in [Nova](https://eprint.iacr.org/2021/370.pdf) and
-/// [CycleFold](https://eprint.iacr.org/2023/1192.pdf).
-/// Modified from the NOVA scheme: by adding ONE Pedersen commitment to the
-/// ``fixed memory" in the witness (those who do not depend on the
-/// Fiat-Shamir random challenges).
+//! # FoldPot
+//!
+//! FoldPot is this project's folding scheme: a SuperNova + CycleFold IVC
+//! specialised for the Sigma-I-R1CS step circuit, extended with a lookup
+//! argument and with one extra Pedersen commitment `cmF` over the "fixed
+//! memory" part of the witness (the part that does not depend on the
+//! Fiat-Shamir challenges). It folds a heterogeneous list of step circuits
+//! and is closed out by a Groth16 decider over BN254, with KZG commitments
+//! on BN254 and Pedersen on Grumpkin.
+//!
+//! Derived from [Sonobe](https://github.com/privacy-scaling-explorations/sonobe),
+//! which implements [Nova](https://eprint.iacr.org/2021/370.pdf) and
+//! [CycleFold](https://eprint.iacr.org/2023/1192.pdf); the multi-circuit
+//! variant follows [SuperNova](https://eprint.iacr.org/2022/1758.pdf).
+//! Upstream copyright and licence are unchanged.
+//! Modified 08/09/2024.
+//!
+//! ## Which code produced the paper's numbers
+//!
+//! The measured and reported path is `mod_super` (`FoldPotSuper`) plus
+//! `circuits_super`, driven by `driver::foldpot_main`, which is called from
+//! `crates/zkregplus/src/zkp_driver.rs:46`. Everything the paper reports for
+//! FoldPot goes through that path.
+//!
+//! The `FoldPot` scheme declared below (line 617) is the earlier
+//! single-instance predecessor, superseded by `FoldPotSuper` and kept as the
+//! reference implementation of the folding logic. It is instantiated only by
+//! `tests_mod_basic::test_ivc` in this file. Note that
+//! `tests_mod_basic::test_ivc_opt` stops at an unconditional `panic!` with the
+//! rest of its body commented out, so this scheme has no passing test; the
+//! reproduction pipeline never builds it (`scripts/PAPER_DATA.py` runs
+//! `cargo test -p zkregplus` only). Only the *scheme* here is superseded:
+//! `circuits` is live and shared (see `circuits_super.rs:33` and
+//! `decider_eth_circuit_super.rs:1116`).
+//!
+//! ## Module inventory (declarations at lines 133-154)
+//!
+//! Inherited from Nova + CycleFold:
+//! - `utils` - shared helpers: constraint-system debug checks, bit/limb
+//!   decomposition, timing and memory probes.
+//! - `sigma_ir1cs` - the Sigma-I-R1CS step circuit (a 3-move restricted
+//!   fragment of I-R1CS, paper Section 6): statements, lookup tables, the
+//!   `GadgetMapper` trait, capacities.
+//! - `nifs` - Nova's NIFS, adapted to committed instances that carry the
+//!   extra `cmF` commitment.
+//! - `circuits` - in-circuit types and gadgets shared by both schemes
+//!   (`CommittedInstanceVarFoldPot`, `ChallengeGadgetFoldPot`,
+//!   `NIFSGadgetFoldPot`) plus the single-instance augmented F circuit.
+//! - `nonnative_group` - non-native G1 add / double / scalar_mul; used by the
+//!   decider only (scalar_mul costs ~2M R1CS constraints).
+//! - `from_field` - `AffineFromField`: rebuild BN254 G1/G2 affine points from
+//!   field elements.
+//! - `batch_proc` - batch argument proving a word belongs to the
+//!   concatenation of a collection of words (paper Section 6.5).
+//! - `sigma_cyclepair` - glue between the Sigma-I-R1CS step circuit and the
+//!   CyclePair pairing sub-protocol.
+//! - `container_config` - column/container layout bookkeeping so composite
+//!   gadgets can size their statement vectors.
+//!
+//! SuperNova version:
+//! - `mod_super` - LIVE scheme: `FoldPotSuper` and its committed-instance /
+//!   witness types.
+//! - `qa_nizk` - quasi-linear-space QA-NIZK (LegoSNARK Appendix D), optimised
+//!   for sparse matrices.
+//! - `decider_eth_circuit_super` - final decider circuit for `FoldPotSuper`
+//!   (`MainCircuit` wrapping `Phase1Circuit` and `CyclePairCircuit`).
+//! - `cyclepair` - CycleFold analogue proving `gt1 + e(a,b) = gt2` with
+//!   non-native arithmetic over BN254 G1/G2/Gt.
+//! - `circuits_super` - LIVE augmented F circuit and challenge gadget for
+//!   `FoldPotSuper`.
+//!
+//! Driver and support:
+//! - `driver` - run orchestration: `foldpot_main`, `FoldPotJob`, parameter
+//!   setup, pass merging, prove and verify. Paper entry point.
+//! - `capacity_planner` - crypto-free copy of the driver's pass-1 planning
+//!   (circuit selection + per-word capacity check), used by `determine_config`.
+//! - `veccom` - KZG vector commitment that keeps interpolation (the copy in
+//!   `commitment::kzg` drops it).
+//!
+//! Also declared in this file: `numa` (line 166), Linux-only NUMA pinning
+//! helpers for the multi-job fold.
 
-/* Modified 08/09/2024 */
+use std::sync::Arc;
 
 
 //use crate::folding::foldpot::utils::Timer;

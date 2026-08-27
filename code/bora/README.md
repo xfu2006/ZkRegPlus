@@ -1,14 +1,13 @@
 # bora
 
-Reference implementation of **BORA** (internally code-named
-`zkregplus`) — a *bulk regex zero-knowledge non-membership* (zk-BuNR)
-system. BORA proves that a committed document matches **no** regex in a
-large published collection (e.g. 38,875 ClamAV logical signatures) at
-near-linear cost in the document length. It is strictly a **non-match**
-prover: it never proves that a document *does* match. A tiered
-approximation (CP / SDE / DFA) discharge feeds a folding-based prover
-(`FoldPot`: modified SuperNova + CycleFold with lookups) and a Groth16
-decider on the BN254/Grumpkin cycle.
+Reference implementation of **BORA** — a *bulk regex zero-knowledge
+non-membership* (zk-BuNR) system. BORA proves that a collection of committed documents
+match **no** regex in a large published collection (e.g. 38,875 ClamAV
+logical signatures) at near-linear cost in the document length. It is
+strictly a **non-match** prover: it never proves that a document *does*
+match. A tiered approximation (CP / SDE / DFA) discharge feeds a
+folding-based prover (`FoldPot`: modified SuperNova + CycleFold with
+lookups) and a Groth16 decider on the BN254/Grumpkin cycle.
 
 > **Paper:** BORA: Bulk Zero-Knowledge Discharging of Regex Collections
 > via Tiered Approximation. Under submission (anonymous).
@@ -25,9 +24,10 @@ artifact inside an isolated VM or container** — see section 4 first.
 python3 scripts/INSTALL.py --data all
 ```
 
-One command does everything: it installs the pinned Rust 1.76.0 and the
+The command installs the pinned Rust 1.76.0 and the
 apt build deps if they are missing, then fetches all five data packs
-(~5.8 GB). To install just one pack, name it instead of `all`:
+(~5.8 GB). It is possible to install individual data packs
+separately using INSTALL.py using its interactive mode. See below:
 
 | `--data` | Contents | Size | Needed by |
 |----------|----------|------|-----------|
@@ -37,24 +37,16 @@ apt build deps if they are missing, then fetches all five data packs
 | `email` | Enron corpus | 3.8 GB | `dlp`, `scale_dlp` |
 | `zombie` | Zombie (NSDI'24) baseline | 0.04 GB | `zombie` |
 
-`lkup` and `effective` need `email`+`dna`+`binexec`. Re-check an
-existing install with `--verify`, which downloads and changes nothing.
 
 ### Step 1 — regenerate the paper's tables (~1 min, no full runs)
 
 ```bash
 python3 scripts/PAPER_DATA.py --run figs
 ```
-
 Re-runs every table generator against the recorded run logs and
 compiles `data/paper_data/pdf/list_figures.pdf` (4 pages). Needs
-`pdflatex`, not `cargo`. Scope: **every number-bearing table (Tables
-1-11) and the data-derived figure (Fig. 8)**; Figures 1-7 are
-hand-drawn TikZ and are not regenerated. Success is the literal line
-`RUNALL done: 0 generator(s) failed.` — a nonzero count means a
-fragment kept stale content (see `docs/TROUBLESHOOTING.md`). Fidelity:
-9 of 12 fragments are byte-identical to the paper's, 3 differ only in
-hand-polished captions, **zero numeric divergence**.
+`pdflatex`. These data tables/figures correspond to those contained
+in the BORA paper.
 
 ### Step 2 — laptop-scale runs of the system itself
 
@@ -63,19 +55,41 @@ python3 scripts/PAPER_DATA.py --run small
 ```
 
 End-to-end ZK proof over the in-tree `small_data_set` (~1.3 min leaf
-wall, ~3-4 GB RSS). The first invocation compiles the workspace first
-(minutes warm, tens of minutes cold — not in the cost quote). Expected
-final line (measured 2026-08-27, 89 s incl. an incremental build):
-`small: rc=0 wall=89s peak_rss=3.9GB` — rc=0 is the pass criterion,
-wall/RSS vary by machine.
+wall, ~3-4 GB RSS). 
 
-- `--run small_full_snark`: the same small sample with one **real
-  full-width SNARK proof** (no light-test elision) — ~113 min /
-  ~433 GB, the only mid-scale path exercising the full decider.
-- `--run dry_run --items <leaves>`: every full leaf against
-  deterministically thinned inputs (2.4-32 min per leaf, <= ~30 GB). A
-  pipeline **smoke test only — its numbers are not the paper's.** Each
-  leaf needs the same `--data` packs as its full version (section 2).
+**Dry run — the whole pipeline, thinned.**
+
+```bash
+python3 scripts/PAPER_DATA.py --run dry_run --items A
+```
+
+Runs all nine leaves against deterministically thinned inputs:
+**~91 min wall, ~30 GB peak RSS** (sequential, so the peak is the
+largest single leaf, not the sum). Needs all five data packs installed
+(step 0). This is a pipeline **smoke test only — its numbers are not
+the paper's**; use step 3 for the reported results.
+
+To run one leaf at a time, pick it from the interactive menu
+(`python3 scripts/PAPER_DATA.py`, then `dry_run`) or name it with
+`--items`:
+
+| `--items` | Leaf | Dry cost | Needs `--data` |
+|-----------|------|----------|----------------|
+| `dlp` | DLP | 2.4 min / 6.5 GB | `email` |
+| `dna` | Dna | 7.0 min / 15.9 GB | `dna` |
+| `clam` | Clamav | 8.7 min / 17.1 GB | `binexec` |
+| `zombie` | Zombie | 15.5 min / 30.3 GB (cold) | `zombie` |
+| `reef` | Reef | 31.9 min / 28.5 GB | `dna` |
+| `lkup` | Analyze lkup | 3.5 min / 8.3 GB | `email,dna,binexec` |
+| `scale_clam` | Scale-ClamAV | 7.3 min / 5.2 GB | `binexec` |
+| `scale_dlp` | Scale-DLP | 8.5 min / 13.0 GB | `email` |
+| `effective` | Effectiveness | ~6 min (estimated) | `email,dna,binexec` |
+
+Several at once: `--items dlp,clam`. Every key above is also a `step 3`
+leaf, with the same `--data` prerequisite and its full cost in the
+section 2 table.
+  Note that it regenerates the list of figures PDF (but data
+  will be different from paper's).
 
 ### Step 3 — full reproduction
 
@@ -89,13 +103,24 @@ The run self-detaches and survives logout — follow it with `tail -f
 /tmp/bora/CURRENT_JOB.log` (live leaf). One leaf failing does not stop
 the rest; see section 6.
 
-Cheaper subsets, if 6.7 days is not available:
+Leaves can also be run individually — pick one from the interactive
+menu (`python3 scripts/PAPER_DATA.py`, then `full_run`) or name it with
+`--items`:
 
-- `--items dna` — 5.8 h / 529 GB, the cheapest true reproduction
-  (Table 3 Dna column) and a one-day Results-Reproduced path.
-- `--items clam,dlp` — 20.3 h and 70.8 h, the other headline columns.
-- `--items zombie,reef,lkup,scale_clam,scale_dlp,effective` — the
-  baselines and microbenchmarks (per-leaf costs in section 2).
+| `--items` | Leaf | Full cost | Needs `--data` |
+|-----------|------|-----------|----------------|
+| `dlp` | DLP | 70.8 h / ~700 GB | `email` |
+| `dna` | Dna | 5.8 h / 529 GB | `dna` |
+| `clam` | Clamav | 20.3 h / ~900 GB | `binexec` |
+| `zombie` | Zombie | 43.5 h / 952 GB | `zombie` |
+| `reef` | Reef | 5.0 h / 29 GB | `dna` |
+| `lkup` | Analyze lkup | 1.8 h / 73 GB | `email,dna,binexec` |
+| `scale_clam` | Scale-ClamAV | 7.1 h / 148 GB | `binexec` |
+| `scale_dlp` | Scale-DLP | 3.7 h / 165 GB | `email` |
+| `effective` | Effectiveness | 1.9 h / 73 GB | `email,dna,binexec` |
+
+Several at once: `--items clam,dlp`. `--items dna` alone is the cheapest
+full reproduction of a paper column.
 
 ## 2. Claim -> experiment map
 
@@ -117,16 +142,11 @@ metered peaks. `R` = `data/paper_data/run_data/data/raw_data`.
 | `full_run --items scale_clam` | Fig. 8 (`fig:scale-regex`) | `binexec` | 7.1 h / 148 GB | `R/any_server/scale_data_{readelf,gdb}.tgz` |
 | `full_run --items scale_dlp` | Fig. 8 (`fig:scale-regex`) | `email` | 3.7 h / 165 GB | `R/any_server/scale_data_dlp_{2,6}.tgz` |
 
-A full leaf **overwrites** its result file; re-running `--run figs`
-then rebuilds the affected tables from *your* run. Table 1
-(`tab:datasets`) derives from shipped corpus manifests, not a leaf.
-Metric mapping: `SUMMARY.log`'s `wall=` is the whole leaf, so Table 3's
-Mal folding wall of 15.48 h (slowest of 8 jobs) comes from the same clam
-run whose whole-leaf wall is 20.3 h here; Table 11 compares net prover
-hours; proof size / verification (1,152 B / 32 ms per batch proof, Table
-3 bottom row) print in the run log's decider section. Testbed for paper
-timings: 2.0 GHz AMD EPYC-Milan, 128 vCPUs, 961 GiB RAM (paper section
-6.1); non-timing runs used a 492 GiB box.
+`SUMMARY.log`'s `wall=` covers a whole leaf, so it runs higher than the
+paper's per-phase cells — Table 3's Mal folding wall of 15.48 h comes
+from the same clam run whose whole-leaf wall is 20.3 h above. A leaf
+overwrites its result file, and `--run figs` then rebuilds the affected
+tables from your run.
 
 ## 3. Requirements
 
@@ -165,12 +185,26 @@ build needs **~250 GB RAM** (commented dependency in
 ## 4. Ethics and safety
 
 - `INSTALL.py` downloads **real malware-scan targets** (CentOS 7 system
-  binaries, scanned against the ClamAV rule base) and the **real Enron
-  e-mail corpus**, which contains **personal information (PII)**. Run
-  the artifact inside an isolated VM or container.
+  binaries, scanned against the ClamAV rule base) and the Enron e-mail
+  corpus.
+- **Enron corpus — obtained, not redistributed.** This artifact ships
+  no part of the corpus and hosts no copy of it. `INSTALL.py` downloads
+  it directly from the original public-domain release — the FERC
+  investigation record — and verifies it against a recorded SHA-256
+  tree digest, so what you receive is the public corpus, unmodified,
+  from its canonical source. It is used solely as a bulk text workload
+  for scanning: BORA makes no attempt to identify any individual, and
+  the paper reports only aggregate counts and timings, never message
+  content.
+- **Handle it as personal data.** The corpus is real correspondence
+  that was never scrubbed — published audits report hundreds of Social
+  Security numbers and dozens of credit-card numbers still in it. Run
+  the artifact inside an isolated VM or container, do not redistribute
+  the corpus, and remove it when you are finished. Use is subject to
+  your own institution's policies and applicable law.
 - **No downloaded binary is ever executed** — the pipeline only reads
   their bytes as scan input. No destructive host side effects.
-- Network egress happens only during `INSTALL.py` (CMU for Enron,
+- Network egress happens only during `INSTALL.py` (the Enron source,
   Zenodo, GitHub, apt/pip) and the **first** `cargo` build (section 7).
 
 ## 5. Repository layout
