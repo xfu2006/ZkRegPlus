@@ -63,12 +63,16 @@ EXTRACT_DIR = os.path.join(TMP_DIR, "extract")
 # Drive now serves NOTHING: binexec and dna moved to Zenodo (DOI-pinned,
 # sha256-verified, free of Drive's download logging), and the email
 # fallback that was Drive's last consumer is retired too.
-# SAMPLES_ID = "1OM_W54JxPEiV3S26XwY7f1qhEAVyFtv_"  # samples.7z -- RETIRED.
-#   It backed only the email fallback, which is commented out below: the
-#   fallback bypassed EMAIL_TREE_DIGEST, so a CMU outage silently yielded an
-#   unverified corpus.  Enron now comes from CMU or not at all.
-# SIG_C21_ID = ".../1314OL6_FYLmBH2i2_kQd7fwuVv73g6LU/..."  # superseded by
-#                                                    # Zenodo, see DNA_URL
+# SAMPLES_ID (samples.7z) -- RETIRED; the id itself is deleted, not just
+#   commented out.  A Drive file id resolves to a share page that names the
+#   uploading account, so a live id in a shipped comment deanonymises the
+#   submission in one click and no identity scan can see it: the leaking
+#   bytes are on Drive, not in the artifact.  It backed only the email
+#   fallback, which is commented out below: the fallback bypassed
+#   EMAIL_TREE_DIGEST, so a source outage silently yielded an unverified
+#   corpus.  Enron now comes from its public source or not at all.
+# SIG_C21_ID (chr17 variants) -- RETIRED, id deleted for the same reason;
+#   superseded by Zenodo, see DNA_URL.
 SIG_C21_TOP = "chr17_variants"                      # archive top dir
 
 # ---- src_sig/.gitignore (canonical) --------------------------------

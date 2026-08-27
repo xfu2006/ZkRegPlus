@@ -40,7 +40,9 @@ Requires only the Python standard library (>= 3.6) and `git` on PATH.
 
 import argparse
 import datetime
+import gzip
 import hashlib
+import io
 import json
 import lzma
 import os
@@ -149,6 +151,24 @@ PRUNE_PATHS = [
     "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/TO_REMOVE",
     "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/compile.sh",
     "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/two_compile.sh",
+    # 508,614-line ranking of Enron messages by PII-pattern hit count,
+    # keyed by real maildir path.  Sorted descending, so line 1 names the
+    # highest-PII message in the corpus -- a pointer the public corpus
+    # does not itself provide.  Nothing reads it: `grep -rI rank_email`
+    # over the tree returns zero hits; it is a leftover of the Zombie
+    # comparison run.
+    "data/src_sig/ms_dlp/docs/rank_email_regex_zombie_international.txt.tgz",
+    # Nested tar-in-a-tar whose INNER header carries the packing account
+    # name.  Orphan: no reader anywhere in the tree, and the only thing
+    # that names its payload (data/debug/full_dlp_sample/runcfg_failscan.
+    # json) is itself unread.  Pruning beats scrubbing -- a file that does
+    # not ship cannot leak.
+    "data/src_sig/ms_dlp/docs/enron_list.tar.tgz",
+    # Orphan twin of the _international list below: zero code readers (the
+    # Rust CLEAN_TGZ const names only the _international one).  It carries
+    # BOTH a dirty tar header and a "# dataset: /home/<user>/..." line in
+    # its member content, so pruning removes two hits at once.
+    "data/src_sig/ms_dlp/docs/clean_email_list_email_regex_zombie.txt.tgz",
 ]
 
 # Pruned wherever they appear.  Deliberately only vim swap files.  Tracked
@@ -228,6 +248,28 @@ BENIGN_CONTEXTS = [
 ]
 CONTEXT_BEFORE = 40
 CONTEXT_AFTER = 60
+
+# Files whose NAME says "tar".  Suffix, not content, decides: a file named
+# like an archive that will not open is a scan failure, never a silent pass.
+ARCHIVE_SUFFIXES = (".tgz", ".tar.gz", ".tar", ".tar.xz", ".txz", ".tar.bz2")
+
+# enron_list.tar.tgz held a tar inside a tar, so one level is not enough.
+# Reaching the cap with an unexpanded inner archive is reported as a hit.
+NEST_DEPTH_CAP = 3
+
+# Member text rewritten by step_scrub, keyed by staging-relative archive.
+# These are provenance comments that record the absolute path the file was
+# generated from, which embeds the author's home directory.  The sole
+# reader, load_email_list() in zkregplus/src/zkp_driver.rs, skips every line
+# beginning with '#', so the value is inert -- but it must stay a comment.
+# A pattern that matches nothing is a hard error, not a no-op: a silently
+# skipped fix would ship the leak while reporting success.
+CONTENT_FIXES = {
+    "data/src_sig/ms_dlp/docs/"
+    "clean_email_list_email_regex_zombie_international.txt.tgz": [
+        (rb"(?m)^# dataset: .*$", b"# dataset: data/samples/email"),
+    ],
+}
 
 # Paste into 4open's "Terms to redact" box.
 REDACTION_TERMS = ["xiang", "Xiang", "Xiang Fu", "xfu2006", "xfu2009",
@@ -487,6 +529,92 @@ def identity_hits(blob, label):
     return hits, forgiven
 
 
+def archive_identity_hits(path, rel, depth=0, blob=None):
+    """(hits, forgiven, opened) for one tar archive, headers included.
+
+    identity_hits() reads raw bytes, so compression hides everything inside
+    an archive: the member CONTENTS, and the tar HEADERS, which record the
+    packing user by NAME.  "xiang/xiang" shipped in the published snapshot
+    exactly that way (see neutral()); the pack got a hand-written special
+    case afterwards, but every other .tgz in the tree stayed unscanned.
+    This is that special case, generalised, so the class cannot recur.
+
+    Returns opened=False when the bytes are not a readable tar.  The caller
+    decides what that means -- for a file matching ARCHIVE_SUFFIXES it is a
+    failure, because an archive we cannot see into is precisely the hole.
+    """
+    hits, forgiven = [], 0
+    try:
+        if blob is None:
+            tf = tarfile.open(path, "r:*")
+        else:
+            tf = tarfile.open(fileobj=io.BytesIO(blob), mode="r:*")
+    except Exception:
+        return [], 0, False
+    # Opening only parses the first header.  A truncated or corrupt archive
+    # opens cleanly and then raises on the first read(), so the walk needs the
+    # same guard: report opened=False and let the caller fail the run, rather
+    # than dying with a traceback or -- worse -- returning "no hits found" for
+    # an archive nobody could actually look inside.
+    try:
+        for mem in tf:
+            head = "%s %s %s" % (mem.name, mem.uname, mem.gname)
+            h, g = identity_hits(head.encode(),
+                                 "%s!%s [tar header]" % (rel, mem.name))
+            hits += h
+            forgiven += g
+            if not mem.isreg():
+                continue
+            src = tf.extractfile(mem)
+            if src is None:
+                continue
+            data = src.read()
+            h, g = identity_hits(data, "%s!%s" % (rel, mem.name))
+            hits += h
+            forgiven += g
+            if not mem.name.endswith(ARCHIVE_SUFFIXES):
+                continue
+            label = "%s!%s" % (rel, mem.name)
+            if depth + 1 >= NEST_DEPTH_CAP:
+                hits.append((label, "nested-archive",
+                             "nested deeper than %d -- NOT scanned"
+                             % NEST_DEPTH_CAP))
+                continue
+            ih, ig, iopened = archive_identity_hits(path, label, depth + 1,
+                                                    blob=data)
+            if not iopened:
+                hits.append((label, "nested-archive",
+                             "named like a tar but could not be opened"))
+            hits += ih
+            forgiven += ig
+    except Exception:
+        return hits, forgiven, False
+    finally:
+        tf.close()
+    return hits, forgiven, True
+
+
+def neutral(ti):
+    """Strip the packer's identity and the wall clock from one tar header.
+
+    tar records the owning user and group by NAME.  Left alone these read
+    "xiang/xiang" -- which `tar tvf` prints on every line and INSTALL.py
+    restores.  A raw byte search cannot see it once the archive is
+    compressed; this shipped in the published snapshot before it was found
+    by hand, 2026-08-13.  archive_identity_hits() is the detector for the
+    same bug; this is the fix.
+
+    Fixing mtime too makes archives byte-identical across exports.  `git
+    archive HEAD:<subdir>` archives a TREE, which carries no commit
+    timestamp, so it stamps the current time -- without this the pack, and
+    therefore the snapshot commit, changes on every single run.
+    """
+    ti.uid = ti.gid = 0
+    ti.uname = ti.gname = ""
+    ti.mtime = NEUTRAL_EPOCH
+    return ti
+
+
 def extract_all(tf, path):
     """extractall with an explicit filter where the runtime supports one.
 
@@ -708,7 +836,14 @@ def inspect_tree(root, label, manifest=None, expect_pack_sha=None,
            % (mb(SIZE_LIMIT), mb(big[0]), big[1]))
 
     # --- (1) anonymity ------------------------------------------------------
+    # Every file is scanned raw, and every file NAMED like a tar is opened
+    # as well.  Compression hides both member contents and tar headers from
+    # the raw pass, so an unopened archive is an unscanned archive.  The
+    # pack used to be the only one opened, by a hand-written arm here; it is
+    # now just one more ARCHIVE_SUFFIXES match, which is what stops the next
+    # .tgz from slipping through the way these did.
     hits, forgiven = [], 0
+    n_arch = 0
     for p, r in files:
         try:
             with open(p, "rb") as f:
@@ -718,35 +853,16 @@ def inspect_tree(root, label, manifest=None, expect_pack_sha=None,
         h, g = identity_hits(blob, r)
         hits += h
         forgiven += g
-
-    # The pack is xz-compressed, so the loop above scanned nothing but
-    # compressed bytes and could never match.  Both things it hides have to
-    # be opened: the member CONTENTS, and the tar HEADERS, which record the
-    # packing user by name.  "xiang/xiang" shipped in the published snapshot
-    # exactly this way -- see the neutral() filter in step_pack.
-    n_pack = 0
-    pack_abs = os.path.join(root, PACK_PATH)
-    if os.path.isfile(pack_abs):
-        try:
-            with tarfile.open(pack_abs, "r:xz") as tf:
-                for mem in tf:
-                    n_pack += 1
-                    head = ("%s %s %s" % (mem.name, mem.uname, mem.gname))
-                    h, g = identity_hits(head.encode(),
-                                         "%s!%s [tar header]"
-                                         % (PACK_PATH, mem.name))
-                    hits += h
-                    forgiven += g
-                    src = tf.extractfile(mem)
-                    if src is None:
-                        continue
-                    h, g = identity_hits(src.read(),
-                                         "%s!%s" % (PACK_PATH, mem.name))
-                    hits += h
-                    forgiven += g
-        except Exception as exc:
-            failures.append("pack could not be opened for the identity "
-                            "scan: %s" % exc)
+        if not r.replace(os.sep, "/").endswith(ARCHIVE_SUFFIXES):
+            continue
+        ah, ag, opened = archive_identity_hits(p, r)
+        hits += ah
+        forgiven += ag
+        if opened:
+            n_arch += 1
+        else:
+            failures.append("%s is named like an archive but could not be "
+                            "opened for the identity scan" % r)
     if hits:
         shown = set()
         for r, pat, snip in hits:
@@ -765,8 +881,8 @@ def inspect_tree(root, label, manifest=None, expect_pack_sha=None,
     else:
         ok("anonymity: clean across %d files%s (%s)"
            % (len(files),
-              " + %d pack member(s), headers included" % n_pack if n_pack
-              else "",
+              " + %d archive(s) opened, members and headers included"
+              % n_arch if n_arch else "",
               ", ".join(p.decode() for p in IDENTITY_PATTERNS)))
         if forgiven:
             info("%d occurrence(s) matched BENIGN_CONTEXTS and were forgiven"
@@ -936,7 +1052,7 @@ def inspect_tree(root, label, manifest=None, expect_pack_sha=None,
 # ---------------------------------------------------------------------------
 
 def step_preflight(ctx):
-    hdr("STEP 1/12  preflight")
+    hdr("STEP 1/13  preflight")
     if sys.version_info < (3, 6):
         die("Python 3.6+ required")
     ok("Python %d.%d" % sys.version_info[:2])
@@ -976,7 +1092,7 @@ def step_preflight(ctx):
 
 
 def step_export(ctx):
-    hdr("STEP 2/12  export tracked tree from git")
+    hdr("STEP 2/13  export tracked tree from git")
     stage = ctx["stage"]
     if os.path.exists(stage):
         shutil.rmtree(stage)
@@ -997,7 +1113,7 @@ def step_export(ctx):
 
 
 def step_prune(ctx):
-    hdr("STEP 3/12  prune non-shippable paths, inline symlinks")
+    hdr("STEP 3/13  prune non-shippable paths, inline symlinks")
     stage = ctx["stage"]
     n_files = n_bytes = 0
     for rel in PRUNE_PATHS:
@@ -1049,8 +1165,100 @@ def step_prune(ctx):
     deref_symlinks(stage)
 
 
+def step_scrub(ctx):
+    hdr("STEP 4/13  neutralise identity inside shipped archives")
+    stage = ctx["stage"]
+
+    # Rebuild each archive in a temp dir OUTSIDE the stage, then rename it
+    # into place.  Writing in place would leave a truncated archive behind
+    # if this died mid-write, and a temp dir inside the stage would be
+    # committed wholesale by step_initrepo's `git add -A -f`.
+    tmp = tempfile.mkdtemp(prefix="bora_scrub_",
+                           dir=os.path.dirname(os.path.abspath(stage)))
+    n_arch = n_hdr = n_fix = 0
+    try:
+        for abs_path, rel in sorted(walk_files(stage), key=lambda t: t[1]):
+            key = rel.replace(os.sep, "/")
+            if not key.endswith(ARCHIVE_SUFFIXES):
+                continue
+            try:
+                tf = tarfile.open(abs_path, "r:*")
+            except Exception as exc:
+                die("%s is named like an archive but will not open: %s"
+                    % (rel, exc))
+            members = []
+            dirty = False
+            with tf:
+                for mem in tf:
+                    data = b""
+                    if mem.isreg():
+                        src = tf.extractfile(mem)
+                        data = src.read() if src is not None else b""
+                    if mem.uname or mem.gname or mem.uid or mem.gid:
+                        dirty = True
+                    members.append((mem, data))
+            # matched counts pattern hits (zero means the file changed shape
+            # and the fix silently stopped working); changed counts hits that
+            # actually altered bytes.  They differ on a re-run over an already
+            # scrubbed tree, where the pattern still matches but rewrites the
+            # line to what it already says -- that must stay a no-op, or every
+            # export would differ and run_update could never report "nothing
+            # to publish".
+            fixes = CONTENT_FIXES.get(key, [])
+            matched = changed = 0
+            if fixes:
+                for i, (mem, data) in enumerate(members):
+                    before = data
+                    for pat, repl in fixes:
+                        data, k = re.subn(pat, repl, data)
+                        matched += k
+                    if data != before:
+                        changed += 1
+                    members[i] = (mem, data)
+                if not matched:
+                    die("CONTENT_FIXES for %s matched nothing -- the file "
+                        "changed shape; fix the pattern rather than "
+                        "shipping it unscrubbed" % key)
+            if not dirty and not changed:
+                continue
+
+            out = os.path.join(tmp, os.path.basename(rel))
+            # gzip's own header carries a name and an mtime that tarfile's
+            # "w:gz" fills from the wall clock -- that alone would make every
+            # export differ and defeat the no-op check in run_update.  Drive
+            # the gzip layer directly so the bytes are reproducible.
+            with open(out, "wb") as raw:
+                gz = gzip.GzipFile(filename="", mtime=NEUTRAL_EPOCH,
+                                   mode="wb", fileobj=raw, compresslevel=9)
+                with gz:
+                    with tarfile.open(fileobj=gz, mode="w",
+                                      format=tarfile.PAX_FORMAT) as out_tf:
+                        for mem, data in members:
+                            ti = neutral(mem)
+                            ti.size = len(data)
+                            out_tf.addfile(ti, io.BytesIO(data))
+            os.replace(out, abs_path)
+            n_arch += 1
+            n_hdr += len(members)
+            n_fix += changed
+            ok("rewrote %-58s %d member(s)%s"
+               % (rel, len(members),
+                  ", %d content fix(es)" % changed if changed else ""))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+    if not n_arch:
+        info("no archive needed scrubbing")
+    else:
+        print()
+        info("%d archive(s), %d header(s) neutralised, %d content fix(es)"
+             % (n_arch, n_hdr, n_fix))
+    info("step_verify re-opens every archive afterwards; that scan, not "
+         "this step, is the gate")
+
+
 def step_pack(ctx):
-    hdr("STEP 4/12  pack oversized files into one archive")
+    hdr("STEP 5/13  pack oversized files into one archive")
     stage = ctx["stage"]
     missing = [m for m in PACK_MEMBERS
                if not os.path.isfile(os.path.join(stage, m))]
@@ -1074,26 +1282,8 @@ def step_pack(ctx):
     info("compressing %s with preset 9|EXTREME -- takes a few minutes" % mb(raw))
     info("member order is deliberate; see PACK_MEMBERS in this script")
 
-    def neutral(ti):
-        """Strip the packer's identity and the wall clock from every header.
-
-        tar records the owning user and group by NAME.  Left alone these read
-        "xiang/xiang" on all 13 members -- which `tar tvf` prints on every
-        line and INSTALL.py restores.  The identity scan cannot see it: the
-        pack is xz-compressed, so a raw byte search over the file matches
-        nothing.  This shipped in the published snapshot before it was found
-        by hand, 2026-08-13; see the pack arm of the scan in inspect_tree.
-
-        Fixing mtime too makes the archive byte-identical across exports.
-        `git archive HEAD:<subdir>` archives a TREE, which carries no commit
-        timestamp, so it stamps the current time -- without this the pack,
-        and therefore the snapshot commit, changes on every single run.
-        """
-        ti.uid = ti.gid = 0
-        ti.uname = ti.gname = ""
-        ti.mtime = NEUTRAL_EPOCH
-        return ti
-
+    # neutral() is module-level: step_scrub applies the identical filter to
+    # every other archive in the tree, and one implementation cannot drift.
     with tarfile.open(pack_abs, mode="w:xz",
                       preset=9 | lzma.PRESET_EXTREME) as tf:
         for m in PACK_MEMBERS:
@@ -1136,14 +1326,14 @@ def step_pack(ctx):
 
 
 def step_verify(ctx):
-    hdr("STEP 5/12  inspect the staging tree")
+    hdr("STEP 6/13  inspect the staging tree")
     if inspect_tree(ctx["stage"], "staging tree",
                     expect_pack_sha=ctx.get("pack_sha")):
         die("verification failed -- fix the above before publishing")
 
 
 def step_initrepo(ctx):
-    hdr("STEP 6/12  initialise the snapshot repository")
+    hdr("STEP 7/13  initialise the snapshot repository")
     stage = ctx["stage"]
     if os.path.exists(os.path.join(stage, ".git")):
         shutil.rmtree(os.path.join(stage, ".git"))
@@ -1196,7 +1386,7 @@ def step_initrepo(ctx):
 
 
 def step_manifest(ctx):
-    hdr("STEP 7/12  record the local manifest")
+    hdr("STEP 8/13  record the local manifest")
     stage = ctx["stage"]
     files = {r: os.path.getsize(p) for p, r in walk_files(stage)}
     files.update({r: None for _, r in walk_links(stage)})   # None = symlink
@@ -1223,15 +1413,15 @@ def step_manifest(ctx):
     ok("wrote %s (%d entries)" % (ctx["manifest_path"], len(files)))
     print()
     warn("KEEP THIS FILE. It is deliberately outside the artifact, so the "
-         "completeness diff in steps 9 and 11 depends on it surviving.")
+         "completeness diff in steps 10 and 12 depends on it surviving.")
     if ctx["manifest_path"].startswith("/tmp/"):
         warn("it is under /tmp and will not survive a reboot -- consider "
              "re-running with --manifest ~/bora_open4s.manifest.json")
 
 
 def step_github(ctx):
-    hdr("STEP 8/12  MANUAL -- create the private GitHub repo and push")
-    sha = ctx.get("snap_sha", "<run step 6 first>")
+    hdr("STEP 9/13  MANUAL -- create the private GitHub repo and push")
+    sha = ctx.get("snap_sha", "<run step 7 first>")
     stage = ctx["stage"]
     y = ctx["yes"]
 
@@ -1278,7 +1468,7 @@ def step_github(ctx):
 
 
 def step_checkpush(ctx):
-    hdr("STEP 9/12  inspect what GitHub actually received")
+    hdr("STEP 10/13  inspect what GitHub actually received")
     url = ctx.get("github_url") or ask(
         "GitHub repo URL to clone (Enter to skip this check):", ctx["yes"])
     if not url:
@@ -1315,7 +1505,7 @@ def step_checkpush(ctx):
 
 
 def step_fouropen(ctx):
-    hdr("STEP 10/12  MANUAL -- mint the anonymous.4open.science URL")
+    hdr("STEP 11/13  MANUAL -- mint the anonymous.4open.science URL")
     y = ctx["yes"]
 
     action(1, 6, "Open the anonymize form", """
@@ -1476,7 +1666,7 @@ def check_mirror_zip(ctx, zip_path):
 
 
 def step_checkmirror(ctx):
-    hdr("STEP 11/12  inspect what the 4open mirror actually serves")
+    hdr("STEP 12/13  inspect what the 4open mirror actually serves")
     y = ctx["yes"]
     zip_path = ctx.get("zip")
 
@@ -1495,7 +1685,7 @@ def step_checkmirror(ctx):
 
 
 def step_freeze(ctx):
-    hdr("STEP 12/12  MANUAL -- the two lock-up dates")
+    hdr("STEP 13/13  MANUAL -- the two lock-up dates")
     y = ctx["yes"]
     sha = ctx.get("snap_sha", "<the published commit>")
 
@@ -1660,9 +1850,9 @@ def run_update(ctx, resume=False):
         prev_sha = ctx.get("snap_sha")
 
         hdr("UPDATE 1/3  rebuild the snapshot")
-        # Steps 1-7 verbatim.  export MUST be included: it is the only step
+        # Steps 1-8 verbatim.  export MUST be included: it is the only step
         # that recreates staging, and re-pruning an already-packed tree fails
-        # in step 4 with "pack member(s) missing from the export".
+        # in step 5 with "pack member(s) missing from the export".
         for name, _, fn in STEPS:
             if name == "github":
                 break
@@ -1716,6 +1906,7 @@ STEPS = [
     ("preflight", "environment, git state, staging dir", step_preflight),
     ("export", "git archive HEAD:%s into staging" % SOURCE_SUBDIR, step_export),
     ("prune", "delete attic/ and swap files, inline symlinks", step_prune),
+    ("scrub", "neutralise identity inside shipped archives", step_scrub),
     ("pack", "build data/bigfiles/bigfiles.tar.xz, drop originals", step_pack),
     ("verify", "inspect the staging tree", step_verify),
     ("initrepo", "git init + one squashed commit + reconciliation", step_initrepo),
