@@ -4,7 +4,8 @@
 # Code reviewed and audited by the author; the generated table was manually
 # verified by the paper author.
 # ----------------------------------
-"""Generate the per-circuit cost-profile table for §7.4 (tab:component-cost).
+"""Generate the per-circuit cost-profile table for App. C.3, Table 8
+(tbl:component-cost).
 
 For each dataset (Mal/Dna/Dlp) we read a FoldPot run log and emit, per
 processing circuit, a row with:

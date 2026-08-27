@@ -4,7 +4,8 @@
 # Code reviewed and audited by the author; the generated figure was manually
 # verified by the paper author.
 # ----------------------------------
-"""Generate the combined regex-set scalability figure for §7.5 (fig:scale-regex).
+"""Generate the combined regex-set scalability figure for App. C.3, Figure 8
+(fig:scale-regex).
 
 Merges the former gen_scale.py (ClamAV) and gen_scale_dlp.py (MS-DLP) into one
 two-column ``figure*`` with a 2x2 grid: columns are datasets (ClamAV | MS-DLP),

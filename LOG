@@ -31611,8 +31611,13 @@ Goal 10. T6010: clean up vendors
 		check if it works for the best intersts for paper acceptance
 	[d] report briefly what needs to be fixed.
 Goal 11. check workflow
+	*** INFO: reference_artifact_eval_checklist.md. ***
 	[a] phase0 -> DONE
-	[b] phase1 -> 
+	[b] phase1 -> DONE
+	[c] phase2 -> DONE
+	[d] phase3 -> running environment
+		[d1] jet2stream server name
+		[d2] vm path docker path
 
 --- DATA ----
 #####################################

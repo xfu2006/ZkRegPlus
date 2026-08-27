@@ -78,7 +78,11 @@ Generators live in `data/paper_data/run_data/scripts/eval/`, run by
 | §6.4, Table 8 (tbl:component-cost) | per-circuit cost | full-run COST dumps | `gen_component_cost.py` |
 | §6.5, Table 3 (tbl:overall-perf) | end-to-end prover cost | `bora_data_driver::full_{clam,dna,dlp}_neo` | `gen_overall_perf.py` |
 | §6.5, Fig. 8 (fig:scale-regex) | regex-set scaling | `collect_scale_{clamav,dlp}_neo` | `gen_scale_all.py` |
-| Tables 9/10/11, 4 | baseline comparison | `data/src_sig/{chr17_variants,ms_dlp}/scripts/` (Reef, Zombie) | `dna_reef_bora.py`, `gen_zombie_table.py`, `gen_compare_all.py` |
+| App. C.4, Table 9 (tab:dna-reef-bora) | Reef baseline on Dna | `data/src_sig/chr17_variants/scripts/` (Reef) | `dna_reef_bora.py` |
+| App. C.4, Tables 10/11 (tab:zombie-data, tab:compare-zombie-bora) | Zombie baseline + unit-cost projection | `data/src_sig/ms_dlp/scripts/` (Zombie) | `gen_zombie_table.py` |
+| §6.5, Table 4 (tab:compare-all) | consolidated Zombie/Reef/BORA comparison | reuses the two extractors above + the full-run BORA logs | `gen_compare_all.py` |
+| §6.1 ("99k lines of code") | author-owned Rust LOC | `crates/`, plus the FoldPot include list under `vendor/` | `count_loc.py` (prints a tally; writes no `figs/` fragment) |
+| App. C.1 (dataset preprocessing) | Dlp corpus screening funnel | step 1 `data/src_sig/ms_dlp/scripts/eval_dlp.py` (RE2 screen); step 2 `zkp_driver::tests_zkp_driver::gen_email_corpus_for_full_dlp` | — (not run by `--run figs`; result ships as `data/paper_data/dlp/cfg/corpus.stat`) |
 
 **Terminology.** Paper **SDE** (Single-Thread Distance Encoding) ≡ code
 prefix `sed_`; there is no "SDE" identifier in the code. **CP =

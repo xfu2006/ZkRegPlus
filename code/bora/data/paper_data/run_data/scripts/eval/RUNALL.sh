@@ -16,16 +16,16 @@ cd "$(dirname "$0")"
 
 # Generators, grouped by the table/figure they emit.
 GENERATORS=(
-  datasets.py            # Table 1  : dataset sizes (Mal/Dna/Dlp)
-  effectiveness.py       # §7.3     : approximation-effectiveness tables
-  gen_lkup_info.py       # §7.4     : lookup-table composition
-  gen_component_cost.py  # §7.4     : per-circuit cost profile
-  gen_overall_perf.py    # §7.5     : stage-level performance breakdown
-  gen_scale_all.py       # §7.5     : regex-set scalability figure
-  dna_reef_bora.py       # Table 3  : Reef per-bucket vs BORA (chr17)
-  gen_zombie_table.py    # §7.7     : Zombie measured totals + projection
-  gen_compare_all.py     # tab:compare-all : Zombie/Reef/BORA comparison
-  count_loc.py           # impl/eval: author-owned Rust line counts
+  datasets.py            # Table 1      : dataset sizes (Mal/Dna/Dlp), §6.2
+  effectiveness.py       # Tables 2/5/6 : approximation effectiveness, §6.3 + App. C.2
+  gen_lkup_info.py       # Table 7      : lookup-table composition, App. C.3 (§6.4)
+  gen_component_cost.py  # Table 8      : per-circuit cost profile, App. C.3 (§6.4)
+  gen_overall_perf.py    # Table 3      : stage-level performance breakdown, §6.5
+  gen_scale_all.py       # Figure 8     : regex-set scalability, App. C.3 (§6.5)
+  dna_reef_bora.py       # Table 9      : Reef per-bucket vs BORA (chr17), App. C.4
+  gen_zombie_table.py    # Tables 10/11 : Zombie measured totals + projection, App. C.4
+  gen_compare_all.py     # Table 4      : Zombie/Reef/BORA comparison (tab:compare-all), §6.5
+  count_loc.py           # §6.1 "99k LOC": author-owned Rust line counts
 )
 
 fail=0

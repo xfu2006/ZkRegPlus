@@ -10,7 +10,7 @@ Each measurement folder under ``data/raw_data`` is named after the machine
 the data was collected on:
 
     gcpm1   GCP M1 (Intel Xeon @ 2.00GHz, 96 cores, ~1411 GiB / 1.4 TB RAM)
-    jet1tb  Jetstream2 large (AMD EPYC-Milan, 128 cores, ~961 GiB / 1 TB RAM)
+    jet1tb  Large-memory node (AMD EPYC-Milan, 128 cores, ~961 GiB / 1 TB RAM)
 
 Every run log embeds a *compute config dump* recording the machine it ran on.
 This script verifies that the logs actually stored under each folder were

@@ -4,7 +4,8 @@
 # Code reviewed and audited by the author; the generated table was manually
 # verified by the paper author.
 # ----------------------------------
-"""Generate the end-to-end prover-performance table for §7.5 (tab:overall-perf).
+"""Generate the end-to-end prover-performance table for §6.5, Table 3
+(tbl:overall-perf).
 
 For each dataset (Mal/Dna/Dlp) we read a FoldPot run log and emit one row:
   - Corpus : input bytes processed, summed over the parallel jobs.

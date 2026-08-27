@@ -9,10 +9,13 @@ Two honest caveats. Some subdirectories additionally contain *generated*
 artefacts that were committed alongside their inputs -- several `sed/*`
 databases are rewritten by `build_test_db()` before they are read, and a
 few captured console logs sit in report directories. And not every tracked
-file still has a live reader: an audit on 2026-08-27 found a substantial
-number of fixtures reachable from no code path, pending a removal pass. So
-treat this folder as "fixtures plus some sediment", and check for a reader
-before assuming a given file is load-bearing.
+file still has a live reader: a name search across `crates/`, `scripts/` and
+`vendor/` on 2026-08-27 found no reference to 158 of the 317 fixtures
+(2.6 MB). That is an upper bound -- fixtures opened through a constructed
+path do not appear in such a search -- and the set was left intact rather
+than pruned on a signal that weak. So treat this folder as "fixtures plus
+some sediment", and check for a reader before assuming a given file is
+load-bearing.
 
 Tracked: **325 fixtures** -- 324 spread over 17 subdirectories plus
 `test1.bin` at the top level -- alongside four `.gitignore` files, the

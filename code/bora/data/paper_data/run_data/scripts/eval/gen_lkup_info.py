@@ -4,7 +4,7 @@
 # Code reviewed and audited by the author; the generated table was manually
 # verified by the paper author.
 # ----------------------------------
-"""Generate the lookup-table composition table for §7.4 (tab:lkup).
+"""Generate the lookup-table composition table for App. C.3, Table 7 (tbl:lkup).
 
 Reads:
   <paper_root>/data/raw_data/any_server/lookup_stats.dat -- the

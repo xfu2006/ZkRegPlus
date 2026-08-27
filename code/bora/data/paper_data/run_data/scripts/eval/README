@@ -22,39 +22,40 @@ datasets.py           Table 1 (tab:datasets): the Mal/Dna/Dlp dataset rows --
                       corpus size, document count, and regex-set size, measured
                       live from the source corpora and rule sets.
 
-effectiveness.py      Section 7.3: the approximation-effectiveness tables
-                      (pair-level + by-file-size), from the tier-discharge dump
-                      any_server/eval_effective.txt.
+effectiveness.py      Tables 2/5/6 (§6.3 + App. C.2): the approximation-
+                      effectiveness tables (pair-level + by-file-size), from
+                      the tier-discharge dump any_server/eval_effective.txt.
 
-gen_lkup_info.py      Section 7.4 (tab:lkup): lookup-table composition -- the
-                      five lookup categories x three datasets, from
+gen_lkup_info.py      Table 7 (tbl:lkup, App. C.3): lookup-table composition
+                      -- the five lookup categories x three datasets, from
                       any_server/lookup_stats.dat.
 
-gen_component_cost.py Section 7.4 (tab:component-cost): per-circuit cost profile
-                      (R1CS per input byte, split across CP/SDE/DFA/framework
-                      tiers). Needs a COST-instrumented dump; a dataset without
+gen_component_cost.py Table 8 (tbl:component-cost, App. C.3): per-circuit cost
+                      profile (R1CS per input byte, split across CP/SDE/DFA/
+                      framework tiers). Needs a COST-instrumented dump; a dataset without
                       one yet gets a single "***" placeholder row.
 
-gen_overall_perf.py   Section 7.5 (overall_perf.tex): stage-level performance
+gen_overall_perf.py   Table 3 (tbl:overall-perf, §6.5): stage-level performance
                       breakdown (select / commit / fold and compression parts)
                       per dataset.
 
-gen_scale_all.py      Section 7.5 (fig:scale-regex): regex-set scalability
-                      figure -- per-step circuit size and proof time vs the
-                      fraction of the regex set, from the any_server scale
-                      bundle (scale_data_gdb.tgz).
+gen_scale_all.py      Figure 8 (fig:scale-regex, App. C.3): regex-set
+                      scalability figure -- per-step circuit size and proof
+                      time vs the fraction of the regex set, from the
+                      any_server scale bundle (scale_data_gdb.tgz).
 
-dna_reef_bora.py      Table 3 (tab:dna-reef-bora): Reef per-bucket cost vs BORA
-                      on chr17 x NCBI, with the Reef-log parser reused by the
-                      comparison generators.
+dna_reef_bora.py      Table 9 (tab:dna-reef-bora, App. C.4): Reef per-bucket
+                      cost vs BORA on chr17 x NCBI, with the Reef-log parser
+                      reused by the comparison generators.
 
-gen_zombie_table.py   Section 7.7: two Zombie tables -- measured per-length
-                      totals (+ derived unit cost) and the unit-cost projection
-                      vs BORA across datasets.
+gen_zombie_table.py   Tables 10/11 (App. C.4): two Zombie tables -- measured
+                      per-length totals (+ derived unit cost) and the unit-cost
+                      projection vs BORA across datasets.
 
-gen_compare_all.py    tab:compare-all: the consolidated main-body comparison of
-                      Zombie / Reef / BORA across all three datasets plus BORA's
-                      speedup over each (reuses the Table 1/3/4 extractors).
+gen_compare_all.py    Table 4 (tab:compare-all, §6.5): the consolidated
+                      main-body comparison of Zombie / Reef / BORA across all
+                      three datasets plus BORA's speedup over each (reuses the
+                      Table 1/9/10 extractors).
 
 count_loc.py          Implementation/eval: counts author-owned Rust lines in
                       new_zkregplus by module (vendored/upstream code excluded).
@@ -62,7 +63,7 @@ count_loc.py          Implementation/eval: counts author-owned Rust lines in
 extract_acc_state_rate.py
                       Off-path analysis tool, not run by RUNALL.sh: the
                       AC-DFA accepting-state density rho behind the "sparse
-                      match locations" remark (Complexity, Section 6.4).  It
+                      match locations" remark (Complexity, App. B.2.5).  It
                       writes no LaTeX fragment -- it prints a per-dataset
                       summary.  Its input, any_server/dump_acc_state_ratio.txt,
                       is not shipped; regenerate it first (see the recipe in

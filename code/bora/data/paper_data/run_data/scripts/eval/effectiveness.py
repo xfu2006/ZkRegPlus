@@ -4,7 +4,7 @@
 # Code reviewed and audited by the author; the generated figure was manually
 # verified by the paper author.
 # ----------------------------------
-"""Generate the data fragments for the §7.3 approximation-effectiveness tables.
+"""Generate the data fragments for the §6.3 approximation-effectiveness tables.
 
 Reads:
   <paper_root>/data/raw_data/any_server/eval_effective.txt -- the tier-discharge
@@ -13,9 +13,9 @@ Reads:
 Writes:
   <paper_root>/figs/effectiveness_tab.tex       -- Table 2 body: pair-level
                                                    (Mal/Dna/Dlp), 3 rows
-  <paper_root>/figs/effectiveness_size.tex      -- Table 3 body: Mal by size,
+  <paper_root>/figs/effectiveness_size.tex      -- Table 5 body: Mal by size,
                                                    4 merged rows
-  <paper_root>/figs/effectiveness_size_dlp.tex  -- Table 4 body: Dlp by size,
+  <paper_root>/figs/effectiveness_size_dlp.tex  -- Table 6 body: Dlp by size,
                                                    4 merged rows
 All are \\input by figs/fig_effectiveness.fig (layout + captions hand-kept).
 

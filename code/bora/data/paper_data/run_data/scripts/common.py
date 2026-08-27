@@ -71,7 +71,7 @@ def get_proj_root() -> Path:
 # data/raw_data/any_server/. Flip this one constant to re-point every
 # generator at the other machine's logs.
 SERVER_TO_USE = "jet1tb"         # alternative: "gcpm1"
-# NB: the raw_data README/spec calls the Jetstream2 folder "jet1t", but the
+# NB: the raw_data README/spec calls the 1 TB machine's folder "jet1t", but
 # on-disk directory is "jet1tb"; this constant must match the directory name.
 
 

@@ -137,13 +137,23 @@ same clam run whose whole-leaf wall is 20.3 h above. A leaf overwrites
 its result file; `--run figs` then rebuilds the affected tables from
 your run.
 
+Timings are hardware-dependent and are not expected to match the
+paper's. Counts and constraint sizes should reproduce, but DB
+construction iterates hash maps unsorted, so lookup elements land in a
+different order each build — treat an exact match on constraint counts
+as expected, not guaranteed.
+
 ## 3. Requirements
 
 - Rust **1.76.0**, pinned in `rust-toolchain` — do **not** change it
   (the vendored arkworks/Sonobe forks are bound to it).
 - `lld` linker; the runners force `RUSTFLAGS="-C
   link-args=-fuse-ld=lld -Awarnings"`.
-- Python 3, Linux.
+- Linux; tested on **Ubuntu 24.04 LTS**. `INSTALL.py` uses `apt-get`
+  and Debian package names — on other distributions install the
+  equivalents of its `APT_PACKAGES` (and `ZOMBIE_APT_PACKAGES` for the
+  `zombie` leaf) yourself.
+- Python 3 (3.12 on 24.04).
 - **Step 1 also needs `pdflatex`** with geometry, booktabs, tikz,
   pgfplots, hyperref (TeX Live >= 2021); `INSTALL.py --toolchain`
   installs the three Ubuntu texlive packages.
@@ -166,6 +176,11 @@ your run.
 | cheapest full leaf | `full_run --items dna` | 5.8 h | 529 GB |
 | largest full leaf | `full_run --items zombie` | 43.5 h | 952 GB |
 | all 9 full leaves | `full_run --items A` | ~160 h (sequential) | 952 GB |
+
+**Reference machine.** All full-run costs above were measured on a
+128-core / 961 GiB Linux server. `zombie`'s 952 GB peak leaves under
+10 GB of headroom there — a host with less memory OOMs rather than
+running slowly.
 
 ## 4. Ethics and safety
 

@@ -3143,7 +3143,7 @@ def install_signal_handlers():
 # gb None = never measured. Every row below is measured: one `--items
 # all` run on 2026-08-11 on a 32-core / 125 GiB box, 8/8 rc=0, 4015s
 # total. RSS is tree-wide peak in GiB (watch_rss divides by 1024^2).
-#   EXCEPT zombie and reef, re-measured 2026-08-21 on zkregplus-large
+#   EXCEPT zombie and reef, re-measured 2026-08-21 on the 1 TB machine
 #   (128-core / 961 GiB) from SUMMARY.log: zombie 932 s / 30.3 GB, reef
 #   1912 s / 28.5 GB.  Both ran after zombie_isolate_dry landed, so
 #   zombie is COLD BY CONSTRUCTION now -- the dry leaf can no longer
@@ -3170,7 +3170,7 @@ DRY_COST = [
 
 # small_full_snark is MEASURED, not dry -- a real 4-job fold plus a full
 # decider.  Source is the run's own trailer (PAPER_DATA_WALL_CLOCK_S /
-# PAPER_DATA_PEAK_RSS_GIB, rc 0, 2026-08-14, 512 GB Jetstream2 box), NOT
+# PAPER_DATA_PEAK_RSS_GIB, rc 0, 2026-08-14, 512 GB machine), NOT
 # the log's "RAM: nnn GB" lines: those topped out at 327 GB and under-
 # report the tree-wide peak by ~106 GiB because they sample only at step
 # boundaries.  433 GiB is ~91 percent of a 512 GB box, so this entry is
@@ -3224,10 +3224,10 @@ def dry_total():
 # with %d and truncates (reef's 28.5 is stored as 29 so the menu does
 # not read 28).
 # SOURCES:
-#   * zkregplus-large (1 TB), full_run of 2026-08-23/24, SUMMARY.log:
+#   * the 1 TB machine, full_run of 2026-08-23/24, SUMMARY.log:
 #     zombie 156,741 s / 952.4 GB, reef 18,129 s / 28.5 GB, dna
 #     20,946 s / 528.8 GB;
-#   * zkreglus-small (512 GB), full_run of 2026-08-21/22, SUMMARY.log:
+#   * the 512 GB machine, full_run of 2026-08-21/22, SUMMARY.log:
 #     scale_clam 25,665 s / 147.9 GB, scale_dlp 13,212 s / 165.0 GB,
 #     lkup 6,623 s / 73.1 GB, effective 6,720 s / 72.7 GB;
 #   * dlp and clam predate this runner's meter, so their walls come

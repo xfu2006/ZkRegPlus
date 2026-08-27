@@ -37,7 +37,9 @@ Dataset & Pairs & $\mathtt{CP}$ & $\mathtt{SDE}$ & $\mathtt{DFA}$ \\
 \hline
 \input{figs/effectiveness_tab}
 \end{tabular}
-\caption{Tier-discharge fractions per dataset.}
+\caption{Discharging statistics: total (rule, file) pairs per data set
+discharged at each tier. Most task pairs clear at $\cp$; $\sde$ is the
+terminal tier for \textsc{Dna}/\textsc{Dlp}.}
 \label{tab:eff-pair}
 \end{table}
 
@@ -50,7 +52,10 @@ Size (B) & Files & $\mathtt{CP}$ & $\mathtt{SDE}$ & $\mathtt{DFA}$ \\
 \hline
 \input{figs/effectiveness_size}
 \end{tabular}
-\caption{Tier-discharge fractions by file size (Mal).}
+\caption{Change of approximation effectiveness with file size (over
+\textsc{Mal}): fractions of (rule, file) pairs discharged at each tier across
+file sizes. $\cp$'s share declines and $\sde$/$\dfa$ grow as files enlarge,
+though the $\dfa$ fraction stays negligible throughout.}
 \label{tab:eff-size}
 \end{table}
 
@@ -63,7 +68,7 @@ Size (B) & Files & $\mathtt{CP}$ & $\mathtt{SDE}$ & $\mathtt{DFA}$ \\
 \hline
 \input{figs/effectiveness_size_dlp}
 \end{tabular}
-\caption{Same, over Dlp.}
+\caption{Same as Table~\ref{tab:eff-size}, over \textsc{Dlp}.}
 \label{tab:eff-size-dlp}
 \end{table}
 
