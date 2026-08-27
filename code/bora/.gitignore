@@ -11,16 +11,13 @@ __pycache__/
 CLAUDE.md
 **/CLAUDE.md
 .gemini/
-.claude/*
+.claude/
+**/.claude/
 
 # sde_aggressive M0 baselines + fixtures (local-only, not committed)
 data/baselines/
 data/debug/sde_aggressive/
 
-# vendored aho-corasick benchmark corpus: upstream excludes it from the
-# published crate (see that crate's Cargo.toml `exclude`), no workspace
-# member builds it, and it held the only >8MB file outside data/
-crates/data_processor/dependency/aho-corasick/benchmarks/
 data/src_sig/ms_dlp/docs/*.partial.jsonl
 
 # the repo-root .gitignore's `*.txt` would otherwise keep this out of

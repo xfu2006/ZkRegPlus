@@ -44,12 +44,23 @@ lines in `folding-schemes/src/frontend/mod.rs`, the `ark-circom`/
 targets) so the artifact is free of strong-copyleft / unlicensed code.
 The `FCircuit` trait (the only part used here) is unaffected.
 
-## 3. ClamAV-pipeline forks (`crates/data_processor/dependency/`)
+**Test-only dependency fix:** `folding-schemes/Cargo.toml` gained
+`num-bigint = { version = "0.4", features = ["rand"] }` under
+`[dev-dependencies]`.  The `#[cfg(test)] mod tests` in
+`src/folding/circuits/nonnative/uint.rs` imports
+`num_bigint::RandBigInt`, which lives behind that feature, so
+`cargo check --all-targets` (and `cargo test`) failed to compile the
+crate's lib-test target upstream.  Dev-dependencies are absent from
+the release build graph, so no shipped code or measurement changes.
 
-`crates/data_processor/dependency/{rustomaton, aho-corasick}` are local
-forks used by the ClamAV signature pipeline.
+## 3. ClamAV-pipeline forks (`vendor/{rustomaton, aho-corasick}`)
+
+`vendor/{rustomaton, aho-corasick}` are local forks used by the ClamAV
+signature pipeline.
 
 ## Workspace exclusions
 
-The root `Cargo.toml` excludes `./foldpot`, `./new_r1cs`, and
-`vendor/dependency/nonnative` from the workspace.
+The root `Cargo.toml` excludes `data/src_sig/chr17_variants/reef` from
+the workspace: it is a vendored third-party crate (Reef, MIT) that the
+dna dataset unpacks inside this repo, and Cargo would otherwise abort
+with "current package believes it's in a workspace when it's not".

@@ -46,6 +46,10 @@ ark-bn254 = {version="0.4.0", features=["r1cs"]}
 #ark-bn254 = {version="0.4.0", path = "../dependency/ark-curves-cherry-picked/bn254"}
 ark-grumpkin = {version="0.4.0", features=["r1cs"]}
 rand = "0.8.5"
+# `rand` feature: the test module in src/folding/circuits/nonnative/
+# uint.rs uses num_bigint::RandBigInt.  dev-dependency only, so the
+# release build graph is unchanged.
+num-bigint = { version = "0.4", features = ["rand"] }
 tracing = { version = "0.1", default-features = false, features = [ "attributes" ] }
 tracing-subscriber = { version = "0.2" }
 

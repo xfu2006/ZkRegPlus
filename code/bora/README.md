@@ -41,7 +41,9 @@ bora/
 │   ├── data_processor/  signature parsing, AC-DFA, discharge prover
 │   └── utils/           logging, timers, global config, nibble packing
 ├── vendor/          patched / vendored dependencies (see vendor/PATCHES.md)
+│   ├── aho-corasick/    Aho-Corasick fork (ClamAV signature pipeline)
 │   ├── dependency/      arkworks forks (pairing-in-R1CS cherry-picks)
+│   ├── rustomaton/      regex -> DFA fork (ClamAV signature pipeline)
 │   └── sonobe_mod/      Sonobe fork adding the `foldpot` folding scheme
 ├── scripts/         PAPER_DATA.py (run menu), INSTALL.py (data install)
 ├── data/            inputs: signatures, samples, per-experiment configs

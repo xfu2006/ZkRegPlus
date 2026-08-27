@@ -892,7 +892,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let mut si_data_info = vec![];
 		let mut si_inp_info = vec![];
 		let mut si_oup_info = vec![];
-		//DEBUG USE 62080: TEMP PROBE -- per-component si census rows.
+		//DEBUG USE 62080: per-component si census rows.
 		let mut probe_rows: Vec<(String, Vec<(usize,bool)>,
 			Vec<(usize,bool)>, Vec<(usize,bool)>,
 			Vec<(String,usize,usize,bool)>)> = vec![];
@@ -928,7 +928,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			let (mut comp_maps, mut new_si_data_info, mut new_si_inp_info,
 				mut new_si_oup_info) = self.vec_components[i].lock().unwrap()
 				.get_gadgets_stmt_map(&cur_alloc);
-			//DEBUG USE 62080: TEMP PROBE -- snapshot this component's si
+			//DEBUG USE 62080: snapshot this component's si
 			//segments before they are drained into the circuit config. The
 			//path collector is filled only by container-config driven
 			//components (SED/DFA); CP hand-writes its si table, so it falls
@@ -954,7 +954,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			.sum::<usize>();
 		assert!(vec_maps.len()==num_gadgets);
 		cfg.reset_si_info(si_data_info, si_inp_info, si_oup_info);
-		//DEBUG USE 62080: TEMP PROBE -- dump the logup query census.
+		//DEBUG USE 62080: dump the logup query census.
 		if folding_schemes::folding::foldpot::container_config
 			::si_census_on(){
 			dump_si_census(&self.name, &probe_rows, &cfg);
@@ -1325,7 +1325,7 @@ impl <F:PrimeField + ColEle + 'static,
 	fn clone_deep_mapper(&self) -> Self { self.clone_deep() }
 }
 
-/// DEBUG USE 62080: TEMP PROBE -- per-column census of the framework logup
+/// DEBUG USE 62080: per-column census of the framework logup
 /// QUERY block (sigma_ir1cs step 5.1). One query per si cell; cost is
 /// 0 cs for a constant-ZERO cell, 1 cs for a constant-nonzero cell, and
 /// 2 cs + 1 witness for a variable cell, plus one add-chain break every

@@ -31563,7 +31563,9 @@ Goal 6. T6007. move paper data
 			and do NOT delete tracked figs/*.tex, approve the change.
 		=> 45.83! (costed 25 dollars!)
 
+Goal 7. check out the latest paer -> DONE
 -- TODO --
+Thursday 08/27/2026
 Goal 8. T6008: clean the crates
 	[a] perform a careful scan of the crates/ folder, use
 		good rust software engineering principle to evaluate it,
@@ -31573,6 +31575,31 @@ Goal 8. T6008: clean the crates
 		(Cost: 5$ , Now: 50.55 -> 52.29 -> $8)
 		-> only 2 more interactions costed 3 dollars! 
 	[b] apply the changes and test with small_data
+Goal 9. T6009: doc
+	[a] our goal is to improve the README.md and doc/
+	[b] First: this is a step of phase 1 of
+		INFO: reference_artifact_eval_checklist.md.
+	[c] You should consider fro mthe point view of
+		reviewer, what would be regarded as a good doc for
+		the artifact.
+	[d] My guess (verify) is that README.md should cover
+		the most important info first: show (1) how to install,
+			(2) quick verify of data pack: generate the PDF directly from
+				the installed full data
+			(3) quick verify of system: small data and dry run
+			e.g., run the small data,
+				dry-run.
+			(4)  full system run
+	[e] then think about covering the rest of requirements: 
+		such as map the design of the paper (read paper first)
+			to the modules of software so people can easily map it.
+	[f] think aout how you split between README.md and
+		docs/ documents to over overlap, but following
+		good software engineering (rust) conventions.
+	[g] I need you to give me an OVERVIEW of the plan first, 
+		justify why it satisfies the guideline of artifact eval
+			check list workflow, suggested practice 
+			and Rust convention.
 
 --- DATA ----
 #####################################

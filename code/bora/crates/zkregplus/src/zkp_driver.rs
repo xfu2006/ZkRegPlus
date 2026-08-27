@@ -3564,8 +3564,8 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 		}
 	}
 
-	/// TEMP PROBE (DELETE WITH THE HARNESS): per-column logup-query census
-	/// for the REAL full_dlp circuit shape. build_circs_adv_aggr's layout
+	/// DEBUG USE 62080: per-column logup-query census for the REAL
+	/// full_dlp circuit shape. build_circs_adv_aggr's layout
 	/// depends only on (DB, capacities), so this builds ONLY the circuits
 	/// -- no discharge, no folding, no key setup. Cost = DLP DB cache load.
 	/// `ZKR_PROBE_SI=1 ZKR_RUNGS=2 cargo test -p zkregplus --release --

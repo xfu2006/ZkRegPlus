@@ -3,11 +3,12 @@ name = "zkregplus"
 version = "0.1.0"
 edition = "2021"
 resolver = "2"
+description = "The BORA proof system: circuits, gadgets and the folding driver."
+license = "MIT"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 hex = "0.4"
-rustomaton = {version="0.2.1", path = "../data_processor/dependency/rustomaton"}
+rustomaton = {version="0.2.1", path = "../../vendor/rustomaton"}
 utils = {path="../utils"}
 data_processor = {path="../data_processor"}
 itertools="0.14.0"

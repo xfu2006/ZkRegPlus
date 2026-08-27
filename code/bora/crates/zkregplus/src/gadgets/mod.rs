@@ -2,8 +2,6 @@
 pub mod commons;
 /// small common traits and structs to build proofs
 pub mod traits;
-/// sum gadget (for testing purpose
-pub mod sum_gadget;
 /// word extractor gadget
 pub mod word_extract;
 /// word extractor gadget (advanced)
