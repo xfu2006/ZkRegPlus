@@ -9,6 +9,7 @@ match. A tiered approximation (CP / SDE / DFA) feeds a folding prover
 (`FoldPot`: modified SuperNova + CycleFold with lookups) and a Groth16
 decider on the BN254/Grumpkin cycle.
 
+
 > **Paper:** BORA: Bulk Zero-Knowledge Discharging of Regex Collections
 > via Tiered Approximation. Under submission (anonymous).
 
