@@ -31600,6 +31600,16 @@ Goal 9. T6009: doc
 		justify why it satisfies the guideline of artifact eval
 			check list workflow, suggested practice 
 			and Rust convention.
+Goal 10. T6010: clean up vendors
+	[a] our main goal is to make a double check of the
+		foldpot in the sonobe: anything to make it tidy?
+	[b] other others folders of vendors should be pretty much intact
+		as it's vendor only. But alert me on major serious issues
+	[c] so start an agent to an exaimination according to the
+		guideline in: 
+		INFO: reference_artifact_eval_checklist.md.
+		check if it works for the best intersts for paper acceptance
+	[d] report briefly what needs to be fixed.
 
 --- DATA ----
 #####################################

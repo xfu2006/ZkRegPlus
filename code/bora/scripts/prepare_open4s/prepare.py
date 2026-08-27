@@ -134,6 +134,14 @@ PRUNE_PATHS = [
     "data/paper_data_backup/bora_paper_data.tgz",
     "vendor/sonobe_mod/.rust-toolchain.swp",
     "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/.circuits_super.rs.swo",
+    # Dead-code folder (188 KB, 5 superseded .rs files) plus two
+    # developer compile scripts. None is referenced by any build: the
+    # workspace compiles the module tree via mod.rs, and the two .sh
+    # files are personal cargo-invocation notebooks. A reviewer opening
+    # a folder literally named TO_REMOVE reads it as untidiness.
+    "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/TO_REMOVE",
+    "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/compile.sh",
+    "vendor/sonobe_mod/folding-schemes/src/folding/foldpot/two_compile.sh",
 ]
 
 # Pruned wherever they appear.  Deliberately only vim swap files.  Tracked

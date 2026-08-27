@@ -12,13 +12,13 @@ pub mod fsm;
 pub mod pack;
 /// extract signatures from final states
 pub mod sigs;
-/// advanced fsm adget which produce compressed (state,loc) info
+/// advanced fsm gadget which produces compressed (state,loc) info
 pub mod fsm_adv;
 /// database related proof operations
 pub mod db;
 /// discharge subsigs
 pub mod discharge_adv;
-/// discharge subsigs (Appendix G.1 constant-queue variant)
+/// discharge subsigs (constant-queue variant)
 pub mod discharge_adv_neo;
 /// from subsigs to discharged sigs
 pub mod compute_sig_adv;
