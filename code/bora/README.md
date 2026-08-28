@@ -200,6 +200,16 @@ running slowly.
   the artifact inside an isolated VM or container, do not redistribute
   the corpus, and remove it when you are finished. Use is subject to
   your own institution's policies and applicable law.
+- **WARNING — unpack it in a sub-directory, never at `/`.** Use
+  `/bora`, `/work/bora`, `~/bora` — anything with a parent. A
+  container built with `COPY . /` makes `/` the Cargo **workspace**
+  root, and the Zombie baseline copies `circ` to
+  `/tmp/bora_zombie_circ` precisely to build it *outside* that
+  workspace; at `/` it no longer is, and the build dies with `current
+  package believes it's in a workspace when it's not`. Do **not**
+  apply cargo's suggested empty `[workspace]` table — that
+  re-resolves the pinned lockfile to MSRV-incompatible crates. Move
+  the tree, `rm -rf /tmp/bora_zombie_circ`, and re-run.
 - **No downloaded binary is ever executed** — the pipeline only reads
   their bytes as scan input. No destructive host side effects.
 - Network egress happens only during `INSTALL.py` (the Enron source,
