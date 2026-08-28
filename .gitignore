@@ -12,6 +12,9 @@
 node_modules/
 dist/
 
+# temporary data trace storage
+extra_more_recent_run/
+
 # Compiled Java class files
 *.class
 
