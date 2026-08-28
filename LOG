@@ -31624,18 +31624,23 @@ Goal 11. check workflow
 		[e3] check the version right
 		[e4] do anonymity check
 
-Goal 12. jetstream test run
+Friday 08/28/2026
+Goal 1. 2nd jetstream test run
 	[a] deploya
 	[b] serter started: 7:45pm ==> 
 	[c] install
-	[d] test run 8:45pm --> (dry run)
-		-> 
+	[d] test run 8:45pm --> (dry run) 8:00AM
+		-> cost 256 * 12 = 3k
+	--- SUBMISSION CLOSED AT THIS MOMENT ----
+
+
 --- DATA ----
 #####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
 *Big server: started 08/15 4am -> 08/24 0am (almost 9 days!)
 COST: 80k (135.8k - 80k) ==> remaining 57.3k credits!!!
 	===> ACTUAL remaining: 58983 credits.
+	===> after 08/28 run 586k credits
 #####################################
 Setting: https://anonymous.4open.science/r/bora_sec27
 	https://github.com/xfu2006/borasub49001
