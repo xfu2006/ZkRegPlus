@@ -31620,7 +31620,15 @@ Goal 11. check workflow
 		[d2] vm path docker path
 	[e] phase4 -> dry run.
 		[e1] update to the site.
+		[e2] downloaded 20MB
+		[e3] check the version right
+		[e4] do anonymity check
 
+Goal 12. jetstream test run
+	[a] deploya
+	[b] serter started: 7:45pm ==> 
+	[c] install
+	[d] 
 --- DATA ----
 #####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)

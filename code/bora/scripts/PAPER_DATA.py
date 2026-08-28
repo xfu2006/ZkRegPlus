@@ -1369,6 +1369,26 @@ class JobHandle:
 VMA_TARGET = int(os.environ.get("ZKR_VM_MAX_MAP_COUNT", "1073741824"))
 
 
+# rustup installs cargo into ~/.cargo/bin and puts it on PATH only via
+# ~/.cargo/env, which a shell opened BEFORE INSTALL.py has never sourced
+# -- there the first cargo spawn dies with "FileNotFoundError: 'cargo'"
+# while the toolchain is in fact installed.  Every spawn env is built
+# from os.environ (neo_env), so repairing PATH once here covers all of
+# them.  APPENDED, not prepended: a cargo already on PATH keeps winning,
+# so this can never shadow an operator's own toolchain.
+def ensure_cargo_path():
+    if shutil.which("cargo"):
+        return
+    cargo_bin = os.path.expanduser("~/.cargo/bin")
+    if os.path.isfile(os.path.join(cargo_bin, "cargo")):
+        os.environ["PATH"] = (os.environ.get("PATH", "")
+                              + os.pathsep + cargo_bin)
+        log("cargo was not on PATH; added %s" % cargo_bin)
+    else:
+        log("WARNING: no cargo on PATH and none in %s -- run "
+            "`python3 scripts/INSTALL.py --toolchain`" % cargo_bin)
+
+
 def ensure_vma(target):
     """Raise vm.max_map_count via sudo sysctl, then ENFORCE the floor:
     below it we quit here.  No-op if target <= 0; an unreadable
@@ -5614,6 +5634,7 @@ def main():
     # (small_full_snark, 512GB box, 2026-08-13).  Rust's own check
     # (foldpot/driver.rs:2467) sizes off packed fields and false-passed
     # it at 52,544 est vs >1M actual.  Earliest point with a tty for sudo.
+    ensure_cargo_path()
     ensure_vma(VMA_TARGET)
 
     plan = resolve_plan(args.run, args.items) if args.run \

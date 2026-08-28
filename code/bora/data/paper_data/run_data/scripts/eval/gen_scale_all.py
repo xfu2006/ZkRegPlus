@@ -50,6 +50,7 @@ import re
 import statistics
 import sys
 import tarfile
+import tempfile
 from pathlib import Path
 
 # common.py lives in the parent scripts/ directory; gen_component_cost is a
@@ -127,17 +128,33 @@ def per_step_metrics(text: str) -> tuple[float, float, int]:
 
 def collect(bundle: Path, work: Path) -> list[tuple[int, float, float, int]]:
     """Unbundle log_<N>.txt.tgz files; return sorted [(N, r1cs, ms, inbytes)]."""
-    work.mkdir(parents=True, exist_ok=True)
-    with tarfile.open(bundle, "r:gz") as tf:
-        tf.extractall(work)
+    work.parent.mkdir(parents=True, exist_ok=True)
     points = []
-    for inner in sorted(work.glob("log_*.tgz")):
-        m = _FRAC.search(inner.name)
-        if not m:
-            continue
-        log = extract_tgz(inner, work)
-        r1cs, ms, inb = per_step_metrics(log.read_text())
-        points.append((int(m.group(1)), r1cs, ms, inb))
+    # A FRESH directory per call, never a persistent cache.  The cache
+    # lied in two ways at once, and a sweep re-packs its bundle from
+    # scratch (PAPER_DATA.pack_scale_bundle), so both fire the moment a
+    # SHORTER sweep runs -- `--run dry_run` packs counts [1, 300]:
+    #   (1) the glob below saw the PREVIOUS sweep's leftover
+    #       log_3888..log_38875 and plotted them beside the two fresh
+    #       points, as 12 points that look like a good figure;
+    #   (2) extract_tgz re-extracts only when the archive is NEWER than
+    #       the cached .txt, and tar restores each member's OWN mtime --
+    #       so re-installing the committed bundle (members dated at pack
+    #       time) over a dry run's newer .txt silently kept the dry
+    #       CONTENT under a full-run count.
+    # Extraction is ~10 MB per bundle and costs well under a second.
+    with tempfile.TemporaryDirectory(prefix="scale_",
+                                     dir=work.parent) as td:
+        tmp = Path(td)
+        with tarfile.open(bundle, "r:gz") as tf:
+            tf.extractall(tmp)
+        for inner in sorted(tmp.glob("log_*.tgz")):
+            m = _FRAC.search(inner.name)
+            if not m:
+                continue
+            log = extract_tgz(inner, tmp)
+            r1cs, ms, inb = per_step_metrics(log.read_text())
+            points.append((int(m.group(1)), r1cs, ms, inb))
     if not points:
         raise RuntimeError(f"no log_<N>.txt.tgz members found in {bundle}")
     points.sort()
