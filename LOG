@@ -31628,7 +31628,8 @@ Goal 12. jetstream test run
 	[a] deploya
 	[b] serter started: 7:45pm ==> 
 	[c] install
-	[d] 
+	[d] test run 8:45pm --> (dry run)
+		-> 
 --- DATA ----
 #####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
