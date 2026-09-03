@@ -848,7 +848,10 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			//3. BP DESC (legacy gen_backward_prf semantics): start
 			// at last_step+1 w/ default_min when under max_steps;
 			// min = map_or(default_min); prune loc+rg_end(src)<min;
-			// BREAK on first empty to_del; step 0 never pruned.
+			// walk EVERY step down to 1; step 0 never pruned.
+			// NO early break on an empty to_del: stopping there leaves a
+			// dead row at a lower step labelled C, so the carry is not
+			// chain-closed and fill_nonaggr finds no final-C predecessor.
 			let mut surv: Vec<Vec<F>> = (0..=last_step).map(|i|
 				merged[i].iter().enumerate()
 					.filter(|(j, _)| cat[i][*j] != f_fp)
@@ -880,7 +883,6 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					if *l + rg_end < min_loc { del += 1; }
 					else { kept.push(*l); }
 				}
-				if del == 0 { break; }
 				surv[src - 1] = kept;
 			}
 			for i in 1..=last_step {

@@ -927,7 +927,8 @@ basis_pats={} perc={} compress={}", q_type, res, size_pat,
 			//2.3 propgate from last step .. to 2 (included).
 			// NOTE that we never produce the bwdprf from step1 -> step0
 			// because we want to keep step0 for each subsig for future use
-			// we break from the loop when there is no more backward proof to produce
+			// we walk EVERY step: breaking at the first empty to_del would
+			// leave dead locs alive at lower steps (see discharge_adv_neo)
 			// (i.e., no more locs to delete from previous step).
 			if steps>=2{
 			  for j in 0..steps-1{//number of iterations:
@@ -981,7 +982,6 @@ basis_pats={} perc={} compress={}", q_type, res, size_pat,
 				item_to_del.locs = to_del;
 
 				//2.2.4 update the vecs
-				if item_to_del.locs.len()==0 {break;} //no need to add empty
 				vec_res.push(item_res);
 				vec_to_del.push(item_to_del);
 				vec_bwd_prf.push(bwd_prf);
