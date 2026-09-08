@@ -31638,8 +31638,34 @@ Goal 1. merge versions -> DONE
 
 Thursday 09/02/2026
 Goal 1. the optimizaiton section
-	[a] re-write draft
-	[b]
+	[a] re-write draft on optimization 2
+	[b] fix one crash site
+	[c] weigh the uniform circuit optimization
+		-> make it aling
+
+Friday 09/03/2026
+Goal 1. the fix_align project
+	[a] check inp_subsigs uniqueness problem
+	[b] add description for the aggresive mode -> done
+	[c] issues 3
+	[d] issue 4
+	[e] issue 5, 6, 7, 8
+	[f] issue 9, 10
+	[g] two more caveats.
+Goal 2. planning code fix. -> OK.
+
+Tuesday 09/08/2026
+Goal 1. Draft of small span
+	[a] p1
+	[b] p2
+	[c] example
+
+Goal 2. Implementtiation "align_impl"
+	[a] merge A1/B/A2, add the seed column into
+		Q_c/Q_r.
+	[b] develop test plan
+	[c] impl and test. increased constraints 3/4 per row. acceptable.
+	[d] testing done.
 
 
 --- DATA ----

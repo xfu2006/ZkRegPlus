@@ -65,7 +65,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use utils::consts::{read_global_config, B_DEBUG};
 use utils::logger::{log, LOG4};
-use ark_r1cs_std::R1CSVar;
+use ark_r1cs_std::{R1CSVar, eq::EqGadget, fields::FieldVar};
 use folding_schemes::Error;
 use folding_schemes::folding::foldpot::{
 	sigma_ir1cs::{SigmaGadget, WitnessSigmaIR1CSVar,
@@ -74,11 +74,12 @@ use folding_schemes::folding::foldpot::{
 	circuits_super::field_to_usize,
 };
 use crate::gadgets::commons::{encode_cols, encode_cols_var,
+	verify_inverse,
 	is_zero_better_adv, check_eq, check_prod_zero, better_select,
 	new_const_var, new_var, gen_m_table_cond, gen_m_table,
 	multiset_prod_2col, var_to_lb};
 use crate::gadgets::db::{assert_logup, assert_logup_cond,
-	gen_union_prf, verify_union_prf_vars};
+	gen_union_prf};
 use crate::gadgets::traits::{Container, Col, IDX_DATA, IDX_SI_DATA,
 	ComponentAdvice};
 use crate::gadgets::discharge_adv::{DischargeAdvGadget,
@@ -473,6 +474,12 @@ pub struct StepQueueItemNeo<F: PrimeField + ColEle> {
 	pub prev_loc1: Vec<F>,
 	/// upper predecessor loc (FP upper bracket, id1+1); par to locs.
 	pub prev_loc2: Vec<F>,
+	/// carry-in tag: 1 iff the row came from Q_i (the previous
+	/// chunk's carry set), 0 for a chunk-join row; parallel to
+	/// base.locs. Set ONCE at merge time (the single source of
+	/// truth -- a halo-straddle pair shares (enc, loc), so it can
+	/// never be re-derived by value). NOT in the (B) serialization.
+	pub cin: Vec<F>,
 	/// MIN carried loc at step i+1 (BP cert); per-item scalar.
 	pub min_next: F,
 	/// freeze threshold fz(subsig, step) from DB (SP cert); per-item scalar.
@@ -489,6 +496,7 @@ impl<F: PrimeField + ColEle> StepQueueItemNeo<F> {
 		Self {
 			cat: vec![z; n], prev_id1: vec![z; n],
 			prev_loc1: vec![z; n], prev_loc2: vec![z; n],
+			cin: vec![z; n],
 			min_next: z, fz: z, queue_len: z, base,
 		}
 	}
@@ -639,6 +647,8 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				prev_id1: rows.iter().map(|r| r[2]).collect(),
 				prev_loc1: rows.iter().map(|r| r[3]).collect(),
 				prev_loc2: rows.iter().map(|r| r[4]).collect(),
+				//cin is within-chunk advice, not serialized: zeroed
+				cin: vec![F::zero(); rows.len()],
 				min_next: scal[0], fz: scal[1], queue_len: scal[2], base,
 			};
 			store_items.entry(item.base.subsig).or_insert(vec![])
@@ -753,22 +763,30 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 
 			//1. MERGE: Q_m = Q_i union (S join db join L): per step,
 			// carried locs + ALL chunk matches of that step's pat.
+			// cin[i][j] = row j of step i came from Q_i (carried);
+			// tagged HERE, once, and never re-derived by (enc, loc).
 			let mut merged: Vec<Vec<F>> = vec![vec![one]];
+			let mut cin: Vec<Vec<bool>> = vec![vec![true]];
 			for i in 1..=max_steps {
 				let pat = F::from(pm_bounds[i - 1].0 as u32);
-				let mut locs: Vec<F> = if i < carried.len() {
-					carried[i].base.locs.clone()} else {vec![]};
+				let mut pairs: Vec<(F, bool)> = if i < carried.len() {
+					carried[i].base.locs.iter()
+						.map(|l| (*l, true)).collect()
+				} else { vec![] };
 				if let Some(v) = hm_loc.get(&pat) {
 					//strip the two dummy wrap entries (0/max)
-					locs.extend(v[1..v.len() - 1].iter()
-						.map(|e| e.1));
+					pairs.extend(v[1..v.len() - 1].iter()
+						.map(|e| (e.1, false)));
 				}
 				// NO dedup: a carried loc matched again this chunk
 				// (halo straddle) keeps BOTH copies, so the union
 				// pays one to q_i and one to the join. Cats and
 				// certs of the pair are identical; ranks differ.
-				locs.sort();
-				merged.push(locs);
+				// sort_by_key is STABLE and the carried copies are
+				// pushed first, so on a tie the carried copy leads.
+				pairs.sort_by_key(|p| p.0);
+				merged.push(pairs.iter().map(|p| p.0).collect());
+				cin.push(pairs.iter().map(|p| p.1).collect());
 			}
 			while merged.len() > carried.len()
 				&& merged[merged.len() - 1].is_empty() {
@@ -777,7 +795,12 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			let last_step = merged.len() - 1;
 
 			//2. CLOSURE ASC: reachable iff covered by a reachable
-			// prev row's window; roots = seed. Unreachable => FP w/
+			// prev row's window; roots = seed + EVERY carried row
+			// (legacy fold semantics: Q_i locs are unioned in
+			// unconditionally, discharge_adv.rs gen_forward_prf).
+			// A carried row without a window hit stays cat 0
+			// (the BP walk below makes it C or BP) with 0/0 prev
+			// sentinels; only a JOIN row with no hit is FP, w/
 			// Q_r-local bracket (missing side = 0 sentinel).
 			let mut cat: Vec<Vec<F>> = merged.iter()
 				.map(|v| vec![zero; v.len()]).collect();
@@ -815,6 +838,8 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 					if let Some(k) = hit {
 						p_id1[i][j] = F::from(k as u32);
 						p_lc1[i][j] = prev[k].0;
+					} else if cin[i][j] {
+						//carried root: reachable by fiat
 					} else {
 						cat[i][j] = f_fp;
 						//p1 = last row reaching short of loc;
@@ -848,10 +873,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			//3. BP DESC (legacy gen_backward_prf semantics): start
 			// at last_step+1 w/ default_min when under max_steps;
 			// min = map_or(default_min); prune loc+rg_end(src)<min;
-			// walk EVERY step down to 1; step 0 never pruned.
-			// NO early break on an empty to_del: stopping there leaves a
-			// dead row at a lower step labelled C, so the carry is not
-			// chain-closed and fill_nonaggr finds no final-C predecessor.
+			// walk the whole chain; step 0 never pruned.
 			let mut surv: Vec<Vec<F>> = (0..=last_step).map(|i|
 				merged[i].iter().enumerate()
 					.filter(|(j, _)| cat[i][*j] != f_fp)
@@ -974,6 +996,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			let mut its: Vec<StepQueueItemNeo<F>> = vec![];
 			let mut it0 = StepQueueItemNeo::from_base(seed.clone());
 			it0.cat[0] = f_c;
+			it0.cin[0] = one;
 			its.push(it0);
 			for i in 1..=last_step {
 				let (pat, (a, b)) =
@@ -987,6 +1010,8 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 				it.prev_id1 = p_id1[i].clone();
 				it.prev_loc1 = p_lc1[i].clone();
 				it.prev_loc2 = p_lc2[i].clone();
+				it.cin = cin[i].iter()
+					.map(|b| if *b {one} else {zero}).collect();
 				it.fz = fz[i - 1];
 				its.push(it);
 			}
@@ -1079,6 +1104,8 @@ B0={} B1={} B2={} B3_4={} B5plus={}", self.b_igc, b_hist[0],
 						.map(|j| it.prev_loc1[*j]).collect(),
 					prev_loc2: idx.iter()
 						.map(|j| it.prev_loc2[*j]).collect(),
+					cin: idx.iter()
+						.map(|j| it.cin[*j]).collect(),
 					min_next: it.min_next, fz: it.fz,
 					queue_len: it.queue_len, base,
 				}
@@ -1287,6 +1314,12 @@ pub(crate) struct QmTable<F: PrimeField + ColEle> {
 	pub step: Vec<F>, pub subsig: Vec<F>,
 	// per-row witnesses (remapped to wrap coords at emission)
 	pub prev_id1: Vec<F>, pub prev_loc1: Vec<F>, pub prev_loc2: Vec<F>,
+	/// carry-in bit: 1 on a row that came from Q_i (item.cin), 0 on
+	/// join rows, wraps and pads. Filled on BOTH arms; committed on
+	/// the non-aggressive arm only (aggr carries nothing across
+	/// chunks). Task A: exempts carried rows from the in-chunk
+	/// predecessor cert and feeds the carried => not-FP check.
+	pub b_cin: Vec<F>,
 	// store bindings (read from item.base; masked rows: 0 + RANGE2 si)
 	pub pat: Vec<F>, pub rg1: Vec<F>, pub rg2: Vec<F>,
 	pub enc_prev: Vec<F>, pub b_bwd: Vec<F>,
@@ -1394,8 +1427,8 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		// wraps keep zeros, matching pack(subsig,0,0,0,0).
 		self.rg1.push(f_rg1); self.rg2.push(f_rg2);
 		for v in [&mut self.prev_id1, &mut self.prev_loc1,
-			&mut self.prev_loc2, &mut self.enc_prev, &mut self.d_c1,
-			&mut self.d_below_lo,
+			&mut self.prev_loc2, &mut self.b_cin, &mut self.enc_prev,
+			&mut self.d_c1, &mut self.d_below_lo,
 			&mut self.d_above_lo] { v.push(z); }
 		self.d_c2.push(dc2);
 		self.si_step.push(SubsigStepStore::gen_step_tbl_id(enc, tag));
@@ -1446,12 +1479,14 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 	/// window (backward subsig AND step>=2). Mode split (b_aggr):
 	///  - aggressive: BP->C retag (forward-only, no BP class) and
 	///    C-cert witnesses from the closure advice -- M6 unchanged.
-	///  - non-aggressive: all four cats kept as tagged; C/BP/SP rows
-	///    get ZEROED prev_*/d_c* here, because fill_nonaggr_cols
-	///    re-picks the C predecessor against the FINAL C sets (an
-	///    SP pass may demote the closure-time pred) and re-ranks
-	///    prev_id1 in QC coordinates. FP rows are identical in both
-	///    modes (QR brackets are unaffected by SP: Q_r keeps SP).
+	///  - non-aggressive (T925): all four cats kept as tagged; every
+	///    C/BP/SP row keeps the closure predecessor VERBATIM (rid
+	///    rank = the QR-target coordinate). The closure pred is
+	///    always in the final Q_r: FP labels are final at closure
+	///    time and the BP/SP passes only relabel non-FP rows.
+	///    d_c1/d_c2 are filled iff the row CITES -- non-seed,
+	///    C/BP/SP, b_cin = 0 (a carried row has no in-chunk pred
+	///    and is exempt). FP rows are identical in both modes.
 	fn push_real(&mut self, it: &StepQueueItemNeo<F>, k: usize,
 		f_step: F, b_last: bool, bwd: bool, enc_prev: F, f_bwd: F,
 		max_val: usize, b_aggr: bool) {
@@ -1488,11 +1523,17 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 			(self.id.last().copied().unwrap_or(z),
 			self.loc.last().copied().unwrap_or(z))
 		} else { (z, z) };
-		//witness policy: FP always carries its bracket; C carries
-		//its closure pred only in aggressive (nonaggr re-picked in
-		//fill_nonaggr_cols); BP/SP carry nothing here.
+		//witness policy: FP always carries its bracket; aggr C
+		//carries its closure pred; nonaggr (T925) C/BP/SP ALL keep
+		//the closure pred -- the widened predicate class is the QR
+		//citation target. A carried row (b_cin = 1) keeps whatever
+		//the closure left (0/0 on a root); the circuit's exemption
+		//masks it.
 		let b_fp = cat == F::from(CAT_FP);
-		let b_keep_prev = b_fp || (b_aggr && cat == F::from(CAT_C));
+		let b_pred = cat == F::from(CAT_C) || cat == F::from(CAT_BP)
+			|| cat == F::from(CAT_SP);
+		let b_keep_prev = b_fp || (b_aggr && cat == F::from(CAT_C))
+			|| (!b_aggr && b_pred);
 		// remaps: +1 wrap-coord shift iff a real lower pred; FP
 		// "no upper row" 0-sentinel -> max (targets the max-wrap).
 		let pl1 = if b_keep_prev { pl1 } else { z };
@@ -1506,6 +1547,9 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		self.subsig.push(it.base.subsig); self.b_bwd.push(f_bwd);
 		self.prev_id1.push(p1); self.prev_loc1.push(pl1);
 		self.prev_loc2.push(pl2);
+		// carry-in tag straight from the item (seed row included;
+		// the circuit masks it via is_seed).
+		self.b_cin.push(it.cin[k]);
 		let (f_p, f_a, f_b) = if b_seed { (z, z, z) } else {
 			(it.base.pat, it.base.rg_start, it.base.rg_end) };
 		self.pat.push(f_p); self.rg1.push(f_a); self.rg2.push(f_b);
@@ -1516,6 +1560,22 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		if !b_seed && b_aggr && cat == F::from(CAT_C) {
 			let gap = if bwd { pl1 - loc } else { loc - pl1 };
 			dc1 = gap - f_a; dc2 = f_b - gap;
+		}
+		// nonaggr (T925): the widened pred cert. A CITING row is a
+		// non-seed C/BP/SP row with b_cin = 0; its closure pred is
+		// a real row (loc >= 1: the seed sits at 1), so the anchor
+		// (enc_prev, 0, 0) is never cited (the circuit bans it).
+		// T-W1: both diffs must fit one RANGE2 cell -- the test
+		// harness has no RANGE2 lookup, production does.
+		let b_cite = !b_aggr && !b_seed && b_pred
+			&& it.cin[k].is_zero();
+		if b_cite {
+			assert!(!pl1.is_zero(),
+				"nonaggr citing row: closure left no predecessor");
+			let gap = loc - pl1;
+			dc1 = gap - f_a; dc2 = f_b - gap;
+			assert_fp_diff_range2(&dc1, max_val);
+			assert_fp_diff_range2(&dc2, max_val);
 		}
 		if cat == F::from(CAT_FP) {
 			if !pl1.is_zero() {
@@ -1577,10 +1637,11 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		for v in [&mut self.enc, &mut self.id, &mut self.loc,
 			&mut self.cat, &mut self.step, &mut self.subsig,
 			&mut self.prev_id1, &mut self.prev_loc1,
-			&mut self.prev_loc2, &mut self.pat, &mut self.rg1,
-			&mut self.rg2, &mut self.enc_prev, &mut self.b_bwd,
-			&mut self.d_c1, &mut self.d_c2, &mut self.d_below_lo,
-			&mut self.d_above_lo, &mut self.d_sort] { pz(v, z); }
+			&mut self.prev_loc2, &mut self.b_cin, &mut self.pat,
+			&mut self.rg1, &mut self.rg2, &mut self.enc_prev,
+			&mut self.b_bwd, &mut self.d_c1, &mut self.d_c2,
+			&mut self.d_below_lo, &mut self.d_above_lo,
+			&mut self.d_sort] { pz(v, z); }
 		pz(&mut self.si_step, sid_step);
 		for v in [&mut self.si_subsig, &mut self.si_pat,
 			&mut self.si_rg1, &mut self.si_rg2,
@@ -1593,16 +1654,14 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 	}
 
 	/// Fill the NON-AGGRESSIVE witness columns on the PADDED table
-	/// (run right after gen_qm_table(.., false)). Two jobs:
-	///  (1) C rows: RE-PICK the predecessor against the FINAL C
-	///      sets and re-rank prev_id1 in QC coordinates. Needed
-	///      because apply_sp_pass may demote the closure-time pred:
-	///      at a frozen step only the min survives, and the min
-	///      always reaches (min-chain lemma), so a C pred exists.
-	///      EXAMPLE: a3:27 closure pred was a2:21; had it been 111
-	///      (now SP), the re-pick lands on the kept min 21, rank 1.
-	///  (2) BP/SP rows: successor/freeze witnesses (see the
-	///      QmNonAggrCols field docs for the certificates).
+	/// (run right after gen_qm_table(.., false)): the BP/SP
+	/// successor/freeze witnesses (see the QmNonAggrCols field
+	/// docs for the certificates). T925: the predecessor columns
+	/// are NOT touched here any more -- push_real keeps the closure
+	/// pred (rid rank) of every C/BP/SP row and the cert queries
+	/// the Q_r target, so the old C re-pick against the FINAL C
+	/// sets (which panicked whenever apply_sp_pass had demoted the
+	/// closure-time pred to SP) is gone.
 	/// PARAMS: default_min = last_loc + 1 (BP/SP empty-min fallback).
 	pub(crate) fn fill_nonaggr(&mut self, info: &SubsigStepStore,
 		default_min: F) {
@@ -1666,29 +1725,6 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 			let step = field_to_usize(&self.step[i]);
 			if step == 0 { continue; } //seed: no certificate
 			let pm = &meta[&subsig];
-			//(1) C re-pick: least final-C loc at step-1 inside the
-			//predecessor window [loc-rg2, loc-rg1]; rank in QC
-			//coordinates (0-wrap holds rank 0, C rows 1..k).
-			if cat == f_c {
-				let (a, b) = pm[step - 1].1;
-				let ul = field_to_usize(&loc);
-				let (w_lo, w_hi) =
-					(ul.saturating_sub(b), ul - a);
-				let empty: Vec<F> = vec![];
-				let plist = c_locs.get(&self.enc_prev[i])
-					.unwrap_or(&empty);
-				let hit = plist.iter().enumerate().find(|(_, p)| {
-					let up = field_to_usize(*p);
-					up >= w_lo && up <= w_hi
-				});
-				let (idx, pl) = hit.expect(
-					"nonaggr C row: no final-C predecessor");
-				let gap = loc - *pl;
-				self.prev_id1[i] = F::from((idx + 1) as u32);
-				self.prev_loc1[i] = *pl;
-				self.d_c1[i] = gap - F::from(a as u32);
-				self.d_c2[i] = F::from(b as u32) - gap;
-			}
 			//(2a) BP: successor key + range + carried-min witness
 			if cat == f_bp {
 				let max_steps = pm.len();
@@ -2272,6 +2308,11 @@ pub(crate) struct QmVars<F: PrimeField + ColEle> {
 	pub prev_loc2: Vec<FpVar<F>>, pub pat: Vec<FpVar<F>>,
 	pub rg1: Vec<FpVar<F>>, pub rg2: Vec<FpVar<F>>,
 	pub enc_prev: Vec<FpVar<F>>, pub b_bwd: Vec<FpVar<F>>,
+	/// T925 (NONAGGR; EMPTY in aggr): the committed carry-in bit,
+	/// 1 on every row that came from Q_i -- the seed row INCLUDED
+	/// (push_real). Consumers read the free LC b_cin - is_seed,
+	/// which assert_qm_union binds and returns.
+	pub b_cin: Vec<FpVar<F>>,
 	// T703a: the five cert/sort vecs are EMPTY on the aggr arm
 	// (served as virtual RANGE2 queries, not committed cells).
 	pub d_c1: Vec<FpVar<F>>, pub d_c2: Vec<FpVar<F>>,
@@ -2347,15 +2388,17 @@ pub(crate) struct QmRanks<F: PrimeField + ColEle> {
 ///
 ///   REACHABLE instance -- subset Q_r = wrap|C|BP|SP rows (all
 ///     but FP). Used where the claim is "this row was not
-///     forward-pruned": assert_fwd_pruning's two bracketing
-///     neighbors of an FP row, and the seed anchors.
+///     forward-pruned": the predecessor of every citing row
+///     (assert_carry; Figure 4's "a location at step i-1 in
+///     Q_r", both arms since T925), assert_fwd_pruning's upper
+///     bracketing neighbor of an FP row (the lower one rides the
+///     carry slot), and the seed anchors.
 ///
 ///   CARRIED instance -- subset = wrap|C rows only. Used where
-///     the claim is "this row SURVIVED into the carry":
-///     assert_carry's predecessor of a C row, and the
+///     the claim is "this row SURVIVED into the carry": the
 ///     group-minimum pins of assert_bwd_pruning /
 ///     assert_singleton_pruning (a minimum is only meaningful
-///     over surviving rows).
+///     over surviving rows). NONAGGR only.
 ///
 /// The id inside the packing is the row's rank WITHIN its
 /// subset (rid over Q_r, cid over carried), which is what makes
@@ -3400,8 +3443,10 @@ pub(crate) struct NeoCore<F: PrimeField + ColEle> {
 	/// m-table of the shared QC-target lookup (C-pred + BP-min +
 	/// SP-freeze + SP-dom query families).
 	pub mtbl_qc: Vec<F>,
-	/// union proof scalars [b_left_more_zero, diff_zero] for the
-	/// Q_m = Q_i u L multiset identity (len 2; empty in aggr).
+	/// union proof scalars: [b_left_more_zero, diff_zero] of the
+	/// Q_m = Q_i u L multiset identity, then (T925) the same pair
+	/// for the split q_i = {carried rows of Q_m} (len 4; empty in
+	/// aggr).
 	pub union_prf: Vec<F>,
 	/// JOIN RESULT temp table (all vecs empty in aggr).
 	pub jr: JrTable<F>,
@@ -3616,18 +3661,28 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			.collect()
 	}
 
-	/// NON-AGGRESSIVE m-table of the fused QR-target logup. Unlike
-	/// the aggressive gen_mtbl_qr, the C-pred family is ABSENT (it
-	/// moved to the QC target); only the FP bracket pairs and the
-	/// seed anchors query QR. Target rows = non-FP non-pad, keyed
-	/// pack(enc, rid, loc).
+	/// NON-AGGRESSIVE m-table of the fused QR-target logup. T925:
+	/// the predecessor family queries QR (Figure 4: "a location at
+	/// step i-1 in Q_r"), widened to every CITING row = non-seed
+	/// C/BP/SP with b_cin = 0 -- keyed off the per-row b_cin, NOT
+	/// off (enc, loc) in q_i, which would skip both copies of a
+	/// halo-straddle pair while the joined copy still queries.
+	/// Plus the FP bracket pairs and the seed anchors. Target rows
+	/// = non-FP non-pad, keyed pack(enc, rid, loc).
 	pub(crate) fn gen_mtbl_qr_nonaggr(t: &QmTable<F>, rid: &Vec<F>,
 		subsig_nat: &Vec<F>) -> Vec<F> {
 		let n = t.enc.len();
 		let f1 = F::from(1u64 << read_global_config().range2_bit);
 		let f_sh4 = f1 * f1 * f1 * f1;
 		let mut hm: HashMap<(F, F, F), u32> = HashMap::new();
+		let b_pred = |c: &F| *c == F::from(CAT_C)
+			|| *c == F::from(CAT_BP) || *c == F::from(CAT_SP);
 		for i in 0..n {
+			if b_pred(&t.cat[i]) && !t.step[i].is_zero()
+				&& t.b_cin[i].is_zero() {
+				*hm.entry((t.enc_prev[i], t.prev_id1[i],
+					t.prev_loc1[i])).or_insert(0) += 1;
+			}
 			if t.cat[i] == F::from(CAT_FP) {
 				*hm.entry((t.enc_prev[i], t.prev_id1[i],
 					t.prev_loc1[i])).or_insert(0) += 1;
@@ -3660,14 +3715,15 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		m
 	}
 
-	/// m-table of the fused QC-target logup (NON-AGGRESSIVE). Four
+	/// m-table of the fused QC-target logup (NON-AGGRESSIVE). Three
 	/// query families against rows keyed pack(enc, cid, loc), row
 	/// selector wrap-or-C:
-	///  C (non-seed): (enc_prev, prev_id1, prev_loc1) -- the
-	///    re-picked carried predecessor, prev_id1 in QC rank;
 	///  BP: (enc_next, 1, w_next) -- least carried loc at step i+1
 	///    (or its max-wrap when the step carries nothing);
 	///  SP: (enc_fz, 1, w_fz) freeze + (enc, 1, w_sp) min-dom.
+	/// T925: the C-pred family is GONE from here -- the predecessor
+	/// cert of every C/BP/SP row queries the QR target instead
+	/// (gen_mtbl_qr_nonaggr), so QC carries only cid-1 pins.
 	pub(crate) fn gen_mtbl_qc(t: &QmTable<F>, cid: &Vec<F>)
 	-> Vec<F> {
 		let n = t.enc.len();
@@ -3675,10 +3731,6 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		let na = &t.nonaggr;
 		let mut hm: HashMap<(F, F, F), u32> = HashMap::new();
 		for i in 0..n {
-			if t.cat[i] == F::from(CAT_C) && !t.step[i].is_zero() {
-				*hm.entry((t.enc_prev[i], t.prev_id1[i],
-					t.prev_loc1[i])).or_insert(0) += 1;
-			}
 			if t.cat[i] == F::from(CAT_BP) {
 				*hm.entry((na.enc_next[i], one, na.w_next[i]))
 					.or_insert(0) += 1;
@@ -3858,10 +3910,14 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		(d_lo, d_hi, mtbl)
 	}
 
-	/// The two zero-count reconciliation scalars of the multiset
-	/// identity Q_m = q_i union JR over pack(enc, loc), which
-	/// assert_qm_union checks in-circuit. The WHOLE step-0 group
-	/// leaves the identity on both sides: Q_m masks step==0 rows
+	/// The zero-count reconciliation scalars of the two multiset
+	/// identities assert_qm_union checks in-circuit over pack(enc,
+	/// loc): [0..2] the total Q_m = q_i union JR, [2..4] (T925) the
+	/// split q_i = {b_cin rows of Q_m}, whose right side is the
+	/// b_cin = 1, step >= 1 rows (the seed row's b_cin = 1 is
+	/// masked by is_seed in-circuit, its q_i partner by b_seed
+	/// here) and never packs to zero. The WHOLE step-0 group
+	/// leaves both identities on both sides: Q_m masks step==0 rows
 	/// (wraps AND the per-universe-subsig seed C rows the M8b
 	/// reseed synthesizes), q_i masks its seed-enc rows (enc =
 	/// subsig*2^4rb, the carried subset). Seed soundness is owned
@@ -3898,9 +3954,22 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			twice or dropped)", nz(&vec1), nz(&vec2), nz(&vec3));
 		let prf = gen_union_prf(&vec1, &vec2, &vec3,
 			"neo_union")?;
-		let g = |n: &str| prf.lock().unwrap().get_container(n)
-			.unwrap().lock().unwrap().to_vec()[0];
-		Ok(vec![g("b_left_more_zero"), g("diff_zero")])
+		// T925 split (U1): the carried copies of Q_m, keyed off the
+		// per-row tag (a halo-straddle pair has ONE tagged copy).
+		let vec3_cin: Vec<F> = (0..t.enc.len()).filter(|&i|
+			!t.b_cin[i].is_zero() && !t.step[i].is_zero())
+			.map(|i| t.enc[i] * base + t.loc[i]).collect();
+		assert!(nz(&vec1) == vec3_cin.len(),
+			"neo union: q_i {} != b_cin rows {} (carry-in tag out \
+			of step with q_i)", nz(&vec1), vec3_cin.len());
+		let prf_cin = gen_union_prf(&vec1, &vec![], &vec3_cin,
+			"neo_union_cin")?;
+		let g = |p: &Arc<Mutex<Container<F>>>, n: &str|
+			p.lock().unwrap().get_container(n).unwrap()
+				.lock().unwrap().to_vec()[0];
+		Ok(vec![g(&prf, "b_left_more_zero"), g(&prf, "diff_zero"),
+			g(&prf_cin, "b_left_more_zero"),
+			g(&prf_cin, "diff_zero")])
 	}
 
 	/// NON-AGGRESSIVE bundle assembler (paper C.1). Builds the
@@ -4885,12 +4954,16 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 //   shared lookups / verdict (approved interfaces; bodies P2)
 // ============================================================
 
-/// Union proof advice for assert_qm_union: the two zero-count
-/// reconciliation scalars of the multiset identity
-/// (verify_union_prf, db.rs).
+/// Union proof advice for assert_qm_union: the zero-count
+/// reconciliation scalar pairs (b_left_more_zero, diff_zero) of
+/// TWO multiset identities (verify_union_prf, db.rs) -- the total
+/// Q_m = q_i u JR, and T925's split q_i = {carried rows of Q_m}.
+/// union_prf[0..2] and [2..4] respectively, all committed pre-r1.
 pub(crate) struct QmUnionAdvice<F: PrimeField + ColEle> {
 	pub b_left_more_zero: FpVar<F>,
 	pub diff_zero: FpVar<F>,
+	pub b_left_more_zero_cin: FpVar<F>,
+	pub diff_zero_cin: FpVar<F>,
 }
 
 impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
@@ -5220,28 +5293,50 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		PredView { key1, key2 }
 	}
 
-	/// Verifies the CARRY labels of Q_m: a row tagged C really
-	/// survives, and the committed carry-out wire q_c is exactly
-	/// that set of rows. C is the paper's Q_c certificate
-	/// (fig:prune step 3) -- some location at the previous step
-	/// reaches this one. Step-0 rows (the seed) are carried by
-	/// definition, and FP/BP/SP rows are not touched here.
+	/// Verifies the PREDECESSOR certificates of Q_m and the carry
+	/// projection. Figure 4 (fig:prune step 3): every reachable
+	/// row e in Q_r \ (Q_i u {seed}) names a location at step i-1
+	/// IN Q_r whose window covers it; Q_i rows are exempt (their
+	/// predecessor lives in the previous chunk) and the seed is
+	/// the root. Step-0 rows are carried by definition; FP rows
+	/// are certified by assert_fwd_pruning instead.
 	///
-	/// Two checks, both masked to is_c:
+	/// Per row, masked to sel_pred:
+	///   aggr:    sel_pred = is_c - is_seed  (unchanged, M6);
+	///   nonaggr: sel_pred = is_c + is_bp + is_sp - is_seed - b_cin
+	///            (T925: the predicate class widened to BP/SP --
+	///            rows pruned for a FORWARD reason are reachable
+	///            and certify honestly -- minus the carried rows).
 	///  (1) reach window: gap = |loc - prev_loc1| lies in
-	///      [rg1, rg2] via the RANGE2 advice d_c1/d_c2, and the
-	///      named predecessor exists -- that query is buffered
-	///      for assert_qm_lookups to discharge against the
-	///      carried rows;
+	///      [rg1, rg2] via the RANGE2 advice d_c1/d_c2;
+	///  (1c) NONAGGR anchor ban (+1cs): prev_loc1 * inv = sel_pred.
+	///      The QR target holds one synthetic (enc, 0, 0) slot per
+	///      group with CONSTANT selector 1 (FP's "nothing
+	///      reachable below"); a citing row landing there would
+	///      fabricate reach at loc 0. ONE direction only: sel_pred
+	///      = 1 forces prev_loc1 invertible, so nonzero (a legit
+	///      pred sits at loc >= 1); sel_pred = 0 takes inv = 0. FP
+	///      rows are OUTSIDE sel_pred and keep their legitimate
+	///      anchor citation -- a ban over sel_pred + is_fp would
+	///      break them silently;
+	///  (1d) the named predecessor exists in Q_r: (enc_prev,
+	///      prev_id1, prev_loc1) is buffered into the REACHABLE
+	///      instance with selector sel_pred + is_fp -- ONE fused
+	///      slot per row, shared with assert_fwd_pruning's lower
+	///      neighbor (same key; the cats are exclusive and b_cin =
+	///      1 implies a C/BP/SP cat, so the sum stays in {0,1});
 	///  (2) projection q_c = sigma_C(Q_m), a permutation check;
 	///      NONAGGR only, the aggressive arm commits no carry.
 	///
 	/// EXAMPLE (fig-14): C row a7:101 with pred a6:96, rg{1,9}
 	/// gives gap 5, d_c1 = 4, d_c2 = 4, and q_c holds (a7, 101).
+	/// A forged pred (enc_6, 0, 0) hits the anchor slot and binds
+	/// gap = 101 in-window, but 0 * inv = 1 is UNSAT.
 	///
 	/// PARAMS: b_aggr selects the arm; pv = shared predecessor
-	/// view (in aggr, fwd_pruning's lower-neighbor query rides
-	/// this fn's fused key1 push).
+	/// view; b_cin = the bound carry-in bits returned by
+	/// assert_qm_union (EMPTY in aggr); buf = the REACHABLE-target
+	/// instance, both arms.
 	/// CONSUMERS of q_c: the folding driver binds it to the NEXT
 	/// chunk's q_i (whose union step rebuilds Q_m from it), and
 	/// compute_sig reads the final chunk's q_c for the verdict.
@@ -5250,13 +5345,17 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		qm: &QmVars<F>,  // loc, prev_loc1, rg1, rg2, enc
 		                 //   (+ d_c1/d_c2 cells, nonaggr only)
 		sel: &NeoSel<F>, // is_c, is_fp, is_seed, b_bwd_row
+		                 //   (+ is_bp, is_sp, nonaggr only)
+		b_cin: &[FpVar<F>],
+		                 // T925 bound carry-in bits, one per row
+		                 //   (b_cin - is_seed); EMPTY in aggr
 		b_aggr: bool,    // arm: bwd windows + no q_c
 		q_c: (&[FpVar<F>], &[FpVar<F>], &[F]),
 		                 // carry-out transport (enc vars, loc
 		                 //   vars, enc native); EMPTY in aggr
 		pv: &PredView<F>,
 		buf: &mut QmQueryBuf<F>,
-		                 // CARRIED-target instance
+		                 // REACHABLE-target instance (both arms)
 		r2: &FpVar<F>,
 		mut vq: Option<&mut (Vec<FpVar<F>>, Vec<FpVar<F>>)>,
 		                 // T703a Some = aggr virtual-cert mode:
@@ -5271,11 +5370,29 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let rb = read_global_config().range2_bit;
 		let c_one = new_const_var(&cs, F::one());
 		let c_base = new_const_var(&cs, F::from(1u64 << rb));
+		// T925 anchor-ban advice inv = sel_pred / prev_loc1, 0 on a
+		// non-citing row; batch-inverted (zeros stay zero).
+		let z = F::zero();
+		let inv_ban: Vec<F> = if b_aggr { vec![] } else {
+			let mut w: Vec<F> = qm.prev_loc1.iter()
+				.map(|x| x.value().unwrap_or(z)).collect();
+			batch_inversion(&mut w);
+			w
+		};
 		for i in 0..n {
 			// --- (1) reach window (2cs both arms) ---
 			// sel_c = non-seed C rows; free: the seed pin makes
 			// is_seed exact (see NeoSel::is_seed).
 			let sel_c = &sel.is_c[i] - &sel.is_seed[i];
+			// T925 nonaggr: widen to BP/SP, exempt the carried
+			// rows. Free LC, in {0,1}: b_cin = 1 forces one of
+			// is_c/is_bp/is_sp (assert_qm_union's containment).
+			// The aggr arm keeps sel_c verbatim -- is_bp/is_sp/
+			// b_cin are EMPTY there, so the selector work cannot
+			// leak out of the nonaggr branch.
+			let sel_pred = if b_aggr { sel_c } else {
+				&(&(&sel_c + &sel.is_bp[i]) + &sel.is_sp[i])
+					- &b_cin[i] };
 			// non-aggr is forward-only (no backward subsigs), so
 			// the orientation select is an aggressive-arm cost.
 			let gap = if b_aggr {
@@ -5290,41 +5407,44 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			// in-window). T703a aggr (Some arm): no cell -- push
 			// the SAME product as the RANGE2 query value itself.
 			// Enforcement is unchanged: value in table <=> diff
-			// >= 0; off-class rows push 0 via sel_c = 0. Cost is
+			// >= 0; off-class rows push 0 via sel_pred = 0. Cost is
 			// unchanged too (the bind allocated the same 2 muls).
 			// EXAMPLE a3:27 pred 21, rg {1,9}: pushes 5 and 3;
 			// a forged pred at 40 -> gap -13 -> the value -14
 			// wraps huge -> RANGE2 rejects.
 			match vq.as_deref_mut() {
 				Some((t1, t2)) => {
-					t1.push(&sel_c * &(&gap - &qm.rg1[i]));
-					t2.push(&sel_c * &(&qm.rg2[i] - &gap));
+					t1.push(&sel_pred * &(&gap - &qm.rg1[i]));
+					t2.push(&sel_pred * &(&qm.rg2[i] - &gap));
 				},
 				None => {
-					check_prod_zero(&sel_c,
+					check_prod_zero(&sel_pred,
 						&(&(&gap - &qm.rg1[i]) - &qm.d_c1[i]),
 						lc!(), "neo C d1")?;
-					check_prod_zero(&sel_c,
+					check_prod_zero(&sel_pred,
 						&(&(&qm.rg2[i] - &gap) - &qm.d_c2[i]),
 						lc!(), "neo C d2")?;
 				},
 			}
-			// NONAGGR: no separate "pred not the group's 0-wrap"
-			// ban needed -- T306b deleted the 0-wrap itself, and QC
-			// (this fn's carried-target instance) has NO loc-0
-			// entry to forge a match against (BP/SP always cite cid
-			// 1; C's own pred here is what THIS check certifies).
-			// A fake (enc_prev, 0, 0) pred fails the QC lookup in
-			// assert_qm_lookups outright: structural, not asserted.
-			// aggr: fwd_pruning's lower-neighbor query is the
-			// SAME key; one fused slot serves both (exclusive
-			// cats keep the fused sel in {0,1}).
-			if b_aggr {
-				buf.push(pv.key1[i].clone(),
-					&sel_c + &sel.is_fp[i]);
-			} else {
-				buf.push(pv.key1[i].clone(), sel_c);
+			// --- (1c) anchor ban (nonaggr, 1cs) ---
+			// The reachable target's per-group (enc, 0, 0) slot has
+			// selector 1 by construction (assert_qm_lookups); only
+			// this product keeps a citing row off it. 0 * inv = 1
+			// is UNSAT on an anchor citation; a non-citing row
+			// takes inv = 0. The aggressive arm already routes its
+			// C-preds through the anchored buffer with no ban --
+			// completeness-only there, and deliberately untouched.
+			if !b_aggr {
+				let sv = sel_pred.value().unwrap_or(z);
+				let inv = new_var(&cs, sv * inv_ban[i]);
+				check_prod_eq(&qm.prev_loc1[i], &inv, &sel_pred,
+					"neo pred anchor ban")?;
 			}
+			// --- (1d) predecessor query -> REACHABLE target ---
+			// fwd_pruning's lower-neighbor query is the SAME key;
+			// one fused slot serves both (exclusive cats keep the
+			// fused sel in {0,1}). Both arms, since T925.
+			buf.push(pv.key1[i].clone(), &sel_pred + &sel.is_fp[i]);
 		}
 		// --- (2) projection q_c = sigma_C(Q_m) ---
 		// is_c identifies the carry set only INSIDE this circuit;
@@ -5350,7 +5470,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		log(job_id, LOG4, &format!(
 			"PERF 61082.4: block=carry cs={} pred={}",
 			cs.num_constraints() - n0,
-			if b_aggr { 3 * n } else { 4 * n + 4 * q_c.0.len() }));
+			if b_aggr { 3 * n } else { 5 * n + 4 * q_c.0.len() }));
 		Ok(())
 	}
 
@@ -5367,7 +5487,8 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	///  (2) above: prev_loc2 + rg1 - loc - 1 >= 0 via d_above_lo;
 	///      skipped when prev_loc2 is the max-wrap;
 	///  (3) the neighbor pair exists rank-adjacent in Q_r:
-	///      pv.key1 / pv.key2 go to the REACHABLE buffer.
+	///      pv.key2 goes to the REACHABLE buffer here; pv.key1
+	///      rides assert_carry's fused slot (both arms, T925).
 	///
 	/// EXAMPLE (fig-14): FP a7:131 vs neighbors 96/141, rg{1,9}:
 	/// below 131-96-9-1 = 25, above 141+1-131-1 = 10, both >= 0.
@@ -5512,18 +5633,16 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 					"neo gap into wrap")?;
 			}
 			m_hi_prev = m_hi.clone();
-			// (3): key1 rides assert_carry's fused slot in aggr
-			// (same key, exclusive sels).
-			if !b_aggr {
-				buf.push(pv.key1[i].clone(),
-					sel.is_fp[i].clone());
-			}
+			// (3): key1 rides assert_carry's fused slot in BOTH
+			// arms (same key, exclusive sels; T925 retargeted the
+			// nonaggr predecessor query to Q_r, absorbing the
+			// separate FP push this block used to make).
 			buf.push(pv.key2[i].clone(), sel.is_fp[i].clone());
 		}
 		log(job_id, LOG4, &format!(
 			"PERF 61082.5: block=fwd_prune cs={} pred={}",
 			cs.num_constraints() - n0,
-			(if b_aggr { 5 } else { 4 }) * n));
+			(if b_aggr { 5 } else { 3 }) * n));
 		Ok((q_bl, q_al, q_ext))
 	}
 
@@ -5819,10 +5938,34 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	/// and b_seed = 0 on a true seed row leaves its pack with no
 	/// vec3 partner -- forced honest both ways. Halo-straddle
 	/// duplicates are two Q_m rows, one paid by each side.
+	///
+	/// T925 -- the carry-in bit. The union erases provenance, but
+	/// Figure 4 exempts Q_i rows from the in-chunk predecessor
+	/// cert, so a per-row bit b = b_cin - is_seed (the committed
+	/// column holds 1 on the seed row too; is_seed is exact) is
+	/// bound here by three labelled obligations, 1cs each:
+	///  (B) booleanity b * (b - 1) = 0 -- LOAD-BEARING: a non-
+	///      boolean b admits a one-parameter family satisfying
+	///      U1, the containment and the anchor ban together;
+	///  (K) containment b * (1 - S) = 0, S = is_c + is_bp + is_sp
+	///      - is_seed in {0,1}: Q_i subseteq Q_r, a carried row is
+	///      never FP, wrap, pad or seed. On the seed row S = 0
+	///      forces b = 0, i.e. b_cin = 1 exactly as emitted; it
+	///      also keeps every zero-pack row off U1's right side;
+	///  (U1) the SPLIT identity q_i = {b = 1 rows of Q_m}, sharing
+	///      the total identity's inverses (+1cs per row for
+	///      b * inv3). With b boolean it pins b = 1 to exactly the
+	///      rows q_i pays for: a fresh row stamping itself carried
+	///      (to skip its cert) leaves a 1/(pack + r1) residual no
+	///      pre-committed scalar can absorb, and un-stamping a
+	///      carried row leaves its q_i entry unpaid. U2 (JR = the
+	///      fresh rows) is the total minus U1, free.
+	/// RETURNS the bound bits b, one per Q_m row, for assert_carry.
 	fn assert_qm_union(
 		cs: ConstraintSystemRef<F>,
-		qm: &QmVars<F>,  // enc, loc (vec3 side)
-		sel: &NeoSel<F>, // is_step0 (masks the seed group)
+		qm: &QmVars<F>,  // enc, loc (vec3 side), b_cin
+		sel: &NeoSel<F>, // is_step0 (masks the seed group);
+		                 //   is_c/is_bp/is_sp/is_seed (containment)
 		q_i: (&[FpVar<F>], &[FpVar<F>]),
 		                 // carried-in enc, loc (pad rows = 0)
 		l_join: (&[FpVar<F>], &[FpVar<F>]),
@@ -5832,7 +5975,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		prf: &QmUnionAdvice<F>,
 		r1: &FpVar<F>,
 		job_id: usize,
-	) -> Result<(), SynthesisError> {
+	) -> Result<Vec<FpVar<F>>, SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = qm.enc.len();
 		let rb = read_global_config().range2_bit;
@@ -5884,22 +6027,80 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			&(&c_one - &sel.is_step0[i])
 				* &(&(&qm.enc[i] * &c_base) + &qm.loc[i]))
 			.collect();
-		verify_union_prf_vars(cs.clone(), &vec1, &vec2, &vec3,
-			&prf.b_left_more_zero, &prf.diff_zero, r1)?;
+		// ---- T925 carry-in bit: (B) + (K), 2cs per row ----
+		let b_cin: Vec<FpVar<F>> = (0..n).map(|i|
+			&qm.b_cin[i] - &sel.is_seed[i]).collect();
+		for i in 0..n {
+			check_prod_zero(&b_cin[i], &(&b_cin[i] - &c_one), lc!(),
+				"neo b_cin boolean")?;
+			let s = &(&(&sel.is_c[i] + &sel.is_bp[i])
+				+ &sel.is_sp[i]) - &sel.is_seed[i];
+			check_prod_zero(&b_cin[i], &(&c_one - &s), lc!(),
+				"neo b_cin containment")?;
+		}
+		// ---- the two identities, INLINED from db.rs's
+		// verify_union_prf_vars so U1 can share the vec3 inverses
+		// (a second black-box call would re-prove n + |q_i|
+		// inverses). Same constraints in the same order. ----
+		let r_val = r1.value().unwrap_or(z);
+		let mut w: Vec<F> = vec1.iter().chain(vec2.iter())
+			.chain(vec3.iter())
+			.map(|x| x.value().unwrap_or(z) + r_val).collect();
+		batch_inversion(&mut w);
+		let mut it = w.into_iter();
+		let mut alloc = |m: usize| -> Vec<FpVar<F>> { (0..m)
+			.map(|_| new_var(&cs, it.next().unwrap())).collect() };
+		let inv1 = alloc(vec1.len());
+		let inv2 = alloc(vec2.len());
+		let inv3 = alloc(vec3.len());
+		verify_inverse(cs.clone(), &vec1, &inv1, r1, vec1.len())?;
+		verify_inverse(cs.clone(), &vec2, &inv2, r1, vec2.len())?;
+		verify_inverse(cs.clone(), &vec3, &inv3, r1, vec3.len())?;
+		// (U1) right side: the b-selected rows, 1cs per row
+		let inv3_cin: Vec<FpVar<F>> = (0..n).map(|i|
+			&b_cin[i] * &inv3[i]).collect();
+		let sum1: FpVar<F> = inv1.iter().sum();
+		let sum2: FpVar<F> = inv2.iter().sum();
+		let sum3: FpVar<F> = inv3.iter().sum();
+		let sum3_cin: FpVar<F> = inv3_cin.iter().sum();
+		// zero reconciliation, shared 1/r1: a zero entry (pad, or a
+		// masked seed row) contributes 1/r1; the committed pair
+		// (b_left_more_zero, diff_zero) moves the surplus to the
+		// lighter side. Committed BEFORE r1 (core_container), which
+		// is what stops a scalar absorbing a real pack's residual.
+		let inv_0 = r1.inverse()?;
+		let identity = |b: &FpVar<F>, d: &FpVar<F>,
+			left: &FpVar<F>, right: &FpVar<F>, msg: &str|
+		-> Result<(), SynthesisError> {
+			b.enforce_equal(&(b * b))?;
+			let term = &inv_0 * d;
+			let case1 = &(left - right) - &term;
+			let case2 = &(left + &term) - right;
+			let res = &(b * &(&case1 - &case2)) + &case2;
+			check_eq(&res, &FpVar::zero(), msg)
+		};
+		// (U) total: Q_m = q_i u JR
+		identity(&prf.b_left_more_zero, &prf.diff_zero,
+			&(&sum1 + &sum2), &sum3, "neo union total")?;
+		// (U1) split: q_i = the carried rows of Q_m. Its right side
+		// has no zero entry (K), so honest scalars are (1, #zeros
+		// of vec1); the two-case form is kept for uniformity.
+		identity(&prf.b_left_more_zero_cin, &prf.diff_zero_cin,
+			&sum1, &sum3_cin, "neo union split (b_cin)")?;
 		log(job_id, LOG4, &format!(
 			"PERF 61082.2: block=union cs={} pred={}",
 			cs.num_constraints() - n0,
-			3 * n + 5 * vec1.len() + vec2.len()
+			6 * n + 5 * vec1.len() + vec2.len()
 				+ 2 * tbl.len()));
-		Ok(())
+		Ok(b_cin)
 	}
 
 	/// Discharges every query buffered by the certificate
 	/// functions: one batch membership lookup (logup) against
-	/// Q_m's REACHABLE rows (buf_qr: FP brackets from
-	/// fwd_pruning + seed anchors; in aggr also the C-preds) and
-	/// one against its CARRIED rows (buf_qc, nonaggr only:
-	/// C-preds from carry, BP mins, SP freeze/kept pins).
+	/// Q_m's REACHABLE rows (buf_qr: the predecessor certs from
+	/// carry -- both arms since T925 -- FP upper brackets from
+	/// fwd_pruning, seed anchors) and one against its CARRIED
+	/// rows (buf_qc, nonaggr only: BP mins, SP freeze/kept pins).
 	/// Closing the batch here lets ONE m-table and ONE argument
 	/// serve every certificate.
 	///
@@ -5920,7 +6121,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	/// EXAMPLE (fig-14): assert_carry buffered C row a2:21's
 	/// predecessor key (enc(a,1), 1, 9); it must hit committed
 	/// row a1:9 here.
-	///  - honest: a1:9 is carried (C), its cid is 1 -> hit.
+	///  - honest: a1:9 is reachable (C), its rid is 1 -> hit.
 	///  - CHEAT phantom parent: cite a loc no committed row
 	///    holds -> no target packs to that key -> UNSAT.
 	///  - CHEAT wrong subset: cite an FP row as predecessor ->
@@ -6157,7 +6358,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    view shared with the fwd-pruning block --
 		let pv = Self::gen_pred_view(&vars.qm, r1, &r1sq);
 		let mut cvq = (vec![], vec![]);
-		Self::assert_carry(cs.clone(), &vars.qm, &sel, true,
+		Self::assert_carry(cs.clone(), &vars.qm, &sel, &[], true,
 			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
 			&mut buf, r2, Some(&mut cvq), job_id)?;
 		// -- 7. fwd pruning: every FP label justified by
@@ -6273,22 +6474,29 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			&vars.d_ns_lo, &vars.d_ns_hi, &vars.l_pat,
 			&vars.mtbl_ns, r1, r2, job_id)?;
 		// -- 7. multiset identity Q_m = q_i (carried in) union
-		//    the join result: no row dropped or smuggled --
+		//    the join result: no row dropped or smuggled; T925
+		//    also binds the carry-in bits (split identity) and
+		//    hands them to step 8 --
 		let prf = QmUnionAdvice {
 			b_left_more_zero: vars.union_prf[0].clone(),
-			diff_zero: vars.union_prf[1].clone() };
-		Self::assert_qm_union(cs.clone(), &vars.qm, &sel,
-			(&vars.qi_enc, &vars.qi_loc),
+			diff_zero: vars.union_prf[1].clone(),
+			b_left_more_zero_cin: vars.union_prf[2].clone(),
+			diff_zero_cin: vars.union_prf[3].clone() };
+		let b_cin = Self::assert_qm_union(cs.clone(), &vars.qm,
+			&sel, (&vars.qi_enc, &vars.qi_loc),
 			(&vars.jr.enc, &vars.jr.loc),
 			(&vars.subsigs, &nat.subsig_nat), &prf, r1,
 			job_id)?;
-		// -- 8. carry-out queue q_c: the tight carried set
-		//    handed to the next chunk (holds the verdict);
-		//    pv = the predecessor view shared with fwd --
+		// -- 8. predecessor certs of every citing row (non-seed
+		//    C/BP/SP with b_cin = 0) into the REACHABLE buffer,
+		//    fused with fwd's lower-neighbor key; + the carry-out
+		//    queue q_c: the tight carried set handed to the next
+		//    chunk (holds the verdict); pv = the predecessor view
+		//    shared with fwd --
 		let pv = Self::gen_pred_view(&vars.qm, r1, &r1sq);
-		Self::assert_carry(cs.clone(), &vars.qm, &sel, false,
-			(&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
-			&mut buf_qc, r2, None, job_id)?;
+		Self::assert_carry(cs.clone(), &vars.qm, &sel, &b_cin,
+			false, (&vars.qc_enc, &vars.qc_loc, &nat.qc_enc), &pv,
+			&mut buf_qr, r2, None, job_id)?;
 		// -- 9. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
 		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
@@ -6505,6 +6713,11 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			fix(&na.d_kept, "d_kept", f_r2);
 			fix(&nat.mtbl_qc, "mtbl_qc", z);
 			fix(&nat.union_prf, "union_prf", z);
+			//Task A: carry-in bit, committed (not value()-derived)
+			//so the carried-row exemption rests on the commitment;
+			//si 0 (booleanity, containment and the split union are
+			//in assert_qm_union).
+			fix(&t.b_cin, "b_cin", z);
 			//JR data cols: enc union-bound (si 0), id chain-bound
 			//(si 0), loc RANGE2 (packing legality of the
 			//membership triple).
@@ -7005,6 +7218,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (d_below_lo, d_below_lo_n) = (vec![], vec![]);
 		let (d_above_lo, d_above_lo_n) = (vec![], vec![]);
 		let (d_sort, d_sort_n) = (vec![], vec![]);
+		//b_cin is a non-aggressive column (aggr has no carry-in).
+		let b_cin_n: Vec<F> = vec![];
 		// -- 2. si_* companions (outer-lookup share) --
 		let (si_step, si_step_n) = c2("si_step")?;
 		let (si_subsig, si_subsig_n) = c2("si_subsig")?;
@@ -7055,9 +7270,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let t = QmTable { enc: enc_n, id: id_n, loc: loc_n,
 			cat: cat_n, step: step_n, subsig: subsig_n,
 			prev_id1: prev_id1_n, prev_loc1: prev_loc1_n,
-			prev_loc2: prev_loc2_n, pat: pat_n, rg1: rg1_n,
-			rg2: rg2_n, enc_prev: enc_prev_n, b_bwd: b_bwd_n,
-			d_c1: d_c1_n, d_c2: d_c2_n,
+			prev_loc2: prev_loc2_n, b_cin: b_cin_n, pat: pat_n,
+			rg1: rg1_n, rg2: rg2_n, enc_prev: enc_prev_n,
+			b_bwd: b_bwd_n, d_c1: d_c1_n, d_c2: d_c2_n,
 			d_below_lo: d_below_lo_n, d_above_lo: d_above_lo_n,
 			d_sort: d_sort_n, si_step: si_step_n,
 			si_subsig: si_subsig_n, si_pat: si_pat_n,
@@ -7077,7 +7292,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			jr: JrTable::default() };
 		let qm = QmVars { enc, id, loc, cat, step, subsig,
 			prev_id1, prev_loc1, prev_loc2, pat, rg1, rg2,
-			enc_prev, b_bwd, d_c1, d_c2, d_below_lo,
+			enc_prev, b_bwd, b_cin: vec![], d_c1, d_c2, d_below_lo,
 			d_above_lo, d_sort, si_step, si_subsig,
 			si_pat, si_rg1, si_rg2, si_enc_prev, si_b_bwd,
 			nonaggr: QmNonAggrVars::empty() };
@@ -7170,6 +7385,8 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (d_fz, d_fz_n) = c2("d_fz")?;
 		let (w_kept, w_kept_n) = c2("w_kept")?;
 		let (d_kept, d_kept_n) = c2("d_kept")?;
+		//Task A carry-in bit (T925): bound in assert_qm_union.
+		let (b_cin, b_cin_n) = c2("b_cin")?;
 		let (si_bp_prev, si_bp_prev_n) = c2("si_bp_prev_val")?;
 		let (si_rg2_next, si_rg2_next_n) = c2("si_rg2_next")?;
 		let (si_fz, si_fz_n) = c2("si_fz")?;
@@ -7235,9 +7452,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let t = QmTable { enc: enc_n, id: id_n, loc: loc_n,
 			cat: cat_n, step: step_n, subsig: subsig_n,
 			prev_id1: prev_id1_n, prev_loc1: prev_loc1_n,
-			prev_loc2: prev_loc2_n, pat: pat_n, rg1: rg1_n,
-			rg2: rg2_n, enc_prev: enc_prev_n, b_bwd: b_bwd_n,
-			d_c1: d_c1_n, d_c2: d_c2_n,
+			prev_loc2: prev_loc2_n, b_cin: b_cin_n, pat: pat_n,
+			rg1: rg1_n, rg2: rg2_n, enc_prev: enc_prev_n,
+			b_bwd: b_bwd_n, d_c1: d_c1_n, d_c2: d_c2_n,
 			d_below_lo: d_below_lo_n, d_above_lo: d_above_lo_n,
 			d_sort: d_sort_n, si_step: si_step_n,
 			si_subsig: si_subsig_n, si_pat: si_pat_n,
@@ -7264,7 +7481,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			si_fz_sub };
 		let qm = QmVars { enc, id, loc, cat, step, subsig,
 			prev_id1, prev_loc1, prev_loc2, pat, rg1, rg2,
-			enc_prev, b_bwd, d_c1, d_c2, d_below_lo,
+			enc_prev, b_bwd, b_cin, d_c1, d_c2, d_below_lo,
 			d_above_lo, d_sort, si_step, si_subsig,
 			si_pat, si_rg1, si_rg2, si_enc_prev, si_b_bwd,
 			nonaggr: na_v };
@@ -7520,7 +7737,7 @@ pub(crate) mod tests_neo_m4 {
 		StepQueueItemNeo {
 			cat: rows.iter().map(|r| f(r.1)).collect(),
 			prev_id1: vec![f(0); n], prev_loc1: vec![f(0); n],
-			prev_loc2: vec![f(0); n],
+			prev_loc2: vec![f(0); n], cin: vec![f(0); n],
 			min_next: f(0), fz: f(fz), queue_len: f(0), base,
 		}
 	}
@@ -7539,6 +7756,7 @@ pub(crate) mod tests_neo_m4 {
 			StepQueueItem::new(f(1), f(0), f(0), f(0), f(0),
 				vec![f(1)]));
 		seed.cat[0] = f(CAT_C);
+		seed.cin[0] = f(1);
 		let mut items = vec![seed,
 			mk(1, 1, 1, f(9), 0, &[(6, CAT_C)]),
 			mk(2, 2, 0, inf,  5, &[(21, CAT_C), (111, CAT_C)]),
@@ -7563,6 +7781,15 @@ pub(crate) mod tests_neo_m4 {
 		items[7].prev_id1  = vec![f(2), f(2)];
 		items[7].prev_loc1 = vec![f(96), f(96)];
 		items[7].prev_loc2 = vec![f(0), f(141)];
+		//carry-in tags: chunk-1 carried {6, 21, 27, 33, 39, 73, 79}
+		//(a18_carried); 111/106/96/141/101/131 are chunk-2 joins.
+		items[1].cin = vec![f(1)];
+		items[2].cin = vec![f(1), f(0)];
+		items[3].cin = vec![f(1)];
+		items[4].cin = vec![f(1)];
+		items[5].cin = vec![f(1), f(0)];
+		items[6].cin = vec![f(1), f(1), f(0), f(0)];
+		items[7].cin = vec![f(0), f(0)];
 		let mut store_items = HashMap::new();
 		store_items.insert(f(1), items);
 		let mut neo = StepQueueNeo {
@@ -7611,7 +7838,15 @@ pub(crate) mod tests_neo_m4 {
 			StepQueueNeo::<Fr>::qc_vec_size(&neo.capacity), 2 * ns);
 		let neo2 = StepQueueNeo::parse_full(&v,
 			&neo.capacity, neo.b_igc);
-		assert_eq!(neo2, neo);
+		//cin is generator-side provenance, deliberately kept OUT of the
+		//(B) serialization (T925), so a parsed copy has it cleared.
+		let mut neo_ser = neo.clone();
+		for v in neo_ser.store_items.values_mut() {
+			for it in v.iter_mut() {
+				it.cin = vec![f(0); it.cin.len()];
+			}
+		}
+		assert_eq!(neo2, neo_ser);
 	}
 
 	#[test]
@@ -7688,6 +7923,46 @@ pub(crate) mod tests_neo_m5 {
 		m.insert(f(1), items);
 		StepQueueNeo::from_stepqueue(StepQueue::new(vec![f(1)], m,
 			&fixture_capacity(), StepQueueType::ResLarge, false))
+	}
+
+	//T925 ROOT fixture (TASK_A.md section 5): SDE a1 .{1,9} a2
+	//.{1,9} a3 .{1,9} a4 -- a1 anywhere (1,mx), a2..a4 gap (1,9);
+	//fz = 4 at steps 1..3 (a4 is the downstream singleton), 0 at 4.
+	pub(crate) fn root_store() -> SubsigStepStore {
+		let mx = (1usize << read_global_config().range2_bit) - 1;
+		let pm = vec![(1,(1,mx)), (2,(1,9)), (3,(1,9)), (4,(1,9))];
+		let item = SubsigStepStoreItem { subsig_id: 1, igc: false,
+			vec_pm_bounds: pm, is_backward: false };
+		let mut m = std::collections::HashMap::new();
+		m.insert(1usize, item);
+		SubsigStepStore { subsig_ids: vec![1], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	//root-store carry: the seed (loc 1) plus `steps[i]` = the locs
+	//carried at step i+1 (contiguous from step 1; windows as
+	//root_store).
+	pub(crate) fn root_carried_from(steps: &[&[u32]])
+	-> StepQueueNeo<Fr> {
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		let mut items = vec![StepQueueItem::new(f(1), f(0), f(0),
+			f(0), f(0), vec![f(1)])];
+		for (i, locs) in steps.iter().enumerate() {
+			let st = (i + 1) as u32;
+			let b = if st == 1 { mx } else { f(9) };
+			items.push(StepQueueItem::new(f(1), f(st), f(st), f(1),
+				b, locs.iter().map(|x| f(*x)).collect()));
+		}
+		let mut m = HashMap::new();
+		m.insert(f(1), items);
+		StepQueueNeo::from_stepqueue(StepQueue::new(vec![f(1)], m,
+			&fixture_capacity(), StepQueueType::ResLarge, false))
+	}
+
+	//section 5's carry as a chain-closed generator emits it, with
+	//the dead a1:6 kept: {0:[1], 1:[6], 2:[58], 3:[66], 4:[74]}.
+	pub(crate) fn root_carried() -> StepQueueNeo<Fr> {
+		root_carried_from(&[&[6], &[58], &[66], &[74]])
 	}
 
 	//chunk-2 matches (dummy wrap entries 0/max, ids ascending).
@@ -8585,16 +8860,21 @@ pub(crate) mod tests_neo_r1 {
 		let qr = NeoCore::gen_mtbl_qr_nonaggr(&t, &rid, &subs);
 		let cnt = |c0: u32| t.cat.iter()
 			.filter(|c| **c == f(c0)).count();
-		let n_c1 = (0..t.enc.len()).filter(|i|
-			t.cat[*i] == f(CAT_C) && !t.step[*i].is_zero()).count();
+		// T925: qr also holds the predecessor family of every
+		// CITING row (non-seed C/BP/SP with b_cin = 0); qc lost the
+		// C family and keeps BP's w_next pin + SP's two pins.
+		let n_cite = (0..t.enc.len()).filter(|&i|
+			(t.cat[i] == f(CAT_C) || t.cat[i] == f(CAT_BP)
+				|| t.cat[i] == f(CAT_SP))
+			&& !t.step[i].is_zero() && t.b_cin[i].is_zero()).count();
 		assert_eq!(qr.iter().map(|x| field_to_usize(x))
-			.sum::<usize>(), 2 * cnt(CAT_FP) + 1);
+			.sum::<usize>(), 2 * cnt(CAT_FP) + 1 + n_cite);
 		let mut t2 = g.gen_qm_table(&info, false).expect("table");
 		t2.fill_nonaggr(&info, f(A18_DEFAULT_MIN));
 		let qc = NeoCore::gen_mtbl_qc(&t2, &cid);
 		assert_eq!(qc.iter().map(|x| field_to_usize(x))
 			.sum::<usize>(),
-			n_c1 + cnt(CAT_BP) + 2 * cnt(CAT_SP));
+			cnt(CAT_BP) + 2 * cnt(CAT_SP));
 		for i in 0..t.enc.len() {
 			let carried = t.cat[i].is_zero()
 				|| t.cat[i] == f(CAT_C);
@@ -8689,6 +8969,9 @@ pub(crate) mod tests_neo_m6 {
 			prev_loc2: av(&t.prev_loc2), pat: av(&t.pat),
 			rg1: av(&t.rg1), rg2: av(&t.rg2),
 			enc_prev: av(&t.enc_prev), b_bwd: av(&t.b_bwd),
+			// as the production loaders: EMPTY on the aggr arm
+			b_cin: if nat.union_prf.is_empty() { vec![] }
+				else { av(&t.b_cin) },
 			d_c1: av(&t.d_c1), d_c2: av(&t.d_c2),
 			d_below_lo: av(&t.d_below_lo),
 			d_above_lo: av(&t.d_above_lo), d_sort: av(&t.d_sort),
@@ -9097,7 +9380,10 @@ pub(crate) mod tests_neo_m6 {
 	/// commit-time cost guard: the Fig-14 single-chunk core must
 	/// stay inside a +/-25% band of the calibrated 1911 cs over 26
 	/// rows (25 data + 1 boundary pad) -- catches accidental
-	/// constraint blowup later. Re-banded
+	/// constraint blowup later. NOTE the 1911 centre is stale: the
+	/// measured cost is 1929 (T925 re-measure; the aggr arm is
+	/// deliberately untouched by T925, so this is drift that
+	/// predates it and the band still holds). Re-banded
 	/// for T306 (was 2763 over 34 rows: 9 groups here, so dropping
 	/// one 0-wrap per group removes 9 rows). Block split at n = 25:
 	///   selectors 401, wf 391, si_pins 100, join 158, ns_gap 114,
@@ -9115,6 +9401,21 @@ pub(crate) mod tests_neo_m6 {
 		let n = cs.num_constraints();
 		assert!(n >= 1433 && n <= 2389,
 			"cost drift: {} cs vs calibrated 1911", n);
+	}
+
+	/// T925 T-C1 / gate G-E -- the AGGRESSIVE cost pinned EXACTLY.
+	/// The +/-25% band above would miss a wholesale +3 cs/row leak
+	/// of T925's nonaggr work into this arm (4.1% of 1,929; the
+	/// band tolerates 18 cs/row). Measured 1,929 on the T925 tree;
+	/// the arm is untouched by T925, so any movement is a leak.
+	#[test]
+	fn test_m6_cost_exact() {
+		let info = super::tests_neo_m5::a18_store();
+		let (cs, nat) = run_core_aggr(&info, &fig14_hm(), 161,
+			None);
+		assert!(cs.is_satisfied().unwrap());
+		assert_eq!(nat.t.enc.len(), 26);
+		assert_eq!(cs.num_constraints(), 1929);
 	}
 }
 
@@ -9229,8 +9530,8 @@ mod tests_neo_m6_neg {
 					t.subsig.push(Fr::from(1u32));
 					t.si_step.push(sid); t.si_b_bwd.push(sbw);
 					for v in [&mut t.prev_id1, &mut t.prev_loc1,
-						&mut t.prev_loc2, &mut t.pat, &mut t.rg1,
-						&mut t.rg2, &mut t.enc_prev,
+						&mut t.prev_loc2, &mut t.b_cin, &mut t.pat,
+						&mut t.rg1, &mut t.rg2, &mut t.enc_prev,
 						&mut t.b_bwd, &mut t.d_c1, &mut t.d_c2,
 						&mut t.d_below_lo, &mut t.d_above_lo,
 						&mut t.d_sort] { v.push(Fr::from(0u32)); }
@@ -9376,10 +9677,11 @@ mod tests_neo_m6_neg {
 
 	/// remove row i from every QmTable column (negative-test tamper).
 	fn remove_row(t: &mut QmTable<Fr>, i: usize) {
-		let cols: [&mut Vec<Fr>; 26] = [
+		let cols: [&mut Vec<Fr>; 27] = [
 			&mut t.enc, &mut t.id, &mut t.loc, &mut t.cat,
 			&mut t.step, &mut t.subsig, &mut t.prev_id1,
-			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.pat,
+			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.b_cin,
+			&mut t.pat,
 			&mut t.rg1, &mut t.rg2, &mut t.enc_prev, &mut t.b_bwd,
 			&mut t.d_c1, &mut t.d_c2, &mut t.d_below_lo,
 			&mut t.d_above_lo, &mut t.d_sort, &mut t.si_step,
@@ -9571,10 +9873,11 @@ mod tests_neo_m6_neg {
 
 	/// append a verbatim copy of row i to every QmTable column.
 	fn dup_row(t: &mut QmTable<Fr>, i: usize) {
-		let cols: [&mut Vec<Fr>; 26] = [
+		let cols: [&mut Vec<Fr>; 27] = [
 			&mut t.enc, &mut t.id, &mut t.loc, &mut t.cat,
 			&mut t.step, &mut t.subsig, &mut t.prev_id1,
-			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.pat,
+			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.b_cin,
+			&mut t.pat,
 			&mut t.rg1, &mut t.rg2, &mut t.enc_prev, &mut t.b_bwd,
 			&mut t.d_c1, &mut t.d_c2, &mut t.d_below_lo,
 			&mut t.d_above_lo, &mut t.d_sort, &mut t.si_step,
@@ -9585,10 +9888,11 @@ mod tests_neo_m6_neg {
 
 	/// permute the real rows of every QmTable column.
 	fn permute_rows(t: &mut QmTable<Fr>, order: &[usize]) {
-		let cols: [&mut Vec<Fr>; 26] = [
+		let cols: [&mut Vec<Fr>; 27] = [
 			&mut t.enc, &mut t.id, &mut t.loc, &mut t.cat,
 			&mut t.step, &mut t.subsig, &mut t.prev_id1,
-			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.pat,
+			&mut t.prev_loc1, &mut t.prev_loc2, &mut t.b_cin,
+			&mut t.pat,
 			&mut t.rg1, &mut t.rg2, &mut t.enc_prev, &mut t.b_bwd,
 			&mut t.d_c1, &mut t.d_c2, &mut t.d_below_lo,
 			&mut t.d_above_lo, &mut t.d_sort, &mut t.si_step,
@@ -10166,6 +10470,9 @@ mod tests_neo_nonaggr {
 	use super::tests_neo_m5::{a18_store, a18_carried, mk_pat_loc};
 	use super::tests_neo_m6::{hm_to_l_cols, hm_gen, alloc_vars,
 		cat_rows};
+	use super::tests_neo_m5::{root_store, root_carried,
+		root_carried_from};
+	use super::tests_neo_nonaggr_neg::{row, regen_mtbls};
 	use ark_bn254::Fr;
 	use utils::consts::read_global_config;
 	use ark_relations::r1cs::{ConstraintSystem,
@@ -10376,6 +10683,7 @@ mod tests_neo_nonaggr {
 		assert_eq!(get("d_kept"), nat.t.nonaggr.d_kept);
 		assert_eq!(get("mtbl_qc"), nat.mtbl_qc);
 		assert_eq!(get("union_prf"), nat.union_prf);
+		assert_eq!(nat.union_prf.len(), 4, "T925: total + split");
 		assert_eq!(get("jr_enc"), nat.jr.enc);
 		assert_eq!(get("jr_pat"), nat.jr.pat);
 		assert_eq!(get("jr_id"), nat.jr.id);
@@ -10412,10 +10720,15 @@ mod tests_neo_nonaggr {
 		let n = cs.num_constraints();
 		// T306b: drops one 0-wrap per group (9 groups here) -> 34-9,
 		// +1 for the mandatory boundary pad (see qm_rows_size).
-		// Re-banded for T306b (was 4516 over 34 rows).
+		// Re-banded for T306b (was 4516 over 34 rows), then for
+		// T925: the 2991 centre had gone stale (measured 2716 at
+		// the T925 base commit), and T925 itself adds +3 cs per
+		// real row (widened pred selector + anchor ban, less the
+		// fused FP query slot) plus +5 per chunk for the U1 split
+		// union -- 2716 + 3*26 + 5 = 2799, measured 2799.
 		assert_eq!(nat.t.enc.len(), 26);
-		assert!(n >= 2243 && n <= 3739,
-			"cost drift: {} cs vs calibrated 2991", n);
+		assert!(n >= 2099 && n <= 3499,
+			"cost drift: {} cs vs calibrated 2799", n);
 	}
 
 	/// CIRCUIT CORNERS: (a) EMPTY-L chunk (carried-only): the BP
@@ -10474,6 +10787,343 @@ mod tests_neo_nonaggr {
 			&& t.loc[i] == f(79)).count();
 		assert_eq!(dups, 1, "the straddle pair must be in Q_m");
 	}
+
+	// ------------- T925 (TASK_A.md section 6) positives -------------
+
+	/// fig-14 as ONE chunk: every a1..a7 match over a seed-only
+	/// carry. fig14c2's six C rows {1,6,21,27,33,39} are all
+	/// CARRIED and hence exempt from the moved predecessor cert
+	/// (TASK_A.md 12.6); here the same rows are FRESH and cite.
+	pub(crate) fn fig14_hm() -> HashMap<u32, Vec<u32>> {
+		let mut m = HashMap::new();
+		m.insert(1, vec![6]); m.insert(2, vec![21, 111]);
+		m.insert(3, vec![27]); m.insert(4, vec![33]);
+		m.insert(5, vec![39, 106]);
+		m.insert(6, vec![73, 79, 96, 141]);
+		m.insert(7, vec![101, 131]);
+		m
+	}
+
+	/// seed-only carry: the a18 seed row (loc 1) alone, i.e. an
+	/// EMPTY Q_i apart from the seed.
+	pub(crate) fn seed_only_sq() -> StepQueue<Fr> {
+		let seed = a18_carried().store_items[&f(1)][0].base.clone();
+		let mut m = HashMap::new();
+		m.insert(f(1), vec![seed]);
+		StepQueue::new(vec![f(1)], m, &fixture_capacity(),
+			StepQueueType::ResLarge, false)
+	}
+
+	/// sorted non-zero locs of the committed carry-out q_c.
+	pub(crate) fn qc_locs(nat: &NeoCore<Fr>) -> Vec<u32> {
+		let mut v: Vec<u32> = nat.qc_loc.iter()
+			.filter(|l| !l.is_zero())
+			.map(|l| field_to_usize(l) as u32).collect();
+		v.sort();
+		v
+	}
+
+	/// (prev_id1, prev_loc1, d_c1, d_c2, b_cin) of the real row at
+	/// `loc` -- the whole predecessor certificate of one row.
+	fn pred_of(nat: &NeoCore<Fr>, loc: u32) -> (Fr, Fr, Fr, Fr, Fr) {
+		let t = &nat.t;
+		let i = row(nat, loc);
+		(t.prev_id1[i], t.prev_loc1[i], t.d_c1[i], t.d_c2[i],
+			t.b_cin[i])
+	}
+
+	/// T925 T-P3 -- CHUNK 1, the C class made FRESH. 12.6: fig14c2
+	/// is VACUOUS for the C class (all six C rows carried, hence
+	/// exempt), so this is the only fixture where a C row cites
+	/// through the Q_r target. Seed-only carry + the whole fig-14
+	/// L, one chunk. Pins:
+	///  - the fig14c2 partition, reproduced by a fresh chain;
+	///  - b_cin = 1 on the seed row ONLY (U1 with an empty Q_i);
+	///  - every non-seed C/BP/SP row cites its closure predecessor
+	///    in rid coordinates with a filled window cert; a1:6 cites
+	///    the seed at loc 1 -- the ban's boundary (1 * inv = 1);
+	///  - the Q_r m-table really counts those queries (39 is cited
+	///    by all four a6 rows; the seed by a1:6 plus its anchor
+	///    query): the cert is exercised, not skipped;
+	///  - the EXACT constraint count (T-C1): the T925 blocks are
+	///    data-oblivious, the L-sized join/ns_gap blocks are not.
+	#[test]
+	fn test_nonaggr_circuit_chunk1() {
+		let info = a18_store();
+		let (cs, nat) = run_core_nonaggr(&info, &seed_only_sq(),
+			&fig14_hm(), A18_DEFAULT_MIN, None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		assert_eq!(cat_rows(&nat, CAT_C), vec![(0, 1), (1, 6),
+			(2, 21), (3, 27), (4, 33), (5, 39)]);
+		assert_eq!(cat_rows(&nat, CAT_SP), vec![(2, 111)]);
+		assert_eq!(cat_rows(&nat, CAT_FP), vec![(5, 106), (7, 131)]);
+		assert_eq!(cat_rows(&nat, CAT_BP), vec![(6, 73), (6, 79),
+			(6, 96), (6, 141), (7, 101)]);
+		let t = &nat.t;
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		for i in 0..t.enc.len() {
+			let b_seed = t.step[i].is_zero() && t.cat[i] == f(CAT_C);
+			assert_eq!(t.b_cin[i], if b_seed { f(1) } else { f(0) },
+				"b_cin at row {}", i);
+		}
+		//(prev_id1, prev_loc1, d_c1, d_c2, b_cin); chain 6 -> seed
+		//(rid 1, loc 1), 21/111 -> 6, 27 -> 21, 33 -> 27, 39 -> 33,
+		//a6 x4 -> 39, 101 -> 96 (rid 3 of the a6 group).
+		assert_eq!(pred_of(&nat, 6), (f(1), f(1), f(4), f(4), f(0)));
+		assert_eq!(pred_of(&nat, 21),
+			(f(1), f(6), f(15), mx - f(15), f(0)));
+		assert_eq!(pred_of(&nat, 111),
+			(f(1), f(6), f(105), mx - f(105), f(0)));
+		assert_eq!(pred_of(&nat, 27), (f(1), f(21), f(5), f(3), f(0)));
+		assert_eq!(pred_of(&nat, 33), (f(1), f(27), f(5), f(3), f(0)));
+		assert_eq!(pred_of(&nat, 39), (f(1), f(33), f(5), f(3), f(0)));
+		for l in [73u32, 79, 96, 141] {
+			assert_eq!(pred_of(&nat, l), (f(1), f(39), f(l - 40),
+				mx - f(l - 39), f(0)), "a6:{}", l);
+		}
+		assert_eq!(pred_of(&nat, 101), (f(3), f(96), f(4), f(4), f(0)));
+		//the Q_r m-table counts the pred family
+		assert_eq!(nat.mtbl_qr[row(&nat, 39)], f(4));
+		assert_eq!(nat.mtbl_qr[row(&nat, 6)], f(2)); //21 + 111
+		assert_eq!(nat.mtbl_qr[row(&nat, 1)], f(2)); //6 + seed anchor
+		assert_eq!(nat.mtbl_qr[row(&nat, 96)], f(2)); //101 + FP 131 lo
+		assert_eq!(qc_locs(&nat), vec![1, 6, 21, 27, 33, 39]);
+		assert_eq!(t.enc.len(), 26);
+		//2,838 = fig14c2's 2,799 + 39 outside the T925 blocks (L has
+		//13 rows here, not 6: join +13, ns_gap +26; union / carry /
+		//fwd_prune / qm_lookups are identical at 235/193/104/330).
+		assert_eq!(cs.num_constraints(), 2838, "T-C1 exact pin");
+	}
+
+	/// T925 T-P5 (gate G-B) -- the section-5 root repro. Carried
+	/// {1, 6, 58, 66, 74} (chain 58 -> 66 -> 74 rooted OUTSIDE this
+	/// chunk, plus the dead a1:6) meets fresh a1 {81, 90}. Before
+	/// T925 the generator labelled the carried 58 FP (no in-chunk
+	/// window hit) and the chunk ended in a false NON-MATCH (or, on
+	/// HEAD, panicked in fill_nonaggr). With carried rows seeded as
+	/// closure roots and exempt from the cert, the chain stays C
+	/// and the terminal a4:74 reaches q_c: MATCH.
+	#[test]
+	fn test_nonaggr_root_repro() {
+		let info = root_store();
+		let mut hm = HashMap::new();
+		hm.insert(1, vec![81, 90]);
+		let (cs, nat) = run_core_nonaggr(&info,
+			&root_carried().to_stepqueue(), &hm, A18_DEFAULT_MIN,
+			None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		assert_eq!(cat_rows(&nat, CAT_C), vec![(0, 1), (1, 81),
+			(2, 58), (3, 66), (4, 74)]);
+		assert_eq!(cat_rows(&nat, CAT_BP), vec![(1, 6)]);
+		assert_eq!(cat_rows(&nat, CAT_SP), vec![(1, 90)]);
+		assert!(cat_rows(&nat, CAT_FP).is_empty());
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		let na = &nat.t.nonaggr;
+		let i6 = row(&nat, 6);
+		assert_eq!((na.w_next[i6], na.d_bp[i6]), (f(58), f(42)));
+		//carried rows: tagged, exempt (no window cert) and never
+		//queried -- 66's would-be target 58 has no hit
+		for l in [6u32, 58, 66, 74] {
+			let (_, _, d1, d2, b) = pred_of(&nat, l);
+			assert_eq!((d1, d2, b), (f(0), f(0), f(1)), "carried {}", l);
+		}
+		assert_eq!(nat.mtbl_qr[row(&nat, 58)], f(0));
+		assert_eq!(nat.mtbl_qr[row(&nat, 66)], f(0));
+		//fresh rows cite the seed (rid 1, loc 1); SP 90 cites too
+		assert_eq!(pred_of(&nat, 81),
+			(f(1), f(1), f(79), mx - f(80), f(0)));
+		assert_eq!(pred_of(&nat, 90),
+			(f(1), f(1), f(88), mx - f(89), f(0)));
+		assert_eq!(nat.mtbl_qr[row(&nat, 1)], f(3)); //81 + 90 + anchor
+		assert_eq!(na.w_kept[row(&nat, 90)], f(81));
+		//verdict: the terminal a4:74 is carried -> match
+		assert_eq!(qc_locs(&nat), vec![1, 58, 66, 74, 81]);
+	}
+
+	/// T925 T-P5b -- a FRESH row certified against a CARRIED root
+	/// through the Q_r target (the exemption's whole point).
+	/// Carried {1, 6, 58@2, 66@3}, fresh a4:74 and a1:90: 74 is C,
+	/// cites the root 66 (rid 1, gap 8 in (1,9)), its query is the
+	/// only hit on 66, and the terminal lands in q_c. (TASK_A.md
+	/// lists {58@2, 75@3} + a4:82; 58 cannot reach 75 there and is
+	/// walked to BP, which muddies the point -- same mechanism.)
+	#[test]
+	fn test_nonaggr_fresh_cites_root() {
+		let info = root_store();
+		let carried = root_carried_from(&[&[6], &[58], &[66]]);
+		let mut hm = HashMap::new();
+		hm.insert(4, vec![74]); hm.insert(1, vec![90]);
+		let (cs, nat) = run_core_nonaggr(&info,
+			&carried.to_stepqueue(), &hm, A18_DEFAULT_MIN, None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		assert_eq!(cat_rows(&nat, CAT_C), vec![(0, 1), (1, 90),
+			(2, 58), (3, 66), (4, 74)]);
+		assert_eq!(cat_rows(&nat, CAT_BP), vec![(1, 6)]);
+		assert_eq!(pred_of(&nat, 74), (f(1), f(66), f(7), f(1), f(0)));
+		assert_eq!(pred_of(&nat, 66).4, f(1));
+		assert_eq!(nat.mtbl_qr[row(&nat, 66)], f(1));
+		assert_eq!(qc_locs(&nat), vec![1, 58, 66, 74, 90]);
+	}
+
+	/// T925 T-P6 -- the SAME-COPY requirement (2.5). Carried 58
+	/// matches again this chunk (hm 2:[58]); the pair shares (enc,
+	/// loc). The carried copy leads (stable sort), is a closure
+	/// root: C, b_cin = 1, exempt. The joined copy has no in-chunk
+	/// window hit (6 -> [7,15], 81 -> [82,90]): FP, b_cin = 0, with
+	/// the bracket 6 (rid 1) / 81 (rid 2) it must cite. Exactly one
+	/// copy pays the union's q_i side and exactly one is carried
+	/// out. (Straddle pairs may now DIFFER in category, 12.6.)
+	#[test]
+	fn test_nonaggr_straddle_root_dup() {
+		let info = root_store();
+		let mut hm = HashMap::new();
+		hm.insert(2, vec![58]); hm.insert(1, vec![81]);
+		let (cs, nat) = run_core_nonaggr(&info,
+			&root_carried().to_stepqueue(), &hm, A18_DEFAULT_MIN,
+			None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		let t = &nat.t;
+		let idx: Vec<usize> = (t.n_pad..t.enc.len()).filter(|&i|
+			t.loc[i] == f(58) && !t.cat[i].is_zero()).collect();
+		assert_eq!(idx.len(), 2, "the straddle pair must be in Q_m");
+		let (a, b) = (idx[0], idx[1]);
+		assert_eq!(b, a + 1);
+		assert_eq!(t.enc[a], t.enc[b]);
+		assert_eq!((t.cat[a], t.b_cin[a]), (f(CAT_C), f(1)));
+		assert_eq!((t.cat[b], t.b_cin[b]), (f(CAT_FP), f(0)));
+		assert_eq!((t.prev_id1[b], t.prev_loc1[b], t.prev_loc2[b]),
+			(f(1), f(6), f(81)));
+		assert_eq!((t.d_below_lo[b], t.d_above_lo[b]), (f(42), f(23)));
+		//seed + {6, 58, 66, 74}: one tag per q_i row
+		assert_eq!(t.b_cin.iter().filter(|x| **x == f(1)).count(), 5);
+		assert_eq!(cat_rows(&nat, CAT_C), vec![(0, 1), (1, 81),
+			(2, 58), (3, 66), (4, 74)]);
+		assert_eq!(qc_locs(&nat), vec![1, 58, 66, 74, 81]);
+	}
+
+	/// T925 T-P2 -- the ban is NOT over-broad. A fresh a5:30 sits
+	/// below every step-4 row (33 -> [34,42]), so the closure takes
+	/// its below-first branch: FP with prev_loc1 = 0, a LEGITIMATE
+	/// citation of the (enc4, 0, 0) anchor slot through the very
+	/// fused slot the pred cert uses. FP is outside sel_pred, so the
+	/// ban must let it pass; no other row cites an anchor.
+	#[test]
+	fn test_nonaggr_fp_below_first() {
+		let info = a18_store();
+		let mut hm = fig14c2_hm();
+		hm.insert(5, vec![30, 106]);
+		let (cs, nat) = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &hm, A18_DEFAULT_MIN,
+			None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		let t = &nat.t;
+		let i = row(&nat, 30);
+		assert_eq!(t.cat[i], f(CAT_FP));
+		assert_eq!((t.prev_id1[i], t.prev_loc1[i], t.prev_loc2[i]),
+			(f(0), f(0), f(33)));
+		assert_eq!(t.d_above_lo[i], f(3));
+		let enc4 = t.enc[row(&nat, 33)];
+		let k = t.anch.iter().position(|e| *e == enc4).unwrap();
+		let n = t.enc.len();
+		assert_eq!(nat.mtbl_qr[n + k], f(1));
+		assert_eq!(nat.mtbl_qr[n..].iter()
+			.filter(|m| !m.is_zero()).count(), 1);
+		assert_eq!(cat_rows(&nat, CAT_FP), vec![(5, 30), (5, 106),
+			(7, 131)]);
+	}
+
+	/// T925 T-P4 -- the exemption on a NON-C carried row. Carry a18
+	/// with step 2 = {21, 25}: both reach (a2's window is (0,mx)),
+	/// step 2 freezes (fz 5, len 5) and 25 is demoted SP with
+	/// w_kept = 21. Carried (b_cin = 1), it makes NO predecessor
+	/// query although SP rows now cite; its SP pins stand alone.
+	#[test]
+	fn test_nonaggr_carried_sp() {
+		let info = a18_store();
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		let mut sq = a18_carried().to_stepqueue();
+		let items = sq.store_items.get_mut(&f(1)).unwrap();
+		assert_eq!(items[2].step, f(2));
+		items[2] = StepQueueItem::new(f(1), f(2), f(2), f(0), mx,
+			vec![f(21), f(25)]);
+		let (cs, nat) = run_core_nonaggr(&info, &sq, &fig14c2_hm(),
+			A18_DEFAULT_MIN, None);
+		assert!(cs.is_satisfied().unwrap(), "unsat: {:?}",
+			cs.which_is_unsatisfied());
+		assert_eq!(cat_rows(&nat, CAT_SP), vec![(2, 25), (2, 111)]);
+		let i = row(&nat, 25);
+		let na = &nat.t.nonaggr;
+		assert_eq!((nat.t.b_cin[i], na.w_kept[i], na.d_kept[i]),
+			(f(1), f(21), f(3)));
+		assert_eq!((nat.t.d_c1[i], nat.t.d_c2[i]), (f(0), f(0)));
+		//111 alone queries 6; carried 21 and 25 are exempt
+		assert_eq!(nat.mtbl_qr[row(&nat, 6)], f(1));
+		assert_eq!(qc_locs(&nat), vec![1, 6, 21, 27, 33, 39]);
+	}
+
+	/// T925 T-N7 -- the Q_r target ADMITS an SP predecessor (a
+	/// tamper expected SAT; the honest generator never emits C ->
+	/// SP, TASK_A.md W2). Fresh a3:115 is honestly SP (closure pred
+	/// a2:111 at rid 2, itself SP; step 3 freezes and keeps 27).
+	/// Relabel 115 C, give it 27's C-row nonaggr columns, add
+	/// (enc3, 115) to q_c, regen. The pred stays (enc2, 2, 111): an
+	/// SP row at rid 2, which the old Q_c target could never
+	/// resolve (111 has no cid). SAT -- and rid, not cid, is the
+	/// citation coordinate.
+	#[test]
+	fn test_nonaggr_c_cites_sp_admitted() {
+		let info = a18_store();
+		let mut hm = fig14c2_hm();
+		hm.insert(3, vec![115]);
+		let (cs, nat) = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &hm, A18_DEFAULT_MIN,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let i = row(nat, 115);
+				let j = row(nat, 27);
+				assert_eq!(nat.t.cat[i], f(CAT_SP));
+				assert_eq!(nat.t.cat[row(nat, 111)], f(CAT_SP));
+				assert_eq!((nat.t.prev_id1[i], nat.t.prev_loc1[i]),
+					(f(2), f(111)));
+				nat.t.cat[i] = f(CAT_C);
+				let na = &mut nat.t.nonaggr;
+				macro_rules! cp { ($($c:ident),*) => {
+					$( na.$c[i] = na.$c[j]; )* } }
+				cp!(enc_next, bp_prev_val, rg2_next, w_next, d_bp,
+					fz, enc_fz, fz_step_val, fz_sub_val, w_fz, d_fz,
+					w_kept, d_kept, si_bp_prev, si_rg2_next, si_fz,
+					si_fz_step, si_fz_sub);
+				let k = (0..nat.qc_enc.len()).position(|k|
+					nat.qc_enc[k].is_zero()).unwrap();
+				nat.qc_enc[k] = nat.t.enc[i];
+				nat.qc_loc[k] = f(115);
+				regen_mtbls(nat);
+			}));
+		assert!(cs.is_satisfied().unwrap(),
+			"C citing SP rejected: {:?}", cs.which_is_unsatisfied());
+		assert_eq!(nat.mtbl_qr[row(&nat, 111)], f(1));
+		assert!(qc_locs(&nat).contains(&115));
+	}
+
+	/// T925 T-C1 -- the nonaggr cost pinned EXACTLY (the +/-25% band
+	/// of test_nonaggr_circuit_positive would miss a +3 cs/row leak
+	/// outright, 12.5): 2,716 at the T925 base + 3 per real row
+	/// (b_cin booleanity, containment, U1 product, anchor ban,
+	/// minus the fused FP slot) x 26 + 5 per chunk = 2,799.
+	#[test]
+	fn test_nonaggr_cost_exact() {
+		let info = a18_store();
+		let (cs, nat) = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &fig14c2_hm(),
+			A18_DEFAULT_MIN, None);
+		assert!(cs.is_satisfied().unwrap());
+		assert_eq!(nat.t.enc.len(), 26);
+		assert_eq!(cs.num_constraints(), 2799);
+	}
 }
 
 // NOTE_NEW8_ADAPTED (P3 R3): the carry-in and b_l attacks became
@@ -10482,8 +11132,10 @@ mod tests_neo_nonaggr {
 mod tests_neo_nonaggr_neg {
 	use super::*;
 	use super::tests_neo_m4::A18_DEFAULT_MIN;
-	use super::tests_neo_m5::{a18_store, a18_carried};
-	use super::tests_neo_nonaggr::run_core_nonaggr;
+	use super::tests_neo_m5::{a18_store, a18_carried, root_store,
+		root_carried};
+	use super::tests_neo_nonaggr::{run_core_nonaggr, seed_only_sq,
+		fig14_hm};
 	use ark_bn254::Fr;
 
 	fn f(x: u32) -> Fr { Fr::from(x) }
@@ -10509,7 +11161,7 @@ mod tests_neo_nonaggr_neg {
 	}
 
 	/// row index of `loc` among real (cat!=0) rows.
-	fn row(nat: &NeoCore<Fr>, loc: u32) -> usize {
+	pub(crate) fn row(nat: &NeoCore<Fr>, loc: u32) -> usize {
 		let t = &nat.t;
 		(t.n_pad..t.enc.len()).find(|&i|
 			t.loc[i] == f(loc) && !t.cat[i].is_zero()).unwrap()
@@ -10518,7 +11170,7 @@ mod tests_neo_nonaggr_neg {
 	/// regenerate the rank m-tables after a consistent tamper, so
 	/// the test pinpoints the intended failing constraint instead
 	/// of a trivially stale multiplicity.
-	fn regen_mtbls(nat: &mut NeoCore<Fr>) {
+	pub(crate) fn regen_mtbls(nat: &mut NeoCore<Fr>) {
 		let rid = NeoCore::gen_rid_native(&nat.t);
 		let cid = NeoCore::gen_cid_native(&nat.t);
 		nat.mtbl_qr = NeoCore::gen_mtbl_qr_nonaggr(&nat.t, &rid,
@@ -10533,7 +11185,8 @@ mod tests_neo_nonaggr_neg {
 		macro_rules! rm { ($($c:ident),*) => {
 			$( t.$c.remove(i); )* } }
 		rm!(enc, id, loc, cat, step, subsig, prev_id1, prev_loc1,
-			prev_loc2, pat, rg1, rg2, enc_prev, b_bwd, d_c1, d_c2,
+			prev_loc2, b_cin, pat, rg1, rg2, enc_prev, b_bwd, d_c1,
+			d_c2,
 			d_below_lo, d_above_lo, d_sort,
 			si_step, si_subsig, si_pat, si_rg1, si_rg2,
 			si_enc_prev, si_b_bwd);
@@ -10707,26 +11360,26 @@ mod tests_neo_nonaggr_neg {
 		});
 	}
 
-	/// N5 C-PRED 0-WRAP BAN (T306b: now STRUCTURAL, no pin left to
-	/// delete): C row 21 (rg {0,inf} from a1) cites the dropped
-	/// step-1 0-wrap as predecessor with a CONSISTENT window (gap
-	/// 21-0=21, d_c1=21, d_c2=inf-21) and a regenerated mtbl_qc.
-	/// The query packs to (enc_prev, cid=0, loc=0), but cid=0 can
-	/// never address a QC TARGET: any row ranking 0 at its group
-	/// start is, by construction, FP/BP/SP (inc=0), and
-	/// gen_mtbl_qc's own b_tgt already excludes those cats -- so no
-	/// committed row ever occupies cid 0. The forged query matches
-	/// no target and the logup identity fails outright.
+	/// N5 PRED ANCHOR BAN (T925; replaces the C-pred 0-wrap test,
+	/// whose target row 21 is CARRIED and therefore exempt -- that
+	/// tamper is vacuous by design now). The predecessor query
+	/// goes to the REACHABLE target, which holds one (enc, 0, 0)
+	/// anchor per group with a CONSTANT selector 1 (FP's "nothing
+	/// reachable below"). Fresh BP row 96 (step 6, window (1, mx))
+	/// cites (enc5, 0, 0) with a CONSISTENT window (gap 96, d_c1 =
+	/// 95, d_c2 = mx-96) and a regenerated mtbl_qr: the lookup
+	/// HITS the anchor and the window binds, so the ban prev_loc1
+	/// * inv = sel_pred is the sole rejecter (0 * inv = 1).
 	#[test]
-	fn test_nonaggr_neg_c_pred_wrap() {
-		expect_unsat("c pred = 0-wrap", &|nat| {
+	fn test_nonaggr_neg_pred_anchor() {
+		expect_unsat("pred = QR anchor", &|nat| {
 			let mx = f((1u32 <<
 				read_global_config().range2_bit) - 1);
-			let i = row(nat, 21);
+			let i = row(nat, 96);
 			nat.t.prev_id1[i] = f(0);
 			nat.t.prev_loc1[i] = f(0);
-			nat.t.d_c1[i] = f(21);
-			nat.t.d_c2[i] = mx - f(21);
+			nat.t.d_c1[i] = f(95);
+			nat.t.d_c2[i] = mx - f(96);
 			regen_mtbls(nat);
 		});
 	}
@@ -10783,6 +11436,345 @@ mod tests_neo_nonaggr_neg {
 			let i = row(nat, 21);
 			nat.mtbl_qc[i] = nat.mtbl_qc[i] + f(1);
 		});
+	}
+
+	// ------------- T925 (TASK_A.md section 6) negatives -------------
+	//
+	// LOCALIZATION EVIDENCE (2026-09-08, flip method): each of the
+	// four T925 constraints was in turn commented out of the circuit
+	// and the negatives re-run; exactly the tampers naming it as sole
+	// rejecter flipped to SAT, every other negative stayed UNSAT:
+	//   "neo pred anchor ban"       -> neg_pred_anchor, neg_pred_anchor_c
+	//   "neo b_cin containment"     -> neg_carried_fp case (b) only
+	//   "neo b_cin boolean"         -> neg_bcin_nonboolean (family case)
+	//   "neo union split (b_cin)"   -> neg_bcin_fresh, neg_c_claims_carried,
+	//                                  neg_straddle_double_cin
+	// neg_bp_pred / neg_fp_lower_forgery are rejected by the fused Q_r
+	// logup (no target packs to the forged key) and were not flipped.
+	// The harness pins r1 = 12345 (run_nat_nonaggr), so anything that
+	// rests on the commitment order of union_prf / mtbl_qr / b_cin is
+	// invisible here and is said so where it matters.
+
+	/// H4: expect_unsat over an arbitrary (info, carried, hm, dmin)
+	/// -- the root-fixture and chunk-1 negatives.
+	fn expect_unsat_on(tag: &str, info: &SubsigStepStore,
+		carried: &StepQueue<Fr>, hm: &HashMap<u32, Vec<u32>>,
+		dmin: u32, tamper: &dyn Fn(&mut NeoCore<Fr>)) {
+		let (cs, _nat) = run_core_nonaggr(info, carried, hm, dmin,
+			Some(tamper));
+		assert!(!cs.is_satisfied().unwrap(),
+			"tamper '{}' still satisfied", tag);
+	}
+
+	/// T925 T-N1 (gate G-A, the single most important test) -- U1
+	/// BINDS b_cin. Sole rejecter: "neo union split (b_cin)".
+	///  (1) the BAN DODGE: fresh BP 96 cites the (enc5, 0, 0) anchor
+	///      with a consistent window exactly as
+	///      test_nonaggr_neg_pred_anchor does, AND stamps b_cin = 1.
+	///      sel_pred is then 0: window, ban and pred query are all
+	///      switched off, containment holds (96 is BP) -- only the
+	///      split identity sees a b = 1 pack q_i never paid for.
+	///  (2) the SWAP: un-stamp carried C 21 (it then cites honestly:
+	///      closure pred 6 at rid 1, gap 15 in (0,mx)) and stamp 96.
+	///      #b_cin rows == |q_i| still, so a COUNT would pass; the
+	///      identity compares packs and rejects.
+	///  (3) the committed scalars are checked, not advice: bump
+	///      union_prf[2] (scalar booleanity) and [3] (the identity).
+	#[test]
+	fn test_nonaggr_neg_bcin_fresh() {
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		expect_unsat("fresh row stamped carried (ban dodge)", &|nat| {
+			let i = row(nat, 96);
+			assert_eq!((nat.t.cat[i], nat.t.b_cin[i]),
+				(f(CAT_BP), f(0)));
+			nat.t.b_cin[i] = f(1);
+			nat.t.prev_id1[i] = f(0);
+			nat.t.prev_loc1[i] = f(0);
+			nat.t.d_c1[i] = f(95);
+			nat.t.d_c2[i] = mx - f(96);
+			regen_mtbls(nat);
+		});
+		expect_unsat("b_cin swapped 21 -> 96", &|nat| {
+			let i = row(nat, 21);
+			let j = row(nat, 96);
+			assert_eq!((nat.t.cat[i], nat.t.b_cin[i], nat.t.prev_id1[i],
+				nat.t.prev_loc1[i]), (f(CAT_C), f(1), f(1), f(6)));
+			nat.t.b_cin[i] = f(0);
+			nat.t.d_c1[i] = f(15);
+			nat.t.d_c2[i] = mx - f(15);
+			nat.t.b_cin[j] = f(1);
+			nat.t.prev_id1[j] = f(0);
+			nat.t.prev_loc1[j] = f(0);
+			nat.t.d_c1[j] = f(0);
+			nat.t.d_c2[j] = f(0);
+			regen_mtbls(nat);
+		});
+		expect_unsat("union_prf[2] += 1", &|nat| {
+			assert_eq!(nat.union_prf.len(), 4);
+			nat.union_prf[2] += f(1);
+		});
+		expect_unsat("union_prf[3] += 1", &|nat| {
+			nat.union_prf[3] += f(1);
+		});
+	}
+
+	/// T925 -- the ban dodge on a FRESH C ROW (fig14c2 has none:
+	/// chunk-1 fixture). C 21 cites the (enc1, 0, 0) anchor with a
+	/// consistent window (gap 21 in (0,mx)) and stamps b_cin = 1.
+	/// Q_i is EMPTY here (seed only), so U1's left side is nothing
+	/// but masked zeros: the sole rejecter is "neo union split
+	/// (b_cin)" with an empty carry -- the case T-P3 localizes.
+	#[test]
+	fn test_nonaggr_neg_c_claims_carried() {
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		expect_unsat_on("fresh C row stamped carried", &a18_store(),
+			&seed_only_sq(), &fig14_hm(), A18_DEFAULT_MIN, &|nat| {
+				let i = row(nat, 21);
+				assert_eq!((nat.t.cat[i], nat.t.step[i], nat.t.b_cin[i]),
+					(f(CAT_C), f(2), f(0)));
+				nat.t.b_cin[i] = f(1);
+				nat.t.prev_id1[i] = f(0);
+				nat.t.prev_loc1[i] = f(0);
+				nat.t.d_c1[i] = f(21);
+				nat.t.d_c2[i] = mx - f(21);
+				regen_mtbls(nat);
+			});
+	}
+
+	/// T925 T-N3 on a FRESH C ROW -- the anchor ban is the sole
+	/// rejecter ("neo pred anchor ban"): chunk-1 C 21 (window (0,mx),
+	/// so gap 21 keeps d_c1/d_c2 in range and production RANGE2
+	/// would NOT reject it either) cites (enc1, 0, 0). The lookup
+	/// hits the constant-selector anchor, the window binds; only
+	/// 0 * inv = 1 fails. (test_nonaggr_neg_pred_anchor covers the
+	/// fresh BP row 96 of chunk 2; the C class there is exempt.)
+	#[test]
+	fn test_nonaggr_neg_pred_anchor_c() {
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		expect_unsat_on("fresh C row cites the QR anchor", &a18_store(),
+			&seed_only_sq(), &fig14_hm(), A18_DEFAULT_MIN, &|nat| {
+				let i = row(nat, 21);
+				assert_eq!((nat.t.cat[i], nat.t.b_cin[i],
+					nat.t.prev_loc1[i]), (f(CAT_C), f(0), f(6)));
+				nat.t.prev_id1[i] = f(0);
+				nat.t.prev_loc1[i] = f(0);
+				nat.t.d_c1[i] = f(21);
+				nat.t.d_c2[i] = mx - f(21);
+				regen_mtbls(nat);
+			});
+		//and fresh BP 141 (window (1,mx)) in chunk 2, with the
+		//category asserted so the test cannot go vacuous
+		expect_unsat("fresh BP 141 cites the QR anchor", &|nat| {
+			let i = row(nat, 141);
+			assert_eq!((nat.t.cat[i], nat.t.b_cin[i],
+				nat.t.prev_loc1[i]), (f(CAT_BP), f(0), f(39)));
+			nat.t.prev_id1[i] = f(0);
+			nat.t.prev_loc1[i] = f(0);
+			nat.t.d_c1[i] = f(140);
+			nat.t.d_c2[i] = mx - f(141);
+			regen_mtbls(nat);
+		});
+	}
+
+	/// T925 T-N2 -- CONTAINMENT (Q_i subseteq Q_r): a carried row
+	/// may not be FP. Root fixture, hm 1:[81]; carried 58 (C, b_cin
+	/// = 1) is relabelled FP with a fully consistent FP witness
+	/// (bracket 6 at rid 1 / 81 at rid 2, d_below_lo 42, d_above_lo
+	/// 23), BP 6's successor pin retargeted to the max-wrap (step 2
+	/// then carries nothing: d_bp = 161-6-9-1), 58 dropped from q_c,
+	/// m-tables regenerated; 66 and 74 are exempt, no cert breaks.
+	///  (a) as TASK_A.md states it. UNSAT -- but NOT by containment
+	///      alone: b = 1 on an FP row makes sel_pred = S - b = -1,
+	///      which switches the window bind ON (gap 52 vs (1,9)) and
+	///      zeroes the FP lower-bracket query's fused weight (sel_pred
+	///      + is_fp = 0), so the m-table no longer balances either.
+	///  (b) sharpened: d_c1 = 51 satisfies the bind, d_c2 = 9 - 52 is
+	///      NEGATIVE (the harness has no RANGE2, W5), and the target
+	///      6 loses the dropped query's count. Now "neo b_cin
+	///      containment" is the SOLE rejecter (flip-verified). In
+	///      production RANGE2 on d_c2 would reject (b) as well: the
+	///      containment product is defence in depth there, not the
+	///      only wall -- an FP bracket (pred + rg2 < loc) and a window
+	///      bind (gap <= rg2) on the same prev_loc1 cannot both hold.
+	#[test]
+	fn test_nonaggr_neg_carried_fp() {
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		let info = root_store();
+		let mut hm = HashMap::new();
+		hm.insert(1, vec![81]);
+		let relabel = |nat: &mut NeoCore<Fr>| {
+			let i = row(nat, 58);
+			let i6 = row(nat, 6);
+			assert_eq!((nat.t.cat[i], nat.t.b_cin[i]),
+				(f(CAT_C), f(1)));
+			assert_eq!((nat.t.cat[i6], nat.t.nonaggr.w_next[i6]),
+				(f(CAT_BP), f(58)));
+			nat.t.cat[i] = f(CAT_FP);
+			nat.t.prev_id1[i] = f(1);
+			nat.t.prev_loc1[i] = f(6);
+			nat.t.prev_loc2[i] = f(81);
+			nat.t.d_below_lo[i] = f(42);
+			nat.t.d_above_lo[i] = f(23);
+			nat.t.nonaggr.w_next[i6] = mx;
+			nat.t.nonaggr.d_bp[i6] = f(A18_DEFAULT_MIN - 6 - 9 - 1);
+			let j = (0..nat.qc_loc.len()).position(|j|
+				nat.qc_loc[j] == f(58)).unwrap();
+			nat.qc_enc[j] = f(0);
+			nat.qc_loc[j] = f(0);
+			regen_mtbls(nat);
+			(i, i6)
+		};
+		expect_unsat_on("carried row labelled FP", &info,
+			&root_carried().to_stepqueue(), &hm, A18_DEFAULT_MIN,
+			&|nat| { relabel(nat); });
+		expect_unsat_on("carried row labelled FP, side effects masked",
+			&info, &root_carried().to_stepqueue(), &hm, A18_DEFAULT_MIN,
+			&|nat| {
+				let (i, i6) = relabel(nat);
+				nat.t.d_c1[i] = f(51);
+				nat.t.d_c2[i] = f(9) - f(52);
+				assert_eq!(nat.mtbl_qr[i6], f(1), "58's lower bracket");
+				nat.mtbl_qr[i6] -= f(1);
+			});
+	}
+
+	/// T925 T-N4 -- the cert is LIVE on BP rows (widened selector;
+	/// both SAT before T925) and the Q_r target EXCLUDES FP. Fresh
+	/// BP 141 (honest pred 39) cites (a) FP row 106 at step 5 and
+	/// (b) a loc no row holds, each with a consistent window.
+	/// Rejecter: the fused Q_r logup (no target packs to the key).
+	#[test]
+	fn test_nonaggr_neg_bp_pred() {
+		let mx = f((1u32 << read_global_config().range2_bit) - 1);
+		expect_unsat("BP cites an FP row", &|nat| {
+			let i = row(nat, 141);
+			assert_eq!((nat.t.cat[i], nat.t.prev_loc1[i]),
+				(f(CAT_BP), f(39)));
+			assert_eq!(nat.t.cat[row(nat, 106)], f(CAT_FP));
+			nat.t.prev_loc1[i] = f(106);
+			nat.t.prev_id1[i] = f(1);
+			nat.t.d_c1[i] = f(34);
+			nat.t.d_c2[i] = mx - f(35);
+			regen_mtbls(nat);
+		});
+		expect_unsat("BP cites a nonexistent loc", &|nat| {
+			let i = row(nat, 141);
+			assert_eq!(nat.t.cat[i], f(CAT_BP));
+			nat.t.prev_loc1[i] = f(50);
+			nat.t.prev_id1[i] = f(1);
+			nat.t.d_c1[i] = f(90);
+			nat.t.d_c2[i] = mx - f(91);
+			regen_mtbls(nat);
+		});
+	}
+
+	/// T925 T-N5 -- BOOLEANITY IS LOAD-BEARING (2.4), localized. The
+	/// one-parameter family that satisfies U1, containment, the ban
+	/// and the window binds at once: fresh BP x = 96 takes b = 1
+	/// with its cert off; fresh BP y = 141 takes b = -inv_x/inv_y
+	/// (inv_i = 1/(pack_i + r1), pack = enc*2^rb + loc), so U1's
+	/// right side gains inv_x - inv_x = 0; y's pred query then
+	/// carries weight 1 - b_y = 1 + inv_x/inv_y and the Q_r m-table
+	/// entry of its target 39 follows (a field value -- the logup is
+	/// a sum identity, nothing there forces integers). Everything
+	/// else honest. Sole rejecter: "neo b_cin boolean".
+	/// HARNESS CAVEAT: this witness needs r1, which the harness pins
+	/// at 12345 BEFORE the prover commits; in production b_cin and
+	/// mtbl_qr are committed before r1 is drawn, so the family is
+	/// also blocked by commitment order. The test proves the
+	/// DESIGNED defence rejects it, not that it is the only one.
+	/// T-N5c is the cheap non-localizing stand-in (b = 2 trips
+	/// booleanity, U1 and the window bind together).
+	#[test]
+	fn test_nonaggr_neg_bcin_nonboolean() {
+		let r1 = f(12345); //run_nat_nonaggr's pinned challenge
+		let base = f(1u32 << read_global_config().range2_bit);
+		expect_unsat("b_cin non-boolean family", &|nat| {
+			let x = row(nat, 96);
+			let y = row(nat, 141);
+			let p = row(nat, 39);
+			assert_eq!((nat.t.cat[x], nat.t.cat[y], nat.t.cat[p]),
+				(f(CAT_BP), f(CAT_BP), f(CAT_C)));
+			assert_eq!((nat.t.prev_loc1[x], nat.t.prev_loc1[y]),
+				(f(39), f(39)));
+			let pack = |i: usize| nat.t.enc[i] * base + nat.t.loc[i];
+			let inv_x = (pack(x) + r1).inverse().unwrap();
+			let inv_y = (pack(y) + r1).inverse().unwrap();
+			let q = inv_x * inv_y.inverse().unwrap();
+			//x: stamped carried, cert off
+			nat.t.b_cin[x] = f(1);
+			nat.t.prev_id1[x] = f(0);
+			nat.t.prev_loc1[x] = f(0);
+			nat.t.d_c1[x] = f(0);
+			nat.t.d_c2[x] = f(0);
+			regen_mtbls(nat);
+			assert_eq!(nat.mtbl_qr[p], f(1), "y alone cites 39 now");
+			//y: the compensating non-boolean bit + its query weight
+			nat.t.b_cin[y] = -q;
+			nat.mtbl_qr[p] += q;
+		});
+		//T-N5c
+		expect_unsat("b_cin = 2", &|nat| {
+			let i = row(nat, 21);
+			assert_eq!(nat.t.b_cin[i], f(1));
+			nat.t.b_cin[i] = f(2);
+		});
+	}
+
+	/// T925 T-N6 -- FP's LOWER citation survived the fusion into
+	/// assert_carry's slot. FP 106 (honest bracket 33 at rid 1 /
+	/// max-wrap) cites a loc no row holds with a consistent
+	/// d_below_lo (106-50-9-1 = 46). Rejecter: the fused Q_r logup.
+	#[test]
+	fn test_nonaggr_neg_fp_lower_forgery() {
+		expect_unsat("FP lower bracket forged", &|nat| {
+			let i = row(nat, 106);
+			assert_eq!((nat.t.cat[i], nat.t.prev_id1[i],
+				nat.t.prev_loc1[i], nat.t.d_below_lo[i]),
+				(f(CAT_FP), f(1), f(33), f(63)));
+			nat.t.prev_loc1[i] = f(50);
+			nat.t.d_below_lo[i] = f(46);
+			regen_mtbls(nat);
+		});
+	}
+
+	/// T925 -- a straddle pair may not BOTH claim the carry. Root
+	/// fixture, hm {2:[58], 1:[81]}: the joined FP copy of 58 is
+	/// relabelled C (containment demands C/BP/SP), its FP bracket
+	/// zeroed, (enc2, 58) added to a q_c pad slot, b_cin = 1 stamped
+	/// on it too, m-tables regenerated. The q_c bijection and BP 6's
+	/// cid-1 pin still hold (two C 58s, cid 1 and 2). q_i paid for
+	/// ONE 58; sole rejecter: "neo union split (b_cin)".
+	#[test]
+	fn test_nonaggr_neg_straddle_double_cin() {
+		let info = root_store();
+		let mut hm = HashMap::new();
+		hm.insert(2, vec![58]); hm.insert(1, vec![81]);
+		expect_unsat_on("both straddle copies stamped carried",
+			&info, &root_carried().to_stepqueue(), &hm,
+			A18_DEFAULT_MIN, &|nat| {
+				let t = &nat.t;
+				let idx: Vec<usize> = (t.n_pad..t.enc.len())
+					.filter(|&i| t.loc[i] == f(58)
+						&& !t.cat[i].is_zero()).collect();
+				assert_eq!(idx.len(), 2);
+				let (a, b) = (idx[0], idx[1]);
+				assert_eq!((t.cat[a], t.b_cin[a]), (f(CAT_C), f(1)));
+				assert_eq!((t.cat[b], t.b_cin[b]), (f(CAT_FP), f(0)));
+				let e = t.enc[b];
+				nat.t.cat[b] = f(CAT_C);
+				nat.t.b_cin[b] = f(1);
+				nat.t.prev_id1[b] = f(0);
+				nat.t.prev_loc1[b] = f(0);
+				nat.t.prev_loc2[b] = f(0);
+				nat.t.d_below_lo[b] = f(0);
+				nat.t.d_above_lo[b] = f(0);
+				let k = (0..nat.qc_enc.len()).position(|k|
+					nat.qc_enc[k].is_zero()).unwrap();
+				nat.qc_enc[k] = e;
+				nat.qc_loc[k] = f(58);
+				regen_mtbls(nat);
+			});
 	}
 }
 
@@ -11047,6 +12039,73 @@ mod tests_neo_nonaggr_oracle {
 				assert_eq!(lv[8].is_empty(), nv[8].is_empty(),
 					"seed {} chunk {} terminal", seed0, k);
 			}
+		}
+	}
+
+	/// T925 T-P7 -- generator COMPLETENESS under random carries,
+	/// through the CIRCUIT (test_nonaggr_oracle_decision is native
+	/// only). 20 seeds x 2 chunks: chunk 1 from the seed, chunk 2
+	/// from chunk 1's real carry. Both SAT; every carried (step,
+	/// loc) reappears in chunk 2's Q_m tagged b_cin = 1 with cat !=
+	/// FP (the containment obligation on an HONEST prover), and no
+	/// other real row is tagged. A negative window diff on a
+	/// citing row would panic in push_real (T-W1) before the
+	/// circuit is even built.
+	#[test]
+	fn test_nonaggr_oracle_circuit() {
+		use super::tests_neo_nonaggr::run_core_nonaggr;
+		let info = a18_store();
+		let rand_pl = |s: &mut u64, lo: u32| {
+			let mut pl: HashMap<u32, Vec<u32>> = HashMap::new();
+			for p in 1u32..=8 {
+				let cnt = (lcg(s) % 4) as usize;
+				let mut v: Vec<u32> = (0..cnt).map(|_|
+					lo + (lcg(s) % 80) as u32).collect();
+				v.sort(); v.dedup();
+				if !v.is_empty() { pl.insert(p, v); }
+			}
+			pl
+		};
+		for seed0 in 0u64..20 {
+			let mut s = seed0
+				.wrapping_mul(0x9E3779B97F4A7C15)
+				.wrapping_add(1);
+			let pl1 = rand_pl(&mut s, 1);
+			let pl2 = rand_pl(&mut s, 81);
+			let (cs1, nat1) = run_core_nonaggr(&info,
+				&seed_only_queue(), &pl1, 81, None);
+			assert!(cs1.is_satisfied().unwrap(),
+				"seed {} chunk 1: {:?}", seed0,
+				cs1.which_is_unsatisfied());
+			assert_eq!(nat1.t.b_cin.iter()
+				.filter(|b| **b == f(1)).count(), 1,
+				"seed {} chunk 1: only the seed row is carried", seed0);
+			let neo1 = neo_chunk(&seed_only_queue(), &pl1, &info, 81);
+			let (cs2, nat2) = run_core_nonaggr(&info, &neo1, &pl2,
+				161, None);
+			assert!(cs2.is_satisfied().unwrap(),
+				"seed {} chunk 2: {:?}", seed0,
+				cs2.which_is_unsatisfied());
+			let t = &nat2.t;
+			let carried = locs_by_step(&neo1);
+			let mut n_carried = 0;
+			for st in 1..=8usize {
+				for l in &carried[st] {
+					n_carried += 1;
+					let i = (t.n_pad..t.enc.len()).find(|&i|
+						t.step[i] == f(st as u32)
+						&& t.loc[i] == f(*l as u32)
+						&& t.b_cin[i] == f(1)).unwrap_or_else(||
+						panic!("seed {}: carried ({}, {}) not tagged \
+							in chunk 2", seed0, st, l));
+					assert_ne!(t.cat[i], f(CAT_FP),
+						"seed {}: carried ({}, {}) labelled FP",
+						seed0, st, l);
+				}
+			}
+			//seed row + the carried rows, nothing else
+			assert_eq!(t.b_cin.iter().filter(|b| **b == f(1)).count(),
+				n_carried + 1, "seed {}: b_cin count", seed0);
 		}
 	}
 }

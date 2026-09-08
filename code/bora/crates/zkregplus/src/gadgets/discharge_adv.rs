@@ -927,8 +927,7 @@ basis_pats={} perc={} compress={}", q_type, res, size_pat,
 			//2.3 propgate from last step .. to 2 (included).
 			// NOTE that we never produce the bwdprf from step1 -> step0
 			// because we want to keep step0 for each subsig for future use
-			// we walk EVERY step: breaking at the first empty to_del would
-			// leave dead locs alive at lower steps (see discharge_adv_neo)
+			// we break from the loop when there is no more backward proof to produce
 			// (i.e., no more locs to delete from previous step).
 			if steps>=2{
 			  for j in 0..steps-1{//number of iterations:
@@ -5594,16 +5593,16 @@ use utils::consts::{read_global_config, get_global_config};
 		assert!(prf100[0].src_step==Fr::from(2)); 
 		assert!(prf100.len()==3);
 
-		//verif example 2: completely empty proof
+		//verif example 2: no deletions, but the chain is still certified
 		let vec200 = res.store_items.get(&Fr::from(200)).unwrap();
 		assert!(vec200[1].pat==Fr::from(20) && 
 			vec200[1].locs==to_vf(vec![22,30]));
 		assert!(vec200[2].pat==Fr::from(30) && vec200[2].locs==to_vf(vec![33]));
 		assert!(vec200[3].pat==Fr::from(40) && vec200[3].locs==to_vf(vec![43]));
 		let prf200 = prf.store_items.get(&Fr::from(200)).unwrap();
-		assert!(prf200.len()==0);
+		assert!(prf200.len()==2);
 
-		//verif example 3: the proof goes down to step 3 (and stops there)
+		//verif example 3: one deletion at step 4, chain certified to step 2
 		let vec205 = res.store_items.get(&Fr::from(205)).unwrap();
 		assert!(vec205[1].pat==Fr::from(2) && vec205[1].locs==to_vf(vec![12]));
 		assert!(vec205[2].pat==Fr::from(3) && vec205[2].locs==to_vf(vec![22]));
@@ -5611,8 +5610,8 @@ use utils::consts::{read_global_config, get_global_config};
 			vec205[3].locs==to_vf(vec![47,57]));
 		assert!(vec205[4].pat==Fr::from(5) && vec205[4].locs==to_vf(vec![60]));
 		let prf205 = prf.store_items.get(&Fr::from(205)).unwrap();
-		assert!(prf205[0].src_step==Fr::from(4)); 
-		assert!(prf205.len()==1);
+		assert!(prf205[0].src_step==Fr::from(2)); 
+		assert!(prf205.len()==3);
 
 		//verif example 4: all will be removed
 		let vec206 = res.store_items.get(&Fr::from(206)).unwrap();

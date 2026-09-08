@@ -47,7 +47,76 @@ on the paper's automata" as evidence.
 
 ---
 
-## 2. Other deferred items
+## 2. BP walk stops early — LATENT PROVER CRASH on matching inputs
+
+**Where:** `code/bora/crates/zkregplus/src/gadgets/discharge_adv_neo.rs:883`
+`if del == 0 { break; }` (the "BP DESC" block), mirrored by
+`discharge_adv.rs:984` `if item_to_del.locs.len()==0 {break;}`.
+
+**What:** the backward-pruning walk descends from the deepest step and
+stops at the first step that deletes nothing. A dead row at a LOWER step is
+then never examined and stays labelled `C`. If such a dead row is a frozen
+step's minimum, `apply_sp_pass` keeps it and demotes the LIVE row to
+`Q_sp`; the next step's `C` row then has no predecessor in the final `Q_c`
+and `fill_nonaggr` panics at `:1682`
+`"nonaggr C row: no final-C predecessor"`.
+
+**REPRODUCED 2026-09-03** (scratch copy, crate otherwise unmodified):
+SDE `a1 .{1,9} a2 .{1,9} a3 .{1,9} a4`, one chunk 1..80, pat-locs
+a1:{6,50}, a2:58, a3:66, a4:74 — a genuine chain 0->50->58->66->74. The
+walk breaks at step 4 (66+9 >= 74) and never reaches step 1, where
+6+9 = 15 < 58 should have pruned the 6. Post-SP step 1 keeps the dead 6 and
+demotes the live 50. Panic.
+
+**Not a soundness issue.** No proof is produced; the prover simply fails.
+It cannot make a verifier accept bad advice.
+
+**Why it matters beyond the crash:** the shipped generator therefore does
+NOT implement the exact merged rule. Its carry is not chain-closed, which
+is the property `:1596-1599` cites ("the min always reaches (min-chain
+lemma)") to justify re-picking a `C` predecessor for every carried row.
+
+**Why deferred (decided 2026-09-03, USENIX Sec'27 cycle):** the one-line
+fix — delete both `break`s — was applied, tested and REVERTED, because it
+regresses the aggressive arm. Measured on `cargo test -p zkregplus
+--release gadgets::` (159 tests, fixtures present):
+  pre-fix (control)   158 passed / 1 failed
+  post-fix            157 passed / 2 failed
+The new failure is `tests_neo_t301::test_t301_emits_zone_edges`
+(`:11830`): `step2_locs` returns all 11 rows
+`[5,8,14,23,37,44,55,61,70,83,max]` instead of the 7 zone edges
+`[8,14,23,44,55,61,max]`. The test's own comment says "37, 70, 83 and 5
+go"; post-fix they do not. 11 is exactly what `test_t301_control_dense_sat`
+asserts under `DenseGuard::on()`, i.e. **the complete walk silently
+defeats the zone-edge (windowed-join) row dropping** — the first of the two
+optimizations `impl.tex:16-18` discloses. That is a table-size regression
+on the AGGRESSIVE arm (the BP walk is shared by both arms), so it could
+move measured constraint counts and timings. Not worth taking near a
+deadline with the artifact frozen.
+
+A second, smaller consequence: `discharge_adv.rs`'s `test_bwd_prf`
+(`:5604 assert!(prf200.len()==0)`, "completely empty proof") encodes the
+truncated walk. With the walk complete, measured values are prf200 0->2
+(deletions `[0,0]`) and prf205 1->3 (deletions `[0,0,2]`, deleting item
+moves to index 2); prf100 and prf206 are unchanged. Both `break`s must move
+TOGETHER — `test_m5_oracle_backward`, `test_m5_oracle_random` and
+`test_nonaggr_oracle_decision` compare neo against legacy byte for byte,
+and fixing neo alone breaks two more `t301` tests (151/8).
+
+**Fix when there is time:** (1) understand why a complete BP walk defeats
+the zone-edge emitter on the aggressive arm, and either restore the
+dropping or accept and re-measure; (2) delete both `break`s; (3) update
+`test_bwd_prf` to assert `locs_to_del` emptiness rather than item counts,
+preserving each example's intent; (4) re-run the full suite and confirm
+constraint counts.
+
+**Pre-existing, unrelated:** `tests_neo_t301::test_t301_bwd_emits_zone_edges`
+(`:11923`) fails identically before and after this change, with the same
+left/right values. It is failing in the repo today.
+
+---
+
+## 3. Other deferred items
 
 - **`compactify` skipped above 1000 terms** —
   `code/bora/vendor/dependency/ark-relations/src/r1cs/impl_lc.rs:49`.
