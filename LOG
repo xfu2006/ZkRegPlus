@@ -31667,6 +31667,142 @@ Goal 2. Implementtiation "align_impl"
 	[c] impl and test. increased constraints 3/4 per row. acceptable.
 	[d] testing done.
 
+Wed 09/09/2026
+Goal 1. improve the algorithm presentation
+	[a] still on if this is the simpflieid version
+	[b] check code consistency.
+
+Friday 09/11/2026
+Goal 1. move step (4) into step (3)
+	[a] refinement and do the skip.
+	[b] update the code relation
+Goal 2. refine the algorithm
+	[a] set up the draft again
+	[b] further simplify the algorithm and example
+
+Saturday 09/12/2026
+Goal 1. re-write section D
+	[a] paragraph 1
+
+Sunday 09/13/2026
+Goal 1. re-write section D
+	[a] Def 7 and pararaph around it
+	[b] Now revisit Def 6.
+	[c] Lemma 2 and proof.
+Goal 2. Figure 14
+	[a] block a to c
+	[b] block d
+	[c] block e
+	[d] block f
+	[e] block g
+
+Monday 09/14/2026
+Goal 2. rewrite D.2
+
+Tuesday 09/15/2026
+Goal 1. go over the proof idea.
+Goal 2. simplify proof and add examples.
+
+Wed 09/16/2026
+Goal 1. read alg again and refine drft
+
+Thursday 09/17/2026
+Goal 2. refine the proof.
+
+Friday 09/18/2026
+Goal 1. furnish new proof of C.2.4
+	[a] p1. nail correctness definition
+	[b] what's the relation between first part and 4 steps then?
+	[c] restructure the C.2.4 into two subsections
+Goal 2. local chunk prf
+	[a] claim 1
+	[b] layer1
+	[c] motivating example.
+
+Sat 09/19/2026
+Goal 3. steps 1 and 2
+	[a] step 1
+	[b] step 2
+Goal 4. step 3
+	[a] read
+Goal 5. step 4.
+
+Sunday 09/20/2026
+Goal 1. revision
+	[a] Figure 12
+	[b] Step 1
+	[c] Step 2
+	[d] Step 3
+		-> p1
+		-> p2
+		-> p3
+		-> polish
+Goal 2. revise step 4
+	[a] p1
+	[b] conclusion
+
+Goal 3. gen proof of D.2
+
+Monday 09/21/2026
+Goal 1. rework Theorem 4 proof
+	[a] re-work proof
+	[b] check if two examples can be merged.
+Goal 2. refine appendix D
+	[a] p1
+	[b] p2
+	[c] Def 8
+	[d] remove paragraphs
+Goal 3. check Theorem 4 proof
+
+Tuesday 09/22/2026
+Goal 1. Polish
+Goal 2. Revise 2nd time
+
+Thursday 09/24/2026
+Goal 1. revise sections 1-3 of notes
+Goal 2. revise section 4
+Goal 3. revise section 5 
+Goal 4. sections 6, 7, 8
+
+Friday 09/25/2026
+Goal 1. Section 10
+Goal 2. Work on slides -> DONE.
+
+Sat 09/26/2026
+Goal 1. improve slides
+
+Monday 09/28/2026
+Goal 1. load paper 
+
+Tuesday 09/29/2026
+Goal 1. E.1
+	[a] paragraph 1 and 2
+	[b] p3
+Goal 2. E.2
+
+Wed 09/30/2026
+Goal 1. E.3
+	[a] p1
+	[b] soundness check
+	[c] add an alignment task.
+Goal 2. implement
+	[a] fix D2a/b and 2 others
+	[b] plan and design.
+
+Thursday 10/01/2026
+Goal 1. impl
+	[a] D,Q8,T929
+	[b] impl and testing
+Goal 2. writing E.4
+	[a] p1 
+
+Friday 10/02/2026
+Goal 1. continue E.4
+	[a] p2 o p3
+	[b] polish E.4 again
+Goal 2. run tests
+	[a] G0
+	[b] G1,G5,G2
 
 --- DATA ----
 #####################################

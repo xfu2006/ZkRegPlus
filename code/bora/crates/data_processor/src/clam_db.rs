@@ -605,8 +605,32 @@ impl SubsigStepStore{
 			let sing = r + 1 < n && rg_end[r + 1] == max;
 			if sing { fz[r] = F::zero(); last_sing = steps[r]; }
 			else { fz[r] = last_sing; }
+			// D2 invariant (the circuit's D2a mask m_fz rests on
+			// it): fz == 0 EXACTLY on singleton steps (terminal, or
+			// unbounded range into r+1). Holds iff every singleton
+			// has a real id1 >= 1 and every block ends in one.
+			debug_assert!((fz[r].is_zero()) == sing,
+				"gen_fz_col: fz==0 <=> singleton broken at row {}", r);
 		}
 		fz
+	}
+
+	/// The (tag(enc, ID_ENCODED_FZ), fz) tuples a NEO build adds to
+	/// the lookup (add_store_to_lkup step 2d): one per real step,
+	/// plus the subsig-0 dummy rows so padded prf lookups resolve.
+	/// Split out (0 behaviour change) so tests can check the emitted
+	/// tuples without writing the process-global neo flag. The D2
+	/// circuit reads these on every non-seed C and SP row.
+	pub fn gen_fz_tuples<F:PrimeField>(cols: &Vec<Vec<F>>, max: F)
+		-> Vec<(F, F)> {
+		let (subsigs, pats, encoded) = (&cols[0], &cols[2], &cols[5]);
+		let fz = Self::gen_fz_col(cols, max);
+		encoded.par_iter().enumerate()
+			.filter_map(|(r,&enc)|{
+				let b_dummy = pats[r].is_zero() || pats[r]==max;
+				if !(!b_dummy || subsigs[r].is_zero()) { return None; }
+				Some((Self::gen_step_tbl_id(enc, ID_ENCODED_FZ), fz[r]))
+			}).collect::<Vec<(F,F)>>()
 	}
 
 	/// M2 corpus stat over this SED store: (B, nu). B = max distance in
@@ -852,13 +876,7 @@ impl SubsigStepStore{
 		// Inclusion mirrors the encoded cats above: real steps, plus the
 		// subsig-0 dummy rows so padded prf lookups resolve.
 		if read_global_config().clamav_cfg.b_use_discharge_neo {
-			let fz = Self::gen_fz_col(&cols, max);
-			let mut tuples5 = encoded.par_iter().enumerate()
-				.filter_map(|(r,&enc)|{
-					let b_dummy = pats[r].is_zero() || pats[r]==max;
-					if !(!b_dummy || subsigs[r].is_zero()) { return None; }
-					Some((Self::gen_step_tbl_id(enc, ID_ENCODED_FZ), fz[r]))
-				}).collect::<Vec<(F,F)>>();
+			let mut tuples5 = Self::gen_fz_tuples(&cols, max);
 			all_tuples.append(&mut tuples5);
 		}
 
@@ -1018,6 +1036,13 @@ impl SubsigStepStore{
 					} else { &item.vec_pm_bounds };
 				for step in steps{
 					let pat_id = step.0; //no adjust (already did in table)
+					// pat 0 / max belong to the BEGIN / END rows. A real
+					// pat strictly inside keeps distinct DB encs 2B^2 + 1
+					// apart, which the union's loc >= 0 bound in
+					// discharge_adv_neo rests on. Release builds too.
+					assert!(pat_id >= 1 && pat_id < max,
+						"gen_cols: real step pat_id {} not in [1, {}]",
+						pat_id, max - 1);
 					let (r_s, r_e) = (step.1.0, step.1.1);
 					entries.push(vec![subsig_id, id1, pat_id, r_s, r_e]);
 					id1+=1;
@@ -3072,20 +3097,43 @@ mod tests_clam_db{
 	/// T3 emission: add_store_to_lkup emits one ID_ENCODED_FZ tuple per
 	/// real step, with the correct key and fz value.
 	#[test]
+	/// D2 r3: was RED on t925-task-a ("missing fz tuple at row 3"):
+	/// emission is gated by the process-global neo flag, default off,
+	/// and this test never set it. It now checks gen_fz_tuples (the
+	/// exact tuples a neo build appends) and, read-only, that
+	/// add_store_to_lkup appends them iff the flag is on. No global
+	/// write, so no race with the other DB-building tests.
 	fn test_fz_emission(){
 		let rb = read_global_config().range2_bit;
 		let (store, cols) = build_a1_a8();
 		let max = Fr::from(((1u64 << rb) - 1) as u64);
 		let fz = SubsigStepStore::gen_fz_col::<Fr>(&cols, max);
-		let mut lk = LookupTableTwoCol_Inst::<Fr>{ vals: vec![] };
-		store.add_store_to_lkup(&mut lk, 100u32, rb);
+		let tup = SubsigStepStore::gen_fz_tuples::<Fr>(&cols, max);
 		let encoded = &cols[5];
+		let mut n_real = 0;
 		for r in 0..cols[2].len() {
 			if cols[2][r] == Fr::zero() || cols[2][r] == max { continue; }
+			n_real += 1;
 			let key = SubsigStepStore::gen_step_tbl_id(
 				encoded[r], ID_ENCODED_FZ);
-			assert!(lk.vals.contains(&(key, fz[r])),
+			assert!(tup.contains(&(key, fz[r])),
 				"missing fz tuple at row {}", r);
+			// one value per key: a prover cannot pick another fz
+			assert_eq!(tup.iter().filter(|t| t.0 == key).count(), 1,
+				"fz key of row {} not unique", r);
+		}
+		assert_eq!(n_real, 8);
+		// plus one per subsig-0 dummy row (padded prf lookups)
+		let n_dummy0 = (0..cols[2].len()).filter(|&r| cols[0][r].is_zero()
+			&& (cols[2][r].is_zero() || cols[2][r] == max)).count();
+		assert_eq!(tup.len(), n_real + n_dummy0,
+			"a1..a8: one tuple per real step + subsig-0 dummies");
+		let b_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
+		let mut lk = LookupTableTwoCol_Inst::<Fr>{ vals: vec![] };
+		store.add_store_to_lkup(&mut lk, 100u32, rb);
+		for t in &tup {
+			assert_eq!(lk.vals.contains(t), b_neo,
+				"fz tuple in lookup iff neo flag ({})", b_neo);
 		}
 	}
 
