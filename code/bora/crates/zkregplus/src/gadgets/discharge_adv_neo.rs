@@ -6438,6 +6438,8 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		for k in 0..kp.len() {
 			w[off + k] *= m_seed[k].value().unwrap_or(z);
 		}
+		#[cfg(test)] // forged-t_seed seam, see tests_t929_fs_adaptive
+		tests_t929_fs_adaptive::t_seed_override(&mut w[off..]);
 		let mut it = w.into_iter();
 		let mut alloc = |m: usize| -> Vec<FpVar<F>> { (0..m)
 			.map(|_| new_var(&cs, it.next().unwrap())).collect() };
@@ -11767,7 +11769,7 @@ mod tests_neo_nonaggr_neg {
 
 	/// remove row i from every T_qm column (base + nonaggr) and
 	/// recompute d_sort + the rank m-tables.
-	fn remove_row(nat: &mut NeoCore<Fr>, i: usize) {
+	pub(crate) fn remove_row(nat: &mut NeoCore<Fr>, i: usize) {
 		let t = &mut nat.t;
 		// T929: the removed row's OWN enc (the old
 		// code compared against enc[i-1] AFTER removal, which is
@@ -11986,7 +11988,7 @@ mod tests_neo_nonaggr_neg {
 	/// balance asserts, so a tamper that cannot balance the union
 	/// still gets the best zero reconciliation. q_i seed rows are
 	/// filtered exactly as gen_union_scalars does (seed table).
-	fn t929_zero_scalars(nat: &NeoCore<Fr>) -> Vec<Fr> {
+	pub(crate) fn t929_zero_scalars(nat: &NeoCore<Fr>) -> Vec<Fr> {
 		let base = f(1u32 << read_global_config().range2_bit);
 		let seeds = NeoCore::<Fr>::seed_packs(&nat.subsig_nat);
 		let t = &nat.t;
@@ -15131,5 +15133,206 @@ mod tests_d2_need {
 			A18_DEFAULT_MIN as u64);
 		assert_eq!(rep.d2b_c.len(), 1, "T-N7 replay {:?}", rep.all());
 		assert!(rep.d2b_c[0].contains("loc 115"));
+	}
+}
+
+// ---- T929 under a Fiat-Shamir model: the two adaptive forgeries ----
+// The T929 tests in tests_neo_nonaggr_neg pin r1 = 12345 BEFORE the
+// tamper, so they cannot tell a committed m_seed from a post-r1 one,
+// and they never touch the post-r1 seed-table advice t_seed. Here
+// (r1, r2) come from the committed cells (fs below). Both tests drop
+// the uncited carried C row a3:27 (fig14c2 and empty-L) with the D2
+// refresh of t929_attack's AdaptR1 play, then forge the one knob the
+// union has left. Each forgery is SAT under exactly one mutant
+// (TESTPLAN G5 5c: T-tab, T-mnew) that the T929 tests above miss.
+#[cfg(test)]
+mod tests_t929_fs_adaptive {
+	use super::*;
+	use super::tests_neo_m4::A18_DEFAULT_MIN;
+	use super::tests_neo_m5::{a18_store, a18_carried};
+	use super::tests_neo_m6::{hm_to_l_cols, hm_gen, alloc_vars};
+	use super::tests_neo_r1::c2_hm;
+	use super::tests_neo_nonaggr_neg::{row, regen_mtbls, remove_row,
+		t929_zero_scalars};
+	use ark_bn254::Fr;
+	use ark_crypto_primitives::sponge::{CryptographicSponge,
+		poseidon::PoseidonSponge};
+	use ark_ff::BigInteger;
+	use ark_relations::r1cs::ConstraintSystem;
+	use crate::gadgets::commons::new_var;
+	use folding_schemes::transcript::poseidon
+		::poseidon_canonical_config;
+	use std::cell::{Cell, RefCell};
+
+	fn f(x: u32) -> Fr { Fr::from(x) }
+
+	// ---- the forged-t_seed seam (TEST ONLY) ----
+	// assert_qm_union passes its seed-table advice (t_k = m_k /
+	// (kp_k + r1), one per slot) through t_seed_override right
+	// before allocating it. The call is #[cfg(test)], so non-test
+	// builds are unchanged. PER THREAD like T301_DENSE: set by
+	// TSeedGuard::on, cleared when the guard drops.
+	thread_local! {
+		static T_SEED_OVR: RefCell<Option<(usize, Fr)>> =
+			const { RefCell::new(None) };
+		static T_SEED_HIT: Cell<bool> = const { Cell::new(false) };
+	}
+
+	pub(super) fn t_seed_override<F: PrimeField>(t: &mut [F]) {
+		T_SEED_OVR.with(|c| {
+			if let Some((k, v)) = *c.borrow() {
+				t[k] = F::from_le_bytes_mod_order(
+					&v.into_bigint().to_bytes_le());
+				T_SEED_HIT.set(true);
+			}
+		});
+	}
+
+	/// t_seed[k] := v on this thread until the guard drops.
+	struct TSeedGuard;
+	impl TSeedGuard {
+		fn on(k: usize, v: Fr) -> Self {
+			T_SEED_OVR.with(|c| *c.borrow_mut() = Some((k, v)));
+			T_SEED_HIT.set(false);
+			TSeedGuard
+		}
+		/// the seam was reached since `on`.
+		fn hit(&self) -> bool { T_SEED_HIT.get() }
+	}
+	impl Drop for TSeedGuard {
+		fn drop(&mut self) {
+			T_SEED_OVR.with(|c| *c.borrow_mut() = None);
+		}
+	}
+
+	/// (tag, L): fig-14 chunk 2 and its empty-L variant, both over
+	/// the a18 store and carry (t929_c2 / t929_empty).
+	fn fixtures() -> Vec<(&'static str, HashMap<u32, Vec<u32>>)> {
+		vec![("fig14c2", c2_hm()), ("empty-L", HashMap::new())]
+	}
+
+	/// honest natives (the advice side of run_core_nonaggr).
+	fn gen_nat(hm: &HashMap<u32, Vec<u32>>) -> NeoCore<Fr> {
+		let info = a18_store();
+		let carried_sq = a18_carried().to_stepqueue();
+		let mut g = StepQueueNeo::from_stepqueue(carried_sq.clone())
+			.gen_shared_core_from_hm(0, &hm_gen(hm), &info,
+				f(A18_DEFAULT_MIN)).expect("shared core");
+		g.apply_sp_pass(&info);
+		let (l_pat, l_id, l_loc) = hm_to_l_cols(hm);
+		NeoCore::gen_nonaggr(&g, &info, l_pat, l_id, l_loc,
+			&hm_gen(hm), &carried_sq, f(A18_DEFAULT_MIN), 0)
+			.expect("gen_nonaggr").0
+	}
+
+	/// t929_attack's drop (AdaptR1 play, no m change) of the carried
+	/// C row at `loc`: out of Q_m and q_c, q_i untouched, then the
+	/// D2 refresh (fill_nonaggr + m-tables) and the committed zero
+	/// scalars of the smaller Q_m. Returns the row's pack enc * 2^rb
+	/// + loc, whose 1/(pack + r1) is now unpaid in both identities.
+	fn drop_c_row(nat: &mut NeoCore<Fr>, loc: u32) -> Fr {
+		let b = f(1u32 << read_global_config().range2_bit);
+		let i = row(nat, loc);
+		let (e, l) = (nat.t.enc[i], nat.t.loc[i]);
+		assert_eq!(nat.t.cat[i], f(CAT_C), "row {} is not C", loc);
+		assert!((0..nat.qi_enc.len()).any(|j|
+			nat.qi_enc[j] == e && nat.qi_loc[j] == l),
+			"row {} is not carried (not in q_i)", loc);
+		let k = (0..nat.qc_enc.len()).find(|&k|
+			nat.qc_enc[k] == e && nat.qc_loc[k] == l)
+			.expect("C row not in q_c");
+		nat.qc_enc[k] = f(0);
+		nat.qc_loc[k] = f(0);
+		remove_row(nat, i);
+		nat.t.fill_nonaggr(&a18_store(), f(A18_DEFAULT_MIN));
+		regen_mtbls(nat);
+		nat.union_prf = t929_zero_scalars(nat);
+		e * b + l
+	}
+
+	/// seed-table key of slot 0: kp_0 = s_0 * 2^5rb + 1.
+	fn kp0(nat: &NeoCore<Fr>) -> Fr {
+		let b = f(1u32 << read_global_config().range2_bit);
+		nat.subsig_nat[0] * b * b * b * b * b + f(1)
+	}
+
+	/// FS model of the commitment order: a Poseidon sponge
+	/// (canonical config) absorbs the committed neo_core cells,
+	/// core_container(nat, false) in container order; r1 = squeeze,
+	/// absorb r1, r2 = squeeze. Any change to a committed cell
+	/// moves r1, as it moves cmF in production.
+	fn fs(nat: &NeoCore<Fr>) -> (Fr, Fr) {
+		let mut sp = PoseidonSponge::<Fr>::new(
+			&poseidon_canonical_config::<Fr>());
+		sp.absorb(&StepQueueNeo::<Fr>::core_container(nat, false)
+			.lock().unwrap().to_vec());
+		let r1: Fr = sp.squeeze_field_elements(1)[0];
+		sp.absorb(&r1);
+		let r2: Fr = sp.squeeze_field_elements(1)[0];
+		(r1, r2)
+	}
+
+	/// run_nat_nonaggr at (r1, r2) = fs(nat); true iff SAT.
+	fn sat_at_fs(nat: &NeoCore<Fr>) -> bool {
+		let (r1, r2) = fs(nat);
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let vars = alloc_vars(&cs, nat);
+		let r1 = new_var(&cs, r1);
+		let r2 = new_var(&cs, r2);
+		let dmin = new_var(&cs, f(A18_DEFAULT_MIN));
+		DischargeAdvNeoGadget::<Fr>::assert_neo_nonaggr(cs.clone(),
+			nat, &vars, &dmin, &r1, &r2, 0)
+			.expect("assert core nonaggr");
+		cs.is_satisfied().unwrap()
+	}
+
+	/// AdaptT. Guards mutant T-tab: the seed-table row t_k * (kp_k
+	/// + r1) = m_k removed from assert_qm_union. After the drop of
+	/// C 27 every committed cell is honest, so r1 = fs(nat) is
+	/// fixed, and the prover forges the post-r1 advice t_seed[0] =
+	/// m_0 / (kp_0 + r1) + 1 / (pack_27 + r1). That balances both
+	/// union identities (U and U1 miss the same pole), so only the
+	/// seed-table row can reject it.
+	#[test]
+	fn test_t929_fs_forged_t_seed_rejected() {
+		let mut bad = vec![];
+		for (tag, hm) in fixtures() {
+			let mut nat = gen_nat(&hm);
+			let pd = drop_c_row(&mut nat, 27);
+			let (r1, _) = fs(&nat);
+			let t0 = nat.m_seed[0] * (kp0(&nat) + r1).inverse().unwrap()
+				+ (pd + r1).inverse().unwrap();
+			let g = TSeedGuard::on(0, t0);
+			let sat = sat_at_fs(&nat);
+			assert!(g.hit(), "{}: t_seed seam not reached", tag);
+			if sat { bad.push(tag); }
+		}
+		assert!(bad.is_empty(),
+			"drop C 27 + forged t_seed[0] accepted on {:?}", bad);
+	}
+
+	/// AdaptFS. Guards mutant T-mnew: m_seed taken out of the
+	/// committed neo_core container (a post-r1 new_var). After the
+	/// drop of C 27 the prover solves m_seed[0] = m_0 + (kp_0 + r1)
+	/// / (pack_27 + r1) at r1 = fs of its previous attempt, 4
+	/// rounds. m_seed is in the FS preimage, so each new m_0 moves
+	/// r1 and no round is SAT.
+	#[test]
+	fn test_t929_fs_adaptive_m_seed_rejected() {
+		let mut bad = vec![];
+		for (tag, hm) in fixtures() {
+			let mut nat = gen_nat(&hm);
+			let pd = drop_c_row(&mut nat, 27);
+			let (m0, kp) = (nat.m_seed[0], kp0(&nat));
+			let mut r1 = fs(&nat).0;
+			for j in 0..4 {
+				let mut nx = nat.clone();
+				nx.m_seed[0] = m0 + (kp + r1) * (pd + r1).inverse().unwrap();
+				if sat_at_fs(&nx) { bad.push(format!("{} round {}", tag, j)); }
+				r1 = fs(&nx).0;
+			}
+		}
+		assert!(bad.is_empty(),
+			"drop C 27 + m_seed[0] solved at r1 accepted on {:?}", bad);
 	}
 }
