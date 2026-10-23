@@ -660,7 +660,10 @@ pub const DNA: DatasetSpec = DatasetSpec {
 	fanout_cap: 127,
 	min_pm_word_len: 4,
 	b_aggressive: false,
-	b_check_lkup: false,
+	// full_dna runs the lookup check like CLAM and DLP (owner
+	// 2026-10-22, TASK_T933 sec. 12 option (a)). The 2026-08-16 paper
+	// run had it off. Dry runs still clear it in effective_spec.
+	b_check_lkup: true,
 	vec_decrease_level: &[],     // single full-cap circuit
 	rung0_scale: None,
 	n_par_snark: 2,
@@ -4765,7 +4768,7 @@ pub mod tests_bora_data_driver {
 		assert_eq!(c.clamav_cfg.min_pm_word_len, 4);
 		assert_eq!(c.clamav_cfg.sde_rep_fanout_cap, 127);
 		assert_eq!(c.n_par_batch_claim, 8);
-		assert!(!c.b_check_lkup, "user decision: check stays off");
+		assert!(c.b_check_lkup, "full_dna runs the lookup check");
 		assert_eq!(c.range2_bit, 27);
 		assert_eq!(c.min_subsigs, 64);
 		assert_eq!(c.min_dfa_sigs, 2);
@@ -5792,7 +5795,7 @@ pub mod tests_bora_data_driver {
 		assert!(DNA.scale_sources.is_empty(), "no Q4 scale for DNA");
 		assert!(DNA.vec_decrease_level.is_empty());
 		assert!(!DNA.b_aggressive);
-		assert!(!DNA.b_check_lkup, "user decision: check stays off");
+		assert!(DNA.b_check_lkup, "full_dna runs the lookup check");
 
 		// 3. neo-own cache.
 		assert_eq!(DNA.db_cache_dir, "dna_neo");
@@ -5911,6 +5914,9 @@ pub mod tests_bora_data_driver {
 		let mut spec = DNA.clone();
 		spec.name = "dna_test";          // /tmp/bora/dna_test_neo_p0
 		spec.db_cache_dir = "dna_test_neo";
+		// kernel test: the real 2^27-row table needs a full-size
+		// run, so keep the check off here (the DNA const has it on).
+		spec.b_check_lkup = false;
 		let _t1 = TmpConfigDir(PathBuf::from(plan_dir(spec.name, 0)));
 		let _t2 = TmpConfigDir(PathBuf::from(format!(
 			"{}/data/cache/{}", proot, cache_dir_for(&spec, 0))));
