@@ -1709,7 +1709,7 @@ where
 				&global_claim, &batch_proof, &self.poseidon_config, 
 				false, None, Some(job_id), "self")); //note part2 checked later
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
-				&snark_inp, &words, &ind_claim,
+				&snark_inp, &words, &ind_claim, &batch_proof,
 				idx_individual_prf);
 			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, global_claim, &batch_proof, &ind_prf,
 				Some(job_id), "self", false);
@@ -2371,7 +2371,7 @@ where
 				&global_claim, &batch_proof, &self.poseidon_config, 
 				false,None,Some(job_id), "self")); //note part2 checked later
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
-				&snark_inp, &words, &ind_claim,
+				&snark_inp, &words, &ind_claim, &batch_proof,
 				idx_ind_proof);
 			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, global_claim, &batch_proof, &ind_prf,
 				Some(job_id), "self", false);

@@ -708,22 +708,40 @@ where
 		Ok( (batch_claim, vec_ind_claims, snark_input) )
 	}
 
+	/// Combiner `ch` of an individual proof (Issue 6b). It absorbs the
+	/// batch's vector commitments BEFORE (r_i, v_i). With H(r_i, v_i)
+	/// alone, a cheating batch prover could learn `ch` first and pick a
+	/// screened word's slot value r_t so that r_t + ch*v_t equals the
+	/// target of an unscreened word, since vec_r is free in the batch.
+	pub fn ind_combiner(poseidon_config: &PoseidonConfig<F>,
+		vcom_vec_r: &C1, vcom_vec_v: &C1, r_i: F, v_i: F) -> F {
+		let mut arr_fe: Vec<F> = vec![];
+		for c in [vcom_vec_r, vcom_vec_v] {
+			c.to_native_sponge_field_elements_as_vec()
+				.to_sponge_field_elements(&mut arr_fe);
+		}
+		let mut sponge = PoseidonSponge::<F>::new(poseidon_config);
+		sponge.absorb(&arr_fe);
+		sponge.absorb(&vec![r_i, v_i]);
+		sponge.squeeze_field_elements(1)[0]
+	}
+
 	/// generate the individual proof for the i'th word (in SnarkAdvice)
 	pub fn prove_individual(pkey: &BatchProcessorProverParams<'a,E>,
 		snark_input: &SnarkAdvice<E::ScalarField>,
 		words: &Vec<Vec<E::ScalarField>>,
 		ind_claim: &IndividualClaim<E>,
+		batch_proof: &BatchProof<E,S>,
 		i: usize)->IndividualProof<E>{
 		//1. retrieve r_i, v_i and compute ch for batched
 		// verification of vec_r[r_i] and vec_v[v_i]
 		assert!(i==ind_claim.i);	
 		let r_i = snark_input.vec_r[i];
 		let v_i = snark_input.vec_v[i];
-		let mut sponge= PoseidonSponge::<E::ScalarField> 
-			::new(&pkey.poseidon_config);
 		//note: r_i is hased from (com_v, com_r, i) already
-		sponge.absorb(&vec![r_i, v_i]);
-		let ch: E::ScalarField = sponge.squeeze_field_elements(1)[0];
+		let ch = Self::ind_combiner(&pkey.poseidon_config,
+			&batch_proof.vcom_vec_r, &batch_proof.vcom_vec_v,
+			r_i, v_i);
 
 		//2. compute the combined vector
 		let zero = E::ScalarField::zero();
@@ -796,10 +814,10 @@ where
 		sponge.absorb(&arr_fe);
 		let r_i:F = sponge.squeeze_field_elements(1)[0];
 		let v_i = ind_proof.v_i;
-		let mut sponge= PoseidonSponge::<E::ScalarField> 
-			::new(&vkey.poseidon_config);
-		sponge.absorb(&vec![r_i, v_i]);
-		let ch: E::ScalarField = sponge.squeeze_field_elements(1)[0];
+		//Issue 6b. ch absorbs vcom_vec_r and vcom_vec_v (ind_combiner)
+		let ch = Self::ind_combiner(&vkey.poseidon_config,
+			&batch_proof.vcom_vec_r, &batch_proof.vcom_vec_v,
+			r_i, v_i);
 
 		//2. verify the vec_com AT omega^i, and bind the opened value.
 		//S102/F2: opening at `ch` and trusting the prover's own
@@ -812,9 +830,22 @@ where
 		//value is the same predicate the early returns computed.
 		//b_vcom is the only one needing idx_pt, so None => false
 		//reproduces the old `Err(_) => return false` exactly.
+		//Issue 6a. Only the word slots 0..n_words-1 may be opened.
+		//Slot n_words holds the blinding nonces, and omega_pow_idx
+		//wraps i, so an unchecked i reaches them. Do not write
+		//`i + 1` here, since it wraps at usize::MAX without overflow
+		//checks and then hits the blind slot when n_words + 1 is the
+		//domain size. b_vcom stays the raw opening result, so the
+		//log shows which of the two rejected.
+		//Issue 6 K1. This binds membership, not position. The fold's
+		//word count is not pinned to n_words (S105b note in
+		//decider_eth_circuit_super.rs, the paper's pubstat_7 is not in
+		//the code), so a malicious batch whose fold has m != n_words
+		//words shifts each word by n_words - m.
+		let b_range = i < vkey.vec_dom_size.saturating_sub(1);
 		let opt_idx = veccom::omega_pow_idx::<E::ScalarField>(
 			vkey.vec_dom_size, i).ok();
-		let b_idx = opt_idx.is_some();
+		let b_idx = b_range && opt_idx.is_some();
 		let b_vcom_eval = ind_proof.vcom_prf.eval == r_i + ch * v_i;
 		let b_vcom = match opt_idx {
 			Some(p) => VecCom::<'a,E>::verify_with_challenge(&vkey.vec,
@@ -840,8 +871,10 @@ where
 			verdict_str(ok, b_unbound)));
 		if !b_claim {emit(ERR, format!("ind[{}] i={}: claim's batch \
 			commitments differ from pubstat", ctx, i));}
-		if !b_idx {emit(ERR, format!("ind[{}] i={}: omega^i failed, \
-			dom_size={}", ctx, i, vkey.vec_dom_size));}
+		if !b_idx {emit(ERR, format!("ind[{}] i={}: not a word slot \
+			(n_words={}) or omega^i failed, dom_size={}", ctx, i,
+			vkey.vec_dom_size.saturating_sub(1),
+			vkey.vec_dom_size));}
 		if !b_vcom_eval {emit(ERR, format!("ind[{}] i={}: vcom eval \
 			got={} want={} (r_i={} ch={} v_i={})", ctx, i,
 			ind_proof.vcom_prf.eval, r_i + ch * v_i, r_i, ch, v_i));}
@@ -1287,7 +1320,7 @@ mod tests_batch_proc {
 		assert!(BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E, false>::verify_batch(&vk, None, None, None, None, &global_claim, &batch_proof, &poseidon_config, false, None, None,
 			"test"));
 		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
-			&snark_inp, &words, &ind_claims[i], i);
+			&snark_inp, &words, &ind_claims[i], &batch_proof, i);
 		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,
 			&ind_claims[i], &global_claim, &batch_proof, &ind_prf, None, "test", false);
 		assert!(res, "verify indidivudal proof failed");
@@ -1340,7 +1373,7 @@ mod tests_batch_proc {
 			&global_claim, &batch_proof, &cfg, false, None, None, "test"),
 			"T932W-A: verify_batch failed on the honest fixture");
 		let ind_prf = T932Bp::prove_individual(&pk, &snark_inp, &words,
-			&ind_claims[i], i);
+			&ind_claims[i], &batch_proof, i);
 		T932wFix{words, pk, vk, global_claim, ind_claims, snark_inp,
 			batch_proof, ind_prf, i}
 	}
@@ -1511,9 +1544,11 @@ mod tests_batch_proc {
 		let v_fake = poly_from_vec(w2.clone()).unwrap().evaluate(&r_fake);
 		let kzg_prf = KZG::<Bn254>::prove_with_challenge(
 			&pk.kzg, r_fake, &w2, &zero, None).unwrap();
-		let mut sponge = PoseidonSponge::<Fr>::new(&poseidon_config);
-		sponge.absorb(&vec![r_fake, v_fake]);
-		let ch: Fr = sponge.squeeze_field_elements(1)[0];
+		//the verifier's own combiner (Issue 6b), so the forger is not
+		//rejected merely for using a stale formula
+		let ch = T932Bp::ind_combiner(&poseidon_config,
+			&batch_proof.vcom_vec_r, &batch_proof.vcom_vec_v,
+			r_fake, v_fake);
 
 		//best effort on the vec-com: open the REAL combined vector, the
 		//only one matching newcm, at omega^i.
@@ -1538,6 +1573,195 @@ mod tests_batch_proc {
 			assert!(!res,
 				"forged word ACCEPTED (opened at {}): F2/F3 not binding",
 				name);
+		}
+	}
+
+	use ark_crypto_primitives::sponge::poseidon::PoseidonConfig;
+
+	/// Issue 6 fixture. n_words two-char words (word `empty` has length
+	/// 0 if given), honest claims, keys, and the part-1 rand input.
+	struct Issue6Fix{
+		words: Vec<Vec<Fr>>,
+		lkup: Arc<LookupTableTwoCol_Inst<Fr>>,
+		pk: super::BatchProcessorProverParams<'static, Bn254>,
+		vk: super::BatchProcessorVerifierParams<'static, Bn254,
+			KZG<'static, Bn254>, false>,
+		gc: super::BatchClaim<Bn254>,
+		claims: Vec<IndividualClaim<Bn254>>,
+		si: super::SnarkAdvice<Fr>,
+		partial: SnarkRandInput<Bn254>,
+	}
+	fn issue6_setup(n_words: usize, empty: Option<usize>) -> Issue6Fix{
+		let mut rng = test_rng();
+		let words: Vec<Vec<Fr>> = (0..n_words).map(|k|
+			if Some(k) == empty { vec![] }
+			else { vec![Fr::rand(&mut rng), Fr::rand(&mut rng)] })
+			.collect();
+		let lkup = Arc::new(LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(1u32))]));
+		let pc = poseidon_canonical_config::<Fr>();
+		let (pk, vk) = T932Bp::setup(&mut rng, T932Bp::key_size(&words),
+			n_words, pc.clone(), 0);
+		let (gc, claims, si) = T932Bp::gen_claims(&pk, &mut rng, &words,
+			lkup.clone()).unwrap();
+		let g1 = G1::generator();
+		let partial = SnarkRandInput::<Bn254>{
+			kzg_all_words: gc.kzg_all_words,
+			kzg_length: gc.kzg_length,
+			kzg_lk_col1: gc.kzg_lk_col1,
+			kzg_lk_col2: gc.kzg_lk_col2,
+			hash_cmF: Fr::zero(), kzg_vec_r: g1, kzg_vec_v: g1,
+			poseidon_config: pc};
+		Issue6Fix{words, lkup, pk, vk, gc, claims, si, partial}
+	}
+
+	/// r_i exactly as verify_individual derives it for (i, C).
+	fn issue6_r(pc: &PoseidonConfig<Fr>,
+		gc: &super::BatchClaim<Bn254>, i: usize, c: G1) -> Fr {
+		let mut sponge = PoseidonSponge::<Fr>::new(pc);
+		let mut arr_fe: Vec<Fr> = vec![];
+		for x in vec![gc.kzg_all_words, gc.kzg_length, c]{
+			x.to_native_sponge_field_elements_as_vec()
+				.to_sponge_field_elements(&mut arr_fe);
+		}
+		sponge.absorb(&Fr::from(i as u32));
+		sponge.absorb(&arr_fe);
+		sponge.squeeze_field_elements(1)[0]
+	}
+
+	/// An unscreened word C*, honestly committed, and its (r*, v*) at
+	/// index i. Returns (coefficients, C*, r*, v*).
+	fn issue6_unscreened(f: &Issue6Fix, i: usize) -> (Vec<Fr>, G1, Fr, Fr){
+		let mut rng = test_rng();
+		let mut wm = vec![Fr::rand(&mut rng), Fr::rand(&mut rng),
+			Fr::rand(&mut rng)];
+		wm.reverse();
+		let c_star = KZG::<Bn254>::commit(&f.pk.kzg, &wm, &Fr::zero())
+			.unwrap();
+		let r_star = issue6_r(&f.partial.poseidon_config, &f.gc, i, c_star);
+		let v_star = poly_from_vec(wm.clone()).unwrap().evaluate(&r_star);
+		(wm, c_star, r_star, v_star)
+	}
+
+	/// Plant (r*, v*) of an unscreened word C* in the blind slot, prove
+	/// the batch, and return the verdict of verify_individual for C* at
+	/// index i, opened at the domain point pt.
+	fn issue6_blind_forgery(f: &mut Issue6Fix, i: usize, pt: Fr,
+		ctx: &'static str) -> bool {
+		let pc = f.partial.poseidon_config.clone();
+		let zero = Fr::zero();
+		let (wm, c_star, r_star, v_star) = issue6_unscreened(f, i);
+		f.si.r_vec_r = r_star;
+		f.si.r_vec_v = v_star;
+		let (bp, _) = T932Bp::prove_batch(&f.pk, &f.si, &f.words,
+			f.lkup.clone(), &f.partial);
+		assert!(T932Bp::verify_batch(&f.vk, None, None, None, None, &f.gc,
+			&bp, &pc, false, None, None, ctx),
+			"Issue 6a: verify_batch rejects the planted nonces");
+		let ch = T932Bp::ind_combiner(&pc, &bp.vcom_vec_r,
+			&bp.vcom_vec_v, r_star, v_star);
+		let mut vec_c = f.si.vec_r.iter().zip(f.si.vec_v.iter())
+			.map(|(a,b)| *a + ch * *b).collect::<Vec<Fr>>();
+		vec_c.push(f.si.r_vec_r + ch * f.si.r_vec_v);
+		let vcom_prf = VecCom::<Bn254>::prove_with_challenge(&f.pk.vec,
+			pt, &vec_c, &zero, None).unwrap();
+		let kzg_prf = KZG::<Bn254>::prove_with_challenge(&f.pk.kzg,
+			r_star, &wm, &zero, None).unwrap();
+		let claim = IndividualClaim::<Bn254>{ i, kzg_word: c_star,
+			ref_batch_claim: f.claims[0].ref_batch_claim.clone() };
+		let prf = IndividualProof::<Bn254>{ vcom_prf, v_i: v_star,
+			kzg_prf };
+		T932Bp::verify_individual(&f.vk, i, &claim, &f.gc, &bp, &prf,
+			None, ctx, false)
+	}
+
+	/// Issue 6a. Slot n_words holds the blinding nonces, which no batch
+	/// check constrains. A batch prover that sets them to (r*, v*) of an
+	/// unscreened word opens that slot honestly, so only the index range
+	/// check rejects the proof.
+	#[test]
+	fn individual_proof_rejects_blind_slot(){
+		let mut f = issue6_setup(20, None);
+		let i = f.words.len();
+		let pt = f.pk.vec.get_idx(i);
+		let res = issue6_blind_forgery(&mut f, i, pt, "test-6a");
+		assert!(!res, "blind-slot forgery ACCEPTED, no range check");
+	}
+
+	/// Issue 6a with overflow. With n_words + 1 = 32 = the domain size,
+	/// omega^usize::MAX = omega^31 is the blind slot, and `i as u32`
+	/// maps usize::MAX to u32::MAX in r_i. A check written as
+	/// `i + 1 < vec_dom_size` wraps there without overflow checks.
+	#[test]
+	fn individual_proof_rejects_wrapped_index(){
+		let mut f = issue6_setup(31, None);
+		let i = usize::MAX;
+		let pt = super::veccom::omega_pow_idx::<Fr>(f.vk.vec_dom_size, i)
+			.unwrap();
+		assert!(pt == f.pk.vec.get_idx(f.words.len()),
+			"not the blind slot");
+		let res = issue6_blind_forgery(&mut f, i, pt, "test-6a-max");
+		assert!(!res, "index usize::MAX ACCEPTED, range check wraps");
+	}
+
+	/// Issue 6b. vec_r is free in the batch relation. If a batch prover
+	/// could compute the combiner ch before fixing vec_r, it could set
+	/// the slot i of a screened word t to r_t with r_t + ch*v_t =
+	/// r* + ch*v*, and an unscreened word would open at the in-range
+	/// index i. Word t is empty, so v_t = p_t(r_t) = rho_t for every r_t
+	/// (prefixed layout (0) || rho_t, T932) and r_t is linear. The
+	/// forger takes ch from the honest batch's commitments, then
+	/// re-proves the batch with slot i changed, which moves ch.
+	#[test]
+	fn individual_proof_rejects_combiner_forgery(){
+		let i = 2usize;
+		let f = issue6_setup(20, Some(i));
+		let pc = f.partial.poseidon_config.clone();
+		let zero = Fr::zero();
+		let (bp0, _) = T932Bp::prove_batch(&f.pk, &f.si, &f.words,
+			f.lkup.clone(), &f.partial);
+		let (wm, c_star, r_star, v_star) = issue6_unscreened(&f, i);
+		let ch = T932Bp::ind_combiner(&pc, &bp0.vcom_vec_r,
+			&bp0.vcom_vec_v, r_star, v_star);
+		//p_t = reverse((0) || rho_t) is the constant rho_t
+		let mut t = vec![Fr::zero(), f.si.rands[i]];
+		t.reverse();
+		let p_t = poly_from_vec(t).unwrap();
+		let rho_t = f.si.rands[i];
+		let r_t = r_star + ch * (v_star - rho_t);
+		let v_t = p_t.evaluate(&r_t);
+		assert_eq!(v_t, rho_t, "empty word is not constant");
+		assert_eq!(r_t + ch * v_t, r_star + ch * v_star);
+		let mut si2 = f.si.clone();
+		si2.vec_r[i] = r_t;
+		si2.vec_v[i] = v_t;
+		let (bp, _) = T932Bp::prove_batch(&f.pk, &si2, &f.words,
+			f.lkup.clone(), &f.partial);
+		assert!(T932Bp::verify_batch(&f.vk, None, None, None, None,
+			&f.gc, &bp, &pc, false, None, None, "test"),
+			"Issue 6b: verify_batch rejects the free r_t");
+		let kzg_prf = KZG::<Bn254>::prove_with_challenge(&f.pk.kzg,
+			r_star, &wm, &zero, None).unwrap();
+		let claim = IndividualClaim::<Bn254>{ i, kzg_word: c_star,
+			ref_batch_claim: f.claims[i].ref_batch_claim.clone() };
+		//open with the forger's ch, and with the verifier's ch for bp
+		let ch_bp = T932Bp::ind_combiner(&pc, &bp.vcom_vec_r,
+			&bp.vcom_vec_v, r_star, v_star);
+		for (name, c) in [("forger ch", ch), ("verifier ch", ch_bp)] {
+			let mut vec_c = si2.vec_r.iter().zip(si2.vec_v.iter())
+				.map(|(a,b)| *a + c * *b)
+				.collect::<Vec<Fr>>();
+			vec_c.push(si2.r_vec_r + c * si2.r_vec_v);
+			let vcom_prf = VecCom::<Bn254>::prove_with_challenge(
+				&f.pk.vec, f.pk.vec.get_idx(i), &vec_c, &zero, None)
+				.unwrap();
+			let prf = IndividualProof::<Bn254>{ vcom_prf,
+				v_i: v_star, kzg_prf: kzg_prf.clone() };
+			assert!(!T932Bp::verify_individual(&f.vk, i, &claim, &f.gc,
+				&bp, &prf, None, "test-6b", false),
+				"combiner forgery ACCEPTED ({})", name);
 		}
 	}
 

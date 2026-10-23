@@ -31804,8 +31804,75 @@ Goal 2. run tests
 	[a] G0
 	[b] G1,G5,G2
 
---- DATA ----
-#####################################
+Saturday 10/03/2026
+Goal 1. E.5 
+	[a] paragraph 1
+	[b] paragraph 2 problems with random vector needs to
+		be precommited.
+	[c] write into TASK_T932
+
+Sunday 10/04/2026
+Goal 1. writing T932
+	[a] approve the T932 paper chanes
+	[b] review the paragraph -> DONE
+
+Wed 10/07/2026
+Goal 1. Fix e.5 before foldpot workflow
+	[a] fix issues 5 out 9
+	[b] pub word len issue.
+	[c] update a new task in alignment.
+	[d] paper edits
+Goal 2. fix issue 7: narrow down to relation of decision procedure
+	[a] think about idea
+
+Friday 10/09/2026
+Goal 1. solve issue 8
+	[a] dicslocse |s| decision
+	[b] 25 fixes in paper
+Goal 2. more revision
+	[a] def 9
+	[b] the entire thm 4
+	[c] proof
+Goal 3. setup figure 13
+	[a] check validity
+Goal 4. Stage 1
+	[a] major inspection
+	[b] correction
+
+Sat 10/10/2026
+Goal 1. review stage 1
+	[a] step 7
+	[b] step 8
+
+Monday 10/12/2026
+Goal 1. review stage 3
+	[a] separate R_half and Figure 16
+	[b] verified proposes
+Goal 2. start another round of auto-inspection
+	[a] 3 simple changes
+	[b] another polish
+
+Tuesday 10/13/2026
+Goal 1. another thorough inspection of bugs
+Goal 2. 2nd polish round
+
+Thursday 10/15/2026
+Goal 1. send out the draft.
+
+Thursday 10/22/2026
+Goal 1. sort out the aign_impl
+	[a] get all tasks
+	[b] group them -> updated
+
+Friday 10/23/2026
+Goal 1. fix Group1
+	[a] T939 - fix Perderson key generaiton
+	[b] test -> ??
+	[c] T932-> put poly blinds into commitment and eval of poly
+		-> test delayed to remote
+	[d] T933 -> 6a/6b and code_v2 (minor individual proof fix)
+		-> 
+####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
 *Big server: started 08/15 4am -> 08/24 0am (almost 9 days!)
 COST: 80k (135.8k - 80k) ==> remaining 57.3k credits!!!
