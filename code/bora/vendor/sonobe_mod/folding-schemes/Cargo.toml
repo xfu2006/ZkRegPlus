@@ -38,6 +38,7 @@ utils = {path="../../../crates/utils"}
 # tmp import for espresso's sumcheck
 espresso_subroutines = {git="https://github.com/EspressoSystems/hyperplonk", package="subroutines"}
 sha2 = "0.10.8"
+rand_chacha = "0.3.1"
 
 [dev-dependencies]
 ark-pallas = {version="0.4.0", features=["r1cs"]}

@@ -3605,7 +3605,9 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 		let m1_len = wtns_cfg.msg1_size;
 
 		let mut rng = ark_std::test_rng();
-		let (cs_pp, _cs_vp) = CS::setup(&mut rng, stmt_len + m1_len +1)
+		//T939: placeholder key (init_adv overwrites it), NUMS-tagged.
+		let (cs_pp, _cs_vp) = CS::setup_tagged(&mut rng, stmt_len + m1_len +1,
+			format!("cmf/{}", name).as_bytes())
 			.expect("setup error");
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField
 			::MODULUS_BIT_SIZE as usize;
@@ -3657,7 +3659,8 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 		// (capacity-max) commit length before R1CS extraction.
 		let cmf_len = self.witness_config.get_cmf_len();
 		let mut rng = ark_std::test_rng();
-		let (cs_pp, _cs_vp) = CS::setup(&mut rng, cmf_len + 1)
+		let (cs_pp, _cs_vp) = CS::setup_tagged(&mut rng, cmf_len + 1,
+			format!("cmf/{}", self.name).as_bytes())
 			.expect("resize cmF params");
 		self.params = cs_pp;
 	}

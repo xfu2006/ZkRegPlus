@@ -766,9 +766,10 @@ where
 			//UPDATED (now the cs_pp is used to prove r1cs
 			//as well as commitment for the Word and Lookup
 
-            (cs_pp, cs_vp) = CS1::setup(&mut rng, max_size)?;
-            (cf_cs_pp, cf_cs_vp) = CS2::setup(&mut rng, cf_r1cs.A.n_rows)?;
-            (cp_cs_pp, cp_cs_vp) = CS2::setup(&mut rng, cp_r1cs.A.n_rows)?;
+            //T939: NUMS keys.
+            (cs_pp, cs_vp) = CS1::setup_tagged(&mut rng, max_size, b"legacy/cs1")?;
+            (cf_cs_pp, cf_cs_vp) = CS2::setup_tagged(&mut rng, cf_r1cs.A.n_rows, b"legacy/cf")?;
+            (cp_cs_pp, cp_cs_vp) = CS2::setup_tagged(&mut rng, cp_r1cs.A.n_rows, b"legacy/cp")?;
         }
 
 		let lookup = &prep_param.lk_tbl;

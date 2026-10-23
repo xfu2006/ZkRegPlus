@@ -3307,25 +3307,17 @@ where
 			let d2_cp: PedersenParams<C2> = read_pedersen_params(
 				&cp_sc_cp);
 
-			let d1_cf_arc = Arc::new(d1_cf.clone());
-			for pp in driver1.nova_param.0.vec_pp.iter_mut() {
-				pp.cf_cs_pp = d1_cf_arc.clone();
-			}
-			for vp in driver1.nova_param.1.vec_vp.iter_mut() {
-				vp.cf_cs_vp = d1_cf.clone();
-			}
-			let d2_cf_arc = Arc::new(d2_cf.clone());
-			let d2_cp_arc = Arc::new(d2_cp.clone());
-			for pp in driver2.nova_param.0.vec_pp.iter_mut() {
-				pp.cf_cs_pp = d2_cf_arc.clone();
-				pp.cp_cs_pp = d2_cp_arc.clone();
-			}
-			for vp in driver2.nova_param.1.vec_vp.iter_mut() {
-				vp.cf_cs_vp = d2_cf.clone();
-				vp.cp_cs_vp = d2_cp.clone();
-			}
+			//T939: Pedersen keys are NUMS-deterministic, so a sidecar
+			//must EQUAL the fresh key. A stale (e.g. b_fast) sidecar
+			//fails loud instead of overriding the fresh keys.
+			assert!(d1_cf == *driver1.nova_param.0.vec_pp[0].cf_cs_pp,
+				"stale sidecar: main cf Pedersen key differs");
+			assert!(d2_cf == *driver2.nova_param.0.vec_pp[0].cf_cs_pp,
+				"stale sidecar: cp cf Pedersen key differs");
+			assert!(d2_cp == *driver2.nova_param.0.vec_pp[0].cp_cs_pp,
+				"stale sidecar: cp cp Pedersen key differs");
 			log_perf(0, LOG2, &format!(
-				"PERF 1004: sidecar READ override of Pedersen params done"),
+				"PERF 1004: sidecar READ Pedersen params match fresh keys"),
 				&mut gt_sc);
 		}
 	}

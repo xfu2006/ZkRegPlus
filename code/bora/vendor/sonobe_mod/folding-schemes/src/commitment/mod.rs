@@ -26,6 +26,16 @@ pub trait CommitmentScheme<C: CurveGroup, const H: bool = false>: Clone + Debug 
         len: usize,
     ) -> Result<(Self::ProverParams, Self::VerifierParams), Error>;
 
+    /// T939: keys derived from a public tag. Defaults to `setup` for
+    /// schemes whose setup needs a trapdoor (KZG, IPA).
+    fn setup_tagged(
+        rng: impl RngCore,
+        len: usize,
+        _tag: &[u8],
+    ) -> Result<(Self::ProverParams, Self::VerifierParams), Error> {
+        Self::setup(rng, len)
+    }
+
 	// added for retrieving the key for qa-nizk
 	fn pkey_in_affine(pkey: &Self::ProverParams, size: usize) -> Vec<C::Affine>;
 

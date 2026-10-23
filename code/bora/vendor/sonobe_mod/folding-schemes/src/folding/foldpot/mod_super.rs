@@ -1232,7 +1232,12 @@ where
 				if key_len > max_circ_pp_size{
 					max_circ_pp_size = key_len;
 				}
-				(cs_pp, cs_vp) = CS1::setup(&mut rng, key_len)?;
+				//T939: NUMS keys. CS1 per circuit (vec_pp.len() = 0-based
+				//index), CS2 per IVC (only vec_pp[0]'s is used, all are
+				//hashed into pp_hash, so they must be equal).
+				let stg = if prep_param_src.b_full_mode {2} else {1};
+				(cs_pp, cs_vp) = CS1::setup_tagged(&mut rng, key_len,
+					format!("s{}/c{}/cs1", stg, vec_pp.len()).as_bytes())?;
 				total_w_len += r1cs.A.n_cols -1 - r1cs.l;
 				total_e_len += r1cs.A.n_rows;
 				log(job_id, log_level, &format!("PERF 1002 circ {}, r1cs cols: {}, rows: {}", idx_j, r1cs.A.n_cols, r1cs.A.n_rows));
@@ -1241,8 +1246,10 @@ where
 				utils::consts::record_circ_size(r1cs.A.n_cols, r1cs.A.n_rows);
 
 				elen.push(r1cs.A.n_rows);
-				(cf_cs_pp, cf_cs_vp) = CS2::setup(&mut rng, cf_r1cs.A.n_rows)?;
-				(cp_cs_pp, cp_cs_vp) = CS2::setup(&mut rng, cp_r1cs_in.A.n_rows)?;
+				(cf_cs_pp, cf_cs_vp) = CS2::setup_tagged(&mut rng,
+					cf_r1cs.A.n_rows, format!("s{}/cf", stg).as_bytes())?;
+				(cp_cs_pp, cp_cs_vp) = CS2::setup_tagged(&mut rng,
+					cp_r1cs_in.A.n_rows, format!("s{}/cp", stg).as_bytes())?;
 			}
 
 			let prover_params = ProverParamsFoldPot::<C1, C2, CS1, CS2, LK, H> {
