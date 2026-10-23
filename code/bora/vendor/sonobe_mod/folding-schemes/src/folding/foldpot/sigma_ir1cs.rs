@@ -1817,6 +1817,7 @@ pub struct ZiPartTwoInst<F:PrimeField>{
 	pub sum_hab22_right: F,
 	/// sum of the randombly combined evaluation of kzg for
 	/// [lkup1, lkup2, all_words, all_len, vec_r, vec_v]
+	/// T932-F2W. all_words carries each word's blind right after it.
 	/// All vectors are REVERSED, as we use Homer's method for computing
 	/// because we compute it as: ((a_0 * r) + a_1)*r ...) + a_n,
 	/// (See BatchProof in batch_proc.rs).
@@ -2057,6 +2058,7 @@ pub struct ZiPartTwoInstVar<F:PrimeField>{
 
 	/// sum of the randombly combined evaluation of kzg for
 	/// [lkup1, lkup2, all_words, all_len, vec_r, vec_v]
+	/// T932-F2W. all_words carries each word's blind right after it.
 	/// All vectors are REVERSED, as we use Homer's method for computing
 	/// because we compute it as: ((a_0 * r) + a_1)*r ...) + a_n,
 	/// (See BatchProof in batch_proc.rs). Part is the
@@ -3086,7 +3088,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			("step 5: logup", 7*llen + 13*rlen ),
 			("step 6: word_id", 18 ),
 			("step 7: kzg ", if self.b_full_mode {0} else {
-				12 + lklen*7  + 11*wlen +  24   
+				12 + lklen*7  + 11*wlen +  27 /*T932-F2W +3*/   
 			}),
 			("step 8: extra join (assumption constant size)", 1),
 			("step 9: cycle_inp", if self.b_full_mode {32 * 5 + 2} else {2}),
@@ -3442,8 +3444,12 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 
 			//6.3 update sum_kzg_eval_word and also sum_vec_v_i
 			let old_sum_kzg_eval_word = sum_kzg_eval_word.clone();
+			//T932-F2W length prefix, mirror of the circuit.
+			//Initialiser first, capture after, so the act=0
+			//restore keeps len.
+			sum_vec_v_i = if b_first_seg {si.total_word_len}
+				else {sum_vec_v_i};
 			let old_sum_vec_v_i = sum_vec_v_i.clone();
-			sum_vec_v_i = if b_first_seg {zero} else {sum_vec_v_i};
 			let mut word_size_left = si.act_word_subseg_size;
 			for i in 0..self.stmt_config.word_subseg_size{
 				let b_wd_left_zero = word_size_left.is_zero();
@@ -3461,6 +3467,11 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 			}
 			sum_kzg_eval_word= if si.act_word_subseg_size.is_zero()
 				{old_sum_kzg_eval_word} else {sum_kzg_eval_word};
+			//T932-F2W. Mirror of the circuit's rho_i fold, on the
+			//last-subseg copy.
+			sum_kzg_eval_word = if b_last_seg
+				{sum_kzg_eval_word*ch + si.r_word_i*rcs[2]}
+				else {sum_kzg_eval_word};
 			sum_kzg_eval_word = if b_last 
 				{sum_kzg_eval_word*ch + si.r_all_words*rcs[2]} 
 				else {sum_kzg_eval_word};
@@ -4458,8 +4469,18 @@ where 	C: CurveGroup<ScalarField=F>,
 
 			//6.3 update sum_kzg_eval_word and also sum_vec_v_i
 			let old_sum_kzg_eval_word = sum_kzg_eval_word.clone();
+			//T932-F2W length prefix. Start the Horner at the
+			//word's length, so the circuit evaluates
+			//reverse((len, w) || rho), the layout of the per-word
+			//commitment. total_word_len is the first-subseg copy
+			//that sum_kzg_eval_others folds (bound to kzg_length)
+			//and that S106b carries to later subsegs. Same single
+			//select, +0 cs. old_sum_vec_v_i is captured AFTER the
+			//initialiser, so the act=0 restore below keeps len,
+			//not the previous word's value.
+			sum_vec_v_i = b_first_seg.select(&si.total_word_len,
+				&sum_vec_v_i)?;
 			let old_sum_vec_v_i = sum_vec_v_i.clone();
-			sum_vec_v_i = b_first_seg.select(&zero_var, &sum_vec_v_i)?;
 			let mut word_size_left = si.act_word_subseg_size.clone();
 			let val_lkup_left = word_size_left.value()?;
 			let vec_left = (0..self.stmt_config.word_subseg_size)
@@ -4490,6 +4511,18 @@ where 	C: CurveGroup<ScalarField=F>,
 			}
 			sum_kzg_eval_word= si.act_word_subseg_size.is_zero()?.select(
 				&old_sum_kzg_eval_word, &sum_kzg_eval_word)?;
+			//T932-F2W. Fold this word's blind into the evaluation
+			//of kzg_all_words right after its last symbol. It is
+			//the LAST-subseg copy of r_word_i, the same witness the
+			//Horner fold of sum_vec_v_i below reads, so the
+			//aggregate KZG opening equates that copy with the rho_i
+			//committed in kzg_all_words, which r_i absorbs. On the
+			//final step b_last_seg and b_last both hold, and rho_n
+			//must precede the r_all_words fold, as here.
+			sum_kzg_eval_word = b_last_seg.select(
+				&(&(&sum_kzg_eval_word*&ch)
+					+ &(&si.r_word_i*&rcs[2])),
+				&sum_kzg_eval_word)?;
 			sum_kzg_eval_word = b_last.select(
 				&(&sum_kzg_eval_word*&ch + &(&si.r_all_words*&rcs[2])),
 				&sum_kzg_eval_word)?;
@@ -5479,6 +5512,134 @@ pub mod tests_sigma_ir1cs{
 		z.word_id == z.total_words
 			&& z.subseg_id == z.total_word_segs
 			&& !z.word_id.is_zero()
+	}
+
+	/// T932-F2W (C5.1). The S106 pin plus the decider's last-word
+	/// length pin, evaluated natively. Kept apart from s106_pin_holds.
+	/// The native next state copies accumulated_word_len from the
+	/// statement while the circuit computes it, and the six_root toy
+	/// leaves the statement field at 1. A fixture must set the running
+	/// count before it calls this.
+	fn s932w_len_pin_holds(z: &ZiPartTwoInst<Fr>) -> bool{
+		s106_pin_holds(z) && z.accumulated_word_len == z.total_word_len
+	}
+
+	/// T932W-B helper. Synthesize the step whose witness `inst` holds,
+	/// and return (is_satisfied, value of the circuit's z_(k+1)[1]).
+	fn s932w_synth_out(inst: &S106Inst, z_in: &ZiPartTwoInst<Fr>)
+		-> (bool, Fr){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let ext_in = inst.witness_to_vec_fp_var(cs.clone());
+		let mut z_i = vec![
+			FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::zero()))
+				.unwrap(),
+			FpVar::<Fr>::new_witness(cs.clone(), || Ok(z_in.hash(&cfg)))
+				.unwrap(),
+		];
+		for _k in 0..4{
+			z_i.push(FpVar::<Fr>::new_witness(cs.clone(),
+				|| Ok(Fr::zero())).unwrap());
+		}
+		let z_out = inst.generate_step_constraints(cs.clone(), 0, z_i,
+			ext_in).expect("gen step err");
+		(cs.is_satisfied().unwrap(), z_out[1].value().unwrap())
+	}
+
+	/// T932W-B arm. Fixture s106_two_seg: word 1 = one subsegment of one
+	/// symbol, word 2 = two subsegments of one symbol each. Per word j,
+	/// batch_r = r_j, r_word_i = rho_j (rho2_first / rho2_last on word
+	/// 2's two subsegments), batch_v = V_j, and the running
+	/// accumulated_word_len 1, 1, 2. Returns the native states z1..z3,
+	/// after asserting each step is SAT.
+	fn s932w_arm(rho2_first: Fr, rho2_last: Fr, v2_rho: Fr)
+		-> Vec<ZiPartTwoInst<Fr>>{
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let (_lk, mut inst, mut stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		s106_two_seg(&mut stmts);
+		//Zero the toy's counter buffers, as s119_fold does, so the
+		//counter gadget carries 0 and every step can be synthesized.
+		for st in stmts.iter_mut(){
+			st.inp_buf[0] = Fr::zero();
+			st.oup_buf[0] = Fr::zero();
+		}
+		let (r1, rho1, r2) = (Fr::from(5u32), Fr::from(7u32),
+			Fr::from(6u32));
+		let x: Vec<Fr> = stmts.iter().map(|s| s.word_subseg[0]).collect();
+		//V_j = Horner over (len_j, symbols of word j) at r_j, then
+		//* r_j + rho_j: the evaluation of reverse((len, w) || rho).
+		let v1 = (Fr::from(1u32) * r1 + x[0]) * r1 + rho1;
+		let v2 = ((Fr::from(2u32) * r2 + x[1]) * r2 + x[2]) * r2 + v2_rho;
+		stmts[0].batch_r = r1;
+		stmts[0].r_word_i = rho1;
+		stmts[0].batch_v = v1;
+		stmts[0].accumulated_word_len = Fr::from(1u32);
+		for k in 1..3{
+			stmts[k].batch_r = r2;
+			stmts[k].batch_v = v2;
+		}
+		stmts[1].r_word_i = rho2_first;
+		stmts[2].r_word_i = rho2_last;
+		stmts[1].accumulated_word_len = Fr::from(1u32);
+		stmts[2].accumulated_word_len = Fr::from(2u32);
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 2);
+		let mut zs = vec![];
+		let mut z_prev = z0;
+		for k in 0..3{
+			let z_next = s106_step_native(&mut inst, &z_prev, &stmts[k]);
+			//SAT covers the in-circuit S110 pin, so the circuit's
+			//prefixed Horner and its last-subsegment r_word_i copy
+			//must match batch_v. The circuit's z[1] is NOT compared
+			//with the native hash: in the six_root toy they differ
+			//already in sum_hab22_left, unrelated to T932.
+			let (sat, _z_out1) = s932w_synth_out(&inst, &z_prev);
+			assert!(sat, "T932W-B: step {} UNSAT", k+1);
+			zs.push(z_next.clone());
+			z_prev = z_next;
+		}
+		zs
+	}
+
+	/// T932W-B (C3.1-C3.4). The step folds each word's blind into the
+	/// word accumulator from the LAST subsegment's copy, after the
+	/// word's symbols, with the length prefix in the v_i Horner. Arms:
+	/// H honest, L forged blind on the last subsegment (with matching
+	/// batch_v), F forged blind on the first subsegment only.
+	#[test]
+	pub fn test_t932w_b_blind_fold(){
+		let (ch, rc) = (Fr::from(2u32), Fr::from(3u32));
+		let rc2 = rc * rc;
+		let (rho2, rho2p) = (Fr::from(8u32), Fr::from(13u32));
+		let hn = |v: &[Fr]| v.iter().fold(Fr::zero(), |a, x| a * ch + x);
+		let zh = s932w_arm(rho2, rho2, rho2);
+		let zl = s932w_arm(rho2, rho2p, rho2p);
+		let zf = s932w_arm(rho2p, rho2, rho2);
+		//the symbols, read back from a fresh fixture
+		let (_lk, _inst, mut stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		s106_two_seg(&mut stmts);
+		let x: Vec<Fr> = stmts.iter().map(|s| s.word_subseg[0]).collect();
+		let rho1 = Fr::from(7u32);
+		//(c) absolute honest values. r_all_words = 0 in the toy.
+		assert!(zh[0].sum_kzg_eval_word == rc2 * hn(&[x[0], rho1]),
+			"T932W-B: z1 word accumulator misses rho_1");
+		assert!(zh[2].sum_kzg_eval_word ==
+			rc2 * hn(&[x[0], rho1, x[1], x[2], rho2, Fr::zero()]),
+			"T932W-B: z3 word accumulator is not w1,rho1,w2,rho2,r_aw");
+		//(d) copy choice. Nothing is folded on a non-last subsegment,
+		//the first-subsegment copy is never read, and the last copy
+		//enters with exactly one factor ch (the r_aw fold follows).
+		assert!(zh[1].sum_kzg_eval_word == zl[1].sum_kzg_eval_word
+			&& zh[1].sum_kzg_eval_word == zf[1].sum_kzg_eval_word,
+			"T932W-B: a non-last subsegment folded the blind");
+		assert!(zf[2].sum_kzg_eval_word == zh[2].sum_kzg_eval_word,
+			"T932W-B: the first-subsegment copy was folded");
+		assert!(zl[2].sum_kzg_eval_word - zh[2].sum_kzg_eval_word
+			== rc2 * (rho2p - rho2) * ch,
+			"T932W-B: last-subsegment blind not folded at its slot");
 	}
 
 	/// S104: a step whose witness input state does not match z_i[1] is

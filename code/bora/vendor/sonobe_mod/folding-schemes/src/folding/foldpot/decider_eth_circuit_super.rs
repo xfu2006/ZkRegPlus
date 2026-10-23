@@ -943,6 +943,22 @@ where
 			.enforce_equal(&zi_part2_inst_var.total_word_segs)?;
 		zi_part2_inst_var.word_id.is_zero()?
 			.enforce_equal(&Boolean::FALSE)?;
+		//T932-F2W r1 (G1). The step circuit checks a word's length
+		//only at the NEXT word's first step (sigma_ir1cs.rs
+		//b_last_full), so the LAST word is unchecked. Pin it on the
+		//final state. total_word_len is the copy S106b ties to the
+		//first subseg (bound to kzg_length, Horner start of v_n), and
+		//accumulated_word_len counts the symbols the circuit
+		//processed. Read the digest-bound zi_part2_inst_var above,
+		//never a second ZiPartTwoInstVar::from, whose fresh witnesses
+		//no digest binds. Stage 1 only, since Stage-2 words are
+		//cyclepair rows, and so the cp decider stays unchanged. Same
+		//placement rule as the S106 pin, above the !b_light_test gate.
+		if !self.b_full_mode {
+			let zp = &zi_part2_inst_var;
+			zp.accumulated_word_len
+				.enforce_equal(&zp.total_word_len)?;
+		}
 
 		//S105b: pin z_0[1] to the CANONICAL initial state. Without it
 		//the chain S104 builds has no root -- z_0 is a decider witness
@@ -2709,6 +2725,25 @@ pub mod tests_decider_eth_circuit_super {
 		(cs.num_constraints(), idx)
 	}
 
+	/// T932W-G G1-prov. True when every witness column of constraint
+	/// `row` also occurs in some constraint before `before`.
+	fn s932w_pin_reads_digest(circ: &S119Circ, row: usize,
+		before: usize) -> bool{
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		circ.generate_constraints_adv(0, cs.clone(), Fr::zero())
+			.expect("gen_cs err");
+		cs.finalize();
+		let m = cs.to_matrices().expect("matrices null");
+		let n_inst = m.num_instance_variables;
+		let cols = |r: usize| [&m.a[r], &m.b[r], &m.c[r]].into_iter()
+			.flat_map(|lc| lc.iter().map(|(_, i)| *i))
+			.filter(|&i| i >= n_inst).collect::<Vec<usize>>();
+		let mut seen = std::collections::HashSet::new();
+		for r in 0..before { seen.extend(cols(r)); }
+		let pin = cols(row);
+		!pin.is_empty() && pin.iter().all(|c| seen.contains(c))
+	}
+
 	/// Repoint u_i.x[0] at the circuit's CURRENT z_0/z_i so a state
 	/// edit does not die at step 5's hash before reaching the pins.
 	/// u_i is a decider witness, so a prover can make this same move.
@@ -2782,9 +2817,9 @@ pub mod tests_decider_eth_circuit_super {
 		//ARM 3 -- honest state restored, z_0[1] moved off the
 		//canonical initial state, u_i.x[0] repointed to match. Only
 		//the S105b pin reads z_0[1] past step 5.
-		circ.zi_part2_inst = Some(zi_ok);
-		circ.z_i = Some(z_i_ok);
-		circ.u_i = Some(u_i_ok);
+		circ.zi_part2_inst = Some(zi_ok.clone());
+		circ.z_i = Some(z_i_ok.clone());
+		circ.u_i = Some(u_i_ok.clone());
 		let mut z_0_bad = z_0_ok.clone();
 		z_0_bad[1] += Fr::one();
 		circ.z_0 = Some(z_0_bad);
@@ -2809,6 +2844,52 @@ pub mod tests_decider_eth_circuit_super {
 			&& i_z0 < i_honest,
 			"rejection not localised: digest {} term {} z0 {} \
 			 honest {}", i_digest, i_term, i_z0, i_honest);
+
+		//ARM 4 (T932W-G). The G1 forgery shape on the final state.
+		//Word n declares length 0 and acc stays 1. Carried
+		//consistently, so only the C5.1 length pin can reject it.
+		circ.u_i = Some(u_i_ok.clone());
+		circ.z_0 = Some(z_0_ok.clone());
+		let mut zi_len = zi_ok.clone();
+		zi_len.total_word_len = Fr::zero();
+		circ.zi_part2_inst = Some(zi_len.clone());
+		let mut z_i_len = z_i_ok.clone();
+		z_i_len[1] = zi_len.hash(&cfg);
+		circ.z_i = Some(z_i_len);
+		s119_rehash_u_i(&mut circ);
+		let (n4, i4) = s119_synth(&circ);
+		let i_len = i4.expect("last word's length unbound, no C5.1");
+		//Localisation first, so a pre-C5.1 tree reports the missing
+		//pin and not the G1-prov message.
+		assert!(i_term < i_len && i_len < i_z0,
+			"length pin not localised, term {} len {} z0 {}",
+			i_term, i_len, i_z0);
+		//G1-prov. The pin must read the digest-bound witnesses. Each
+		//witness column of its row occurs in some row before the
+		//digest carry (the Poseidon rows of zi_p2). A pin on a second
+		//ZiPartTwoInstVar::from reads fresh columns that no earlier
+		//row can contain.
+		assert!(s932w_pin_reads_digest(&circ, i_len, i_digest),
+			"C5.1 reads witnesses that the digest does not bind");
+		//ARM 4b. acc == total == 2, while total_word_segs and
+		//subseg_id stay 1. A correct pin accepts it, so the first
+		//failure is the honest one. A pin of total_word_len against
+		//total_word_segs or subseg_id rejects it.
+		circ.u_i = Some(u_i_ok.clone());
+		let mut zi_4b = zi_ok.clone();
+		zi_4b.total_word_len = Fr::from(2u32);
+		zi_4b.accumulated_word_len = Fr::from(2u32);
+		circ.zi_part2_inst = Some(zi_4b.clone());
+		let mut z_i_4b = z_i_ok.clone();
+		z_i_4b[1] = zi_4b.hash(&cfg);
+		circ.z_i = Some(z_i_4b);
+		s119_rehash_u_i(&mut circ);
+		let (n4b, i4b) = s119_synth(&circ);
+		assert!(n4 == n0 && n4b == n0,
+			"T932W-G arms are not shape-identical");
+		assert!(i4b == i0,
+			"length pin rejects acc == total == 2, {:?} vs {:?}",
+			i4b, i0);
 	}
 
 	// ---------------------------------------------------------------

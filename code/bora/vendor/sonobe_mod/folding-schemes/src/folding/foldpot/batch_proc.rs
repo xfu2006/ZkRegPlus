@@ -168,6 +168,7 @@ where CS1E: CommitmentScheme<
 
 
 /// The claim: kzg_all_words commits to the concatenation of all words.
+/// Since T932-F2W each word in it is followed by its blind.
 /// then the length array decides the words. (1) the total sum of the
 /// lengths match the length of combined words. (2) each word
 /// is malware free (regarding the regex signatures).
@@ -506,11 +507,15 @@ where
 	/// return the max key size needed for kzg commitment
 	pub fn key_size(words: &Vec<Vec<F>>) -> usize{
 		let n = words.iter().map(|w| w.len()).sum::<usize>();
-		n
+		//T932-F2W. kzg_all_words holds every word followed by its
+		//blind, so n + words.len() entries. Its own blind is covered
+		//by the +2 in setup.
+		n + words.len()
 	}
 
 	/// set up the prover and verifier params
-	/// max_total_n should be greater than the combined length of all words,
+	/// max_total_n should be greater than the combined length of all words
+	/// plus n_words (T932-F2W: one blind per word in kzg_all_words),
 	/// and the lookup table size
 	/// `job_id`: The ID of the job being processed.
 	pub fn setup(mut rng: impl RngCore, max_total_n: usize, n_words: usize,
@@ -607,7 +612,14 @@ where
 			.collect();
 		let r_all_words = <E::G1 as Group>::ScalarField::rand(rng);
 		let r_kzg_len = <E::G1 as Group>::ScalarField::rand(rng);
-		let all_words = words.concat();
+		//T932-F2W. Each word is followed by its blind rands[i], so
+		//kzg_all_words commits to rands BEFORE any r_i is drawn (r_i
+		//absorbs kzg_all_words). Layout w1||rho1||...||wn||rhon, then
+		//|| r_all_words and reversed below, as for every KZG vector.
+		let all_words: Vec<F> = words.iter().zip(rands.iter())
+			.flat_map(|(w, r)| w.iter().cloned()
+				.chain(std::iter::once(*r)))
+			.collect();
 		//here blind: zero (coz default kzg does not take blind anyway)
 		let kzg_all_words = {
 			let mut all_words2 = all_words.clone();
@@ -633,7 +645,10 @@ where
 		assert!(vec_idx.len()==n_words);
 		let vec_kzg_words= words.par_iter().zip(rands.par_iter())
 			.map(|(w, r)| {
-				let mut w2 = w.clone();
+				//T932-F2W. Commit (len, w) || rho, reversed
+				//like every KZG vector.
+				let mut w2 = vec![F::from(w.len() as u32)];
+				w2.extend_from_slice(w);
 				w2.push(*r);
 				w2.reverse();
 				KZG::<E>::commit(&pkey.kzg, &w2, &zero)
@@ -667,7 +682,9 @@ where
 				sponge.absorb(&arr_fe);
 				let r_i:F = sponge.squeeze_field_elements(1)[0];
 				let r = rands[*i];
-				let mut w2 = w.clone();
+				//T932-F2W length prefix, as in the commitment.
+				let mut w2 = vec![F::from(w.len() as u32)];
+				w2.extend_from_slice(w);
 				w2.push(r);
 				w2.reverse();
 				let p_i = poly_from_vec(w2).unwrap();
@@ -721,7 +738,10 @@ where
 		let vcom_prf =
 			VecCom::<'a,E>::prove_with_challenge(&pkey.vec, idx_pt, &vec,
 			&zero, None).expect("vcom proof err");
-		let mut wi = words[i].clone();
+		//T932-F2W. Open the length-prefixed vector, as gen_claims
+		//commits it.
+		let mut wi = vec![E::ScalarField::from(words[i].len() as u32)];
+		wi.extend_from_slice(&words[i]);
 		wi.push(snark_input.rands[i]);
 		wi.reverse();
 		let kzg_prf = KZG::<'a,E>
@@ -735,6 +755,8 @@ where
 	pub fn verify_individual(vkey: &BatchProcessorVerifierParams<'a,E,CS1E,H>,
 		i: usize,
 		claim: &IndividualClaim<E>,
+		//T932-F2W. The BatchClaim (pubstat) that verify_batch checked.
+		batch_claim: &BatchClaim<E>,
 		batch_proof: &BatchProof<E,S>,
 		ind_proof: &IndividualProof<E>,
 		log_tag: Option<usize>, //Some(job_id): route report lines to that
@@ -760,6 +782,11 @@ where
 			let guard = rc.lock().unwrap();
 			(guard.kzg_all_words.clone(), guard.kzg_length.clone())
 		};
+		//T932-F2W (paper P18). r_i below is hashed over these
+		//kzg_all_words and kzg_length. They must be the commitments
+		//the aggregate opening bound, which are batch_claim's.
+		let b_claim = kzg_all_words == batch_claim.kzg_all_words &&
+			kzg_length == batch_claim.kzg_length;
 		let arr_c1 = vec![kzg_all_words, kzg_length, claim.kzg_word.clone()];
 		for c in arr_c1{
 				c.to_native_sponge_field_elements_as_vec()
@@ -802,13 +829,17 @@ where
 		let b_kzg = KZG::<'a,E>::verify_with_challenge(&vkey.kzg, r_i,
 			&claim.kzg_word, &ind_proof.kzg_prf).is_ok();
 
-		//4. report all five flags, then the detail of each red one.
-		let ok = b_idx && b_vcom_eval && b_vcom && b_kzg_eval && b_kzg;
-		emit(LOG1, format!("VERIFY-FLAGS ind[{}] i={}: idx={} \
+		//4. report all six flags, then the detail of each red one.
+		let ok = b_claim && b_idx && b_vcom_eval && b_vcom && b_kzg_eval
+			&& b_kzg;
+		emit(LOG1, format!("VERIFY-FLAGS ind[{}] i={}: claim={} idx={} \
 			veval={} vcom={} keval={} kzg={} verdict={}", ctx, i,
-			b_idx as u8, b_vcom_eval as u8, b_vcom as u8,
+			b_claim as u8, b_idx as u8, b_vcom_eval as u8,
+			b_vcom as u8,
 			b_kzg_eval as u8, b_kzg as u8,
 			verdict_str(ok, b_unbound)));
+		if !b_claim {emit(ERR, format!("ind[{}] i={}: claim's batch \
+			commitments differ from pubstat", ctx, i));}
 		if !b_idx {emit(ERR, format!("ind[{}] i={}: omega^i failed, \
 			dom_size={}", ctx, i, vkey.vec_dom_size));}
 		if !b_vcom_eval {emit(ERR, format!("ind[{}] i={}: vcom eval \
@@ -896,7 +927,13 @@ where
 			lk1.reverse();
 			lk2.reverse();
 
-			let mut all_words = words.concat();
+			//T932-F2W. Same interleaved layout as kzg_all_words
+			//in gen_claims.
+			let mut all_words: Vec<F> = words.iter()
+				.zip(snark_input.rands.iter())
+				.flat_map(|(w, r)| w.iter().cloned()
+					.chain(std::iter::once(*r)))
+				.collect();
 			all_words.push(snark_input.r_all_words);
 			let mut all_len:Vec<F> 
 				= words.iter().map(|w| F::from(w.len() as u32))
@@ -1184,7 +1221,7 @@ mod tests_batch_proc {
   //  use super::*;
    use crate::transcript::poseidon::poseidon_canonical_config;
    use crate::folding::foldpot::{batch_proc::KZG};
-   use std::sync::Arc;
+   use std::sync::{Arc, Mutex};
 	//S102/F2+F3: for the forged-word rejection test below.
 	use crate::folding::foldpot::batch_proc::{IndividualClaim,
 		IndividualProof};
@@ -1252,9 +1289,156 @@ mod tests_batch_proc {
 		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
 			&snark_inp, &words, &ind_claims[i], i);
 		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,
-			&ind_claims[i], &batch_proof, &ind_prf, None, "test", false);
+			&ind_claims[i], &global_claim, &batch_proof, &ind_prf, None, "test", false);
 		assert!(res, "verify indidivudal proof failed");
    }
+
+	/// T932W-A fixture. n_words random words of length wlen, key from
+	/// key_size(), then gen_claims, prove_batch, verify_batch (asserted)
+	/// and the honest individual proof of word i.
+	type T932Bp = BatchProcessor<Bn254,LookupTableTwoCol_Inst<Fr>,
+		Groth16<Bn254>,KZG<'static, Bn254>,false>;
+	struct T932wFix{
+		words: Vec<Vec<Fr>>,
+		pk: super::BatchProcessorProverParams<'static, Bn254>,
+		vk: super::BatchProcessorVerifierParams<'static, Bn254,
+			KZG<'static, Bn254>,false>,
+		global_claim: super::BatchClaim<Bn254>,
+		ind_claims: Vec<IndividualClaim<Bn254>>,
+		snark_inp: super::SnarkAdvice<Fr>,
+		batch_proof: super::BatchProof<Bn254,Groth16<Bn254>>,
+		ind_prf: IndividualProof<Bn254>,
+		i: usize,
+	}
+	fn t932w_fix(n_words: usize, wlen: usize, i: usize) -> T932wFix{
+		let mut rng = test_rng();
+		let words: Vec<Vec<Fr>> = (0..n_words).map(|_|
+			(0..wlen).map(|_| Fr::rand(&mut rng)).collect()).collect();
+		let lkup = Arc::new(LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(1u32))]));
+		let cfg = poseidon_canonical_config::<Fr>();
+		let (pk, vk) = T932Bp::setup(&mut rng, T932Bp::key_size(&words),
+			n_words, cfg.clone(), 0);
+		let (global_claim, ind_claims, snark_inp) =
+			T932Bp::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
+		let g1 = G1::generator();
+		let partial_input = SnarkRandInput::<Bn254>{
+			kzg_all_words: global_claim.kzg_all_words.clone(),
+			kzg_length: global_claim.kzg_length.clone(),
+			kzg_lk_col1: global_claim.kzg_lk_col1.clone(),
+			kzg_lk_col2: global_claim.kzg_lk_col2.clone(),
+			hash_cmF: Fr::zero(),
+			kzg_vec_r: g1.clone(),
+			kzg_vec_v: g1.clone(),
+			poseidon_config: cfg.clone()
+		};
+		let (batch_proof, _r2) = T932Bp::prove_batch(&pk, &snark_inp,
+			&words, lkup, &partial_input);
+		assert!(T932Bp::verify_batch(&vk, None, None, None, None,
+			&global_claim, &batch_proof, &cfg, false, None, None, "test"),
+			"T932W-A: verify_batch failed on the honest fixture");
+		let ind_prf = T932Bp::prove_individual(&pk, &snark_inp, &words,
+			&ind_claims[i], i);
+		T932wFix{words, pk, vk, global_claim, ind_claims, snark_inp,
+			batch_proof, ind_prf, i}
+	}
+	fn t932w_verify(f: &T932wFix, claim: &IndividualClaim<Bn254>,
+		bc: &super::BatchClaim<Bn254>) -> bool{
+		T932Bp::verify_individual(&f.vk, f.i, claim, bc, &f.batch_proof,
+			&f.ind_prf, None, "test", false)
+	}
+	fn t932w_kzg(f: &T932wFix, v: &Vec<Fr>) -> G1{
+		let mut v2 = v.clone();
+		v2.reverse();
+		KZG::<Bn254>::commit(&f.pk.kzg, &v2, &Fr::zero()).unwrap()
+	}
+
+	/// T932W-A item 0 (C1.1). 7 words of length 2: kzg_all_words needs
+	/// 14 + 7 + 1 = 22 coefficients. Without C1.1 the key has 18 powers
+	/// and gen_claims fails. Items 1 (positive) run on the same fixture.
+	#[test]
+	fn t932w_a0_key_bound_and_positive(){
+		let f = t932w_fix(7, 2, 2);
+		assert!(t932w_verify(&f, &f.ind_claims[f.i], &f.global_claim),
+			"T932W-A1: honest individual proof rejected");
+	}
+
+	/// T932W-A item 2 (C1.3). The per-word commitment is
+	/// kzg(reverse((len, w) || rho)), not kzg(reverse(w || rho)). A claim
+	/// on the old layout is rejected.
+	#[test]
+	fn t932w_a2_prefix_layout(){
+		let f = t932w_fix(20, 2, 2);
+		let (w, rho) = (&f.words[f.i], f.snark_inp.rands[f.i]);
+		let mut pre = vec![Fr::from(w.len() as u32)];
+		pre.extend_from_slice(w);
+		pre.push(rho);
+		let mut old = w.clone();
+		old.push(rho);
+		let (c_pre, c_old) = (t932w_kzg(&f, &pre), t932w_kzg(&f, &old));
+		assert!(f.ind_claims[f.i].kzg_word == c_pre,
+			"T932W-A2: kzg_word is not the length-prefixed layout");
+		assert!(c_pre != c_old);
+		let mut claim_old = f.ind_claims[f.i].clone();
+		claim_old.kzg_word = c_old;
+		assert!(!t932w_verify(&f, &claim_old, &f.global_claim),
+			"T932W-A2: old-layout claim accepted");
+	}
+
+	/// T932W-A item 3 (C1.7). Each batch commitment of the checked
+	/// claim, changed alone, makes verify_individual reject. r_i is
+	/// hashed over ref_batch_claim, which stays honest, so only b_claim
+	/// moves.
+	#[test]
+	fn t932w_a3_claim_check_per_field(){
+		let f = t932w_fix(20, 2, 2);
+		let g = G1::generator();
+		assert!(t932w_verify(&f, &f.ind_claims[f.i], &f.global_claim));
+		let mut bc = f.global_claim.clone();
+		bc.kzg_all_words += g;
+		assert!(!t932w_verify(&f, &f.ind_claims[f.i], &bc),
+			"T932W-A3: changed kzg_all_words accepted");
+		let mut bc = f.global_claim.clone();
+		bc.kzg_length += g;
+		assert!(!t932w_verify(&f, &f.ind_claims[f.i], &bc),
+			"T932W-A3: changed kzg_length accepted");
+	}
+
+	/// T932W-A item 4 (C1.2, C1.8). kzg_all_words commits to
+	/// w_1, rho_1, ..., w_n, rho_n, r_all_words (reversed). Built with a
+	/// plain loop. verify_batch passed in the fixture, so the aggregate
+	/// opening (C1.8) uses the same polynomial.
+	#[test]
+	fn t932w_a4_interleaved_layout(){
+		let f = t932w_fix(20, 2, 2);
+		let mut s: Vec<Fr> = vec![];
+		for j in 0..f.words.len(){
+			for x in f.words[j].iter(){ s.push(*x); }
+			s.push(f.snark_inp.rands[j]);
+		}
+		s.push(f.snark_inp.r_all_words);
+		assert!(f.global_claim.kzg_all_words == t932w_kzg(&f, &s),
+			"T932W-A4: kzg_all_words is not the interleaved layout");
+	}
+
+	/// T932W-A item 5, regression guard. r_i absorbs both batch
+	/// commitments: moving one in BOTH the claim's ref and the checked
+	/// claim (b_claim holds) must still reject.
+	#[test]
+	fn t932w_a5_r_i_absorbs_batch_commitments(){
+		let f = t932w_fix(20, 2, 2);
+		let g = G1::generator();
+		for k in 0..2{
+			let mut bc2 = f.global_claim.clone();
+			if k == 0 {bc2.kzg_all_words += g;} else {bc2.kzg_length += g;}
+			let mut claim2 = f.ind_claims[f.i].clone();
+			claim2.ref_batch_claim = Arc::new(Mutex::new(bc2.clone()));
+			assert!(!t932w_verify(&f, &claim2, &bc2),
+				"T932W-A5: r_i ignores batch commitment {}", k);
+		}
+	}
 
 	/// S102/F2+F3: a certificate for a word never in the batch must be
 	/// REJECTED. Pre-fix both checks were vacuous and this passed.
@@ -1349,7 +1533,7 @@ mod tests_batch_proc {
 				vcom_prf, v_i: v_fake, kzg_prf: kzg_prf.clone()};
 			let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
 				Groth16<Bn254>,CS1E,false>::verify_individual(
-				&vk, i, &claim_fake, &batch_proof, &ind_prf, None, "test",
+				&vk, i, &claim_fake, &global_claim, &batch_proof, &ind_prf, None, "test",
 				false);
 			assert!(!res,
 				"forged word ACCEPTED (opened at {}): F2/F3 not binding",

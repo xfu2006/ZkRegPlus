@@ -501,8 +501,10 @@ where
 			&mut gt1);
 
 		//4. set up the batch processor if it is NOT full mode (1st stage)
-		let max_w_lk = if max_total_n > lkup_inp.get_size() 
-			{max_total_n+1} else {lkup_inp.get_size()+1};
+		//T932-F2W. kzg_all_words holds max_total_n + n_words entries
+		//(one blind per word) plus its own blind.
+		let max_w_lk = if max_total_n + n_words > lkup_inp.get_size()
+			{max_total_n+n_words+1} else {lkup_inp.get_size()+1};
 		let batch_param = BatchProcessor::<E,LK,S,CS1E,H>
 				::setup(&mut rng, max_w_lk, n_words, poseidon_config.clone(), 0); 
 
@@ -1709,7 +1711,7 @@ where
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_individual_prf);
-			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, &batch_proof, &ind_prf,
+			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, global_claim, &batch_proof, &ind_prf,
 				Some(job_id), "self", false);
 			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
@@ -2371,7 +2373,7 @@ where
 			let ind_prf = BatchProcessor::<E,LK,S,CS1E,H>::prove_individual(pk, 
 				&snark_inp, &words, &ind_claim,
 				idx_ind_proof);
-			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, &batch_proof, &ind_prf,
+			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, global_claim, &batch_proof, &ind_prf,
 				Some(job_id), "self", false);
 			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
@@ -3855,6 +3857,7 @@ set; exit(0) before Phase 2.");
 		&batch_ver_param,
 		idx_individual_prf,
 		&ind_claim,
+		&batch_claim, //T932-F2W
 		&batch_prf,
 		&ind_prf,
 		Some(job_id),
