@@ -71,7 +71,10 @@ All nine leaves against deterministically thinned inputs: **~91 min
 wall, ~30 GB peak RSS** (sequential, so the peak is the largest leaf,
 not the sum). Needs all five data packs (step 0). A smoke test only —
 **its numbers are not the paper's**, and it rewrites the step 1 PDF
-with its own data. Use step 3 for the reported results.
+with its own data. Use step 3 for the reported results. Dry runs,
+scale sweeps and tests fold with the lookup check off, so their final
+proofs print `verdict=UNBOUND` and bind neither the lookup table nor
+the words (the paper runs, with the check on, print `verdict=PASS`).
 
 One leaf at a time: `--items dlp`, several with `--items dlp,clam`, or
 pick from the menu (`python3 scripts/PAPER_DATA.py`, then `dry_run`).

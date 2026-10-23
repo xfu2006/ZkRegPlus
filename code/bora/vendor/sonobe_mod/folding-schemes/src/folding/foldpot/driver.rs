@@ -1710,7 +1710,7 @@ where
 				&snark_inp, &words, &ind_claim,
 				idx_individual_prf);
 			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_individual_prf, &ind_claim, &batch_proof, &ind_prf,
-				Some(job_id), "self");
+				Some(job_id), "self", false);
 			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
 		}else{
@@ -2372,7 +2372,7 @@ where
 				&snark_inp, &words, &ind_claim,
 				idx_ind_proof);
 			let _res = BatchProcessor::<E,LK,S,CS1E,H>::verify_individual(vk, idx_ind_proof, &ind_claim, &batch_proof, &ind_prf,
-				Some(job_id), "self");
+				Some(job_id), "self", false);
 			if B_DEBUG { assert!(_res); }
 			Some((batch_proof, ind_prf))
 		}else{
@@ -3866,7 +3866,8 @@ set; exit(0) before Phase 2.");
 		&batch_prf,
 		&ind_prf,
 		Some(job_id),
-		"final");
+		"final",
+		!b_check_lkup); //check off: a green verdict prints UNBOUND
 	if !ok_ind {
 		//see the ok_batch site: counted so a test can fail on it.
 		utils::consts::record_verify_fail();

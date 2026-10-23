@@ -48,6 +48,14 @@ use crate::folding::foldpot::{
 use crate::transcript::AbsorbNonNative;
 use crate::utils::vec::poly_from_vec;
 
+/// T933 Hole A: verdict text of a VERIFY-FLAGS line. A failed check is
+/// REJECT. A green proof from a run with the lookup check off
+/// (b_check_lkup = false) is UNBOUND, never PASS, because it binds
+/// neither the lookup table nor the words. Only the log text changes.
+fn verdict_str(ok: bool, b_unbound: bool) -> &'static str {
+	if !ok {"REJECT"} else if b_unbound {"UNBOUND"} else {"PASS"}
+}
+
 /// This structure contains the information which
 /// generates the random challenge and folding rand
 /// for evaluating the w, vec_len, vec_r, vec_v 
@@ -733,6 +741,9 @@ where
 			//job's log; None keeps the legacy shared-stdout behaviour
 		ctx: &'static str, //call-site tag, "self" (prover self-check) or
 			//"final" (post-fold verification), so ONE job log tells them apart
+		b_unbound: bool, //true when the run folds with the lookup check
+			//off: a green verdict prints UNBOUND, not PASS (T933 Hole A).
+			//The returned bool is unchanged.
 		)->bool{
 		//1. verify the generated challenges
 		assert!(i==claim.i);
@@ -797,7 +808,7 @@ where
 			veval={} vcom={} keval={} kzg={} verdict={}", ctx, i,
 			b_idx as u8, b_vcom_eval as u8, b_vcom as u8,
 			b_kzg_eval as u8, b_kzg as u8,
-			if ok {"PASS"} else {"REJECT"}));
+			verdict_str(ok, b_unbound)));
 		if !b_idx {emit(ERR, format!("ind[{}] i={}: omega^i failed, \
 			dom_size={}", ctx, i, vkey.vec_dom_size));}
 		if !b_vcom_eval {emit(ERR, format!("ind[{}] i={}: vcom eval \
@@ -952,9 +963,13 @@ where
 	/// it implies that the b_check_lkup flag is false for driver (that is
 	/// we use a much smaller lkup share in circuit so that the entire
 	/// lkup table is NOT covered by the folding of circuits). Thus,
-	/// kzg_sum1 produced by the circuits will NOT BE equal 
-	/// to the KZG eval of the lkup as a poly. So we use the opt_kzg_sum1
-	/// in this case to let the verification pass.
+	/// kzg_sum1 produced by the circuits will NOT BE equal
+	/// to the KZG eval of the lkup as a poly. The cp SNARK input then
+	/// takes the circuit's own kzg_sum1, so c5 is only a
+	/// self-consistency check. Such a proof binds neither the lookup
+	/// table nor the words, and a green part 2 is reported as
+	/// verdict=UNBOUND, never PASS (T933 Hole A). Part 2 still runs, so
+	/// c1-c4 keep their decider smoke test.
 	pub fn verify_batch(
 		vkey: &BatchProcessorVerifierParams<'a,E,CS1E,H>, 
 		nova1_qa_nizk_vkey_hash: Option<E::ScalarField>, //only use in part2 
@@ -1146,7 +1161,7 @@ where
 				c3={} c4={} c5={} mh={} n_pub={} verdict={}", ctx,
 				c1 as u8, c2 as u8, c3 as u8, c4 as u8, c5 as u8,
 				mh, public_input.len(),
-				if part2_ok {"PASS"} else {"REJECT"}));
+				verdict_str(part2_ok, opt_kzg_sum1.is_some())));
 			if !part2_ok { return false; }
 		}
 
@@ -1180,6 +1195,17 @@ mod tests_batch_proc {
 	use crate::utils::vec::poly_from_vec;
 	use crate::commitment::CommitmentScheme;
 	use ark_poly::Polynomial;
+
+	/// T933 Hole A: a green check-off run prints UNBOUND, never PASS.
+	/// REJECT wins over the unbound flag.
+	#[test]
+	fn verdict_str_fails_closed_when_unbound(){
+		use crate::folding::foldpot::batch_proc::verdict_str;
+		assert_eq!(verdict_str(true, false), "PASS");
+		assert_eq!(verdict_str(true, true), "UNBOUND");
+		assert_eq!(verdict_str(false, false), "REJECT");
+		assert_eq!(verdict_str(false, true), "REJECT");
+	}
 
 
    #[test]
@@ -1226,7 +1252,7 @@ mod tests_batch_proc {
 		let ind_prf = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::prove_individual(&pk, 
 			&snark_inp, &words, &ind_claims[i], i);
 		let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>,CS1E,false>::verify_individual(&vk, i,
-			&ind_claims[i], &batch_proof, &ind_prf, None, "test");
+			&ind_claims[i], &batch_proof, &ind_prf, None, "test", false);
 		assert!(res, "verify indidivudal proof failed");
    }
 
@@ -1323,7 +1349,8 @@ mod tests_batch_proc {
 				vcom_prf, v_i: v_fake, kzg_prf: kzg_prf.clone()};
 			let res = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
 				Groth16<Bn254>,CS1E,false>::verify_individual(
-				&vk, i, &claim_fake, &batch_proof, &ind_prf, None, "test");
+				&vk, i, &claim_fake, &batch_proof, &ind_prf, None, "test",
+				false);
 			assert!(!res,
 				"forged word ACCEPTED (opened at {}): F2/F3 not binding",
 				name);

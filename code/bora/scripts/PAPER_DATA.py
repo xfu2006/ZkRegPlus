@@ -1332,8 +1332,9 @@ class JobHandle:
         # into a successful log, which the scan would counterfeit).
         # The scan still RUNS on an rc != 0 leaf so _pack_bundle keeps
         # its "failure signatures" section -- it just gets no VOTE.
-        # b_proof_ok=True: a FINAL individual proof verified, which
-        # outranks the signature scan entirely (see proof_verified).
+        # b_proof_ok=True: a FINAL individual proof verified, or
+        # completed UNBOUND with the lookup check off, which outranks
+        # the signature scan entirely (see leaf_proof_ok).
         # It deliberately does NOT clear rc -- a nonzero rc is a dead
         # process or a missing marker, not a "failure message".
         wall = self._replay_wall if self._replay_wall is not None \
@@ -1712,26 +1713,66 @@ VERIFY_FAIL_RE = re.compile(r"PROOF VERIFICATION FAILED")
 VERIFY_PASS_RE = re.compile(r"VERIFY-FLAGS ind\[final\].*verdict=PASS")
 VERIFY_REJECT_RE = re.compile(r"VERIFY-FLAGS \S+\[final\].*"
                                r"verdict=REJECT")
+# T933 Hole A: a run with the lookup check off (b_check_lkup = false:
+# dry runs, scale sweeps, tests) prints verdict=UNBOUND instead of PASS
+# on its green batch2[final] and ind[final] lines (batch_proc.rs
+# verdict_str).  Such a proof binds neither the lookup table nor the
+# words, so it is NOT a verified proof.  Matches neither regex above.
+VERIFY_UNBOUND_RE = re.compile(r"VERIFY-FLAGS \S+\[final\].*"
+                                r"verdict=UNBOUND")
+
+
+def _read_logs(logs):
+    """Texts of the readable logs; an unreadable one is skipped."""
+    out = []
+    for lg in logs:
+        try:
+            with open(lg, errors="replace") as f:
+                out.append(f.read())
+        except OSError:
+            continue
+    return out
 
 
 def proof_verified(logs):
     """True when a FINAL individual proof verified and nothing final
-    was rejected.  This OUTRANKS the FAIL_RE signature scan: those
-    tokens fire on expected CapErr/DECLINED routing telemetry, so a
-    run that produced a verified proof must never be failed by them.
-    Safe as an override because the marker is emitted only at the very
-    end of the decider -- a crashed half can never reach it."""
+    was rejected or UNBOUND.  This OUTRANKS the FAIL_RE signature
+    scan: those tokens fire on expected CapErr/DECLINED routing
+    telemetry, so a run that produced a verified proof must never be
+    failed by them.  Safe as an override because the marker is emitted
+    only at the very end of the decider -- a crashed half can never
+    reach it.  An UNBOUND proof (lookup check off) is not verified:
+    only a bound proof counts."""
     ok = False
-    for lg in logs:
-        try:
-            text = open(lg, errors="replace").read()
-        except OSError:
-            continue
-        if VERIFY_REJECT_RE.search(text):
+    for text in _read_logs(logs):
+        if VERIFY_REJECT_RE.search(text) \
+                or VERIFY_UNBOUND_RE.search(text):
             return False
         if VERIFY_PASS_RE.search(text):
             ok = True
     return ok
+
+
+def proof_unbound(logs):
+    """True when a FINAL proof completed green with the lookup check
+    off (verdict=UNBOUND) and nothing final was rejected."""
+    texts = _read_logs(logs)
+    if any(VERIFY_REJECT_RE.search(t) for t in texts):
+        return False
+    return any(VERIFY_UNBOUND_RE.search(t) for t in texts)
+
+
+def leaf_proof_ok(ctx, logs):
+    """b_proof_ok for ctx.finish.  A verified proof, or an UNBOUND one
+    (dry/scale leaf, lookup check off), completed the decider, so both
+    outrank the signature scan.  UNBOUND is noted, never FAIL, and is
+    still not 'verified' (proof_verified stays False)."""
+    if proof_verified(logs):
+        return True
+    if proof_unbound(logs):
+        ctx.note("proof UNBOUND: lookup check off")
+        return True
+    return False
 
 
 def dlp_missing_success(logs, num_jobs):
@@ -1790,7 +1831,7 @@ def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs,
     # DOES overwrite the last good dump.)
     ctx.raw_data.extend(safe_pack_dump(ctx, base, logs, rc))
     return ctx.finish(rc, b_fail_scan=b_fail_scan,
-                       b_proof_ok=proof_verified(logs))
+                       b_proof_ok=leaf_proof_ok(ctx, logs))
 
 
 def run_leaf_dlp(mode, ctx):
@@ -1845,7 +1886,7 @@ def run_leaf_dna(mode, ctx):
     # counterfeit a FAIL on every successful run. Verdict = rc + the
     # positive markers above.
     return ctx.finish(rc, b_fail_scan=False,
-                       b_proof_ok=proof_verified(logs))
+                       b_proof_ok=leaf_proof_ok(ctx, logs))
 
 
 # 69801 decider-probe env (2026-08-15, "snark main fails" triage).
@@ -2149,7 +2190,7 @@ def final_pack_one(key):
     # Same verdict inputs as the live leaf: scan-free, and a verified
     # final individual proof outranks the signature scan.
     res = ctx.finish(rc, b_fail_scan=False,
-                      b_proof_ok=proof_verified(logs))
+                      b_proof_ok=leaf_proof_ok(ctx, logs))
     if not res.failed:
         # _pack_bundle writes SUMMARY.txt only on a FAILURE, so a
         # successful replay has to refresh it itself -- otherwise the
@@ -4159,6 +4200,9 @@ def v101_parse(key, path, res):
     # whole gate, and every token below is quoted from the emit site
     # rather than from a healthy log:
     #   batch_proc.rs:800,1025,1149  ->  if ok {"PASS"} else {"REJECT"}
+    #   (batch2/ind: verdict_str prints UNBOUND for a green proof with
+    #   the lookup check off, T933 Hole A.  The dry dec_* leaves run
+    #   check-off, so the [final] counters accept PASS or UNBOUND.)
     # TWICE BURNED HERE.  The first version grepped "VERIFY_FAILS=",
     # a line that does not exist.  The second grepped "verdict=FAIL",
     # a token that does not exist either -- the failure word is
@@ -4176,9 +4220,9 @@ def v101_parse(key, path, res):
     # (batch_proc.rs:1032-1041), so a missing marker is as much a
     # failure as a REJECTed one.
     n["verify_final"] = _v101_count(
-        path, r"VERIFY-FLAGS \w+\[final\].*verdict=PASS")
+        path, r"VERIFY-FLAGS \w+\[final\].*verdict=(?:PASS|UNBOUND)")
     n["verify_snark"] = _v101_count(
-        path, r"VERIFY-FLAGS batch2\[final\].*verdict=PASS")
+        path, r"VERIFY-FLAGS batch2\[final\].*verdict=(?:PASS|UNBOUND)")
     res.nums = n
     return n
 
@@ -5008,11 +5052,12 @@ def _v101_verdict_step(st, r, res, cap, rss_hit=False):
         # UNREADABLE log, and None < 3 raises.  An unreadable decider
         # log must fail CLOSED -- absence of proof is not proof.
         if (n.get("verify_final") or 0) < 3:
-            return "FAIL", ("only %s of 3 [final] VERIFY-FLAGS PASS "
-                            "markers (batch1/batch2/ind)"
+            return "FAIL", ("only %s of 3 [final] VERIFY-FLAGS "
+                            "PASS/UNBOUND markers (batch1/batch2/ind)"
                             % num_or(n.get("verify_final"), "unreadable"))
         if not n.get("verify_snark"):
-            return "FAIL", "no batch2[final] PASS (Groth16 decider)"
+            return "FAIL", ("no batch2[final] PASS/UNBOUND "
+                            "(Groth16 decider)")
     return "OK", ""
 
 
@@ -8308,6 +8353,62 @@ class ProofVerifiedTest(unittest.TestCase):
                                  + self.PASS_LINE)
         self.assertIn("count 0 != 1", dlp_missing_success([lg], 1))
 
+    # T933 Hole A: the check-off spelling (batch_proc.rs verdict_str).
+    UNB_LINE = ("[job 0] LOG1:  VERIFY-FLAGS ind[final] i=0: idx=1 "
+                "veval=1 vcom=1 keval=1 kzg=1 verdict=UNBOUND\n")
+    UNB_B2 = ("[job 0] LOG1:  VERIFY-FLAGS batch2[final]: c1=1 c2=1 "
+              "c3=1 c4=1 c5=1 mh=7 n_pub=40 verdict=UNBOUND\n")
+    B1_PASS = ("[job 0] LOG1:  VERIFY-FLAGS batch1[final]: qa=1 fs=1 "
+               "kzg=1 verdict=PASS\n")
+
+    def test_unbound_is_not_verified(self):
+        """HA4: a check-off proof binds neither table nor words, so it
+        is never a verified proof, even beside a batch1 PASS."""
+        unb = self._log("u.log", self.SELF_LINE + self.B1_PASS
+                         + self.UNB_B2 + self.UNB_LINE)
+        self.assertFalse(proof_verified([unb]))
+        self.assertTrue(proof_unbound([unb]))
+        # a stray PASS in another part does not rescue an UNBOUND one
+        self.assertFalse(proof_verified(
+            [unb, self._log("p.log", self.PASS_LINE)]))
+        # PASS unchanged: bound, not unbound
+        ok = self._log("ok.log", self.PASS_LINE)
+        self.assertTrue(proof_verified([ok]))
+        self.assertFalse(proof_unbound([ok]))
+
+    def test_reject_outranks_unbound(self):
+        lg = self._log("ur.log", self.UNB_B2 + self.REJ_LINE)
+        self.assertFalse(proof_verified([lg]))
+        self.assertFalse(proof_unbound([lg]))
+        self.assertIn("verdict=REJECT", dlp_missing_success(
+            [self._log("ur2.log", "Job 0 generating SNARK proof\n"
+                       "FOLDPOT Step 13. Verify Individual Proof.\n"
+                       + self.UNB_LINE + self.REJ_LINE)], 1))
+
+    def test_unbound_matches_neither_pass_nor_reject(self):
+        for ln in (self.UNB_LINE, self.UNB_B2):
+            self.assertIsNone(VERIFY_PASS_RE.search(ln))
+            self.assertIsNone(VERIFY_REJECT_RE.search(ln))
+            self.assertIsNotNone(VERIFY_UNBOUND_RE.search(ln))
+
+    def test_unbound_leaf_is_ok_with_a_note(self):
+        """HA4: a dry/scale leaf with an UNBOUND proof stays OK (no
+        FAIL, no missing-marker rc) and carries the UNBOUND note."""
+        lg = self._log("leaf.log", "Job 0 generating SNARK proof\n"
+                       "FOLDPOT Step 13. Verify Individual Proof.\n"
+                       + self.UNB_B2 + self.UNB_LINE)
+        self.assertIsNone(dlp_missing_success([lg], 1))
+        ctx = mock.Mock()
+        self.assertTrue(leaf_proof_ok(ctx, [lg]))
+        ctx.note.assert_called_once_with(
+            "proof UNBOUND: lookup check off")
+        ctx2 = mock.Mock()
+        self.assertTrue(leaf_proof_ok(
+            ctx2, [self._log("lp.log", self.PASS_LINE)]))
+        ctx2.note.assert_not_called()
+        self.assertFalse(leaf_proof_ok(
+            mock.Mock(), [self._log("lr.log", self.REJ_LINE)]))
+
 
 class ProofOverridesFailScanTest(unittest.TestCase):
     """b_proof_ok=True must silence FAIL_RE, and only FAIL_RE."""
@@ -10655,6 +10756,11 @@ _V101_DEC_SNARK_REJECT = _V101_DEC_OK.replace(
 # decider: the count gate alone waves this through.
 _V101_DEC_NO_SNARK = _V101_DEC_OK.replace(
     "VERIFY-FLAGS batch2[final]", "VERIFY-FLAGS batchX[final]")
+# T933 Hole A: the dry dec_* leaves fold with the lookup check off,
+# so batch2[final] and ind[final] print UNBOUND (batch1 stays PASS).
+_V101_DEC_UNBOUND = _V101_DEC_OK.replace(
+    "c5=1 verdict=PASS", "c5=1 verdict=UNBOUND").replace(
+    "kzg=1 verdict=PASS\ndetermine", "kzg=1 verdict=UNBOUND\ndetermine")
 
 
 class V101ParseTest(unittest.TestCase):
@@ -10683,6 +10789,14 @@ class V101ParseTest(unittest.TestCase):
         n = self._parse("dec_v2", _V101_DEC_OK)
         self.assertEqual(n["verify_final"], 3)
         self.assertEqual(n["verify_snark"], 1)
+
+    def test_unbound_final_markers_are_counted(self):
+        """T933 Hole A: dry dec_* leaves print UNBOUND, not PASS."""
+        self.assertEqual(_V101_DEC_UNBOUND.count("verdict=UNBOUND"), 2)
+        n = self._parse("dec_v2", _V101_DEC_UNBOUND)
+        self.assertEqual(n["verify_final"], 3)
+        self.assertEqual(n["verify_snark"], 1)
+        self.assertEqual(n["verify_fail"], 0)
 
     def test_build_bump_counts_as_a_bump_round(self):
         """bora_data_driver.rs:2265.  The old regex saw only :2318, so
@@ -10753,6 +10867,19 @@ class V101StepVerdictTest(unittest.TestCase):
     def test_healthy_decider_is_ok(self):
         self.assertEqual(self._verdict("dec_v2", _V101_DEC_OK)[0],
                           "OK")
+
+    def test_unbound_dry_decider_is_ok(self):
+        """T933 Hole A: dec_v1/dec_v2/dec_big are dry, check-off."""
+        for key in ("dec_v1", "dec_v2", "dec_big"):
+            self.assertEqual(
+                self._verdict(key, _V101_DEC_UNBOUND)[0], "OK", key)
+
+    def test_reject_still_wins_over_unbound(self):
+        text = _V101_DEC_UNBOUND.replace(
+            "c5=1 verdict=UNBOUND", "c5=0 verdict=REJECT")
+        status, why = self._verdict("dec_v2", text)
+        self.assertEqual(status, "FAIL")
+        self.assertIn("REJECT", why)
 
     def test_rejected_groth16_proof_is_a_failure(self):
         """THE regression test: 4 PASS markers and one REJECT used to
