@@ -61,3 +61,6 @@ Thumbs.db
 # to prevent any accidental run against the frozen open4science static site
 code/bora/scripts/prepare_open4s/
 
+
+# test byproduct of nova/serialize.rs (rewritten on every --lib run)
+code/bora/vendor/sonobe_mod/folding-schemes/nova.serde
