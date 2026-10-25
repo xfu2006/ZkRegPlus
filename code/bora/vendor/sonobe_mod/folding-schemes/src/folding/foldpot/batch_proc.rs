@@ -133,6 +133,11 @@ pub struct BatchProcessorProverParams<'a, E:Pairing>{
 	pub poseidon_config: PoseidonConfig<E::ScalarField>,
 	/// qa_nizk 
 	pub pk_qa_nizk: QaNizkProverParams<E>,
+	/// T933 s10. KZG commitments to the two lookup columns, made once
+	/// by setup from the public table. gen_claims copies them.
+	pub lk_cm1: E::G1,
+	/// see lk_cm1
+	pub lk_cm2: E::G1,
 }
 
 /// verifier key
@@ -164,6 +169,12 @@ where CS1E: CommitmentScheme<
 	/// the same value passed to VecCom::setup). Needed to recompute
 	/// omega^i for the position opening in verify_individual.
 	pub vec_dom_size: usize,
+	/// T933 s10 (paper Fig 13 (ii)). The trusted lookup-column
+	/// commitments, the same pair as the prover key. verify_batch
+	/// requires the claim's kzg_lk_col1/2 to equal them.
+	pub lk_cm1: E::G1,
+	/// see lk_cm1
+	pub lk_cm2: E::G1,
 }
 
 
@@ -513,13 +524,28 @@ where
 		n + words.len()
 	}
 
+	/// T933 s10. The two lookup-column commitments: the columns of
+	/// `lkup.get_cols()` reversed, blind zero. Only setup calls it, so
+	/// the claim and the verifier key hold the same pair.
+	fn commit_lkup_cols(
+		kzg: &<KZG::<'a, E> as CommitmentScheme<E::G1>>::ProverParams,
+		lkup: &LK) -> Result<(E::G1, E::G1), Error>{
+		let zero = F::zero();
+		let (mut lk1, mut lk2) = lkup.get_cols();
+		lk1.reverse();
+		lk2.reverse();
+		Ok((KZG::<E>::commit(kzg, &lk1, &zero)?,
+			KZG::<E>::commit(kzg, &lk2, &zero)?))
+	}
+
 	/// set up the prover and verifier params
 	/// max_total_n should be greater than the combined length of all words
 	/// plus n_words (T932-F2W: one blind per word in kzg_all_words),
 	/// and the lookup table size
 	/// `job_id`: The ID of the job being processed.
+	/// `lkup`: the public lookup table. Both keys get its commitments.
 	pub fn setup(mut rng: impl RngCore, max_total_n: usize, n_words: usize,
-		poseidon_config: PoseidonConfig<F>, job_id: usize) 
+		poseidon_config: PoseidonConfig<F>, job_id: usize, lkup: &LK)
 	-> (BatchProcessorProverParams<'a, E>, BatchProcessorVerifierParams<'a,E,CS1E,H>){
 		let b_debug = B_DEBUG;
 		let logl = LOG1;
@@ -565,10 +591,16 @@ where
 		let m2 = get_mem_usage_mb();
 		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt);
 
+		//T933 s10. Commit the public table once (2 MSMs of its size).
+		let (lk_cm1, lk_cm2) = Self::commit_lkup_cols(&kzg.0, lkup)
+			.expect("lkup commit fail (table larger than the kzg key?)");
+		log_perf(job_id, logl, &format!("BatchProcessor step 5b. commit lkup cols: {} rows", lkup.get_size()), &mut gt);
+
 		let pkey = BatchProcessorProverParams::<'a, E>{
 			kzg: kzg.0, vec: vec.0, 
 			poseidon_config: poseidon_config.clone(),
 			pk_qa_nizk: pkey_qanizk,
+			lk_cm1, lk_cm2,
 		};
 
 	
@@ -582,6 +614,7 @@ where
 			//same length handed to VecCom::setup just above; setup
 			//rounds it to a power of two internally.
 			vec_dom_size: n_words + 1,
+			lk_cm1, lk_cm2,
 		};
 		let m2 = get_mem_usage_mb();
 		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}, TOTAL RAM now: {}. ", mb2s(m2-m0), mb2s(m2)), &mut gt2);
@@ -594,15 +627,11 @@ where
 	pub fn gen_claims(
 		pkey: &BatchProcessorProverParams<'a,E>,
 		rng: &mut impl RngCore,
-		words: &Vec<Vec<F>>,
-		lkup: Arc<LK>)
+		words: &Vec<Vec<F>>)
 	-> Result<(BatchClaim<E>, Vec<IndividualClaim<E>>, 
 		SnarkAdvice<F>), Error>{
 		//1. generate the global claim
 		let n_words = words.len();
-		let (mut lk1, mut lk2) = lkup.get_cols();
-		lk1.reverse();
-		lk2.reverse();
 
 		let zero = F::zero();
 		//one INDEPENDENT hiding pad per word: rayon::iter::repeat
@@ -636,9 +665,9 @@ where
 			all_len.reverse();
 			KZG::<E>::commit(&pkey.kzg, &all_len, &zero)?
 		};
-		let kzg_lk_col1 = KZG::<E>::commit(&pkey.kzg, &lk1, &zero)?;
-		let kzg_lk_col2 = KZG::<E>::commit(&pkey.kzg, &lk2, &zero)?;
-		let batch_claim = BatchClaim::<E>{kzg_all_words, kzg_length, kzg_lk_col1, kzg_lk_col2};
+		//T933 s10. The table commitments come from setup.
+		let batch_claim = BatchClaim::<E>{kzg_all_words, kzg_length,
+			kzg_lk_col1: pkey.lk_cm1, kzg_lk_col2: pkey.lk_cm2};
 
 		//2. generate the individual claim
 		let vec_idx = (0..n_words).collect::<Vec<usize>>();
@@ -1102,18 +1131,29 @@ where
 		let b_kzg = KZG::<E>::verify_with_challenge(&vkey.kzg,
 			ch, &com_all, &prf.agg_kzg_prf).is_ok();
 
+		//T933 s10 (paper Fig 16 (1)). The claim's lookup commitments
+		//must be the ones setup made from the public table. They feed
+		//only the Fiat-Shamir input and the aggregated opening above,
+		//so without this a prover commits its own table and passes.
+		let b_lk1 = claim.kzg_lk_col1 == vkey.lk_cm1;
+		let b_lk2 = claim.kzg_lk_col2 == vkey.lk_cm2;
+		let b_lk = b_lk1 && b_lk2;
+
 		//R2: report ALL of part 1 before returning, so one red
 		//sub-check no longer hides the other two.
-		let part1_ok = b_qa && b_fs && b_kzg;
+		let part1_ok = b_qa && b_fs && b_kzg && b_lk;
 		emit(LOG1, format!("VERIFY-FLAGS batch1[{}]: qa={} fs={} \
-			kzg={} verdict={}", ctx, b_qa as u8, b_fs as u8,
-			b_kzg as u8, if part1_ok {"PASS"} else {"REJECT"}));
+			kzg={} lk={} verdict={}", ctx, b_qa as u8, b_fs as u8,
+			b_kzg as u8, b_lk as u8,
+			if part1_ok {"PASS"} else {"REJECT"}));
 		if !b_qa {emit(ERR, "qa_nizk verif fails".to_string());}
 		if !b_fs {emit(ERR, format!("fs challenge (ch/rc) mismatch: \
 			ch_exp={} ch_got={} rc_exp={} rc_got={}",
 			ch, prf.ch, rc, prf.rc));}
 		if !b_kzg {emit(ERR, format!("kzg verif fails: n_coms={} \
 			eval={}", coms.len(), prf.agg_kzg_prf.eval));}
+		if !b_lk {emit(ERR, format!("lkup commitments differ from vk: \
+			col1={} col2={}", b_lk1 as u8, b_lk2 as u8));}
 		if !part1_ok {
 			//part 2 opens ~18 Options with .expect(); today's early
 			//return makes those states unreachable, so keep the gate
@@ -1298,8 +1338,8 @@ mod tests_batch_proc {
 
 		let keysize = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::key_size(&words);
 		let (pk,vk) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,Groth16<Bn254>, CS1E, false>::setup(&mut rng,keysize,n_words,
-			poseidon_canonical_config::<Fr>(), 0);
-		let (global_claim, ind_claims, snark_inp) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
+			poseidon_canonical_config::<Fr>(), 0, &lkup);
+		let (global_claim, ind_claims, snark_inp) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>::gen_claims(&pk, &mut rng, &words).unwrap();
 
 		let i = 2;
 		let poseidon_config = poseidon_canonical_config::<Fr>();
@@ -1353,9 +1393,9 @@ mod tests_batch_proc {
 			(Fr::from(1u32), Fr::from(1u32))]));
 		let cfg = poseidon_canonical_config::<Fr>();
 		let (pk, vk) = T932Bp::setup(&mut rng, T932Bp::key_size(&words),
-			n_words, cfg.clone(), 0);
+			n_words, cfg.clone(), 0, &lkup);
 		let (global_claim, ind_claims, snark_inp) =
-			T932Bp::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
+			T932Bp::gen_claims(&pk, &mut rng, &words).unwrap();
 		let g1 = G1::generator();
 		let partial_input = SnarkRandInput::<Bn254>{
 			kzg_all_words: global_claim.kzg_all_words.clone(),
@@ -1495,11 +1535,11 @@ mod tests_batch_proc {
 			Groth16<Bn254>,CS1E,false>::key_size(&words);
 		let (pk,vk) = BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
 			Groth16<Bn254>,CS1E,false>::setup(&mut rng, keysize, n_words,
-			poseidon_canonical_config::<Fr>(), 0);
+			poseidon_canonical_config::<Fr>(), 0, &lkup);
 		let (global_claim, ind_claims, snark_inp) =
 			BatchProcessor::<Bn254,LookupTableTwoCol_Inst<Fr>,
 			Groth16<Bn254>,CS1E,false>::gen_claims(
-			&pk, &mut rng, &words, lkup.clone()).unwrap();
+			&pk, &mut rng, &words).unwrap();
 		let poseidon_config = poseidon_canonical_config::<Fr>();
 		let g1 = G1::generator();
 		let partial_input = SnarkRandInput::<Bn254>{
@@ -1603,9 +1643,9 @@ mod tests_batch_proc {
 			(Fr::from(1u32), Fr::from(1u32))]));
 		let pc = poseidon_canonical_config::<Fr>();
 		let (pk, vk) = T932Bp::setup(&mut rng, T932Bp::key_size(&words),
-			n_words, pc.clone(), 0);
-		let (gc, claims, si) = T932Bp::gen_claims(&pk, &mut rng, &words,
-			lkup.clone()).unwrap();
+			n_words, pc.clone(), 0, &lkup);
+		let (gc, claims, si) = T932Bp::gen_claims(&pk, &mut rng, &words)
+			.unwrap();
 		let g1 = G1::generator();
 		let partial = SnarkRandInput::<Bn254>{
 			kzg_all_words: gc.kzg_all_words,
@@ -1880,10 +1920,10 @@ mod tests_batch_proc {
 		let (pk, _vk) = BatchProcessor::<Bn254,
 			LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>
 			::setup(&mut rng, keysize, n_words,
-				poseidon_canonical_config::<Fr>(), 0);
+				poseidon_canonical_config::<Fr>(), 0, &lkup);
 		let (_gc, _ic, si) = BatchProcessor::<Bn254,
 			LookupTableTwoCol_Inst<Fr>, Groth16<Bn254>, CS1E, false>
-			::gen_claims(&pk, &mut rng, &words, lkup.clone()).unwrap();
+			::gen_claims(&pk, &mut rng, &words).unwrap();
 
 		assert_eq!(si.rands.len(), n_words, "rands length changed");
 		let uniq: HashSet<Fr> = si.rands.iter().cloned().collect();
@@ -1891,5 +1931,88 @@ mod tests_batch_proc {
 			"per-word rands are not pairwise distinct");
 		assert!(si.r_vec_r != si.r_vec_v,
 			"r_vec_r and r_vec_v are the same draw");
+	}
+
+	/// T933 s10 table A, the public table handed to setup.
+	fn s10_table_a() -> LookupTableTwoCol_Inst<Fr>{
+		LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(1u32))])
+	}
+
+	/// T933 s10. A cheating prover swaps the public table A for its own
+	/// table lk_b. Everything else is honest. It commits lk_b in the
+	/// claim exactly as gen_claims commits a table (columns reversed,
+	/// blind zero) and proves the batch against lk_b, so the
+	/// Fiat-Shamir input and the aggregated KZG opening are consistent.
+	/// Returns the verify_batch verdict.
+	fn s10_forged_table(lk_b: LookupTableTwoCol_Inst<Fr>,
+		ctx: &'static str) -> bool{
+		let mut rng = test_rng();
+		let words: Vec<Vec<Fr>> = (0..20).map(|_|
+			vec![Fr::rand(&mut rng), Fr::rand(&mut rng)]).collect();
+		let cfg = poseidon_canonical_config::<Fr>();
+		let (pk, vk) = T932Bp::setup(&mut rng, T932Bp::key_size(&words),
+			words.len(), cfg.clone(), 0, &s10_table_a());
+		let (mut gc, _claims, si) = T932Bp::gen_claims(&pk, &mut rng,
+			&words).unwrap();
+		let (mut c1, mut c2) = lk_b.get_cols();
+		c1.reverse();
+		c2.reverse();
+		gc.kzg_lk_col1 = KZG::<Bn254>::commit(&pk.kzg, &c1, &Fr::zero())
+			.unwrap();
+		gc.kzg_lk_col2 = KZG::<Bn254>::commit(&pk.kzg, &c2, &Fr::zero())
+			.unwrap();
+		let g1 = G1::generator();
+		let partial = SnarkRandInput::<Bn254>{
+			kzg_all_words: gc.kzg_all_words, kzg_length: gc.kzg_length,
+			kzg_lk_col1: gc.kzg_lk_col1, kzg_lk_col2: gc.kzg_lk_col2,
+			hash_cmF: Fr::zero(), kzg_vec_r: g1, kzg_vec_v: g1,
+			poseidon_config: cfg.clone()};
+		let (bp, _) = T932Bp::prove_batch(&pk, &si, &words,
+			Arc::new(lk_b), &partial);
+		T932Bp::verify_batch(&vk, None, None, None, None, &gc, &bp, &cfg,
+			false, None, None, ctx)
+	}
+
+	/// T933 s10 (paper Fig 16 (1)). Table B differs from A in one row.
+	/// The control run with table A must still pass, so a rejection is
+	/// due to the table and not to a broken fixture.
+	#[test]
+	fn batch_rejects_foreign_lkup(){
+		assert!(s10_forged_table(s10_table_a(), "test-s10-ctrl"),
+			"T933 s10: honest table A rejected");
+		let lk_b = LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(2u32))]);
+		assert!(!s10_forged_table(lk_b, "test-s10-foreign"),
+			"T933 s10: foreign lookup table ACCEPTED");
+	}
+
+	/// T933 s10. The two columns of A swapped, proved consistently.
+	/// The check must bind each commitment to its column, not the pair
+	/// as a set.
+	#[test]
+	fn batch_rejects_swapped_lkup_cols(){
+		let (c1, c2) = s10_table_a().get_cols();
+		assert!(c1 != c2, "swap must change the table");
+		let lk_sw = LookupTableTwoCol_Inst::new(
+			c2.into_iter().zip(c1.into_iter()).collect());
+		assert!(!s10_forged_table(lk_sw, "test-s10-swap"),
+			"T933 s10: swapped lookup columns ACCEPTED");
+	}
+
+	/// T933 s10. driver2 (Phase 2, full mode) builds its batch keys from
+	/// LK::new(vec![]). setup must not panic on the empty table.
+	#[test]
+	fn setup_accepts_empty_lkup(){
+		let mut rng = test_rng();
+		let (pk, vk) = T932Bp::setup(&mut rng, 8, 2,
+			poseidon_canonical_config::<Fr>(), 0,
+			&LookupTableTwoCol_Inst::new(vec![]));
+		assert!(pk.lk_cm1.is_zero() && pk.lk_cm2.is_zero());
+		assert!(vk.lk_cm1 == pk.lk_cm1 && vk.lk_cm2 == pk.lk_cm2);
 	}
 }

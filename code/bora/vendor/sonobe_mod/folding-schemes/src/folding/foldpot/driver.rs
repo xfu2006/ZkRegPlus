@@ -506,7 +506,8 @@ where
 		let max_w_lk = if max_total_n + n_words > lkup_inp.get_size()
 			{max_total_n+n_words+1} else {lkup_inp.get_size()+1};
 		let batch_param = BatchProcessor::<E,LK,S,CS1E,H>
-				::setup(&mut rng, max_w_lk, n_words, poseidon_config.clone(), 0); 
+				::setup(&mut rng, max_w_lk, n_words, poseidon_config.clone(), 0,
+				&lkup_inp);
 
 		log_perf(0, log_level, &format!(
 			"Driver New: Step 4: batch param"), 
@@ -1422,7 +1423,7 @@ where
 			let pk = &self.batch_pk.as_ref().unwrap();
 			let _vk = &self.batch_vk.as_ref().unwrap();
 			let (global_claim, ind_claims, snark_inp) = 
-				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
+				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words).unwrap();
 			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
 		}else{
 			None
@@ -1887,7 +1888,7 @@ where
 			};
 
 			let (global_claim, ind_claims, snark_inp) =
-				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words, self.lkup.clone()).unwrap();
+				BatchProcessor::<E,LK,S,CS1E,H>::gen_claims(pk, &mut rng, &words).unwrap();
 			Some( (global_claim, ind_claims[idx_ind_proof].clone(), snark_inp) )
 		}else{			None
 		};
