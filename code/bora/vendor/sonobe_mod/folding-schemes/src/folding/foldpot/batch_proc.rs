@@ -2033,6 +2033,11 @@ mod tests_batch_proc {
 			si.r_kzg_len, si.r_kzg_len2, si.r_vec_r, si.r_vec_r2,
 			si.r_vec_v, si.r_vec_v2].into_iter().collect();
 		assert_eq!(nonces.len(), 8, "the eight nonces are not distinct");
+		//T933 s9 review N1. Distinctness alone lets one zero blind
+		//through, which drops a commitment back to one blind.
+		assert!(si.rands.iter().chain(si.rands2.iter())
+			.chain(nonces.iter()).all(|x| !x.is_zero()),
+			"a blind or nonce is zero");
 	}
 
 	/// T933 s10 table A, the public table handed to setup.

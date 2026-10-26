@@ -525,8 +525,8 @@ where
 		//4. set up the batch processor if it is NOT full mode (1st stage)
 		//T932-F2W, T933 s9. kzg_all_words holds max_total_n +
 		//2*n_words entries (two blinds per word) plus its own two.
-		let max_w_lk = if max_total_n + 2*n_words > lkup_inp.get_size()
-			{max_total_n+2*n_words+2} else {lkup_inp.get_size()+1};
+		let max_w_lk = std::cmp::max(max_total_n+2*n_words+2,
+			lkup_inp.get_size()+1);
 		let batch_param = BatchProcessor::<E,LK,S,CS1E,H>
 				::setup(&mut rng, max_w_lk, n_words, poseidon_config.clone(), 0,
 				&lkup_inp);

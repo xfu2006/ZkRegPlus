@@ -31882,7 +31882,11 @@ Monday 10/26/2026
 Goal 1. continue to fix GRP1
 	[a] s11: B1 to B6: increase stmt header, add blinder
 		add checker of i<n_words
-	[b] impl and test -> 
+	[b] impl and test ->  done
+Goal 2. GRP1: T934-8D
+	[a] fix decider wires before r_2 is drawn
+	[b] decisions making
+	[c]
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
