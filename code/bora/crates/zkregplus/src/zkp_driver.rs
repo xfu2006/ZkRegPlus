@@ -6253,6 +6253,27 @@ non_aggr={binexec_small,binexec_dense}", &cells);
 	#[test]
 	pub fn test_zkreg_main(){ zkreg_main_body(false) }
 
+	/// T933 s11 (F1): honest small_data run with a trailing EMPTY lookup
+	/// step and the lookup check on. The share is pinned to perc 5200
+	/// (cfg 3224 at chunk_len 1), so the 9464-row table pads to 9672 =
+	/// 3 full table steps, and the 4th step has act = 0. This is the
+	/// only run that exercises the 6.2 empty-step select (b_full = 0
+	/// keeps the old KZG sum): dropping it fails batch2 c4. The pin is
+	/// set on the global config, as other drivers here do; restored
+	/// after. Run it with --exact (the global config is shared).
+	#[test]
+	pub fn test_zkreg_main_empty_lkup_step(){
+		let old = (read_global_config().b_pin_lkup_share,
+			read_global_config().perc_lkup_share);
+		get_global_config().b_pin_lkup_share = true;
+		get_global_config().perc_lkup_share = 5200;
+		small_data::<Fr>(true);
+		get_global_config().b_pin_lkup_share = old.0;
+		get_global_config().perc_lkup_share = old.1;
+		utils::logger::flush_logger();
+		assert_no_verify_fails("test_zkreg_main_empty_lkup_step");
+	}
+
 	/// small_data_par coverage (T9902): LARGE set, run via --ignored.
 	#[test]
 	#[ignore]

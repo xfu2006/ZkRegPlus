@@ -21,7 +21,7 @@ macro_rules! lock_unwrap {
 		are discharged).
 */
 use utils::{consts::ADD_CHAIN_SIZE, logger::{log, log_perf, emit_stdout, LOG1,LOG6,LOG7}, timer::Timer as GTimer}; //DEBUG USE 69801: +LOG1
-use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs, POW_LE_BITS, alloc_le_bits};
+use crate::folding::foldpot::utils::{sum3,alloc_fpvar_mul,var_to_tuple, var_to_tuple_adv, B_DEBUG, B_DEBUG3, B_DEBUG2, check_cs};
 use crate::folding::foldpot::utils::gadget_sat_check;
 use serde::{Serialize,Deserialize};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
@@ -161,7 +161,11 @@ impl WordInfo{
 /// Two column lookup table. The first entry is always
 /// (0,0). All entries are sorted in ascending order
 /// Col1 is serving as sub-table ID, Col2 serves as entry
-/// No duplicate entries. Two columns always have the same length.
+/// Two columns always have the same length. Sorted, non-decreasing:
+/// equal neighbours (duplicate rows) are allowed and `self_check`
+/// accepts them anywhere. `pad_lkup` (T933 s11) appends copies of the
+/// last row. Duplicates keep the support, so LogUp membership is
+/// unchanged.
 pub trait LookupTableTwoCol<F:PrimeField>: Debug +Clone + Send + Sync{
 	/// constructor
 	fn new(vals: Vec<(F,F)>) -> Self;
@@ -215,13 +219,13 @@ impl <F: PrimeField> LookupTableTwoCol_Inst<F>{
 		Ok( Self::deserialize_uncompressed(&*buffer)? )
 	}
 
-	/// perform self check (required all entries in order, as big-uint)
+	/// perform self check (required all entries in order, as big-uint).
+	/// T933 s11: equal neighbours pass (the pad_lkup copies).
 	pub fn self_check(&self) -> Result<(), Error>{
-		for i in 0..self.vals.len()-1{
-			let v1 = self.vals[i];
-			let v2 = self.vals[i+1];
+		for w in self.vals.windows(2){
+			let (v1, v2) = (w[0], w[1]);
 			if v1.0>v2.0 || 
-			  (v1.0==v2.0 && v1.1>=v2.1){
+			  (v1.0==v2.0 && v1.1>v2.1){
 				return Err(Error
 					::Other("self check fails not in order".to_string()));
 			}
@@ -299,6 +303,34 @@ impl <F:PrimeField> LookupTableTwoCol<F> for LookupTableTwoCol_Inst<F>{
 
 		res
 	}
+}
+
+/// T933 s11. Pad the table with copies of its LAST row up to a multiple
+/// of `u` (the lookup share size), so every step is full (act = u) or
+/// empty (act = 0). Copies at the end keep every index, keep (0,0)
+/// unique at row 0 and keep the order `find` binary-searches. A query
+/// of the last row may land on any copy (`find` returns one of them);
+/// all copies have the same LogUp denominator, so the table side is
+/// unchanged. n = 0 (driver2's empty table) and u = 0 return a copy.
+/// Built in chunks: the table is copied once, not via get_cols.
+pub fn pad_lkup<F: PrimeField, LK: LookupTableTwoCol<F>>(lk: &LK, u: usize)
+	-> LK{
+	let n = lk.get_size();
+	let n_pad = if n==0 || u==0 {n} else {n.div_ceil(u) * u};
+	let mut v: Vec<(F, F)> = Vec::with_capacity(n_pad);
+	let chunk = 1usize << 20;
+	let mut s = 0;
+	while s < n{
+		let e = (s + chunk).min(n);
+		let (c1, c2) = lk.get_cols_slice(s, e);
+		v.extend(c1.into_iter().zip(c2));
+		s = e;
+	}
+	if n > 0{
+		let last = v[n-1];
+		v.resize(n_pad, last);
+	}
+	LK::new(v)
 }
 
 /// Just for syntactic enforce the use of struct SigmaIR1CS
@@ -1420,13 +1452,13 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		}
 
 		//2. update the statements for m_vec and share
-		let lk_len = lk.get_size();
-		let share_size = if lk_len>n_steps {lk_len/n_steps} else {1usize};
+		//T933 s11: cfg-aligned windows, as the driver does. lk must be
+		//padded (pad_lkup); update_lookup asserts full shares.
+		let share_size = vec_stmt[0].col1_share.len();
 		for i in 0..n_steps{
 			//update_lookup will auto-correct index
 			let start = i*share_size;
-			let end = if i==n_steps-1 {lk_len} else {(i+1)*share_size};
-			vec_stmt[i].update_lookup(start,end,lk,&m_map);
+			vec_stmt[i].update_lookup(start,start+share_size,lk,&m_map);
 		}
 
 	}
@@ -1653,9 +1685,14 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		}
 		let end_idx = if end_idx>=lk.get_size() {lk.get_size()} else {end_idx};
 		let size = end_idx - start_idx;
+		//T933 s11: a counted step is full. The table is padded to a
+		//multiple of the share size at load (pad_lkup), so a share
+		//that starts inside it ends inside it.
 		assert!(self.col1_share.len()==self.col2_share.len() 
 			&& self.m_share.len()==self.col1_share.len() 
-			&& self.m_share.len()>=size);
+			&& self.m_share.len()==size,
+			"T933 s11: partial lookup share {} of {} (table not padded?)",
+			size, self.col1_share.len());
 		let (mut col1, mut col2):(Vec<F>,Vec<F>) = lk.get_cols_slice(start_idx, end_idx);
 		let left_over = self.col1_share.len()-size;
 		col1.extend(std::iter::repeat(F::zero()).take(left_over));
@@ -1697,8 +1734,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 
 		//2. prepare the witness for extra_vars:
 		// unused_inp_size and unused_oup_size
-		// subtable 1 is used as range table. We assert that they are in
-		// range
+		// They carry sid 0, so in-circuit they are case 1 (constant
+		// zero sid): NOT looked up and NOT range-checked. That is
+		// harmless (T933 s11.7, SN2): act_input/output_size are only
+		// loop counters, and an out-of-range act saturates like
+		// act = N.
 		let (zero,_one) = (F::zero(), F::one());
 		let tbl_ids_wit = vec![zero, zero]; 
 		let vals_wit= vec![
@@ -3349,11 +3389,14 @@ where 	C: CurveGroup<ScalarField=F>,
 			let v = alpha + si.col1_share[i]*beta + si.col2_share[i];
 			v.inverse().unwrap()
 		}).collect::<Vec<F>>();
-		// Dummies have m=0, so inv*m = 0 either way -- no need to
-		// branch on col1.is_zero(). Mirrors the constraint side.
+		// T933 s11: mirrors the constraint side. The step's table
+		// total counts only when the step is full (b_full, act = cfg).
+		let b_full = right_size > 0 &&
+			si.act_lookup_share_size == F::from(right_size as u64);
 		let local_right = (0..right_size).into_par_iter().map(|i|{
 			inv_hab22_right[i] * si.m_share[i]
 		}).sum::<F>();
+		let local_right = if b_full {local_right} else {zero};
 		let sum_hab22_right = local_right + zi_part2.sum_hab22_right;
 		// this is disabled because fill_lkup is not called during
 		// preprocess mode
@@ -3401,27 +3444,25 @@ where 	C: CurveGroup<ScalarField=F>,
 			let mut rcs = vec![one];
 			for _i in 0..5{rcs.push(rcs[rcs.len()-1] * rc)};
 
-			//6.2 update sum_kzg_eval_lk
+			//6.2 update sum_kzg_eval_lk. T933 s11: mirror of the
+			//circuit, unconditional Horner over all cfg slots, kept
+			//only when the step is full (act = cfg).
 			let old_sum_kzg_eval_lk = sum_kzg_eval_lk.clone();
-			let mut lookup_share_size_left = si.act_lookup_share_size;
-			for i in 0..self.stmt_config.lookup_share_size{
-				let b_lk_left_zero = lookup_share_size_left.is_zero();
-				sum_kzg_eval_lk= if b_lk_left_zero{sum_kzg_eval_lk}
-					else {
-						sum_kzg_eval_lk* ch + 
-						si.col1_share[i] * rcs[0] +
-						si.col2_share[i] * rcs[1]
-					};
-
-				let val2_lk = lookup_share_size_left - one;
-				lookup_share_size_left= if b_lk_left_zero {zero} else {val2_lk};
+			let cfg_lk = self.stmt_config.lookup_share_size;
+			let b_full = cfg_lk > 0 &&
+				si.act_lookup_share_size == F::from(cfg_lk as u64);
+			for i in 0..cfg_lk{
+				sum_kzg_eval_lk= sum_kzg_eval_lk* ch + 
+					si.col1_share[i] * rcs[0] +
+					si.col2_share[i] * rcs[1];
 			}
-			sum_kzg_eval_lk = if si.act_lookup_share_size.is_zero()
-				{old_sum_kzg_eval_lk} else {sum_kzg_eval_lk};
+			sum_kzg_eval_lk = if b_full {sum_kzg_eval_lk}
+				else {old_sum_kzg_eval_lk};
 
-			//DEBUG probe 69801: audit the circuit's dummy-slot
-			//assumption (col1=col2=0 for i>=act) that its
-			//ch^(cfg-act) recovery at :4388 depends on.
+			//DEBUG probe 69801: counts nonzero rows in slots
+			//i >= act. Since T933 s11 the circuit has no dummy slots
+			//(act is 0 or cfg, the ch^(cfg-act) recovery is gone), so
+			//honest runs report 0; a hit means act is neither.
 			if std::env::var("ZKR_LKUP_PROBE").is_ok(){
 				let cfg_lk = self.stmt_config.lookup_share_size;
 				let act_lk = field_to_usize(
@@ -4073,6 +4114,10 @@ where 	C: CurveGroup<ScalarField=F>,
 		let unused_output_size = wtns_var.unused_output_size;
 		//T703a: constant sid vars for the virtual slots; the value
 		//vars were collected from assert_msg3 in step 3.
+		//T933 s11.7: a virtual sid of 0 would make its slot case 1,
+		//never looked up. Keygen runs this, so it fails there.
+		assert!(self.stmt_config.virt_sids.iter().all(|s| *s != 0),
+			"virtual sid 0 => case 1, unchecked");
 		let virt_sid_vars: Vec<FpVar<F>> = self.stmt_config
 			.virt_sids.iter()
 			.map(|s| FpVar::Constant(F::from(*s as u64)))
@@ -4264,7 +4309,24 @@ where 	C: CurveGroup<ScalarField=F>,
 		nl = cs.num_lc();
 
 		//5.2 check the right side
+		//T933 s11: every step is full (act = cfg) or empty (act = 0).
+		//b_full gates the step's table total here and its KZG Horner
+		//in 6.2, so an empty step's rows and m have no effect and no
+		//slot of a counted step is unused (Attacks A and B).
+		let cfg_lk = self.stmt_config.lookup_share_size;
+		assert!(cfg_lk == inv_hab22_right_size,
+			"lookup_share_size {} != inv_hab22_right_size {}",
+			cfg_lk, inv_hab22_right_size);
+		let b_full = if b_has_lookup{
+			let b = Boolean::new_witness(cs.clone(), || Ok(
+				si.act_lookup_share_size.value()? ==
+				F::from(cfg_lk as u64)))?;
+			si.act_lookup_share_size.enforce_equal(
+				&(FpVar::from(b.clone()) * F::from(cfg_lk as u64)))?;
+			b
+		}else{ Boolean::TRUE }; //no slots: nothing to gate
 		//5.2.2 now process the inv_hab22_right
+		let mut local_right = FpVar::<F>::zero();
 		for i in 0usize..inv_hab22_right_size{
 			//let v_temp = &beta * &si.col1_share[i]; //cost 271ns
 			let v_temp = alloc_fpvar_mul(&beta, &si.col1_share[i]); //231ns
@@ -4275,20 +4337,22 @@ where 	C: CurveGroup<ScalarField=F>,
 			let prod = alloc_fpvar_mul(&v,  &wtns_var.inv_hab22_right[i]);
 			prod.enforce_equal(&one_var)?;
 
-			// Dummies (i >= act_lookup_share_size) have col1=col2=m=0
-			// per update_lookup() at sigma_ir1cs.rs:1304-1316, so their
-			// contribution to sum_hab22_right is (1/alpha)*0 = 0.
+			// T933 s11: summed into local_right, gated by b_full below.
 			let to_add = &wtns_var.inv_hab22_right[i] * m_i;
 			if b_debug{
 				if si.col1_share[i].value()?.is_zero(){
 					assert!(m_i.value()?.is_zero());
 				}
 			}
-			sum_hab22_right = &sum_hab22_right + &to_add;
+			local_right = &local_right + &to_add;
 
 			if i%ADD_CHAIN_SIZE==0{//avoid too long chain in later
-				sum_hab22_right = &sum_hab22_right * &one_wit_var;
+				local_right = &local_right * &one_wit_var;
 			}
+		}
+		if b_has_lookup{
+			sum_hab22_right = &sum_hab22_right +
+				&(&local_right * &FpVar::from(b_full.clone()));
 		}
 
 
@@ -4415,22 +4479,10 @@ where 	C: CurveGroup<ScalarField=F>,
 
 			//6.2 update sum_kzg_eval_lk
 			let old_sum_kzg_eval_lk = sum_kzg_eval_lk.clone();
-			let cfg_lk = self.stmt_config.lookup_share_size;
 
-			// ASSUMPTION: cfg_lk < 2^POW_LE_BITS  (= 2^32).
-			assert!(
-				(cfg_lk as u64) < (1u64 << POW_LE_BITS),
-				"step 6.2: lookup_share_size {} exceeds 2^{} bound",
-				cfg_lk, POW_LE_BITS
-			);
-
-
-			// (a) UNCONDITIONAL Horner over all cfg slots.  
-			//   NOTE: Dummies
-			//     (i >= act_lookup_share_size) have col1=col2=0 (see
-			//     update_lookup at sigma_ir1cs.rs:~1304-1316), so they
-			//     only push *ch through.  We compensate for the extra
-			//     ch^(cfg-act) factor in step (c).
+			// (a) UNCONDITIONAL Horner over all cfg slots. T933 s11: a
+			//     counted step is full (b_full, 5.2), so there are no
+			//     dummy slots and no ch^(cfg-act) division.
 			let mut sum_padded = sum_kzg_eval_lk.clone();
 			for i in 0..cfg_lk {
 				sum_padded = &(&sum_padded * &ch)
@@ -4438,34 +4490,9 @@ where 	C: CurveGroup<ScalarField=F>,
 					+ &(&si.col2_share[i] * &rcs[1]);
 			}
 
-			// (b) ch_pow = ch^(cfg - act) via existing pow_le.
-			let cfg_const = FpVar::<F>::new_constant(
-				cs.clone(), F::from(cfg_lk as u64))?;
-			let n_dummy = &cfg_const - &si.act_lookup_share_size;
-			let nd_bits = alloc_le_bits(cs.clone(), &n_dummy)?;
-			let ch_pow = ch.pow_le(&nd_bits)?;
-
-			// (c) recover sum_target by enforcing
-			//     sum_target * ch_pow == sum_padded.
-			let sum_target = FpVar::<F>::new_witness(cs.clone(), || {
-				let pad = sum_padded.value()?;
-				let pow = ch_pow.value()?;
-				// In setup-mode placeholder (ch=0, n_dummy>0), ch_pow=0
-				// and inverse is undefined.  Default to zero; the
-				// resulting unsat is benign (matrices are still correct
-				// for the real-witness path).
-				Ok(pad * pow.inverse().unwrap_or(F::zero()))
-			})?;
-			cs.enforce_constraint(
-				var_to_lb(&sum_target, F::one()),
-				var_to_lb(&ch_pow,     F::one()),
-				var_to_lb(&sum_padded, F::one()),
-			)?;
-
-			// (d) preserve original act=0 gate (redundant under (c)
-			//     but kept for parity with the previous code).
-			sum_kzg_eval_lk = si.act_lookup_share_size.is_zero()?
-				.select(&old_sum_kzg_eval_lk, &sum_target)?;
+			// (b) an empty step keeps the old sum.
+			sum_kzg_eval_lk = b_full.select(&sum_padded,
+				&old_sum_kzg_eval_lk)?;
 
 			//6.3 update sum_kzg_eval_word and also sum_vec_v_i
 			let old_sum_kzg_eval_word = sum_kzg_eval_word.clone();
@@ -6190,6 +6217,410 @@ pub mod tests_sigma_ir1cs{
 		for i in 0..cpi.x.len(){
 			assert!(cpi.x[i].value().unwrap() == cpi2.x[i].value().unwrap());
 		}
+	}
+
+	// ---------------------------------------------------------------
+	// T933 s11 (K1): unused lookup slots. Before the fix a step could
+	// declare 0 < act < cfg, and 6.2 divided by ch^(cfg-act), so a
+	// dummy slot shifted onto the next step's rows (Attack A). An
+	// act = 0 step kept the old KZG sum while 5.2.2 still counted its
+	// free rows and m (Attack B). After the fix every step is full
+	// (act = cfg) or empty (act = 0, nothing counted).
+	// Fixture: six_root, 12-row table, cfg = 4, n_steps = 4. Honest
+	// layout [0,4) [4,8) [8,12) [] (act 4,4,4,0).
+	// ---------------------------------------------------------------
+	const S11_CFG: usize = 4;
+
+	/// R' = (2, 999), a row NOT in the six_root table.
+	fn s11_forged_row() -> (Fr, Fr){ (Fr::from(2u32), Fr::from(999u32)) }
+
+	/// big (ch, rc) so a value found in a witness vector is no accident
+	fn s11_z0(n_steps: usize) -> ZiPartTwoInst<Fr>{
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		ZiPartTwoInst::<Fr>::new(Fr::from(0x1234567u64),
+			Fr::from(0x7654321u64), &cfg, false, fq_bits, n_steps)
+	}
+
+	/// Overwrite one statement's lookup share: rows, m (pad with 0 to
+	/// cfg) and the declared act.
+	fn s11_set(st: &mut S106Stmt, rows: &[(Fr,Fr)], ms: &[u64], act: u64){
+		assert!(rows.len()<=S11_CFG && ms.len()<=S11_CFG);
+		for i in 0..S11_CFG{
+			let (a, b) = if i<rows.len() {rows[i]} else {(Fr::zero(), Fr::zero())};
+			st.col1_share[i] = a;
+			st.col2_share[i] = b;
+			st.m_share[i] = Fr::from(if i<ms.len() {ms[i]} else {0});
+		}
+		st.act_lookup_share_size = Fr::from(act);
+	}
+
+	/// Synthesize the step `inst` holds. Ok((sat, witness assignment,
+	/// #constraints, #witness vars)), Err(msg) if a native assert trips.
+	fn s11_synth(inst: &S106Inst, z_in: &ZiPartTwoInst<Fr>)
+		-> Result<(bool, Vec<Fr>, usize, usize), String>{
+		let cfg = poseidon_canonical_config::<Fr>();
+		let zi_hash = z_in.hash(&cfg);
+		let old_hook = std::panic::take_hook();
+		std::panic::set_hook(Box::new(|_|{}));
+		let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let ext_in = inst.witness_to_vec_fp_var(cs.clone());
+			let mut z_i = vec![
+				FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::zero()))
+					.unwrap(),
+				FpVar::<Fr>::new_witness(cs.clone(), || Ok(zi_hash))
+					.unwrap(),
+			];
+			for _k in 0..4{
+				z_i.push(FpVar::<Fr>::new_witness(cs.clone(),
+					|| Ok(Fr::zero())).unwrap());
+			}
+			inst.generate_step_constraints(cs.clone(), 0, z_i, ext_in)
+				.expect("gen step err");
+			let sat = cs.is_satisfied().unwrap();
+			let w = cs.borrow().unwrap().witness_assignment.clone();
+			(sat, w, cs.num_constraints(), cs.num_witness_variables())
+		}));
+		std::panic::set_hook(old_hook);
+		match res{
+			Ok(r) => Ok(r),
+			Err(e) => Err(if let Some(s) = e.downcast_ref::<&str>(){
+					s.to_string()
+				}else if let Some(s) = e.downcast_ref::<String>(){
+					s.clone()
+				}else{ format!("unknown panic") }),
+		}
+	}
+
+	/// Pre-fix 6.2 semantics (the code this test attacks): unconditional
+	/// Horner over all cfg slots, then divide by ch^(cfg-act); act = 0
+	/// keeps the old sum. Equals the post-fix semantics whenever
+	/// act is 0 or cfg.
+	fn s11_kzg_old(s: Fr, z: &ZiPartTwoInst<Fr>, st: &S106Stmt) -> Fr{
+		use ark_ff::Field;
+		let act = field_to_usize(&st.act_lookup_share_size);
+		if act==0 {return s;}
+		let mut p = s;
+		for i in 0..S11_CFG{
+			p = p * z.ch + st.col1_share[i] + z.rc * st.col2_share[i];
+		}
+		let pw = z.ch.pow([(S11_CFG - act) as u64]);
+		p * pw.inverse().unwrap()
+	}
+
+	/// Run a chain of statements. z_k is the native next state, with
+	/// sum_kzg_eval_lk overwritten by the pre-fix value (what a prover
+	/// carries). Returns per step (verdict, circuit's own output equals
+	/// the carried next value), and the final carried value.
+	fn s11_chain(inst: &mut S106Inst, z0: &ZiPartTwoInst<Fr>,
+		sts: &Vec<S106Stmt>) -> (Vec<Result<bool,String>>, Vec<bool>, Fr){
+		let mut z = z0.clone();
+		let mut s = z0.sum_kzg_eval_lk;
+		let (mut verdicts, mut found) = (vec![], vec![]);
+		for st in sts.iter(){
+			z.sum_kzg_eval_lk = s;
+			let z_next = s106_step_native(inst, &z, st);
+			let s_next = s11_kzg_old(s, &z, st);
+			match s11_synth(inst, &z){
+				Ok((sat, w, _, _)) => {
+					verdicts.push(Ok(sat));
+					found.push(w.contains(&s_next));
+				},
+				//a panic poisons the mapper lock: stop the chain here
+				Err(m) => {verdicts.push(Err(m)); found.push(false); break;},
+			}
+			s = s_next;
+			z = z_next;
+		}
+		(verdicts, found, s)
+	}
+
+	/// honest P(ch): Horner over the whole table, start value z0's sum
+	fn s11_p_honest(z: &ZiPartTwoInst<Fr>, rows: &[(Fr,Fr)]) -> Fr{
+		rows.iter().fold(z.sum_kzg_eval_lk, |a, (c1,c2)| a * z.ch + c1 + z.rc * c2)
+	}
+
+	fn s11_rows(lk: &S106Lk) -> Vec<(Fr,Fr)>{
+		let (c1, c2) = lk.get_cols();
+		c1.into_iter().zip(c2).collect()
+	}
+
+	/// honest four-step layout [0,4) [4,8) [8,12) [], m = 0. Zero the
+	/// toy's counter buffers (as s119_fold does) so every step of the
+	/// chain can be synthesized.
+	fn s11_honest(sts: &mut Vec<S106Stmt>, t: &[(Fr,Fr)]){
+		for st in sts.iter_mut(){
+			st.inp_buf[0] = Fr::zero();
+			st.oup_buf[0] = Fr::zero();
+		}
+		s11_set(&mut sts[0], &t[0..4], &[], 4);
+		s11_set(&mut sts[1], &t[4..8], &[], 4);
+		s11_set(&mut sts[2], &t[8..12], &[], 4);
+		s11_set(&mut sts[3], &[], &[], 0);
+	}
+
+	/// 11.3 test 1, Attack A (overlay). Step 1 declares act = 3 and puts
+	/// t7 - R' in its dummy slot (m = 0); step 2 starts with R' (m = 1);
+	/// step 3 takes t11 with act = 1. Pre-fix: every step SAT, every
+	/// circuit output equals the carried value, final value = P(ch), and
+	/// the LogUp table side counts R'. After: rejected.
+	#[test]
+	pub fn test_lkup_dummy_overlay_forgery(){
+		let n_steps = 4usize;
+		let (lk, mut inst, mut sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let t = s11_rows(&lk);
+		assert!(t.len()==12 && inst.stmt_config.lookup_share_size==S11_CFG);
+		let z0 = s11_z0(n_steps);
+		let p = s11_p_honest(&z0, &t);
+		//control: honest layout accepted, final value P(ch)
+		let mut hon = sts.clone();
+		s11_honest(&mut hon, &t);
+		let (vh, fh, sh) = s11_chain(&mut inst, &z0, &hon);
+		assert!(vh.iter().all(|v| *v==Ok(true)) && fh.iter().all(|b| *b),
+			"honest control rejected: {:?} {:?}", vh, fh);
+		assert!(sh==p, "honest control misses P(ch)");
+		//forgery
+		let r = s11_forged_row();
+		let d = (t[7].0 - r.0, t[7].1 - r.1);
+		s11_honest(&mut sts, &t);
+		s11_set(&mut sts[1], &[t[4], t[5], t[6], d], &[], 3);
+		s11_set(&mut sts[2], &[r, t[8], t[9], t[10]], &[1], 4);
+		s11_set(&mut sts[3], &[t[11]], &[], 1);
+		//attack precondition (algebra, pre-fix semantics): same P(ch),
+		//and the all-slot LogUp table side (5.2.2) now counts R'.
+		let s_alg = sts.iter().fold(z0.sum_kzg_eval_lk,
+			|a, st| s11_kzg_old(a, &z0, st));
+		assert!(s_alg==p, "precondition: forged chain does not reach P(ch)");
+		let (v, f, _s) = s11_chain(&mut inst, &z0, &sts);
+		let accepted = v.iter().all(|x| *x==Ok(true)) && f.iter().all(|b| *b);
+		println!("T933s11 attack A: verdicts {:?} outputs-match {:?}", v, f);
+		assert!(!accepted, "ATTACK A ACCEPTED: forged rows reach P(ch), R' counted");
+	}
+
+	/// 11.3 test 2, Attack B. Final step, b_check_lkup on, act = 0 with
+	/// the free row R' and m = 1. The carried left sum already holds one
+	/// query of R' (dL_fake). Pre-fix: 5.2.2 counts R' -> SAT. After:
+	/// an empty step adds 0 -> UNSAT. Control C0 (act = 0, rows and m
+	/// zero, balanced) is SAT before and after: it validates dL.
+	#[test]
+	pub fn test_lkup_act_zero_free_rows(){
+		use ark_ff::Field;
+		let n_steps = 4usize;
+		let (lk, mut inst, mut sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, true);
+		let t = s11_rows(&lk);
+		s11_honest(&mut sts, &t);
+		let z0 = s11_z0(n_steps);
+		let mut z = z0.clone();
+		for k in 0..3{ z = s106_step_native(&mut inst, &z, &sts[k]); }
+		//in-circuit left delta of the final step: every slot past the
+		//two constant-zero ones is case 3 (statement-witness sid)
+		let st = &sts[3];
+		let q2 = [st.inp_buf.clone(), st.oup_buf.clone(), st.data.clone()].concat();
+		assert!(q2.len()==st.subtable_id.len());
+		let dl: Fr = st.subtable_id.iter().zip(q2.iter())
+			.map(|(a,b)| (z.alpha + z.beta * a + b).inverse().unwrap()).sum();
+		let r = s11_forged_row();
+		let x = (z.alpha + z.beta * r.0 + r.1).inverse().unwrap();
+		let rejected = |res: &Result<(bool,Vec<Fr>,usize,usize),String>| match res{
+			Ok((b,_,_,_)) => !*b,
+			Err(m) => {assert!(m.contains("hab22"), "wrong check: {}", m); true},
+		};
+		//C0: honest empty step, balanced
+		let mut z_c = z.clone();
+		z_c.sum_hab22_right = z.sum_hab22_left + dl;
+		let _ = s106_step_native(&mut inst, &z_c, &sts[3]);
+		let c0 = s11_synth(&inst, &z_c);
+		assert!(!rejected(&c0), "C0 control rejected (dL wrong?)");
+		//attack: left carries one forged query of R', the empty step pays
+		let mut s_bad = sts[3].clone();
+		s11_set(&mut s_bad, &[r], &[1], 0);
+		let mut z_b = z.clone();
+		z_b.sum_hab22_right = z.sum_hab22_left + dl - x;
+		let _ = s106_step_native(&mut inst, &z_b, &s_bad);
+		let rb = s11_synth(&inst, &z_b);
+		assert!(rejected(&rb), "ATTACK B ACCEPTED: act=0 step paid a forged query");
+	}
+
+	/// 11.3 test 3: act = cfg - 1 with honest rows and a zero dummy slot.
+	/// SAT before (that is the old honest last step), UNSAT after.
+	#[test]
+	pub fn test_lkup_partial_act_unsat(){
+		let n_steps = 4usize;
+		let (lk, mut inst, mut sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let t = s11_rows(&lk);
+		s11_honest(&mut sts, &t);
+		let z0 = s11_z0(n_steps);
+		let z1 = s106_step_native(&mut inst, &z0, &sts[0]);
+		//control: the same step with act = cfg is SAT
+		let _ = s106_step_native(&mut inst, &z1, &sts[1]);
+		let c = s11_synth(&inst, &z1);
+		assert!(matches!(c, Ok((true,_,_,_))), "control rejected: {:?}",
+			c.as_ref().map(|x| x.0));
+		s11_set(&mut sts[1], &t[4..7], &[], 3);
+		let _ = s106_step_native(&mut inst, &z1, &sts[1]);
+		let r = s11_synth(&inst, &z1);
+		assert!(!matches!(r, Ok((true,_,_,_))), "act = cfg-1 step is SAT");
+	}
+
+	/// 11.3 test 6: one extra FULL all-zero step past the table. The
+	/// steps are SAT, but the carried value is P(ch)*ch^cfg != P(ch),
+	/// so the KZG check rejects it. Green before and after.
+	#[test]
+	pub fn test_lkup_trailing_full_step(){
+		use ark_ff::Field;
+		let n_steps = 4usize;
+		let (lk, mut inst, mut sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let t = s11_rows(&lk);
+		s11_honest(&mut sts, &t);
+		s11_set(&mut sts[3], &[], &[], 4);
+		let z0 = s11_z0(n_steps);
+		let p = s11_p_honest(&z0, &t);
+		let (v, f, s) = s11_chain(&mut inst, &z0, &sts);
+		assert!(v.iter().all(|x| *x==Ok(true)) && f.iter().all(|b| *b),
+			"extra full step: {:?} {:?}", v, f);
+		assert!(s==p * z0.ch.pow([S11_CFG as u64]) && s!=p,
+			"extra full step reached P(ch)");
+	}
+
+	/// 11.7: a virtual sid of 0 makes its slot case 1 (never looked up).
+	/// The constant sids are built in generate_step_constraints, which
+	/// keygen runs, so it must panic there.
+	#[test]
+	pub fn test_virt_sid_zero_panics(){
+		let (_lk, mut inst, sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		let z0 = s11_z0(3);
+		let _ = s106_step_native(&mut inst, &z0, &sts[0]);
+		inst.stmt_config.virt_sids = vec![0usize];
+		let r = s11_synth(&inst, &z0);
+		match r{
+			Err(m) => assert!(m.contains("virtual sid 0"), "other panic: {}", m),
+			Ok(_) => panic!("virtual sid 0 accepted"),
+		}
+	}
+
+	/// T933 s11 pin: constraints / witness vars of one six_root step.
+	/// Pre-fix 5755 / 5800; the fix removes 129 constraints and 128
+	/// witness vars per step. Full and empty steps share one shape.
+	#[test]
+	pub fn test_s11_measure_step_cs(){
+		let n_steps = 4usize;
+		let (lk, mut inst, mut sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let t = s11_rows(&lk);
+		s11_honest(&mut sts, &t);
+		let z0 = s11_z0(n_steps);
+		let _ = s106_step_native(&mut inst, &z0, &sts[0]);
+		let (s0, _, c0, w0) = s11_synth(&inst, &z0).unwrap();
+		let _ = s106_step_native(&mut inst, &z0, &sts[3]);
+		let (s3, _, c3, w3) = s11_synth(&inst, &z0).unwrap();
+		println!("T933s11 MEASURE six_root step: full sat={} cs={} vars={}; \
+			empty sat={} cs={} vars={}", s0, c0, w0, s3, c3, w3);
+		assert!(s0, "honest full step UNSAT");
+		assert!(c0==c3 && w0==w3, "full and empty shapes differ");
+		assert!(c0==5755-129 && w0==5800-128,
+			"six_root step shape moved: cs {} vars {}", c0, w0);
+	}
+
+	/// 11.3 test 5: pad_lkup, find, self_check, fill_mvec with the
+	/// duplicated last row; empty table; aligned table; u = 0.
+	#[test]
+	pub fn test_pad_lkup_find_selfcheck(){
+		use crate::folding::foldpot::sigma_ir1cs::pad_lkup;
+		use ark_ff::Field;
+		let f = |a: u64, b: u64| (Fr::from(a), Fr::from(b));
+		let t = vec![f(0,0), f(1,1), f(1,2), f(2,5), f(3,7)];
+		let lk = LookupTableTwoCol_Inst::new(t.clone());
+		let lp = pad_lkup(&lk, 4);
+		assert!(lp.vals.len()==8 && lp.vals[..5]==t[..]);
+		assert!(lp.vals[5..].iter().all(|r| *r==f(3,7)));
+		assert!(lp.self_check().is_ok(), "pad copies fail self_check");
+		assert!(LookupTableTwoCol_Inst::new(vec![f(0,0), f(2,1), f(1,9)])
+			.self_check().is_err(), "out of order passes");
+		//find: unique rows keep their index, the last row hits a copy
+		assert!(lp.find(f(2,5).0, f(2,5).1)==Ok(3));
+		assert!(lp.find(Fr::zero(), Fr::zero())==Ok(0));
+		let i_last = lp.find(f(3,7).0, f(3,7).1).unwrap();
+		assert!(i_last>=4 && i_last<8, "last row index {}", i_last);
+		assert!(lp.find(f(3,8).0, f(3,8).1)==Err(8));
+		assert!(lp.find(f(2,6).0, f(2,6).1)==Err(4));
+		//fill_mvec: two queries of the last row, one of (2,5)
+		let mut map = HashMap::<usize, usize>::new();
+		lp.fill_mvec(&vec![f(3,7).0, f(3,7).0, f(2,5).0, Fr::zero()],
+			&vec![f(3,7).1, f(3,7).1, f(2,5).1, Fr::from(9u64)], &mut map);
+		let m = LookupTableTwoCol_Inst::<Fr>::gen_m_share(0, 8, &map);
+		assert!(m[3]==Fr::from(2u64).inverse().unwrap() * Fr::from(2u64)
+			&& m[4..].iter().sum::<Fr>()==Fr::from(2u64)
+			&& m[..3].iter().all(|x| x.is_zero()), "m {:?}", m);
+		//LogUp table side over the padded table == over the original
+		let (al, be) = (Fr::from(11u64), Fr::from(13u64));
+		let side = |rows: &[(Fr,Fr)], ms: &[Fr]| rows.iter().zip(ms)
+			.map(|((a,b),c)| *c * (al + be * a + b).inverse().unwrap())
+			.sum::<Fr>();
+		let m_orig = vec![Fr::zero(), Fr::zero(), Fr::zero(), Fr::one(),
+			Fr::from(2u64)];
+		assert!(side(&lp.vals, &m)==side(&t, &m_orig));
+		//empty table (driver2), aligned table, u = 0
+		let e = LookupTableTwoCol_Inst::<Fr>::new(vec![]);
+		assert!(pad_lkup(&e, 4).vals.is_empty());
+		let a = LookupTableTwoCol_Inst::new(t[..4].to_vec());
+		assert!(pad_lkup(&a, 4).vals==t[..4].to_vec());
+		assert!(pad_lkup(&lk, 0).vals==t);
+		assert!(pad_lkup(&lk, 1).vals==t);
+		//update_lookup: full shares pass, a partial share panics
+		let lka = Arc::new(lp.clone());
+		let (_l, _i, sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		let mut st = sts[0].clone();
+		st.update_lookup(4, 8, &lka, &map);
+		assert!(st.act_lookup_share_size==Fr::from(4u64)
+			&& st.m_share.iter().sum::<Fr>()==Fr::from(2u64));
+		st.update_lookup(8, 12, &lka, &map);
+		assert!(st.act_lookup_share_size.is_zero());
+		let lk_raw = Arc::new(lk.clone());
+		let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+			let mut s2 = sts[0].clone();
+			s2.update_lookup(4, 8, &lk_raw, &map);
+		}));
+		assert!(r.is_err(), "partial share accepted");
+	}
+
+	/// 11.3 test 4 (toy arm): honest chain over a table with |L| = 11,
+	/// padded to 12 (last row (2,300) twice), m = 1 on the duplicated
+	/// row. All steps SAT, the circuit output equals P_pad(ch), and the
+	/// native table-side total is one 1/(alpha + 2 beta + 300).
+	#[test]
+	pub fn test_lkup_padded_honest_chain(){
+		use crate::folding::foldpot::sigma_ir1cs::pad_lkup;
+		use ark_ff::Field;
+		let n_steps = 4usize;
+		let (lk, mut inst, mut sts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(n_steps, false);
+		let t = s11_rows(&lk);
+		let lp = pad_lkup(&LookupTableTwoCol_Inst::new(t[..11].to_vec()), 4);
+		assert!(lp.vals.len()==12 && lp.vals[11]==t[10]);
+		let lpa = Arc::new(lp.clone());
+		let mut map = HashMap::<usize, usize>::new();
+		lp.fill_mvec(&vec![t[10].0], &vec![t[10].1], &mut map);
+		s11_honest(&mut sts, &t); //zero the counters
+		for k in 0..4{ sts[k].update_lookup(4*k, 4*k+4, &lpa, &map); }
+		assert!(sts[3].act_lookup_share_size.is_zero());
+		let z0 = s11_z0(n_steps);
+		let p = s11_p_honest(&z0, &lp.vals);
+		let (v, fo, s) = s11_chain(&mut inst, &z0, &sts);
+		assert!(v.iter().all(|x| *x==Ok(true)) && fo.iter().all(|b| *b),
+			"padded honest chain: {:?} {:?}", v, fo);
+		assert!(s==p, "padded honest chain misses P_pad(ch)");
+		let mut z = z0.clone();
+		for k in 0..4{ z = s106_step_native(&mut inst, &z, &sts[k]); }
+		let x = (z0.alpha + z0.beta * t[10].0 + t[10].1).inverse().unwrap();
+		assert!(z.sum_hab22_right - z0.sum_hab22_right == x,
+			"table side != one copy of the last row");
 	}
 
 }

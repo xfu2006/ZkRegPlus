@@ -1826,6 +1826,11 @@ pub fn gen_1d_lkup_prf<F:PrimeField + ColEle>(
 /// verify the 2-way lookup between qry_cols and lkup_cols
 /// where we assume all values in RANGE2, and no DUPLICATED non-zero
 /// combined alues in lkup_cols. 
+/// NOTE (T933 s11.7, O1): the no-duplicates precondition can fail
+/// for states_final (fsm_adv.rs). Soundness then rests on the RANGE2
+/// pin of m_tbl_1: the weights m_tbl_1 + 1 stay positive, so a
+/// duplicate only erases multiplicity. Keep that pin. Without it,
+/// weights such as (1,1,1,1,-4) would let a row go uncovered.
 /// Idea: we just run one lookup between qry_cols and lkup_cols
 /// and reason about that all entries in lkup table are COVERED
 /// (basically proving that all m_table entries are positive, with
@@ -2468,6 +2473,22 @@ pub mod tests_commons{
 	use ark_r1cs_std::fields::fp::FpVar;
 	use crate::gadgets::commons::{gen_m_table,encode_cols, decode_cols,
 		check_prod_eq, verify_inverse_mul_col_weighted, new_var};
+
+	/// T933 s11.7 green lock: a sid slot holding 0 fails the pin to a
+	/// nonzero constant sid (only z or RANGE2 pass).
+	#[test]
+	fn test_check_arr_eq_or_rg2_sid_zero_unsat(){
+		use ark_r1cs_std::alloc::AllocVar;
+		use crate::gadgets::commons::check_arr_eq_or_rg2;
+		use data_processor::clam_db::RANGE2;
+		for (v, want) in [(5u64, true), (RANGE2 as u64, true), (0u64, false)]{
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let z = FpVar::<Fr>::new_constant(cs.clone(), Fr::from(5u64)).unwrap();
+			let x = FpVar::<Fr>::new_witness(cs.clone(), || Ok(Fr::from(v))).unwrap();
+			check_arr_eq_or_rg2(&[x], &z, "s11.7").unwrap();
+			assert!(cs.is_satisfied().unwrap()==want, "sid {} sat != {}", v, want);
+		}
+	}
 
 	#[test]
 	fn test_gen_m_tbl(){

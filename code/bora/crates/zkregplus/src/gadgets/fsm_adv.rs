@@ -1490,23 +1490,18 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		}
 
 		//2. NO need to check transition id because its constant.
-		// ALSO no need to check the si_states_id as there will be a 
-		// logup check between all states and the final_states
-		// the way we perform it is the Logup relation
-		// (sid_state - fsm_id) is either 1 or 0 as selector
-		// NOW, if a "fake" sid_state is provided, they can only
-		// be (RANGE2, 0, some other fsm_state_sid) where
-		// all of these are at least 2^28 away rom the real value. (because
-		// how these fsm_id constants are defined like 
-		// 0x2000 0000, 0x3000 0000 etc). 
-		// on the right hand size, all logup entries are summed up
-		// with m_tbl entry set to 1. So, the only way is to
-		// have sufficient logup entries with the appropriate count
-		// which are caused by the DISTANCE caused by the "fake".
-		// We know the the max size of the right hand side table
-		// is much smaller than nlen (which is no more than 128k)
-		// Thus, there is no way for supplying fake SID_STATE for
-		// the states to work.
+		// The si_states sids are not range-checked here (the
+		// check_arr_eq below is off). They are pinned by the
+		// final-state LogUp later in this gadget, whose selector is
+		// (sid_state - fsm_id). The earlier argument here, that a fake
+		// sid is at least 2^28 away from the real one, was wrong:
+		// CRIT_STATES is fsm_id + 6, only 5 away (T933 s11.7, SN1).
+		// Residual: a final hit can take sid fsm_id + 6 (sel = 5) and
+		// so appear 5 times. That is harmless. The multiplicity is
+		// erased downstream, in verify_2d_lkup_prf (commons.rs,
+		// weights m_tbl_1 + 1 with m_tbl_1 pinned to RANGE2) and by the
+		// set-only tie of sorted_tbl (db.rs). The LogUp still forces at
+		// least one copy (O1, 10/13). Keep the RANGE2 pin.
 		//check_arr_eq(&si_states,&tblid_state,"checking states in range")?;
 		//check_arr_eq(&si_trans,&tblid_trans,"checking trans in range")?;
 

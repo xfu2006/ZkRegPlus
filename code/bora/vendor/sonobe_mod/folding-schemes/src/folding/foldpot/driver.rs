@@ -51,7 +51,7 @@ use crate::{
 			circuits_super::{field_to_usize},
 			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper,
 				compute_step_hc_cmF_adv},
-			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo,CloneDeep},
+			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo,CloneDeep,pad_lkup},
 			sigma_cyclepair::{create_sigma_fold_pair,FoldPairMapper},
 			//decider_eth_super::{DeciderFoldPotSuper},
 			decider_eth_circuit_super::{CyclePairCircuit, CircPubInput, MainDeciderCircuit},
@@ -439,6 +439,28 @@ where
 		let _b_debug = false;
 		let layered_circuits = F_circuits;
 		let circuits = layered_circuits.concat(); 
+		//T933 s11: every step is full (act = cfg) or empty (act = 0),
+		//so the table must be a whole number of cfg-row shares. Pad it
+		//here, once, with copies of its last row. prep_param, the SRS
+		//size, BatchProcessor::setup (the s10 commitments) and
+		//self.lkup all see the padded table. The step count is set by
+		//the words, and steps*cfg >= |L| iff steps*cfg >= |L_pad|.
+		let cfg_lk = circuits.first().map(|c| c.get_lkup_share_size())
+			.unwrap_or(0);
+		assert!(circuits.iter().all(|c| c.get_lkup_share_size()==cfg_lk),
+			"T933 s11: all circuits must share one lookup share size");
+		let lkup_inp: Arc<LK> = if cfg_lk==0 ||
+			lkup_inp.get_size() % cfg_lk == 0 {lkup_inp}
+			else {
+				let n0 = lkup_inp.get_size();
+				let lk = Arc::new(pad_lkup(&*lkup_inp, cfg_lk));
+				//free the unpadded table now: the caller moved it in
+				//(foldpot_main), so this was its last strong ref
+				drop(lkup_inp);
+				log(0, LOG1, &format!("T933 s11: lkup padded {} -> {} rows \
+					(share {})", n0, lk.get_size(), cfg_lk));
+				lk
+			};
 		let size_F = circuits.iter().map(|f| f.get_size_f())
 			.collect::<Vec<usize>>();
 		if b_perf{
@@ -3199,8 +3221,10 @@ where
 	//2. create the driver1 for the 1st phase
 	let poseidon_config_global = poseidon_canonical_config::<C1::ScalarField>();
 	let b_full1 = false;
+	//T933 s11: move the table in. Driver::new pads it and drops the
+	//unpadded copy, so only the padded table stays resident.
 	let mut driver1 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,FC,S,LK,GM,H>
-	::new(poseidon_config_global.clone(), lkup.clone(),
+	::new(poseidon_config_global.clone(), lkup,
 		vec_circ.clone(), rand::rngs::OsRng, b_full1,
 		global_max_total_n, global_max_words
 	);
