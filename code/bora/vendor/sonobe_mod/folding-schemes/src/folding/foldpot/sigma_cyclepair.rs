@@ -309,6 +309,11 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 			r_vec_r: ea.r_vec_r,
 			r_vec_v: ea.r_vec_v,
 			r_word_i: ea.r_word_i,
+			r_word_i2: ea.r_word_i2,
+			r_all_words2: ea.r_all_words2,
+			r_kzg_len2: ea.r_kzg_len2,
+			r_vec_r2: ea.r_vec_r2,
+			r_vec_v2: ea.r_vec_v2,
 			accumulated_word_len: ea.accumulated_word_len,
 			f_result: hash_a_b,
 
@@ -429,6 +434,11 @@ where 	C: CurveGroup<ScalarField=F>,
 			r_vec_r: F::zero(),
 			r_vec_v: F::zero(),
 			r_word_i: F::zero(),
+			r_word_i2: F::zero(),
+			r_all_words2: F::zero(),
+			r_kzg_len2: F::zero(),
+			r_vec_r2: F::zero(),
+			r_vec_v2: F::zero(),
 			accumulated_word_len: F::from(164u32),
 		};
 	let lk = LK::new(vec![
@@ -526,6 +536,11 @@ pub mod tests_sigma_cyclepair{
 				r_vec_r: F::from(3u32),
 				r_vec_v: F::from(3u32),
 				r_word_i: F::from(3u32),
+				r_word_i2: F::from(3u32),
+				r_all_words2: F::from(3u32),
+				r_kzg_len2: F::from(3u32),
+				r_vec_r2: F::from(3u32),
+				r_vec_v2: F::from(3u32),
 				accumulated_word_len: F::from(164u32),
 			};
 		let mut rng = test_rng();

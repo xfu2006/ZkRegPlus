@@ -998,6 +998,17 @@ pub struct StatementExtraInfo<F:PrimeField>{
 	/// used very time for encoding kzg_w_i (individual proof),
 	/// retrived from rands[i] from SnarkAdvice
 	pub r_word_i: F,
+	/// T933 s9 B4. The second per-word blind o_i2 (rands2[i]) and the
+	/// second nonces of the four pubstat commitments.
+	pub r_word_i2: F,
+	/// see r_word_i2
+	pub r_all_words2: F,
+	/// see r_word_i2
+	pub r_kzg_len2: F,
+	/// see r_word_i2
+	pub r_vec_r2: F,
+	/// see r_word_i2
+	pub r_vec_v2: F,
 	/// accumuated word length (for the current word)
 	pub accumulated_word_len: F,
 }
@@ -1036,6 +1047,11 @@ impl <F:PrimeField> StatementExtraInfo<F>{
 			r_vec_r: zero,
 			r_vec_v: zero,
 			r_word_i: zero,
+			r_word_i2: zero,
+			r_all_words2: zero,
+			r_kzg_len2: zero,
+			r_vec_r2: zero,
+			r_vec_v2: zero,
 			accumulated_word_len: zero
 		}
 	}
@@ -1112,6 +1128,17 @@ pub struct StatementInst<F:PrimeField, LK: LookupTableTwoCol<F>>{
 	/// used very time for encoding kzg_w_i (individual proof),
 	/// retrived from rands[i] from SnarkAdvice
 	pub r_word_i: F,
+	/// T933 s9 B4. Fixed-segment second blinds (see
+	/// StatementExtraInfo::r_word_i2).
+	pub r_word_i2: F,
+	/// see r_word_i2
+	pub r_all_words2: F,
+	/// see r_word_i2
+	pub r_kzg_len2: F,
+	/// see r_word_i2
+	pub r_vec_r2: F,
+	/// see r_word_i2
+	pub r_vec_v2: F,
 	/// accumuated word length (for the current word)
 	pub accumulated_word_len: F,
 	/// the logical result of the current step (it reflects the
@@ -1214,6 +1241,16 @@ pub struct StatementInstVar<F:PrimeField>{
 	/// used very time for encoding kzg_w_i (individual proof),
 	/// retrived from rands[i] from SnarkAdvice
 	pub r_word_i: FpVar<F>,
+	/// T933 s9 B4. Second blinds, see StatementInst::r_word_i2.
+	pub r_word_i2: FpVar<F>,
+	/// see r_word_i2
+	pub r_all_words2: FpVar<F>,
+	/// see r_word_i2
+	pub r_kzg_len2: FpVar<F>,
+	/// see r_word_i2
+	pub r_vec_r2: FpVar<F>,
+	/// see r_word_i2
+	pub r_vec_v2: FpVar<F>,
 	/// accumuated word length (for the current word)
 	pub accumulated_word_len: FpVar<F>,
 
@@ -1323,7 +1360,8 @@ impl StatementConfig{
 		failed_sigs_size: usize, discharged_sigs_size: usize,
 		b_cyclepair: bool)
 	->Self{
-		let idx_inp = 23;
+		//T933 s9 B4: 5 more fixed-segment fields (21-25)
+		let idx_inp = 28;
 		let idx_oup = idx_inp + input_size;
 		let idx_word_subseg = idx_oup + output_size;
 		let idx_data = idx_word_subseg + word_subseg_size;
@@ -1483,6 +1521,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			r_vec_r: self.r_vec_r,
 			r_vec_v: self.r_vec_v,
 			r_word_i: self.r_word_i,
+			r_word_i2: self.r_word_i2,
+			r_all_words2: self.r_all_words2,
+			r_kzg_len2: self.r_kzg_len2,
+			r_vec_r2: self.r_vec_r2,
+			r_vec_v2: self.r_vec_v2,
 			accumulated_word_len: self.accumulated_word_len,
 		}
 	}
@@ -1594,6 +1637,11 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 				self.r_vec_r.clone(),
 				self.r_vec_v.clone(),
 				self.r_word_i.clone(),
+				self.r_word_i2.clone(),
+				self.r_all_words2.clone(),
+				self.r_kzg_len2.clone(),
+				self.r_vec_r2.clone(),
+				self.r_vec_v2.clone(),
 				self.accumulated_word_len.clone(),
 
 				self.f_result.clone(),
@@ -1639,9 +1687,14 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		let r_vec_r = vec[18];
 		let r_vec_v = vec[19];
 		let r_word_i = vec[20];
-		let accumulated_word_len = vec[21];
+		let r_word_i2 = vec[21];
+		let r_all_words2 = vec[22];
+		let r_kzg_len2 = vec[23];
+		let r_vec_r2 = vec[24];
+		let r_vec_v2 = vec[25];
+		let accumulated_word_len = vec[26];
 
-		let f_result= vec[22];
+		let f_result= vec[27];
 
 		let inp_buf = (&vec[cfg.idx_inp..cfg.idx_inp+cfg.input_size]).to_vec();
 		let oup_buf = (&vec[cfg.idx_oup..cfg.idx_oup+cfg.output_size]).to_vec();
@@ -1661,7 +1714,9 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			total_word_segs,
 			total_words, r_F,
 			batch_r, batch_v,r_all_words, r_kzg_len, r_vec_r, 
-				r_vec_v, r_word_i, accumulated_word_len,
+				r_vec_v, r_word_i,
+				r_word_i2, r_all_words2, r_kzg_len2, r_vec_r2, r_vec_v2,
+				accumulated_word_len,
 				f_result,
 			inp_buf, oup_buf, word_subseg, data, subtable_id,
 			col1_share, col2_share, m_share, 
@@ -1783,8 +1838,13 @@ impl <F:PrimeField> StatementInstVar<F>{
 		let r_vec_r = vec[18].clone();
 		let r_vec_v = vec[19].clone();
 		let r_word_i = vec[20].clone();
-		let accumulated_word_len = vec[21].clone();
-		let f_result = vec[22].clone();
+		let r_word_i2 = vec[21].clone();
+		let r_all_words2 = vec[22].clone();
+		let r_kzg_len2 = vec[23].clone();
+		let r_vec_r2 = vec[24].clone();
+		let r_vec_v2 = vec[25].clone();
+		let accumulated_word_len = vec[26].clone();
+		let f_result = vec[27].clone();
 
 		let inp_buf = (&vec[cfg.idx_inp..cfg.idx_inp+cfg.input_size]).to_vec();
 		let oup_buf = (&vec[cfg.idx_oup..cfg.idx_oup+cfg.output_size]).to_vec();
@@ -1805,7 +1865,9 @@ impl <F:PrimeField> StatementInstVar<F>{
 			inp_buf, oup_buf, word_subseg, data, subtable_id,
 			col1_share, col2_share, m_share, total_words, r_F,
 			batch_r, batch_v, r_all_words, r_kzg_len, r_vec_r, r_vec_v, 
-				r_word_i, accumulated_word_len, f_result,
+				r_word_i,
+				r_word_i2, r_all_words2, r_kzg_len2, r_vec_r2, r_vec_v2,
+				accumulated_word_len, f_result,
 			failed_sigs, discharged_sigs, mtbl_sigs
 		}
 	}
@@ -3510,16 +3572,20 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 				{old_sum_kzg_eval_word} else {sum_kzg_eval_word};
 			//T932-F2W. Mirror of the circuit's rho_i fold, on the
 			//last-subseg copy.
+			//T933 s9 B5: then o_i2, then r_all_words2, as the circuit.
 			sum_kzg_eval_word = if b_last_seg
-				{sum_kzg_eval_word*ch + si.r_word_i*rcs[2]}
+				{(sum_kzg_eval_word*ch + si.r_word_i*rcs[2])*ch
+				+ si.r_word_i2*rcs[2]}
 				else {sum_kzg_eval_word};
 			sum_kzg_eval_word = if b_last 
-				{sum_kzg_eval_word*ch + si.r_all_words*rcs[2]} 
+				{(sum_kzg_eval_word*ch + si.r_all_words*rcs[2])*ch
+				+ si.r_all_words2*rcs[2]} 
 				else {sum_kzg_eval_word};
 			sum_vec_v_i= if si.act_word_subseg_size.is_zero()
 				{old_sum_vec_v_i} else {sum_vec_v_i};
 			sum_vec_v_i = if b_last_seg
-				{sum_vec_v_i*si.batch_r + si.r_word_i} else {sum_vec_v_i};
+				{(sum_vec_v_i*si.batch_r + si.r_word_i)*si.batch_r
+				+ si.r_word_i2} else {sum_vec_v_i};
 			//S110/F1: native mirror of the in-circuit pin (:4356).
 			//Unconditional so a prover-side violation names itself here
 			//instead of surfacing as an opaque UNSAT row later.
@@ -3535,10 +3601,13 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 				si.batch_r * rcs[4] + 
 				si.batch_v * rcs[5]} else {sum_kzg_eval_others};
 			sum_kzg_eval_others = if b_last {
-				sum_kzg_eval_others * ch + 
+				(sum_kzg_eval_others * ch + 
 				si.r_kzg_len * rcs[3] +
 				si.r_vec_r * rcs[4] +
-				si.r_vec_v * rcs[5]} else {sum_kzg_eval_others};
+				si.r_vec_v * rcs[5]) * ch +
+				si.r_kzg_len2 * rcs[3] +
+				si.r_vec_r2 * rcs[4] +
+				si.r_vec_v2 * rcs[5]} else {sum_kzg_eval_others};
 
 			//6.5 total
 			let _sum_kzg_eval = sum_kzg_eval_lk + 
@@ -4546,17 +4615,25 @@ where 	C: CurveGroup<ScalarField=F>,
 			//committed in kzg_all_words, which r_i absorbs. On the
 			//final step b_last_seg and b_last both hold, and rho_n
 			//must precede the r_all_words fold, as here.
+			//T933 s9 B5. o_i2 (r_word_i2) follows o_i1 in the same
+			//select, read from the same last-subseg copy as v_i below.
+			//Every extra term sits inside the existing select (+2).
 			sum_kzg_eval_word = b_last_seg.select(
-				&(&(&sum_kzg_eval_word*&ch)
-					+ &(&si.r_word_i*&rcs[2])),
+				&(&(&(&(&sum_kzg_eval_word*&ch)
+					+ &(&si.r_word_i*&rcs[2])) * &ch)
+					+ &(&si.r_word_i2*&rcs[2])),
 				&sum_kzg_eval_word)?;
+			//T933 s9 B5. r_all_words2 at X^0 of kzg_all_words (+2).
 			sum_kzg_eval_word = b_last.select(
-				&(&sum_kzg_eval_word*&ch + &(&si.r_all_words*&rcs[2])),
+				&(&(&(&sum_kzg_eval_word*&ch + &(&si.r_all_words*&rcs[2]))
+					* &ch) + &(&si.r_all_words2*&rcs[2])),
 				&sum_kzg_eval_word)?;
 			sum_vec_v_i= si.act_word_subseg_size.is_zero()?.select(
 				&old_sum_vec_v_i, &sum_vec_v_i)?;
+			//T933 s9 B5. v_i = (sum*r + o_i1)*r + o_i2 (+1).
 			sum_vec_v_i = b_last_seg.select(
-				&(&(&sum_vec_v_i*&si.batch_r) + &si.r_word_i), 
+				&(&(&(&(&sum_vec_v_i*&si.batch_r) + &si.r_word_i)
+					* &si.batch_r) + &si.r_word_i2), 
 				&sum_vec_v_i)?;
 			if B_DEBUG {
 				if b_last_seg.value()? {assert!(sum_vec_v_i.value()?
@@ -4581,11 +4658,16 @@ where 	C: CurveGroup<ScalarField=F>,
 				&(&si.batch_r * &rcs[4]) + 
 				&(&si.batch_v * &rcs[5])
 				),&sum_kzg_eval_others)?;
+			//T933 s9 B5. The three second nonces, one more Horner
+			//slot inside the same select (+4).
 			sum_kzg_eval_others = b_last.select(&(
-				&(&sum_kzg_eval_others * &ch) + 
+				&(&(&(&sum_kzg_eval_others * &ch) + 
 				&(&si.r_kzg_len * &rcs[3]) +
 				&(&si.r_vec_r * &rcs[4]) +
-				&(&si.r_vec_v * &rcs[5])
+				&(&si.r_vec_v * &rcs[5])) * &ch) +
+				&(&si.r_kzg_len2 * &rcs[3]) +
+				&(&si.r_vec_r2 * &rcs[4]) +
+				&(&si.r_vec_v2 * &rcs[5])
 				), &sum_kzg_eval_others)?;
 
 			//6.5 total
@@ -5218,6 +5300,11 @@ pub mod tests_sigma_ir1cs{
 				r_vec_r: ea.r_vec_r,
 				r_vec_v: ea.r_vec_v,
 				r_word_i: ea.r_word_i,
+				r_word_i2: ea.r_word_i2,
+				r_all_words2: ea.r_all_words2,
+				r_kzg_len2: ea.r_kzg_len2,
+				r_vec_r2: ea.r_vec_r2,
+				r_vec_v2: ea.r_vec_v2,
 				accumulated_word_len: ea.accumulated_word_len,
 				f_result: zero, //we didn't take advantage of it.
 
@@ -5402,6 +5489,11 @@ pub mod tests_sigma_ir1cs{
 				r_vec_r: F::zero(),
 				r_vec_v: F::zero(),
 				r_word_i: F::zero(),
+				r_word_i2: F::zero(),
+				r_all_words2: F::zero(),
+				r_kzg_len2: F::zero(),
+				r_vec_r2: F::zero(),
+				r_vec_v2: F::zero(),
 				accumulated_word_len: F::one(),
 			};
 			let dummy_adv = Arc::new(DummyNdAdvice{});
@@ -5573,14 +5665,36 @@ pub mod tests_sigma_ir1cs{
 		(cs.is_satisfied().unwrap(), z_out[1].value().unwrap())
 	}
 
+	/// T933 s9 second blinds of the two-word fixture: o_1,2 and the
+	/// honest o_2,2.
+	const S9_O12: u32 = 11;
+	const S9_O22: u32 = 17;
+
 	/// T932W-B arm. Fixture s106_two_seg: word 1 = one subsegment of one
 	/// symbol, word 2 = two subsegments of one symbol each. Per word j,
 	/// batch_r = r_j, r_word_i = rho_j (rho2_first / rho2_last on word
 	/// 2's two subsegments), batch_v = V_j, and the running
 	/// accumulated_word_len 1, 1, 2. Returns the native states z1..z3,
-	/// after asserting each step is SAT.
+	/// after asserting each step is SAT. T933 s9: r_word_i2 = o_j,2.
 	fn s932w_arm(rho2_first: Fr, rho2_last: Fr, v2_rho: Fr)
 		-> Vec<ZiPartTwoInst<Fr>>{
+		let o22 = Fr::from(S9_O22);
+		let (zs, sats) = s932w_run(rho2_first, rho2_last, v2_rho,
+			o22, o22, o22, None);
+		for (k, sat) in sats.iter().enumerate(){
+			assert!(*sat, "T932W-B: step {} UNSAT", k+1);
+		}
+		zs
+	}
+
+	/// s932w_arm, generalised for T933-B3. o22_first / o22_last are the
+	/// two subsegment copies of o_2,2 and v2_o2 the one in V_2. With
+	/// `tamper`, the LAST step's witness copy of r_word_i2 is replaced
+	/// after the native step, so batch_v keeps the honest value. Returns
+	/// the native states z1..z3 and the SAT flag of each step.
+	fn s932w_run(rho2_first: Fr, rho2_last: Fr, v2_rho: Fr, o22_first: Fr,
+		o22_last: Fr, v2_o2: Fr, tamper: Option<Fr>)
+		-> (Vec<ZiPartTwoInst<Fr>>, Vec<bool>){
 		let cfg = poseidon_canonical_config::<Fr>();
 		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
 		let (_lk, mut inst, mut stmts) = gen_six_root_adv::<Fr,Projective,
@@ -5596,11 +5710,17 @@ pub mod tests_sigma_ir1cs{
 			Fr::from(6u32));
 		let x: Vec<Fr> = stmts.iter().map(|s| s.word_subseg[0]).collect();
 		//V_j = Horner over (len_j, symbols of word j) at r_j, then
-		//* r_j + rho_j: the evaluation of reverse((len, w) || rho).
-		let v1 = (Fr::from(1u32) * r1 + x[0]) * r1 + rho1;
-		let v2 = ((Fr::from(2u32) * r2 + x[1]) * r2 + x[2]) * r2 + v2_rho;
+		//* r_j + rho_j, * r_j + o_j,2: the evaluation of
+		//reverse((len, w) || rho || o_2) (T933 s9).
+		let o12 = Fr::from(S9_O12);
+		let v1 = ((Fr::from(1u32) * r1 + x[0]) * r1 + rho1) * r1 + o12;
+		let v2 = (((Fr::from(2u32) * r2 + x[1]) * r2 + x[2]) * r2
+			+ v2_rho) * r2 + v2_o2;
 		stmts[0].batch_r = r1;
 		stmts[0].r_word_i = rho1;
+		stmts[0].r_word_i2 = o12;
+		stmts[1].r_word_i2 = o22_first;
+		stmts[2].r_word_i2 = o22_last;
 		stmts[0].batch_v = v1;
 		stmts[0].accumulated_word_len = Fr::from(1u32);
 		for k in 1..3{
@@ -5614,20 +5734,37 @@ pub mod tests_sigma_ir1cs{
 		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
 			&cfg, false, fq_bits, 2);
 		let mut zs = vec![];
+		let mut sats = vec![];
 		let mut z_prev = z0;
 		for k in 0..3{
 			let z_next = s106_step_native(&mut inst, &z_prev, &stmts[k]);
+			if let (Some(t), 2) = (tamper, k){
+				//statement index 21 = r_word_i2 (StatementInst::to_vec)
+				let w = inst.witness.as_ref().expect("wit null");
+				let mut st = w.statement.clone();
+				assert!(st[21] == o22_last, "r_word_i2 is not at 21");
+				st[21] = t;
+				inst.witness = Some(Arc::new(super::WitnessSigmaIR1CS::<Fr>{
+					cmF: w.cmF.clone(),
+					unused_input_size: w.unused_input_size,
+					unused_output_size: w.unused_output_size,
+					statement: st,
+					msg1: w.msg1.clone(), msg2: w.msg2.clone(),
+					msg3: w.msg3.clone(), zi_part2: w.zi_part2.clone(),
+					inv_hab22_left: w.inv_hab22_left.clone(),
+					inv_hab22_right: w.inv_hab22_right.clone()}));
+			}
 			//SAT covers the in-circuit S110 pin, so the circuit's
 			//prefixed Horner and its last-subsegment r_word_i copy
 			//must match batch_v. The circuit's z[1] is NOT compared
 			//with the native hash: in the six_root toy they differ
 			//already in sum_hab22_left, unrelated to T932.
 			let (sat, _z_out1) = s932w_synth_out(&inst, &z_prev);
-			assert!(sat, "T932W-B: step {} UNSAT", k+1);
+			sats.push(sat);
 			zs.push(z_next.clone());
 			z_prev = z_next;
 		}
-		zs
+		(zs, sats)
 	}
 
 	/// T932W-B (C3.1-C3.4). The step folds each word's blind into the
@@ -5650,23 +5787,58 @@ pub mod tests_sigma_ir1cs{
 		s106_two_seg(&mut stmts);
 		let x: Vec<Fr> = stmts.iter().map(|s| s.word_subseg[0]).collect();
 		let rho1 = Fr::from(7u32);
-		//(c) absolute honest values. r_all_words = 0 in the toy.
-		assert!(zh[0].sum_kzg_eval_word == rc2 * hn(&[x[0], rho1]),
-			"T932W-B: z1 word accumulator misses rho_1");
+		let (o12, o22) = (Fr::from(S9_O12), Fr::from(S9_O22));
+		//(c) absolute honest values. r_all_words = r_all_words2 = 0 in
+		//the toy. T933 s9: each rho_j is followed by o_j,2.
+		assert!(zh[0].sum_kzg_eval_word == rc2 * hn(&[x[0], rho1, o12]),
+			"T932W-B: z1 word accumulator misses rho_1, o_1,2");
 		assert!(zh[2].sum_kzg_eval_word ==
-			rc2 * hn(&[x[0], rho1, x[1], x[2], rho2, Fr::zero()]),
-			"T932W-B: z3 word accumulator is not w1,rho1,w2,rho2,r_aw");
+			rc2 * hn(&[x[0], rho1, o12, x[1], x[2], rho2, o22,
+			Fr::zero(), Fr::zero()]),
+			"T932W-B: z3 word accumulator is not \
+			w1,rho1,o12,w2,rho2,o22,r_aw,r_aw2");
 		//(d) copy choice. Nothing is folded on a non-last subsegment,
 		//the first-subsegment copy is never read, and the last copy
-		//enters with exactly one factor ch (the r_aw fold follows).
+		//enters with exactly ch^3 (o_2,2, r_aw, r_aw2 follow).
 		assert!(zh[1].sum_kzg_eval_word == zl[1].sum_kzg_eval_word
 			&& zh[1].sum_kzg_eval_word == zf[1].sum_kzg_eval_word,
 			"T932W-B: a non-last subsegment folded the blind");
 		assert!(zf[2].sum_kzg_eval_word == zh[2].sum_kzg_eval_word,
 			"T932W-B: the first-subsegment copy was folded");
 		assert!(zl[2].sum_kzg_eval_word - zh[2].sum_kzg_eval_word
-			== rc2 * (rho2p - rho2) * ch,
+			== rc2 * (rho2p - rho2) * ch * ch * ch,
 			"T932W-B: last-subsegment blind not folded at its slot");
+	}
+
+	/// T933-B3 (s9). Copy binding of the second per-word blind o_i2 on
+	/// the last subsegment of a multi-subsegment word (word 2). The
+	/// word fold and v_i read ONE witness copy, and v_i is pinned to
+	/// batch_v (S110). Arms: X the last copy differs from the o_2,2 in
+	/// batch_v, so UNSAT; F the first-subsegment copy differs, never
+	/// read; L the last copy differs and batch_v agrees, so SAT and it
+	/// is folded with ch^2 (r_aw, r_aw2 follow).
+	#[test]
+	pub fn t933_b3_copy_binding(){
+		let ch = Fr::from(2u32);
+		let rc2 = Fr::from(9u32);
+		let rho2 = Fr::from(8u32);
+		let (o22, o22p) = (Fr::from(S9_O22), Fr::from(19u32));
+		let (zh, sh) = s932w_run(rho2, rho2, rho2, o22, o22, o22, None);
+		assert!(sh == vec![true; 3], "T933-B3: honest arm UNSAT {:?}", sh);
+		let (_zx, sx) = s932w_run(rho2, rho2, rho2, o22, o22, o22,
+			Some(o22p));
+		assert!(sx == vec![true, true, false],
+			"T933-B3: a last-subsegment o_2,2 that differs from v_i's is \
+			not rejected {:?}", sx);
+		let (zf, sf) = s932w_run(rho2, rho2, rho2, o22p, o22, o22, None);
+		assert!(sf == vec![true; 3], "T933-B3: arm F UNSAT {:?}", sf);
+		assert!(zf[2].sum_kzg_eval_word == zh[2].sum_kzg_eval_word,
+			"T933-B3: the first-subsegment copy of o_2,2 was folded");
+		let (zl, sl) = s932w_run(rho2, rho2, rho2, o22, o22p, o22p, None);
+		assert!(sl == vec![true; 3], "T933-B3: arm L UNSAT {:?}", sl);
+		assert!(zl[2].sum_kzg_eval_word - zh[2].sum_kzg_eval_word
+			== rc2 * (o22p - o22) * ch * ch,
+			"T933-B3: o_2,2 not folded at its slot");
 	}
 
 	/// S104: a step whose witness input state does not match z_i[1] is
@@ -6083,6 +6255,11 @@ pub mod tests_sigma_ir1cs{
 				r_vec_r: Fr::zero(),
 				r_vec_v: Fr::zero(),
 				r_word_i: Fr::zero(),
+				r_word_i2: Fr::zero(),
+				r_all_words2: Fr::zero(),
+				r_kzg_len2: Fr::zero(),
+				r_vec_r2: Fr::zero(),
+				r_vec_v2: Fr::zero(),
 				accumulated_word_len: Fr::one(),
 				f_result: Fr::zero(),
 
@@ -6507,6 +6684,9 @@ pub mod tests_sigma_ir1cs{
 	/// T933 s11 pin: constraints / witness vars of one six_root step.
 	/// Pre-fix 5755 / 5800; the fix removes 129 constraints and 128
 	/// witness vars per step. Full and empty steps share one shape.
+	/// T933-B4 (s9): the second blinds add 9 constraints (v_i 1, o_i2
+	/// fold 2, r_all_words2 2, the other three 4) and 14 witness vars
+	/// (5 fixed-segment fields, 9 products).
 	#[test]
 	pub fn test_s11_measure_step_cs(){
 		let n_steps = 4usize;
@@ -6523,7 +6703,7 @@ pub mod tests_sigma_ir1cs{
 			empty sat={} cs={} vars={}", s0, c0, w0, s3, c3, w3);
 		assert!(s0, "honest full step UNSAT");
 		assert!(c0==c3 && w0==w3, "full and empty shapes differ");
-		assert!(c0==5755-129 && w0==5800-128,
+		assert!(c0==5755-129+9 && w0==5800-128+14,
 			"six_root step shape moved: cs {} vars {}", c0, w0);
 	}
 

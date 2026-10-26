@@ -381,6 +381,11 @@ pub mod tests_word_extract_gadget{
 			r_vec_r: zero,
 			r_vec_v: zero,
 			r_word_i: zero,
+			r_word_i2: zero,
+			r_all_words2: zero,
+			r_kzg_len2: zero,
+			r_vec_r2: zero,
+			r_vec_v2: zero,
 			accumulated_word_len: zero,
 			f_result: zero,
 

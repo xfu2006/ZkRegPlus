@@ -31880,7 +31880,9 @@ Goal 1. fix Group1
 
 Monday 10/26/2026
 Goal 1. continue to fix GRP1
-	[a]
+	[a] s11: B1 to B6: increase stmt header, add blinder
+		add checker of i<n_words
+	[b] impl and test -> 
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)

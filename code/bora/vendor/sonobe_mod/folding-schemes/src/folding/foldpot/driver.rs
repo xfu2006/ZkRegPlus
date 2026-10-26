@@ -523,10 +523,10 @@ where
 			&mut gt1);
 
 		//4. set up the batch processor if it is NOT full mode (1st stage)
-		//T932-F2W. kzg_all_words holds max_total_n + n_words entries
-		//(one blind per word) plus its own blind.
-		let max_w_lk = if max_total_n + n_words > lkup_inp.get_size()
-			{max_total_n+n_words+1} else {lkup_inp.get_size()+1};
+		//T932-F2W, T933 s9. kzg_all_words holds max_total_n +
+		//2*n_words entries (two blinds per word) plus its own two.
+		let max_w_lk = if max_total_n + 2*n_words > lkup_inp.get_size()
+			{max_total_n+2*n_words+2} else {lkup_inp.get_size()+1};
 		let batch_param = BatchProcessor::<E,LK,S,CS1E,H>
 				::setup(&mut rng, max_w_lk, n_words, poseidon_config.clone(), 0,
 				&lkup_inp);
@@ -1531,6 +1531,11 @@ where
 					r_vec_r: snark_inp.r_vec_r,
 					r_vec_v: snark_inp.r_vec_v,
 					r_word_i: snark_inp.rands[(word_id as usize)-1],
+					r_word_i2: snark_inp.rands2[(word_id as usize)-1],
+					r_all_words2: snark_inp.r_all_words2,
+					r_kzg_len2: snark_inp.r_kzg_len2,
+					r_vec_r2: snark_inp.r_vec_r2,
+					r_vec_v2: snark_inp.r_vec_v2,
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
 				};//end constructor StatementExtraInfo
 
@@ -2043,6 +2048,11 @@ where
 					r_vec_r: snark_inp.r_vec_r,
 					r_vec_v: snark_inp.r_vec_v,
 					r_word_i: snark_inp.rands[(word_id as usize)-1],
+					r_word_i2: snark_inp.rands2[(word_id as usize)-1],
+					r_all_words2: snark_inp.r_all_words2,
+					r_kzg_len2: snark_inp.r_kzg_len2,
+					r_vec_r2: snark_inp.r_vec_r2,
+					r_vec_v2: snark_inp.r_vec_v2,
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
 				};//end constructor StatementExtraInfo
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. For wd: {}, subseg_id: {} gen_statment_extra_info.", word_fname, subseg_id), &mut gt3);
@@ -2329,6 +2339,12 @@ where
 						("r_vec_r", o.r_vec_r, ea.r_vec_r),
 						("r_vec_v", o.r_vec_v, ea.r_vec_v),
 						("r_word_i", o.r_word_i, ea.r_word_i),
+						("r_word_i2", o.r_word_i2, ea.r_word_i2),
+						("r_all_words2", o.r_all_words2,
+							ea.r_all_words2),
+						("r_kzg_len2", o.r_kzg_len2, ea.r_kzg_len2),
+						("r_vec_r2", o.r_vec_r2, ea.r_vec_r2),
+						("r_vec_v2", o.r_vec_v2, ea.r_vec_v2),
 						("accumulated_word_len",
 							o.accumulated_word_len,
 							ea.accumulated_word_len),
@@ -3202,6 +3218,11 @@ where
 				r_vec_r: zero,
 				r_vec_v: zero,
 				r_word_i: zero,
+				r_word_i2: zero,
+				r_all_words2: zero,
+				r_kzg_len2: zero,
+				r_vec_r2: zero,
+				r_vec_v2: zero,
 				accumulated_word_len: C1::ScalarField::from(wlen as u32),
 			};//end constructor StatementExtraInfo
 			circ.set_container_config(&advice);
@@ -4262,6 +4283,11 @@ pub mod tests_driver{
 				r_vec_r: ea.r_vec_r,
 				r_vec_v: ea.r_vec_v,
 				r_word_i: ea.r_word_i,
+				r_word_i2: ea.r_word_i2,
+				r_all_words2: ea.r_all_words2,
+				r_kzg_len2: ea.r_kzg_len2,
+				r_vec_r2: ea.r_vec_r2,
+				r_vec_v2: ea.r_vec_v2,
 				accumulated_word_len: ea.accumulated_word_len,
 				f_result: new_sum,
 

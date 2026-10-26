@@ -165,9 +165,10 @@ where CS1E: CommitmentScheme<
 	pub kzg_driver1: Option<CS1E::VerifierParams>,
 	/// for driver 2
 	pub kzg_driver2: Option<CS1E::VerifierParams>,
-	/// entry count the veccom eval domain was built for (= n_words+1,
-	/// the same value passed to VecCom::setup). Needed to recompute
-	/// omega^i for the position opening in verify_individual.
+	/// entry count the veccom eval domain was built for (= n_words+2,
+	/// the same value passed to VecCom::setup; T933 s9 B2: two blind
+	/// slots n_words, n_words+1). Needed to recompute omega^i for the
+	/// position opening in verify_individual.
 	pub vec_dom_size: usize,
 	/// T933 s10 (paper Fig 13 (ii)). The trusted lookup-column
 	/// commitments, the same pair as the prover key. verify_batch
@@ -179,7 +180,8 @@ where CS1E: CommitmentScheme<
 
 
 /// The claim: kzg_all_words commits to the concatenation of all words.
-/// Since T932-F2W each word in it is followed by its blind.
+/// Since T932-F2W each word in it is followed by its blind (two
+/// blinds since T933 s9).
 /// then the length array decides the words. (1) the total sum of the
 /// lengths match the length of combined words. (2) each word
 /// is malware free (regarding the regex signatures).
@@ -189,7 +191,9 @@ where CS1E: CommitmentScheme<
 /// of malware, but none of the individual word does. That's the reason
 /// we do the dinvidual proof. 
 /// Note2: KZG commitment and vcom_commitment is 1-leaky. It's accomplished
-/// by padding a random, just like halo2(plonk) and Lunar. 
+/// by padding a random, just like halo2(plonk) and Lunar. T933 s9: two
+/// randoms, so a commitment and one published evaluation stay
+/// jointly uniform. 
 /// Note that all KZG are actually commitment to the REVERSE of vectors.
 /// but VecCom are normal order.
 #[derive(Clone,Debug)]
@@ -453,16 +457,27 @@ pub struct SnarkAdvice<F:PrimeField>{
 	//pub words: Vec<Vec<F>>,
 	/// the rands (to be padded to each word)
 	pub rands: Vec<F>,
+	/// T933 s9 B1. The second per-word blinds o_i2, padded after
+	/// rands[i]. The pair makes (C_i, v_i) jointly uniform.
+	pub rands2: Vec<F>,
 	/// the nonce for kzg_all_words
 	pub r_all_words: F,
+	/// T933 s9 B2. Second nonce for kzg_all_words.
+	pub r_all_words2: F,
 	/// the nonce for kzg_len
 	pub r_kzg_len: F,
+	/// T933 s9 B2. Second nonce for kzg_len.
+	pub r_kzg_len2: F,
 	/// nonce hiding vec_r, shared by the vec_com and the kzg commit:
 	/// the qa_nizk proves both from ONE witness vector, so a split
 	/// nonce would make that proof unsatisfiable.
 	pub r_vec_r: F,
 	/// nonce hiding vec_v; shared by vec_com and kzg as for r_vec_r.
 	pub r_vec_v: F,
+	/// T933 s9 B2. Second nonce of vec_r (slot n_words+1).
+	pub r_vec_r2: F,
+	/// T933 s9 B2. Second nonce of vec_v (slot n_words+1).
+	pub r_vec_v2: F,
 	/// the vec of v_i
 	pub vec_v: Vec<F>,
 	/// the vec of r_i
@@ -476,10 +491,15 @@ impl <F:PrimeField> SnarkAdvice<F>{
 		let zero = F::zero();
 		Self{
 			rands: vf.clone(),
+			rands2: vf.clone(),
 			r_all_words: zero,
+			r_all_words2: zero,
 			r_kzg_len: zero,
+			r_kzg_len2: zero,
 			r_vec_r: zero,
 			r_vec_v: zero,
+			r_vec_r2: zero,
+			r_vec_v2: zero,
 			vec_v: vf.clone(),
 			vec_r: vf.clone()
 		}
@@ -518,10 +538,10 @@ where
 	/// return the max key size needed for kzg commitment
 	pub fn key_size(words: &Vec<Vec<F>>) -> usize{
 		let n = words.iter().map(|w| w.len()).sum::<usize>();
-		//T932-F2W. kzg_all_words holds every word followed by its
-		//blind, so n + words.len() entries. Its own blind is covered
-		//by the +2 in setup.
-		n + words.len()
+		//T932-F2W, T933 s9 B1. kzg_all_words holds every word
+		//followed by its two blinds, so n + 2*words.len() entries.
+		//Its own two blinds are covered by the +2 in setup.
+		n + 2*words.len()
 	}
 
 	/// T933 s10. The two lookup-column commitments: the columns of
@@ -540,8 +560,8 @@ where
 
 	/// set up the prover and verifier params
 	/// max_total_n should be greater than the combined length of all words
-	/// plus n_words (T932-F2W: one blind per word in kzg_all_words),
-	/// and the lookup table size
+	/// plus 2*n_words (T932-F2W, T933 s9: two blinds per word in
+	/// kzg_all_words), and the lookup table size
 	/// `job_id`: The ID of the job being processed.
 	/// `lkup`: the public lookup table. Both keys get its commitments.
 	pub fn setup(mut rng: impl RngCore, max_total_n: usize, n_words: usize,
@@ -562,19 +582,20 @@ where
 		log_perf(job_id, logl, &format!("BatchProcessor step 2. setting up kzg: {}, INCREASED RAM now: {}. ", max_total_n, mb2s(m2-m1)), &mut gt);
 		m1 = m2;
 
-		let kzg_frag = KZG::<E>::pkey_in_affine(&kzg.0, n_words+1);
+		//T933 s9 B2. n_words entries plus two blind slots.
+		let kzg_frag = KZG::<E>::pkey_in_affine(&kzg.0, n_words+2);
 		//lg is for random blinding factor
-		let lg= KZG::<E>::pkey_in_affine(&kzg.0, n_words+2)[n_words+1];
+		let lg= KZG::<E>::pkey_in_affine(&kzg.0, n_words+3)[n_words+2];
 
-		let vec = VecCom::<E>::setup(&mut rng, n_words + 1).expect("vec setup fails"); 
-		let mut vec_frag = VecCom::<E>::pkey_in_affine(&vec.0, n_words+1);
+		let vec = VecCom::<E>::setup(&mut rng, n_words + 2).expect("vec setup fails"); 
+		let mut vec_frag = VecCom::<E>::pkey_in_affine(&vec.0, n_words+2);
 		vec_frag.reverse(); //because it's order is the REVERSE
 		let m2 = get_mem_usage_mb();
 		log_perf(job_id, logl, &format!("BatchProcessor step 3. setting up veccom: {}, INCREASED RAM: {} ", n_words, mb2s(m2-m1)), &mut gt);
 		m1 = m2;
 
 		//of the vector which generates kzg
-		let vz = vec![ E::G1::zero().into_affine(); n_words + 1];
+		let vz = vec![ E::G1::zero().into_affine(); n_words + 2];
 		//w will be [vec_r || vec_v]
 		let matrix = vec![
 			vec![kzg_frag.clone(), vz.clone(),vec![lg]].concat(), //-> kzg_vec_r
@@ -613,7 +634,7 @@ where
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash,
 			//same length handed to VecCom::setup just above; setup
 			//rounds it to a power of two internally.
-			vec_dom_size: n_words + 1,
+			vec_dom_size: n_words + 2,
 			lk_cm1, lk_cm2,
 		};
 		let m2 = get_mem_usage_mb();
@@ -639,20 +660,30 @@ where
 		let rands: Vec<F> = (0..n_words)
 			.map(|_| <E::G1 as Group>::ScalarField::rand(rng))
 			.collect();
+		//T933 s9 B1. The second per-word blind o_i2, independent.
+		let rands2: Vec<F> = (0..n_words)
+			.map(|_| <E::G1 as Group>::ScalarField::rand(rng))
+			.collect();
 		let r_all_words = <E::G1 as Group>::ScalarField::rand(rng);
 		let r_kzg_len = <E::G1 as Group>::ScalarField::rand(rng);
+		//T933 s9 B2. Second nonces of kzg_all_words and kzg_length.
+		let r_all_words2 = <E::G1 as Group>::ScalarField::rand(rng);
+		let r_kzg_len2 = <E::G1 as Group>::ScalarField::rand(rng);
 		//T932-F2W. Each word is followed by its blind rands[i], so
 		//kzg_all_words commits to rands BEFORE any r_i is drawn (r_i
-		//absorbs kzg_all_words). Layout w1||rho1||...||wn||rhon, then
-		//|| r_all_words and reversed below, as for every KZG vector.
+		//absorbs kzg_all_words). T933 s9 B1: then by rands2[i]. Layout
+		//w1||o11||o12||...||wn||on1||on2, then || r_all_words ||
+		//r_all_words2 and reversed below, as for every KZG vector.
 		let all_words: Vec<F> = words.iter().zip(rands.iter())
-			.flat_map(|(w, r)| w.iter().cloned()
-				.chain(std::iter::once(*r)))
+			.zip(rands2.iter())
+			.flat_map(|((w, r), r2)| w.iter().cloned()
+				.chain([*r, *r2]))
 			.collect();
 		//here blind: zero (coz default kzg does not take blind anyway)
 		let kzg_all_words = {
 			let mut all_words2 = all_words.clone();
 			all_words2.push(r_all_words);
+			all_words2.push(r_all_words2);
 			all_words2.reverse();
 			KZG::<E>::commit(&pkey.kzg, &all_words2, &zero)?
 		};
@@ -662,6 +693,7 @@ where
 			let mut all_len:Vec<F> 
 				= words.iter().map(|w| F::from(w.len() as u32)).collect();
 			all_len.push(r_kzg_len);
+			all_len.push(r_kzg_len2);
 			all_len.reverse();
 			KZG::<E>::commit(&pkey.kzg, &all_len, &zero)?
 		};
@@ -673,12 +705,15 @@ where
 		let vec_idx = (0..n_words).collect::<Vec<usize>>();
 		assert!(vec_idx.len()==n_words);
 		let vec_kzg_words= words.par_iter().zip(rands.par_iter())
-			.map(|(w, r)| {
+			.zip(rands2.par_iter())
+			.map(|((w, r), r2)| {
 				//T932-F2W. Commit (len, w) || rho, reversed
-				//like every KZG vector.
+				//like every KZG vector. T933 s9 B1: (len, w) ||
+				//o_i1 || o_i2, so o_i2 at X^0 and o_i1 at X^1.
 				let mut w2 = vec![F::from(w.len() as u32)];
 				w2.extend_from_slice(w);
 				w2.push(*r);
+				w2.push(*r2);
 				w2.reverse();
 				KZG::<E>::commit(&pkey.kzg, &w2, &zero)
 					.expect("kzg fails")
@@ -715,6 +750,7 @@ where
 				let mut w2 = vec![F::from(w.len() as u32)];
 				w2.extend_from_slice(w);
 				w2.push(r);
+				w2.push(rands2[*i]); //T933 s9 B1
 				w2.reverse();
 				let p_i = poly_from_vec(w2).unwrap();
 				let v_i = p_i.evaluate(&r_i);
@@ -727,10 +763,14 @@ where
 		//clones, which made all four of these identical.
 		let r_vec_r = <E::G1 as Group>::ScalarField::rand(rng);
 		let r_vec_v = <E::G1 as Group>::ScalarField::rand(rng);
+		//T933 s9 B2. Second nonces, at Lagrange slot n_words+1.
+		let r_vec_r2 = <E::G1 as Group>::ScalarField::rand(rng);
+		let r_vec_v2 = <E::G1 as Group>::ScalarField::rand(rng);
 
 		let snark_input = SnarkAdvice::<F>{
-			rands,
-			r_all_words, r_kzg_len, r_vec_r, r_vec_v,
+			rands, rands2,
+			r_all_words, r_all_words2, r_kzg_len, r_kzg_len2,
+			r_vec_r, r_vec_v, r_vec_r2, r_vec_v2,
 			vec_r, vec_v
 		};
 
@@ -778,6 +818,8 @@ where
 			map(|(a,b)| *a + ch * *b).collect::<Vec<E::ScalarField>>();
 		let last_ele = snark_input.r_vec_r + ch * snark_input.r_vec_v;
 		vec.push(last_ele);
+		//T933 s9 B2. The second blind slot n_words+1.
+		vec.push(snark_input.r_vec_r2 + ch * snark_input.r_vec_v2);
 		//S102/F2: open the combined vec-com at the POSITION omega^i.
 		//`ch` stays what it should be -- the linear-combination
 		//coefficient that folds vec_r and vec_v into one vector.
@@ -790,6 +832,7 @@ where
 		let mut wi = vec![E::ScalarField::from(words[i].len() as u32)];
 		wi.extend_from_slice(&words[i]);
 		wi.push(snark_input.rands[i]);
+		wi.push(snark_input.rands2[i]); //T933 s9 B1
 		wi.reverse();
 		let kzg_prf = KZG::<'a,E>
 			::prove_with_challenge(&pkey.kzg, r_i,  &wi, &zero, None)
@@ -860,10 +903,11 @@ where
 		//b_vcom is the only one needing idx_pt, so None => false
 		//reproduces the old `Err(_) => return false` exactly.
 		//Issue 6a. Only the word slots 0..n_words-1 may be opened.
-		//Slot n_words holds the blinding nonces, and omega_pow_idx
+		//Slots n_words and n_words+1 hold the blinding nonces (T933
+		//s9 B2, vec_dom_size = n_words + 2), and omega_pow_idx
 		//wraps i, so an unchecked i reaches them. Do not write
-		//`i + 1` here, since it wraps at usize::MAX without overflow
-		//checks and then hits the blind slot when n_words + 1 is the
+		//`i + 2` here, since it wraps at usize::MAX without overflow
+		//checks and then hits a blind slot when n_words + 2 is the
 		//domain size. b_vcom stays the raw opening result, so the
 		//log shows which of the two rejected.
 		//Issue 6 K1. This binds membership, not position. The fold's
@@ -871,7 +915,7 @@ where
 		//decider_eth_circuit_super.rs, the paper's pubstat_7 is not in
 		//the code), so a malicious batch whose fold has m != n_words
 		//words shifts each word by n_words - m.
-		let b_range = i < vkey.vec_dom_size.saturating_sub(1);
+		let b_range = i < vkey.vec_dom_size.saturating_sub(2);
 		let opt_idx = veccom::omega_pow_idx::<E::ScalarField>(
 			vkey.vec_dom_size, i).ok();
 		let b_idx = b_range && opt_idx.is_some();
@@ -902,7 +946,7 @@ where
 			commitments differ from pubstat", ctx, i));}
 		if !b_idx {emit(ERR, format!("ind[{}] i={}: not a word slot \
 			(n_words={}) or omega^i failed, dom_size={}", ctx, i,
-			vkey.vec_dom_size.saturating_sub(1),
+			vkey.vec_dom_size.saturating_sub(2),
 			vkey.vec_dom_size));}
 		if !b_vcom_eval {emit(ERR, format!("ind[{}] i={}: vcom eval \
 			got={} want={} (r_i={} ch={} v_i={})", ctx, i,
@@ -935,23 +979,24 @@ where
 		//1. vcom and kzg of vec_r
 		// NOTE: vcom (vec com) is the NORMAL sequence, kzg is the reversed
 		let zero = E::ScalarField::zero();
+		//T933 s9 B2. Both nonces, at slots n_words and n_words+1.
 		let mut vec_r = vec![snark_input.vec_r.clone(), 
-			vec![snark_input.r_vec_r]].concat();
+			vec![snark_input.r_vec_r, snark_input.r_vec_r2]].concat();
 		let vcom_vec_r = VecCom::<'a,E>::commit(&pkey.vec, &vec_r, &zero)
 			.expect("vcom_vec_r error");
-		//after the reverse, index 0 IS the r_vec_r appended above:
-		//kzg and vec_com must commit to the SAME vector.
+		//after the reverse, index 0 IS the r_vec_r2 appended above
+		//(r_vec_r at 1): kzg and vec_com must commit to the SAME vector.
 		vec_r.reverse();
 		let kzg_vec_r = KZG::<'a,E>::commit(&pkey.kzg, &vec_r, &zero)
 			.expect("kzg_vec_r error"); 
 
 		//2. vcom and kzg of vec_v
 		let mut vec_v = vec![snark_input.vec_v.clone(), 
-			vec![snark_input.r_vec_v]].concat();
+			vec![snark_input.r_vec_v, snark_input.r_vec_v2]].concat();
 		let vcom_vec_v = VecCom::<'a,E>::commit(&pkey.vec, &vec_v, &zero)
 			.expect("vcom_vec_v error");
-		//after the reverse, index 0 IS the r_vec_v appended above:
-		//kzg and vec_com must commit to the SAME vector.
+		//after the reverse, index 0 IS the r_vec_v2 appended above
+		//(r_vec_v at 1): kzg and vec_com must commit to the SAME vector.
 		vec_v.reverse();
 		let kzg_vec_v = KZG::<'a,E>::commit(&pkey.kzg, &vec_v, &zero)
 			.expect("kzg_vec_r error"); 
@@ -990,27 +1035,33 @@ where
 			lk2.reverse();
 
 			//T932-F2W. Same interleaved layout as kzg_all_words
-			//in gen_claims.
+			//in gen_claims (T933 s9: both blinds per word, two
+			//trailing nonces).
 			let mut all_words: Vec<F> = words.iter()
 				.zip(snark_input.rands.iter())
-				.flat_map(|(w, r)| w.iter().cloned()
-					.chain(std::iter::once(*r)))
+				.zip(snark_input.rands2.iter())
+				.flat_map(|((w, r), r2)| w.iter().cloned()
+					.chain([*r, *r2]))
 				.collect();
 			all_words.push(snark_input.r_all_words);
+			all_words.push(snark_input.r_all_words2);
 			let mut all_len:Vec<F> 
 				= words.iter().map(|w| F::from(w.len() as u32))
 				.collect();
 			all_words.reverse();
 
 			all_len.push(snark_input.r_kzg_len);
+			all_len.push(snark_input.r_kzg_len2);
 			all_len.reverse();
 
 			let mut vec_r = snark_input.vec_r.clone();
 			vec_r.push(snark_input.r_vec_r);
+			vec_r.push(snark_input.r_vec_r2);
 			vec_r.reverse();
 
 			let mut vec_v = snark_input.vec_v.clone();
 			vec_v.push(snark_input.r_vec_v);
+			vec_v.push(snark_input.r_vec_v2);
 			vec_v.reverse();
 
 
@@ -1429,8 +1480,9 @@ mod tests_batch_proc {
 	}
 
 	/// T932W-A item 0 (C1.1). 7 words of length 2: kzg_all_words needs
-	/// 14 + 7 + 1 = 22 coefficients. Without C1.1 the key has 18 powers
-	/// and gen_claims fails. Items 1 (positive) run on the same fixture.
+	/// 14 + 7 + 1 = 22 coefficients (T933 s9: 14 + 14 + 2 = 30). Without
+	/// C1.1 the key has 18 powers and gen_claims fails. Items 1
+	/// (positive) run on the same fixture.
 	#[test]
 	fn t932w_a0_key_bound_and_positive(){
 		let f = t932w_fix(7, 2, 2);
@@ -1440,16 +1492,20 @@ mod tests_batch_proc {
 
 	/// T932W-A item 2 (C1.3). The per-word commitment is
 	/// kzg(reverse((len, w) || rho)), not kzg(reverse(w || rho)). A claim
-	/// on the old layout is rejected.
+	/// on the old layout is rejected. T933 s9 B1: rho is the pair
+	/// (rho, rho2).
 	#[test]
 	fn t932w_a2_prefix_layout(){
 		let f = t932w_fix(20, 2, 2);
 		let (w, rho) = (&f.words[f.i], f.snark_inp.rands[f.i]);
+		let rho2 = f.snark_inp.rands2[f.i];
 		let mut pre = vec![Fr::from(w.len() as u32)];
 		pre.extend_from_slice(w);
 		pre.push(rho);
+		pre.push(rho2);
 		let mut old = w.clone();
 		old.push(rho);
+		old.push(rho2);
 		let (c_pre, c_old) = (t932w_kzg(&f, &pre), t932w_kzg(&f, &old));
 		assert!(f.ind_claims[f.i].kzg_word == c_pre,
 			"T932W-A2: kzg_word is not the length-prefixed layout");
@@ -1482,7 +1538,8 @@ mod tests_batch_proc {
 	/// T932W-A item 4 (C1.2, C1.8). kzg_all_words commits to
 	/// w_1, rho_1, ..., w_n, rho_n, r_all_words (reversed). Built with a
 	/// plain loop. verify_batch passed in the fixture, so the aggregate
-	/// opening (C1.8) uses the same polynomial.
+	/// opening (C1.8) uses the same polynomial. T933 s9: each rho_j is
+	/// followed by rho2_j, and r_all_words by r_all_words2.
 	#[test]
 	fn t932w_a4_interleaved_layout(){
 		let f = t932w_fix(20, 2, 2);
@@ -1490,8 +1547,10 @@ mod tests_batch_proc {
 		for j in 0..f.words.len(){
 			for x in f.words[j].iter(){ s.push(*x); }
 			s.push(f.snark_inp.rands[j]);
+			s.push(f.snark_inp.rands2[j]);
 		}
 		s.push(f.snark_inp.r_all_words);
+		s.push(f.snark_inp.r_all_words2);
 		assert!(f.global_claim.kzg_all_words == t932w_kzg(&f, &s),
 			"T932W-A4: kzg_all_words is not the interleaved layout");
 	}
@@ -1595,6 +1654,7 @@ mod tests_batch_proc {
 		let mut vec_c = snark_inp.vec_r.iter().zip(snark_inp.vec_v.iter())
 			.map(|(a,b)| *a + ch * *b).collect::<Vec<Fr>>();
 		vec_c.push(snark_inp.r_vec_r + ch * snark_inp.r_vec_v);
+		vec_c.push(snark_inp.r_vec_r2 + ch * snark_inp.r_vec_v2);
 		//Try BOTH opening points. omega^i is the forger's best move
 		//against the current verifier; `ch` is what a pre-fix forger
 		//used. Asserting on both stops this test passing for the
@@ -1687,14 +1747,20 @@ mod tests_batch_proc {
 
 	/// Plant (r*, v*) of an unscreened word C* in the blind slot, prove
 	/// the batch, and return the verdict of verify_individual for C* at
-	/// index i, opened at the domain point pt.
+	/// index i, opened at the domain point pt. T933 s9 B2: `second`
+	/// plants in the second blind slot n_words+1 instead of n_words.
 	fn issue6_blind_forgery(f: &mut Issue6Fix, i: usize, pt: Fr,
-		ctx: &'static str) -> bool {
+		ctx: &'static str, second: bool) -> bool {
 		let pc = f.partial.poseidon_config.clone();
 		let zero = Fr::zero();
 		let (wm, c_star, r_star, v_star) = issue6_unscreened(f, i);
-		f.si.r_vec_r = r_star;
-		f.si.r_vec_v = v_star;
+		if second {
+			f.si.r_vec_r2 = r_star;
+			f.si.r_vec_v2 = v_star;
+		} else {
+			f.si.r_vec_r = r_star;
+			f.si.r_vec_v = v_star;
+		}
 		let (bp, _) = T932Bp::prove_batch(&f.pk, &f.si, &f.words,
 			f.lkup.clone(), &f.partial);
 		assert!(T932Bp::verify_batch(&f.vk, None, None, None, None, &f.gc,
@@ -1705,6 +1771,7 @@ mod tests_batch_proc {
 		let mut vec_c = f.si.vec_r.iter().zip(f.si.vec_v.iter())
 			.map(|(a,b)| *a + ch * *b).collect::<Vec<Fr>>();
 		vec_c.push(f.si.r_vec_r + ch * f.si.r_vec_v);
+		vec_c.push(f.si.r_vec_r2 + ch * f.si.r_vec_v2);
 		let vcom_prf = VecCom::<Bn254>::prove_with_challenge(&f.pk.vec,
 			pt, &vec_c, &zero, None).unwrap();
 		let kzg_prf = KZG::<Bn254>::prove_with_challenge(&f.pk.kzg,
@@ -1726,23 +1793,42 @@ mod tests_batch_proc {
 		let mut f = issue6_setup(20, None);
 		let i = f.words.len();
 		let pt = f.pk.vec.get_idx(i);
-		let res = issue6_blind_forgery(&mut f, i, pt, "test-6a");
+		let res = issue6_blind_forgery(&mut f, i, pt, "test-6a", false);
 		assert!(!res, "blind-slot forgery ACCEPTED, no range check");
 	}
 
-	/// Issue 6a with overflow. With n_words + 1 = 32 = the domain size,
-	/// omega^usize::MAX = omega^31 is the blind slot, and `i as u32`
-	/// maps usize::MAX to u32::MAX in r_i. A check written as
-	/// `i + 1 < vec_dom_size` wraps there without overflow checks.
+	/// T933-B2 (s9). Both blind slots, n_words and n_words+1, hold
+	/// unconstrained nonces. The 64217 forgery planted in either one is
+	/// rejected by the range check alone (verify_batch passes).
+	#[test]
+	fn t933_b2_blind_slots_rejected(){
+		for (k, second) in [(0usize, false), (1usize, true)]{
+			let mut f = issue6_setup(20, None);
+			let n = f.words.len();
+			assert_eq!(f.vk.vec_dom_size, n + 2,
+				"T933-B2: veccom is not n_words + 2 slots");
+			let i = n + k;
+			let pt = f.pk.vec.get_idx(i);
+			let res = issue6_blind_forgery(&mut f, i, pt, "test-s9-b2",
+				second);
+			assert!(!res, "T933-B2: forgery in blind slot n+{} ACCEPTED", k);
+		}
+	}
+
+	/// Issue 6a with overflow. With n_words + 2 = 32 = the domain size
+	/// (T933 s9: n_words = 30), omega^usize::MAX = omega^31 is the
+	/// second blind slot, and `i as u32` maps usize::MAX to u32::MAX in
+	/// r_i. A check written as `i + 2 < vec_dom_size` wraps there
+	/// without overflow checks.
 	#[test]
 	fn individual_proof_rejects_wrapped_index(){
-		let mut f = issue6_setup(31, None);
+		let mut f = issue6_setup(30, None);
 		let i = usize::MAX;
 		let pt = super::veccom::omega_pow_idx::<Fr>(f.vk.vec_dom_size, i)
 			.unwrap();
-		assert!(pt == f.pk.vec.get_idx(f.words.len()),
+		assert!(pt == f.pk.vec.get_idx(f.words.len() + 1),
 			"not the blind slot");
-		let res = issue6_blind_forgery(&mut f, i, pt, "test-6a-max");
+		let res = issue6_blind_forgery(&mut f, i, pt, "test-6a-max", true);
 		assert!(!res, "index usize::MAX ACCEPTED, range check wraps");
 	}
 
@@ -1750,10 +1836,11 @@ mod tests_batch_proc {
 	/// could compute the combiner ch before fixing vec_r, it could set
 	/// the slot i of a screened word t to r_t with r_t + ch*v_t =
 	/// r* + ch*v*, and an unscreened word would open at the in-range
-	/// index i. Word t is empty, so v_t = p_t(r_t) = rho_t for every r_t
-	/// (prefixed layout (0) || rho_t, T932) and r_t is linear. The
-	/// forger takes ch from the honest batch's commitments, then
-	/// re-proves the batch with slot i changed, which moves ch.
+	/// index i. Word t is empty, so p_t = rho2_t + rho_t X (prefixed
+	/// layout (0) || rho_t || rho2_t, T932 + T933 s9) and r_t solves a
+	/// linear equation. The forger takes ch from the honest batch's
+	/// commitments, then re-proves the batch with slot i changed, which
+	/// moves ch.
 	#[test]
 	fn individual_proof_rejects_combiner_forgery(){
 		let i = 2usize;
@@ -1765,14 +1852,18 @@ mod tests_batch_proc {
 		let (wm, c_star, r_star, v_star) = issue6_unscreened(&f, i);
 		let ch = T932Bp::ind_combiner(&pc, &bp0.vcom_vec_r,
 			&bp0.vcom_vec_v, r_star, v_star);
-		//p_t = reverse((0) || rho_t) is the constant rho_t
-		let mut t = vec![Fr::zero(), f.si.rands[i]];
+		//p_t = reverse((0) || rho_t || rho2_t) = rho2_t + rho_t X, so
+		//r_t + ch*p_t(r_t) = r* + ch*v* gives
+		//r_t = (r* + ch*v* - ch*rho2_t) / (1 + ch*rho_t)
+		let mut t = vec![Fr::zero(), f.si.rands[i], f.si.rands2[i]];
 		t.reverse();
 		let p_t = poly_from_vec(t).unwrap();
-		let rho_t = f.si.rands[i];
-		let r_t = r_star + ch * (v_star - rho_t);
+		let (rho_t, rho2_t) = (f.si.rands[i], f.si.rands2[i]);
+		use ark_ff::Field;
+		let r_t = (r_star + ch * v_star - ch * rho2_t)
+			* (Fr::from(1u32) + ch * rho_t).inverse().unwrap();
 		let v_t = p_t.evaluate(&r_t);
-		assert_eq!(v_t, rho_t, "empty word is not constant");
+		assert_eq!(v_t, rho2_t + rho_t * r_t, "empty word is not linear");
 		assert_eq!(r_t + ch * v_t, r_star + ch * v_star);
 		let mut si2 = f.si.clone();
 		si2.vec_r[i] = r_t;
@@ -1794,6 +1885,7 @@ mod tests_batch_proc {
 				.map(|(a,b)| *a + c * *b)
 				.collect::<Vec<Fr>>();
 			vec_c.push(si2.r_vec_r + c * si2.r_vec_v);
+			vec_c.push(si2.r_vec_r2 + c * si2.r_vec_v2);
 			let vcom_prf = VecCom::<Bn254>::prove_with_challenge(
 				&f.pk.vec, f.pk.vec.get_idx(i), &vec_c, &zero, None)
 				.unwrap();
@@ -1931,6 +2023,16 @@ mod tests_batch_proc {
 			"per-word rands are not pairwise distinct");
 		assert!(si.r_vec_r != si.r_vec_v,
 			"r_vec_r and r_vec_v are the same draw");
+		//T933 s9: rands2 and the four second nonces are fresh too
+		assert_eq!(si.rands2.len(), n_words, "rands2 length changed");
+		let uniq: HashSet<Fr> = si.rands.iter().chain(si.rands2.iter())
+			.cloned().collect();
+		assert_eq!(uniq.len(), 2*n_words,
+			"rands and rands2 are not pairwise distinct");
+		let nonces: HashSet<Fr> = [si.r_all_words, si.r_all_words2,
+			si.r_kzg_len, si.r_kzg_len2, si.r_vec_r, si.r_vec_r2,
+			si.r_vec_v, si.r_vec_v2].into_iter().collect();
+		assert_eq!(nonces.len(), 8, "the eight nonces are not distinct");
 	}
 
 	/// T933 s10 table A, the public table handed to setup.
@@ -2014,5 +2116,178 @@ mod tests_batch_proc {
 			&LookupTableTwoCol_Inst::new(vec![]));
 		assert!(pk.lk_cm1.is_zero() && pk.lk_cm2.is_zero());
 		assert!(vk.lk_cm1 == pk.lk_cm1 && vk.lk_cm2 == pk.lk_cm2);
+	}
+
+	/// T933 s9 one-blind guess test on (C, v). g is a guess in
+	/// coefficient order with zeros in its blind slots. With one
+	/// unknown blind o at X^j, C - [g(s)]_1 = o [s^j]_1 and
+	/// v - g(r) = o r^j, so one MSM confirms g. Tried for j < max(k, 1).
+	fn t933_x0_hit(kzg: &crate::commitment::kzg::ProverKey<'static, G1>,
+		c: G1, v: Fr, r: Fr, g: &Vec<Fr>, k: usize) -> bool{
+		use std::ops::Mul;
+		use ark_ff::Field;
+		let cg = KZG::<Bn254>::commit(kzg, g, &Fr::zero()).unwrap();
+		let vg = poly_from_vec(g.clone()).unwrap().evaluate(&r);
+		(0..k.max(1)).any(|j| c - cg == kzg.powers_of_g[j]
+			.mul((v - vg) * r.pow([j as u64]).inverse().unwrap()))
+	}
+
+	/// T933 s9 attacker vector: data with k zero blinds appended, then
+	/// reversed (coefficient order), as every KZG vector here.
+	fn t933_guess_vec(data: &[Fr], k: usize) -> Vec<Fr>{
+		let mut g = data.to_vec();
+		g.extend(std::iter::repeat(Fr::zero()).take(k));
+		g.reverse();
+		g
+	}
+
+	/// T933-B1 (Issue 8, F2). The guess test. For 1000 words, the
+	/// one-blind test of t933_x0_hit with k = 1..=3 zero blind slots
+	/// never confirms the true word or a wrong guess. k = 1 is the
+	/// one-blind layout, where the X^0 test confirms every true word. Repeated on the
+	/// aggregate opening of the six batch commitments (k = 1..=2), with
+	/// each per-word blind taken from (C_i, v_i) as a one-blind attacker
+	/// would.
+	#[test]
+	fn t933_b1_guess_test(){
+		let n = 1000;
+		let f = t932w_fix(n, 2, 2);
+		//not test_rng(): its stream would replay the fixture's words
+		use ark_std::rand::{rngs::StdRng, SeedableRng};
+		let mut rng = StdRng::seed_from_u64(0x933);
+		let si = &f.snark_inp;
+		let mut bad: Vec<String> = vec![];
+		for k in 1..=3usize{
+			let (mut hit_t, mut hit_w) = (0usize, 0usize);
+			for i in 0..n{
+				let (c, r, v) = (f.ind_claims[i].kzg_word, si.vec_r[i],
+					si.vec_v[i]);
+				let w = &f.words[i];
+				let mut lw = vec![Fr::from(w.len() as u32)];
+				lw.extend_from_slice(w);
+				if t933_x0_hit(&f.pk.kzg, c, v, r,
+					&t933_guess_vec(&lw, k), k) {hit_t += 1;}
+				let mut lw2 = vec![Fr::from(w.len() as u32)];
+				lw2.extend((0..w.len()).map(|_| Fr::rand(&mut rng)));
+				if t933_x0_hit(&f.pk.kzg, c, v, r,
+					&t933_guess_vec(&lw2, k), k) {hit_w += 1;}
+			}
+			if hit_t + hit_w > 0 {bad.push(format!("per-word, {} blind \
+				slot(s): {}/{} true words, {}/{} wrong guesses confirmed",
+				k, hit_t, n, hit_w, n));}
+		}
+		//aggregate: sum_j rc^j C_j opened at ch to y = agg eval
+		let bp = &f.batch_proof;
+		let (ch, rc, y) = (bp.ch, bp.rc, bp.agg_kzg_prf.eval);
+		let cms = [f.global_claim.kzg_lk_col1, f.global_claim.kzg_lk_col2,
+			f.global_claim.kzg_all_words, f.global_claim.kzg_length,
+			bp.kzg_vec_r, bp.kzg_vec_v];
+		let lk = LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(1u32))]);
+		let (lk1, lk2) = lk.get_cols();
+		let mut wrong = f.words.clone();
+		wrong[0][0] += Fr::from(1u32);
+		//k <= 2: a third slot per word overflows the key
+		for k in 1..=2usize{
+			for (name, ws) in [("true", &f.words), ("wrong", &wrong)]{
+				//each word's blind slots: zeros, then at X^0 the residual
+				//v_i - g_i(r_i), which IS the blind in a one-blind layout
+				let mut all_w: Vec<Fr> = vec![];
+				for (i, w) in ws.iter().enumerate(){
+					let mut lw = vec![Fr::from(w.len() as u32)];
+					lw.extend_from_slice(w);
+					let e = si.vec_v[i] - poly_from_vec(
+						t933_guess_vec(&lw, k)).unwrap().evaluate(&si.vec_r[i]);
+					all_w.extend_from_slice(w);
+					all_w.extend(std::iter::repeat(Fr::zero()).take(k-1));
+					all_w.push(e);
+				}
+				let lens: Vec<Fr> = ws.iter()
+					.map(|w| Fr::from(w.len() as u32)).collect();
+				let gs = [t933_guess_vec(&lk1, 0), t933_guess_vec(&lk2, 0),
+					t933_guess_vec(&all_w, k), t933_guess_vec(&lens, k),
+					t933_guess_vec(&si.vec_r, k),
+					t933_guess_vec(&si.vec_v, k)];
+				let (mut c, mut g, mut f_rc) = (G1::zero(), vec![], Fr::from(1u32));
+				for j in 0..6{
+					c += cms[j] * f_rc;
+					let gj: Vec<Fr> = gs[j].iter().map(|x| *x * f_rc).collect();
+					if g.len() < gj.len() {g.resize(gj.len(), Fr::zero());}
+					for (a, b) in g.iter_mut().zip(gj.iter()) {*a += b;}
+					f_rc *= rc;
+				}
+				if t933_x0_hit(&f.pk.kzg, c, y, ch, &g, 1) {bad.push(format!(
+					"aggregate, {} blind slot(s): {} guess confirmed",
+					k, name));}
+			}
+		}
+		assert!(bad.is_empty(), "T933-B1: X^0 guess test confirms: {:?}",
+			bad);
+	}
+
+	/// T933-B1 (s9), trapdoor half. setup draws the KZG trapdoor s
+	/// first, so a fresh test_rng() replays it. Each C_i is
+	/// [p(s)]_1 with p = reverse((len, w) || o_1 || o_2). For every
+	/// guess g (blind slots zero) the pair o_2 + o_1 X with
+	/// o_2 + o_1 s = p(s) - g(s) and o_2 + o_1 r_i = v_i - g(r_i) is
+	/// unique (s != r_i) and reproduces (C_i, v_i). For the true word it
+	/// is (rands[i], rands2[i]).
+	#[test]
+	fn t933_b1_trapdoor_unique(){
+		use ark_ff::Field;
+		use std::ops::Mul;
+		use ark_std::rand::{rngs::StdRng, SeedableRng};
+		let n = 100;
+		let mut wrng = StdRng::seed_from_u64(0x9331);
+		let words: Vec<Vec<Fr>> = (0..n).map(|_|
+			(0..2).map(|_| Fr::rand(&mut wrng)).collect()).collect();
+		let s = Fr::rand(&mut test_rng());
+		let mut rng = test_rng();
+		let lkup = LookupTableTwoCol_Inst::new(vec![
+			(Fr::from(0u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(0u32)),
+			(Fr::from(1u32), Fr::from(1u32))]);
+		let (pk, _vk) = T932Bp::setup(&mut rng, T932Bp::key_size(&words),
+			n, poseidon_canonical_config::<Fr>(), 0, &lkup);
+		let g0 = pk.kzg.powers_of_g[0];
+		assert!(pk.kzg.powers_of_g[1] == g0.mul(s),
+			"trapdoor replay failed");
+		let (_gc, claims, si) = T932Bp::gen_claims(&pk, &mut rng, &words)
+			.unwrap();
+		let ev = |v: &Vec<Fr>, x: Fr| poly_from_vec(v.clone()).unwrap()
+			.evaluate(&x);
+		for i in 0..n{
+			let (c, r, v) = (claims[i].kzg_word, si.vec_r[i], si.vec_v[i]);
+			let mut lw = vec![Fr::from(2u32)];
+			lw.extend_from_slice(&words[i]);
+			let mut full = lw.clone();
+			full.push(si.rands[i]);
+			full.push(si.rands2[i]);
+			full.reverse();
+			let p_s = ev(&full, s);
+			assert!(c == g0.mul(p_s), "T933-B1: C_i is not \
+				reverse((len, w) || o_1 || o_2)");
+			assert!(s != r);
+			let mut lw2 = lw.clone();
+			lw2[1] += Fr::from(1u32);
+			for (name, gw) in [("true", &lw), ("wrong", &lw2)]{
+				let g = t933_guess_vec(gw, 2);
+				let (d1, d2) = (p_s - ev(&g, s), v - ev(&g, r));
+				let o1 = (d1 - d2) * (s - r).inverse().unwrap();
+				let o2 = d1 - o1 * s;
+				let mut gb = g.clone();
+				gb[0] += o2;
+				gb[1] += o1;
+				assert!(KZG::<Bn254>::commit(&pk.kzg, &gb, &Fr::zero())
+					.unwrap() == c && ev(&gb, r) == v,
+					"T933-B1: {} guess has no blind pair", name);
+				if name == "true" {
+					assert!(o1 == si.rands[i] && o2 == si.rands2[i],
+						"T933-B1: true guess pair is not (o_1, o_2)");
+				}
+			}
+		}
 	}
 }

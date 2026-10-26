@@ -606,8 +606,9 @@ where
 
     /// used for computing KZG challenges (advice) - will be checked
 	pub com_all_w: Option<C1>,
-	/// the r_all_w used in generating com_all_w
-	pub r_all_w: Option<C1::ScalarField>,
+	/// the r_all_w used in generating com_all_w. T933 s9 B3: the
+	/// pair (o_1, o_2).
+	pub r_all_w: Option<(C1::ScalarField, C1::ScalarField)>,
 
 	// Added for super nova
 	/// the number of circuits
@@ -675,7 +676,7 @@ where
 		+ SigmaIR1CS<H, C1::ScalarField, LK, GM, C=C1>> 
 		(nova: FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E,LK, GM, H>, 
 		 com_all_w: C1,
-		 r_all_w: C1::ScalarField) -> Result<Self, Error> {
+		 r_all_w: (C1::ScalarField, C1::ScalarField)) -> Result<Self, Error> {
         //1. compute the U_{i+1}, W_{i+1}
 		let (U_i1, W_i1, r_Fr, cmT)= nova.gen_next_folded()?;
 
@@ -816,7 +817,10 @@ where
 				&self.poseidon_config, U_i1.clone(), com_all_w)?;
 		let kzg_all_com_ch_clone= kzg_all_com_ch.clone();
 		let r_all_w = FpVar::<C1::ScalarField>::new_witness(cs.clone(),
-			|| Ok(self.r_all_w.expect("r_all_w null")))?;
+			|| Ok(self.r_all_w.expect("r_all_w null").0))?;
+		//T933 s9 B3. The second blind, on top of o_1.
+		let r_all_w2 = FpVar::<C1::ScalarField>::new_witness(cs.clone(),
+			|| Ok(self.r_all_w.expect("r_all_w null").1))?;
 
 		let mut all_w = W_i1.vec_wit.iter().map(|it| it.W.clone()
 		).flatten().collect::<Vec<FpVar<C1::ScalarField>>>();
@@ -824,6 +828,7 @@ where
 		).flatten().collect::<Vec<FpVar<C1::ScalarField>>>();
 		all_w.append(&mut all_e);
 		all_w.push(r_all_w);
+		all_w.push(r_all_w2);
 		let len_all_w_e = all_w.len();
 		//DEBUG USE 69801.8: all_w_e layout so a step-4 UNSAT row maps
 		//to a W (witness) vs E (error) region of a specific circuit.
@@ -1413,7 +1418,7 @@ where
 		+ SigmaIR1CS<H, C1::ScalarField, LK, GM, C=C1>> 
 		(nova: FoldPotSuper<E,P,C2G2,C1,GC1,C2,GC2,FC,CS1,CS2,CS1E,LK, GM, H>, 
 		 com_all_w_2: C1,
-		 r_all_w_2: C1::ScalarField,
+		 r_all_w_2: (C1::ScalarField, C1::ScalarField),
 		 cyclepair_inputs: Vec<Vec<CF1<C1>>>,
 	 	) -> Result<Self, Error> {
 			let job_id = nova.job_id;
@@ -1926,7 +1931,7 @@ where
 		(
         nova1: FoldPotSuper<E, P, C2G2, C1, GC1, C2, GC2, FC, CS1, CS2, CS1E, LK, GM, H>,
 		com_all_w_1: C1,
-		r_all_w_1: C1::ScalarField,
+		r_all_w_1: (C1::ScalarField, C1::ScalarField),
 		randf: C1::ScalarField,
     ) -> Result<Self, Error> {
 		use ark_relations::r1cs::ConstraintSystem;
@@ -2191,9 +2196,9 @@ where
 		_qa_nizk_vkey_hash: C1::ScalarField,
 		_poseidon_config: PoseidonConfig<C1::ScalarField>,
 		_com_all_w_1: C1,
-		_r_all_w_1: C1::ScalarField,
+		_r_all_w_1: (C1::ScalarField, C1::ScalarField),
 		com_all_w_2: C1,
-		r_all_w_2: C1::ScalarField,
+		r_all_w_2: (C1::ScalarField, C1::ScalarField),
 		mainres: Phase1CircuitRetVal<CF1<C1>, C1>, //will generate cyclepair inp
 		inp: CircPubInput<CF1<C1>,C1>, //will be verified against mainres
     ) -> Result<Self, Error> 
@@ -2625,7 +2630,16 @@ pub mod tests_decider_eth_circuit_super {
 
 	/// Fold the six_root toy n_steps and return the Phase 1 decider
 	/// circuit built from it, mirroring driver.rs foldpot_main step 5.
-	fn s119_fold(n_steps: usize) -> S119Circ{
+	fn s119_fold(n_steps: usize) -> S119Circ{ s119_fold_probe(n_steps, None) }
+
+	/// T933 s9 probe at step 5: (folded witness, com_all_w, opening of
+	/// com_all_w, its challenge, the cs1e key).
+	type S119Probe<'p> = &'p mut dyn FnMut(&WitnessFoldPotSuper<Projective>,
+		Projective, &crate::commitment::kzg::Proof<Projective>, Fr,
+		&crate::commitment::kzg::ProverKey<'static, Projective>);
+
+	/// s119_fold with an optional probe on the step-5 values.
+	fn s119_fold_probe(n_steps: usize, probe: Option<S119Probe>) -> S119Circ{
 		let mut rng = ark_std::test_rng();
 		let cfg = poseidon_canonical_config::<Fr>();
 		let b_full = false;
@@ -2707,8 +2721,47 @@ pub mod tests_decider_eth_circuit_super {
 				&params.0.cs1e_pp,
 				params.1.qa_vp.as_ref().expect("qa_vp null"),
 				&u_i1, &cfg);
+		if let Some(p) = probe {
+			p(&w_i1, com_all_w, &_kzg, _ch, &params.0.cs1e_pp);
+		}
 		S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
 			.expect("from_nova err")
+	}
+
+	/// T933-B1 on (C_WE, e_2), T933 s9. com_all_w commits W || E ||
+	/// blinds in coefficient order, so the blinds sit on top, from X^L
+	/// with L = |W||E|. With one blind o at X^L,
+	/// C - [g(s)]_1 == ((e_2 - g(ch)) / ch^L) [s^L]_1 confirms a guess g
+	/// of W || E with one MSM. A second blind at X^(L+1) hides it.
+	#[test]
+	fn test_t933_b1_cwe_guess(){
+		use ark_ff::Field;
+		use std::ops::Mul;
+		let mut hits: Vec<(bool, bool)> = vec![];
+		let mut probe = |w: &WitnessFoldPotSuper<Projective>, com: Projective,
+			prf: &crate::commitment::kzg::Proof<Projective>, ch: Fr,
+			pk: &crate::commitment::kzg::ProverKey<'static, Projective>|{
+			let mut we: Vec<Fr> = w.vec_wit.iter()
+				.flat_map(|x| x.W.clone()).collect();
+			we.extend(w.vec_wit.iter().flat_map(|x| x.E.clone()));
+			let l = we.len();
+			let s_l = pk.powers_of_g[l];
+			let test = |g: &Vec<Fr>| {
+				let cg = <S119Cm as CommitmentScheme<Projective, false>>
+					::commit(pk, g, &Fr::zero()).unwrap();
+				let eg = poly_from_vec(g.clone()).unwrap().evaluate(&ch);
+				let o = (prf.eval - eg) * ch.pow([l as u64]).inverse()
+					.unwrap();
+				com - cg == s_l.mul(o)
+			};
+			let mut wrong = we.clone();
+			wrong[0] += Fr::from(1u32);
+			hits.push((test(&we), test(&wrong)));
+		};
+		let _ = s119_fold_probe(5, Some(&mut probe));
+		assert!(hits.len() == 1);
+		assert!(!hits[0].0, "T933-B1: C_WE guess test confirms the true W||E");
+		assert!(!hits[0].1, "T933-B1: C_WE guess test confirms a wrong guess");
 	}
 
 	/// Synthesize one arm on a fresh CS. Returns (num_constraints,

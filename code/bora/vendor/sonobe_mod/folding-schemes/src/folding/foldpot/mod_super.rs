@@ -418,7 +418,9 @@ where
 	/// return (com_all_w, r_all_w, prf_qa_nizk, prf_kzg, kzg_challenge) 
 	/// note proof kzg contains
 	/// the evaluation point (which is the Fiat shamir of U1 and com_all).
-	/// Note the r_all_w is the random used.
+	/// Note the r_all_w is the random used. T933 s9 B3: it is the pair
+	/// (o_1, o_2), appended after W || E, so (com_all_w, e_2) stay
+	/// jointly uniform.
 	pub fn gen_com_all_w_and_qa_nizk_prf<E: Pairing<G1=C,ScalarField=C::ScalarField>, CS1E: CommitmentScheme<C, HC, ProverChallenge=C::ScalarField,Challenge=C::ScalarField>, const HC: bool>
 		(&self, 
 			pkey: &QaNizkProverParams<E>, 
@@ -426,7 +428,7 @@ where
 			_vkey: &QaNizkVerifierParams<E>, 
 			Ui1: &CommittedInstanceFoldPotSuper<C>, 
 			poseidon_config: &PoseidonConfig<C::ScalarField>) 
-	-> (C, C, C::ScalarField, CS1E::Proof, C::ScalarField)
+	-> (C, C, (C::ScalarField, C::ScalarField), CS1E::Proof, C::ScalarField)
 where
     C: CurveGroup,
     C::ScalarField: PrimeField,
@@ -441,13 +443,16 @@ where
 		all_w.append(&mut all_e);
 		let mut rng = rand::rngs::OsRng;
 		let r_all_w = C::ScalarField::rand(&mut rng);
+		let r_all_w2 = C::ScalarField::rand(&mut rng); //T933 s9 B3
 
-		//2. generate the proof
-		let qa_prf = prove_qa_nizk_fast(&all_w, r_all_w, pkey);
+		//2. generate the proof. T933 s9 B3: o_1 joins the witness
+		//vector (pushed here, no copy), o_2 is the last column.
+		all_w.push(r_all_w);
+		let qa_prf = prove_qa_nizk_fast(&all_w, r_all_w2, pkey);
 		let prf = qa_prf.prf.clone();
 
 		//3. generate all commitment and the proof
-		all_w.push(r_all_w);
+		all_w.push(r_all_w2);
 		let zero = C::ScalarField::zero();
 		let com_all = CS1E::commit(&comkey, &all_w, &zero).expect("err in cmt");
 		let kzg_all_com_ch = KZGChallengesGadgetSuper::<C>
@@ -472,7 +477,7 @@ where
 			&all_w,
 			&zero, None).expect("kzg prf err");
 
-		(com_all, prf, r_all_w, prf_kzg, kzg_all_com_ch)
+		(com_all, prf, (r_all_w, r_all_w2), prf_kzg, kzg_all_com_ch)
 	}
 
 
@@ -1283,8 +1288,8 @@ where
 		let b_full_mode = prep_param_src.b_full_mode;
 		let mut rng = rand::rngs::OsRng;
 
-		//+1 for extra random blinding factor
-		let new_total_cs_pp_len = total_w_len + total_e_len + 1;
+		//+2 for the two random blinding factors (T933 s9 B3)
+		let new_total_cs_pp_len = total_w_len + total_e_len + 2;
 
 		let Ok( (cs1e_pp,cs1e_vp) ) = CS1E::setup(&mut rng, new_total_cs_pp_len)
 			else {panic!("cs1e setup failed");};
@@ -1309,6 +1314,8 @@ where
 			}).  flatten().collect::<Vec<C1::Affine>>();
 			ped_row.append(&mut ped_row2);	
 			let kzg_row = CS1E::pkey_in_affine(&cs1e_pp, new_total_cs_pp_len);
+			//T933 s9 B3. One placeholder per blind column.
+			ped_row.push(kzg_row[kzg_row.len()-2]);
 			let lg = kzg_row[kzg_row.len()-1];
 			ped_row.push(lg);
 			assert!(ped_row.len()==kzg_row.len()); //because extra random

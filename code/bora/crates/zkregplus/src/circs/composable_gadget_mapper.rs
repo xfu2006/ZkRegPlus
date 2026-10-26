@@ -1122,6 +1122,11 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			r_vec_r: ea.r_vec_r,
 			r_vec_v: ea.r_vec_v,
 			r_word_i: ea.r_word_i,
+			r_word_i2: ea.r_word_i2,
+			r_all_words2: ea.r_all_words2,
+			r_kzg_len2: ea.r_kzg_len2,
+			r_vec_r2: ea.r_vec_r2,
+			r_vec_v2: ea.r_vec_v2,
 			accumulated_word_len: ea.accumulated_word_len,
 			f_result: if oup.len()>0 {oup[oup.len()-1]}
 				else {zero}, //by convention, we make it the
