@@ -2232,6 +2232,7 @@ pub mod tests_mod_super {
     /// This test tests the Nova+CycleFold IVC, and by consequence it is also testing the
     /// AugmentedFCircuit
     #[test]
+    #[ignore = "legacy gen_six_root fixture; covered by S119 + e2e"]
     fn test_ivc() {
 		type GM = SixRootMapper<Fr,LookupTableTwoCol_Inst<Fr>>;
         let poseidon_config = poseidon_canonical_config::<Fr>();

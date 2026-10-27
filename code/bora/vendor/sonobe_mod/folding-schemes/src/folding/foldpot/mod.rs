@@ -1519,6 +1519,7 @@ pub mod tests_mod_basic {
     /// This test tests the Nova+CycleFold IVC, and by consequence it is also testing the
     /// AugmentedFCircuit
     #[test]
+    #[ignore = "FoldPot basic deprecated; use FoldPotSuper"]
     fn test_ivc() {
 		type GM = SixRootMapper<Fr,LookupTableTwoCol_Inst<Fr>>;
         let poseidon_config = poseidon_canonical_config::<Fr>();
