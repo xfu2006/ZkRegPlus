@@ -26,3 +26,5 @@ ark-r1cs-std = { version = "0.4.0", path = "./vendor/dependency/r1cs-std" } # th
 ark-bn254 = {version="0.4.0", path = "./vendor/dependency/ark-curves-cherry-picked/bn254"}
 ark-grumpkin = { version="0.4.0", path="./vendor/dependency/ark-curves-cherry-picked/grumpkin"}
 ark-relations = {version="0.4.0", path="./vendor/dependency/ark-relations"}
+# T934: commit-and-prove Groth16 (one extra pairing base, committed wires)
+ark-groth16 = {version="0.4.0", path="./vendor/dependency/ark-groth16"}

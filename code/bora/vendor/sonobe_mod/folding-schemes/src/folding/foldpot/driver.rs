@@ -54,8 +54,8 @@ use crate::{
 			sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,StatementExtraInfo,GadgetMapper,Capacity,NdAdvice,WordInfo,CloneDeep,pad_lkup},
 			sigma_cyclepair::{create_sigma_fold_pair,FoldPairMapper},
 			//decider_eth_super::{DeciderFoldPotSuper},
-			decider_eth_circuit_super::{CyclePairCircuit, CircPubInput, MainDeciderCircuit},
-			batch_proc::{BatchProcessorProverParams,BatchProcessorVerifierParams,BatchProcessor,BatchClaim,BatchProof,IndividualClaim,IndividualProof,SnarkAdvice,SnarkRandInput}
+			decider_eth_circuit_super::{CyclePairCircuit, CircPubInput, MainDeciderCircuit, kzg_ch, KZG_CH_TAG_S1, KZG_CH_TAG_S2},
+			batch_proc::{BatchProcessorProverParams,BatchProcessorVerifierParams,BatchProcessor,BatchClaim,BatchProof,IndividualClaim,IndividualProof,SnarkAdvice,SnarkRandInput,CpSnark}
 		}
 	},
 };
@@ -382,7 +382,7 @@ where
 	<CS1E as CommitmentScheme<C1, H>>::ProverParams: Send + Sync,
     // enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
     CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>>,
-    S: SNARK<C1::ScalarField>,
+    S: CpSnark<E>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
     <C1 as Group>::ScalarField: Absorb,
@@ -2870,7 +2870,7 @@ where
 	<CS1E as CommitmentScheme<C1, H>>::VerifierParams: Send + Sync,
     CS2: CommitmentScheme<C2, H, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2, H>>::VerifierParams: Send + Sync,
-    S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
+    S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField> + CpSnark<E>,
     <C1 as CurveGroup>::BaseField: PrimeField,
     <C2 as CurveGroup>::BaseField: PrimeField,
     <C1 as Group>::ScalarField: Absorb,
@@ -3074,6 +3074,8 @@ where
         if read_global_config().b_read_snark_cache {
             let need = ["g16_main.key", "g16_main.key.meta",
                 "g16_cp.key", "g16_cp.key.meta",
+                "g16_main.key_pk_d_query_compressed.data",
+                "g16_cp.key_pk_d_query_compressed.data",
                 "g16_main.sidecar.cf", "g16_cp.sidecar.cf",
                 "g16_cp.sidecar.cp"];
             let missing: Vec<&str> = need.iter().copied()
@@ -3534,11 +3536,11 @@ where
 	  		let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver1.poseidon_config);
 	  		let qa_nizk_vkey_hash1 = qa_nizk_vkey_hash.clone();
 	  		let (U_i1, W_i1, _r_Fr, _cmT)= nova1.gen_next_folded().unwrap();
-	  		let (com_all_w, prf_qa_nizk, r_all_w, prf_kzg, kzg_all_com_ch) =
+	  		let (com_all_w, prf_qa_nizk, r_all_w) =
 				W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>(
 					&qa_nizk_pkey,
 					&driver1.nova_param.0.cs1e_pp,
-					&qa_nizk_vkey, &U_i1, &driver1.poseidon_config
+					&qa_nizk_vkey, &U_i1
 			);
 	  		drop(W_i1);
 	  		let cyclepair_inputs = U_i1
@@ -3574,6 +3576,11 @@ where
 	  				"Job {}: snark-start flag seen; proceeding", job_id));
 	  		}
 
+	  		//T934 ruling E: r' is drawn with driver2's config, verify_batch
+	  		//recomputes it with driver1's.
+	  		assert!(format!("{:?}", driver1.poseidon_config)
+	  			== format!("{:?}", driver2.poseidon_config),
+	  			"T934: driver1/driver2 poseidon configs differ");
 	  		// ------------- The following is the CRITICAL SECTION -------
 	  		guard_outer = Some({
 	  			let (lock, cvar) = &*semaphore_outer;
@@ -3615,11 +3622,9 @@ where
 	  			use crate::folding::foldpot::utils::set_gadget_sat;
 	  			set_gadget_sat(true);
 	  		}
-	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main) = {
-				let main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
+	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main, prf_kzg, kzg_all_com_ch) = {
+				let mut main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
 	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
-	  			let mainres = main_circ.res.clone();
-	  			let mainres_hash = main_circ.res_hash.clone();
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
 	  	
 				// 2026-05-21 (Lever 3): read main_pk under RwLock so the
@@ -3647,8 +3652,23 @@ where
 					};
 	  			log_perf(job_id, log_level, &format!("PERF 1006: Job Step 2: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
-	  			let snark_proof_main: S::Proof = S::prove(&g16_pk,
-	  				main_circ, &mut rng)
+				//T934 D5 (ruling B): all_w rebuilt after the wait. D_1
+				//first, then r_2 = H(tag, C_WE, D_1), its opening, finalize.
+				let all_w = main_circ.circ1.all_w();
+				let kappa = C1::ScalarField::rand(&mut rng);
+				let d_1 = S::cp_commit(g16_pk, &all_w, kappa);
+				let kzg_all_com_ch = kzg_ch(&driver1.poseidon_config,
+					KZG_CH_TAG_S1, com_all_w, d_1);
+				let prf_kzg = CS1E::prove_with_challenge(
+					&driver1.nova_param.0.cs1e_pp, kzg_all_com_ch, &all_w,
+					&C1::ScalarField::zero(), None).expect("kzg prf err");
+				main_circ.finalize(kzg_all_com_ch, &all_w);
+				drop(all_w);
+				log_perf(job_id, log_level, &format!("PERF 1006: Job Step 2b: KZG open + D_1. MEM: {} GB.", get_mem_usage()), &mut gt1);
+	  			let mainres = main_circ.res.clone();
+	  			let mainres_hash = main_circ.res_hash.clone();
+	  			let snark_proof_main: S::Proof = S::prove_cp(g16_pk,
+	  				main_circ, kappa, Some(d_1), &mut rng)
 	  				.map_err(|e| Error::Other(e.to_string())).unwrap();
 
 	  			//DEBUG probe 69801: immediate self-verify against the
@@ -3680,7 +3700,8 @@ set; exit(0) before Phase 2.");
 	  				let _ = qa_pp_d1.write().unwrap().take();
 	  			}
 
-	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned)
+	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned,
+	  				prf_kzg, kzg_all_com_ch)
 	  		};
 
 	  		//7. prepare the other data.
@@ -3734,7 +3755,7 @@ set; exit(0) before Phase 2.");
 	let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver2.poseidon_config);
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
 		nova2.gen_next_folded().unwrap();
-	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w, nova2_prf_kzg, nova2_kzg_all_com_ch) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1, &driver2.poseidon_config);
+	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1);
 	drop(nova2_W_i1);
 	drop(qa_pp_d2_guard);
 	log_perf(job_id, log_level, &format!("PERF 1006: Job Step 4: cyclefold and cyclepair IVC PROVE STEPS (folding) DONE. num_steps: {}", _num_steps), &mut gt1);
@@ -3753,16 +3774,17 @@ set; exit(0) before Phase 2.");
 			eval_w_e1: prf_kzg.eval,
 			mainres_hash: mainres_hash,
 
-			kzg_all_com_ch2: nova2_kzg_all_com_ch,
-			eval_w_e2: nova2_prf_kzg.eval,
+			kzg_all_com_ch2: C1::ScalarField::zero(), //T934: set_kzg_ch
+			eval_w_e2: C1::ScalarField::zero(),
 
 			comE2: nova2_U_i1.vec_inst[0].cmE.clone(),
 			comW2: nova2_U_i1.vec_inst[0].cmW.clone(),
 			comF2: nova2_U_i1.vec_inst[0].cmF.clone(),
+			kzg_all_com1: com_all_w,
 
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1,
 	};
-	let (snark_proof_cp, g16_vk_cp) = {
+	let (snark_proof_cp, g16_vk_cp, nova2_prf_kzg) = {
 		// ------------- The following is the CRITICAL SECTION -------
 		let _guard_cp = {
 			let (lock, cvar) = &*semaphore_cp;
@@ -3774,7 +3796,7 @@ set; exit(0) before Phase 2.");
 			SemaphoreGuard { lock: semaphore_cp.clone() }
 		};
 
-		let cp_circuit = CyclePairCircuit
+		let mut cp_circuit = CyclePairCircuit
 			::from_nova(nova2,
 				cyclepair_inputs, qa_nizk_vkey_hash.clone(),
 				driver2.poseidon_config.clone(),
@@ -3822,8 +3844,22 @@ set; exit(0) before Phase 2.");
 			};
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 6: setup Groth16 for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
+		//T934 D5 Stage 2: D_2, r' = H(tag, C_W'E', D_2), its opening.
+		let all_w = cp_circuit.circ2.main_circ.all_w();
+		let kappa = C1::ScalarField::rand(&mut rng);
+		let d_2 = S::cp_commit(g16_pk, &all_w, kappa);
+		let r_p = kzg_ch(&driver2.poseidon_config, KZG_CH_TAG_S2,
+			nova2_com_all_w, d_2);
+		let nova2_prf_kzg = CS1E::prove_with_challenge(
+			&driver2.nova_param.0.cs1e_pp, r_p, &all_w,
+			&C1::ScalarField::zero(), None).expect("kzg prf err");
+		cp_circuit.set_kzg_ch(r_p, &all_w);
+		drop(all_w);
+		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 6b: KZG open + D_2. MEM: {} GB.", get_mem_usage()), &mut gt1);
+
 		//10. produce the groth16 snark
-		let snark_proof_cp: S::Proof = S::prove(&g16_pk, cp_circuit, &mut rng)
+		let snark_proof_cp: S::Proof = S::prove_cp(g16_pk, cp_circuit,
+			kappa, Some(d_2), &mut rng)
 			.map_err(|e| Error::Other(e.to_string())).unwrap();
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 7: Generate Groth16 proof. MEM: {} GB.",  get_mem_usage()), &mut gt1);
 
@@ -3838,17 +3874,15 @@ set; exit(0) before Phase 2.");
 			let _ = qa_pp_d2.write().unwrap().take();
 		}
 
-		(snark_proof_cp, g16_vk_cp_owned)
+		(snark_proof_cp, g16_vk_cp_owned, nova2_prf_kzg)
 	};
 	drop(guard_outer);
 
 	batch_prf.add_part2(
 		com_all_w.clone(),
-		kzg_all_com_ch.clone(),
 		prf_kzg.clone(),
 
 		nova2_com_all_w.clone(),
-		nova2_kzg_all_com_ch,
 		nova2_prf_kzg,
 
 		nova2_U_i1.vec_inst[0].cmE.clone(),

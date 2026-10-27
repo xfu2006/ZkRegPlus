@@ -41,7 +41,7 @@ use crate::folding::foldpot::{
 		QaNizkVerifierParams, prove_qa_nizk_fast,
 		QaNizkProof, verify_qa_nizk},
 	sigma_ir1cs::{LookupTableTwoCol},
-	decider_eth_circuit_super::{CircPubInput},
+	decider_eth_circuit_super::{CircPubInput, kzg_ch, KZG_CH_TAG_S1, KZG_CH_TAG_S2},
 	from_field::{AffineFromField},
 	utils::{B_DEBUG,get_mem_usage_mb,mb2s},
 };
@@ -120,6 +120,31 @@ where
 	_lk: PhantomData<LK>,
 	_s: PhantomData<S>,
 	_c: PhantomData<CS1E>,
+}
+
+/// T934: commit-and-prove SNARK. D = MSM(d_query, a_S) + kappa [delta]_1
+/// commits the committed wires a_S under its own pairing base (Mirage).
+pub trait CpSnark<E: Pairing>: SNARK<E::ScalarField> {
+	fn cp_commit(pk: &Self::ProvingKey, a_s: &[E::ScalarField], kappa: E::ScalarField) -> E::G1;
+	fn prove_cp<C: ark_relations::r1cs::ConstraintSynthesizer<E::ScalarField>, R: RngCore>(
+		pk: &Self::ProvingKey, circ: C, kappa: E::ScalarField, d_pre: Option<E::G1>, rng: &mut R)
+		-> Result<Self::Proof, Self::Error>;
+	fn commitment(prf: &Self::Proof) -> E::G1;
+}
+
+impl<E: Pairing> CpSnark<E> for ark_groth16::Groth16<E> {
+	fn cp_commit(pk: &Self::ProvingKey, a_s: &[E::ScalarField], kappa: E::ScalarField) -> E::G1 {
+		ark_groth16::Groth16::<E>::cp_commit(pk, a_s, kappa)
+	}
+	fn prove_cp<C: ark_relations::r1cs::ConstraintSynthesizer<E::ScalarField>, R: RngCore>(
+		pk: &Self::ProvingKey, circ: C, kappa: E::ScalarField, d_pre: Option<E::G1>, rng: &mut R)
+		-> Result<Self::Proof, Self::Error> {
+		use ark_std::{UniformRand, Zero};
+		assert!(pk.n_commit == 0 || !kappa.is_zero(), "T934: kappa = 0");
+		let (r, s) = (E::ScalarField::rand(rng), E::ScalarField::rand(rng));
+		Self::create_proof_with_reduction(circ, pk, r, s, kappa, d_pre)
+	}
+	fn commitment(prf: &Self::Proof) -> E::G1 { prf.d.into() }
 }
 
 /// prover key
@@ -234,7 +259,7 @@ pub struct IndividualProof<E:Pairing>{
 #[derive(Clone,Debug)]
 /// Global Proof: which proves the BatchClaim <kzg_all_words, kzg_length>
 /// that all words defined by the above are ``malware free".
-/// Total: 16G1 + 1G2 +  7F
+/// Total: 20G1 + 2G2 + 7F
 pub struct BatchProof<E:Pairing, S: SNARK<E::ScalarField>>{
 	/// the vector commitment to vec_v
 	pub vcom_vec_v: E::G1,
@@ -261,16 +286,12 @@ pub struct BatchProof<E:Pairing, S: SNARK<E::ScalarField>>{
 
 	/// kzg of all w and e for circ1
 	pub kzg_all_com1: Option<E::G1>,
-	// for the decider circuit (circ1 part), will be part of i/o of snark prf
-	pub kzg_all_com_ch1: Option<E::ScalarField>,
 	/// proof kzg_all_com1
 	/// the corresponding proof (it contains eval_w_e1)
 	pub kzg_all_com_prf1: Option<kzg::Proof<E::G1>>,
 
 	/// kzg of all w and e for circ2
 	pub kzg_all_com2: Option<E::G1>,
-	// for the decider circuit (circ2 part), will be part of i/o of snark prf
-	pub kzg_all_com_ch2: Option<E::ScalarField>,
 	/// the corresponding proof (note it consists of the eval)
 	pub kzg_all_com_prf2: Option<kzg::Proof<E::G1>>,
 
@@ -297,11 +318,9 @@ pub struct BatchProof<E:Pairing, S: SNARK<E::ScalarField>>{
 impl <E:Pairing, S: SNARK<E::ScalarField>> BatchProof<E,S>{
 	pub fn add_part2(&mut self, 
 		kzg_all_com1: E::G1,
-		kzg_all_com_ch1: E::ScalarField,
 		kzg_all_com_prf1: kzg::Proof<E::G1>,
 
 		kzg_all_com2: E::G1,
-		kzg_all_com_ch2: E::ScalarField,
 		kzg_all_com_prf2: kzg::Proof<E::G1>,
 
 		comE2: E::G1,
@@ -314,11 +333,9 @@ impl <E:Pairing, S: SNARK<E::ScalarField>> BatchProof<E,S>{
 		mainres_hash: E::ScalarField
 	){
 		self.kzg_all_com1 = Some(kzg_all_com1);
-		self.kzg_all_com_ch1 = Some(kzg_all_com_ch1);
 		self.kzg_all_com_prf1 = Some(kzg_all_com_prf1);
 
 		self.kzg_all_com2 = Some(kzg_all_com2);
-		self.kzg_all_com_ch2 = Some(kzg_all_com_ch2);
 		self.kzg_all_com_prf2 = Some(kzg_all_com_prf2);
 
 		self.comE2 = Some(comE2);
@@ -385,9 +402,9 @@ impl<E: Pairing, S: SNARK<E::ScalarField>> BatchProof<E, S>
 	/// Print each field's element kinds + compressed bytes, then the
 	/// element totals; return the total byte size. Option (part-2)
 	/// fields print Some/None and count only when present. Each Groth16
-	/// S::Proof is a known shape (2 G1 + 1 G2): its bytes come from
-	/// serialized_size (exact for any S) and 2 G1 + 1 G2 fold into the
-	/// element tally.
+	/// S::Proof is a known shape (3 G1 + 1 G2 with T934's D): its bytes
+	/// come from serialized_size (exact for any S) and 3 G1 + 1 G2 fold
+	/// into the element tally.
 	pub fn print_size(&self) -> usize{
 		emit_stdout("==== BatchProof ====".to_string());
 		let mut a = SizeAcc::new();
@@ -403,15 +420,11 @@ impl<E: Pairing, S: SNARK<E::ScalarField>> BatchProof<E, S>
 		// part 2 (Option) -- present-aware
 		match &self.kzg_all_com1{ Some(x)=>a.g1("kzg_all_com1", x),
 			None=>emit_stdout("  kzg_all_com1          : None".to_string()) }
-		match &self.kzg_all_com_ch1{ Some(x)=>a.fr("kzg_all_com_ch1", x),
-			None=>emit_stdout("  kzg_all_com_ch1       : None".to_string()) }
 		match &self.kzg_all_com_prf1{
 			Some(p)=>a.kzg_like("kzg_all_com_prf1", &p.eval, &p.proof),
 			None=>emit_stdout("  kzg_all_com_prf1      : None".to_string()) }
 		match &self.kzg_all_com2{ Some(x)=>a.g1("kzg_all_com2", x),
 			None=>emit_stdout("  kzg_all_com2          : None".to_string()) }
-		match &self.kzg_all_com_ch2{ Some(x)=>a.fr("kzg_all_com_ch2", x),
-			None=>emit_stdout("  kzg_all_com_ch2       : None".to_string()) }
 		match &self.kzg_all_com_prf2{
 			Some(p)=>a.kzg_like("kzg_all_com_prf2", &p.eval, &p.proof),
 			None=>emit_stdout("  kzg_all_com_prf2      : None".to_string()) }
@@ -423,15 +436,15 @@ impl<E: Pairing, S: SNARK<E::ScalarField>> BatchProof<E, S>
 			None=>emit_stdout("  comF2                 : None".to_string()) }
 		match &self.qa_nizk_prf2{ Some(p)=>a.g1("qa_nizk_prf2.prf", &p.prf),
 			None=>emit_stdout("  qa_nizk_prf2          : None".to_string()) }
-		// Groth16 proofs: bytes via serialized_size, 2 G1 + 1 G2 each
+		// Groth16 proofs: bytes via serialized_size, 3 G1 + 1 G2 each
 		for (name, sp) in [("snark_proof_main", &self.snark_proof_main),
 			("snark_proof_cp", &self.snark_proof_cp)]{
 			match sp{
 				Some(p)=>{
 					let b = p.serialized_size(Compress::Yes);
-					a.n_g1 += 2; a.n_g2 += 1; a.bytes += b;
+					a.n_g1 += 3; a.n_g2 += 1; a.bytes += b;
 					emit_stdout(format!(
-						"  {:<22}: Groth16 2 G1+1 G2: {:>5} B", name, b));
+						"  {:<22}: Groth16 3 G1+1 G2: {:>5} B", name, b));
 				},
 				None=>emit_stdout(format!("  {:<22}: None", name)),
 			}
@@ -511,7 +524,7 @@ impl <'a,
 	C1:CurveGroup<ScalarField=F> + ToConstraintField<CF2<C1>>, 
 	F:PrimeField + Absorb + ColEle, 
 	LK: LookupTableTwoCol<E::ScalarField>, 
-	S: SNARK<F>, 
+	S: CpSnark<E>,
 	CS1E,
 	const H: bool> 
 BatchProcessor <E,LK,S,CS1E,H> 
@@ -1080,10 +1093,8 @@ where
 			prf_qa_nizk, ch, rc, agg_kzg_prf,
 
 			kzg_all_com1: None,
-			kzg_all_com_ch1: None,
 			kzg_all_com_prf1: None,
 			kzg_all_com2: None,
-			kzg_all_com_ch2: None,
 			kzg_all_com_prf2: None,
 			comE2: None,
 			comW2: None,
@@ -1224,10 +1235,17 @@ where
 			let mh = prf.mainres_hash.map(|x| format!("{}", x))
 				.unwrap_or_else(|| "NA".to_string());
 
+			//T934 D6: r_2 / r' = H(tag, C_WE / C_W'E', D) with D read
+			//from the matching snark proof.
+			let r2 = kzg_ch(poseidon_config, KZG_CH_TAG_S1, prf.kzg_all_com1.expect("kzg1 empty"),
+				S::commitment(prf.snark_proof_main.as_ref().expect("snark main empty")));
+			let rp = kzg_ch(poseidon_config, KZG_CH_TAG_S2, prf.kzg_all_com2.expect("kzg2 empty"),
+				S::commitment(prf.snark_proof_cp.as_ref().expect("snark cp empty")));
+
 			//1. check kzg_all_com1
 			let c1 = CS1E::verify_with_challenge(
 				&vkey.kzg_driver1.clone().expect("driver 1 kzg ver key null!"),
-				*prf.kzg_all_com_ch1.as_ref().expect("com_ch1 empty"),
+				r2,
 				&prf.kzg_all_com1.expect("kzg1 empty"),
 				&prf.kzg_all_com_prf1.as_ref().expect("prf1 empty")).is_ok();
 			if !c1 {emit(ERR, "cs1e kzg_all_ocm1 verif fails".to_string());}
@@ -1235,7 +1253,7 @@ where
 			//2. check kzg_all_com2
 			let c2 = CS1E::verify_with_challenge(
 				&vkey.kzg_driver2.clone().expect("driver2 kzg ver null!"),
-				*prf.kzg_all_com_ch2.as_ref().expect("com_ch2 empty"),
+				rp,
 				&prf.kzg_all_com2.expect("kzg2 empty"),
 				&prf.kzg_all_com_prf2.as_ref().expect("prf2 empty")).is_ok();
 			if !c2 {emit(ERR, "cs1e kzg_all_com2 res2 fails".to_string());}
@@ -1280,20 +1298,19 @@ where
 				//if prf.hash_cmF == the disclosed decider z_n[0].
 				hash_cmF1: prf.hash_cmF,
 				kzg_sum1: kzg_sum1,
-				kzg_all_com_ch1: prf.kzg_all_com_ch1.clone()
-					.expect("com_ch1 null"),
+				kzg_all_com_ch1: r2,
 				eval_w_e1: prf.kzg_all_com_prf1.clone()
 					.expect("eval_w_e1 null").eval,
 				mainres_hash: prf.mainres_hash.unwrap(),
 
-				kzg_all_com_ch2: prf.kzg_all_com_ch2.clone()
-					.expect("com_ch2 null"),
+				kzg_all_com_ch2: rp,
 				eval_w_e2: prf.kzg_all_com_prf2.clone()
 					.expect("eval_w_e2 null").eval,
 
 				comE2: prf.comE2.expect("com_e2 null").clone(),
 				comW2: prf.comW2.expect("com_e2 null").clone(),
 				comF2: prf.comF2.expect("com_e2 null").clone(),
+				kzg_all_com1: prf.kzg_all_com1.expect("kzg1 empty"),
 
 				qa_nizk_vkey_hash: nova1_qa_nizk_vkey_hash
 					.expect("nova1 qanizk vkey hash empty!"),
@@ -1931,8 +1948,8 @@ mod tests_batch_proc {
 			prf_qa_nizk: super::QaNizkProof{ prf: g },
 			ch: Fr::zero(), rc: Fr::zero(),
 			agg_kzg_prf: kzg(),
-			kzg_all_com1: None, kzg_all_com_ch1: None, kzg_all_com_prf1: None,
-			kzg_all_com2: None, kzg_all_com_ch2: None, kzg_all_com_prf2: None,
+			kzg_all_com1: None, kzg_all_com_prf1: None,
+			kzg_all_com2: None, kzg_all_com_prf2: None,
 			comE2: None, comW2: None, comF2: None, qa_nizk_prf2: None,
 			snark_proof_main: None, snark_proof_cp: None, mainres_hash: None,
 			hash_cmF: Fr::zero(),
@@ -1940,8 +1957,8 @@ mod tests_batch_proc {
 		// Groth16 Proof has no Default; build from affine generators.
 		let a = G1::generator().into_affine();
 		let b = ark_bn254::G2Projective::generator().into_affine();
-		let g16 = ark_groth16::Proof::<Bn254>{ a, b, c: a };
-		p.add_part2(g, Fr::zero(), kzg(), g, Fr::zero(), kzg(),
+		let g16 = ark_groth16::Proof::<Bn254>{ a, b, c: a, d: a };
+		p.add_part2(g, kzg(), g, kzg(),
 			g, g, g, super::QaNizkProof{ prf: g },
 			g16.clone(), g16, Fr::zero());
 		let reported = p.print_size();
@@ -1958,14 +1975,10 @@ mod tests_batch_proc {
 		p.agg_kzg_prf.proof.serialize_compressed(&mut buf).unwrap();
 		p.kzg_all_com1.as_ref().unwrap()
 			.serialize_compressed(&mut buf).unwrap();
-		p.kzg_all_com_ch1.as_ref().unwrap()
-			.serialize_compressed(&mut buf).unwrap();
 		{ let pr = p.kzg_all_com_prf1.as_ref().unwrap();
 			pr.eval.serialize_compressed(&mut buf).unwrap();
 			pr.proof.serialize_compressed(&mut buf).unwrap(); }
 		p.kzg_all_com2.as_ref().unwrap()
-			.serialize_compressed(&mut buf).unwrap();
-		p.kzg_all_com_ch2.as_ref().unwrap()
 			.serialize_compressed(&mut buf).unwrap();
 		{ let pr = p.kzg_all_com_prf2.as_ref().unwrap();
 			pr.eval.serialize_compressed(&mut buf).unwrap();
@@ -2294,5 +2307,115 @@ mod tests_batch_proc {
 				}
 			}
 		}
+	}
+
+	/// T934-6 toy: x public, w = x^2 first (so the range starts at 1),
+	/// then a_i (committed when `commit`) and b_i = a_i (a_i + x). mode 1
+	/// adds an unconstrained committed wire, mode 2 uses a_0, a_1 only
+	/// as a sum: both must trip the R9 setup assert.
+	struct T934Toy { commit: bool, mode: u8 }
+	impl ark_relations::r1cs::ConstraintSynthesizer<Fr> for T934Toy {
+		fn generate_constraints(self, cs: ark_relations::r1cs::ConstraintSystemRef<Fr>)
+			-> ark_relations::r1cs::Result<()> {
+			use ark_relations::{lc, r1cs::Variable};
+			let (xv, av) = (Fr::from(3u64), (1..=4u64).map(Fr::from).collect::<Vec<_>>());
+			let x = cs.new_input_variable(|| Ok(xv))?;
+			let w = cs.new_witness_variable(|| Ok(xv * xv))?;
+			cs.enforce_constraint(lc!() + x, lc!() + x, lc!() + w)?;
+			let s0 = cs.num_witness_variables();
+			let a = av.iter().map(|v| cs.new_witness_variable(|| Ok(*v)))
+				.collect::<Result<Vec<Variable>, _>>()?;
+			if self.mode == 1 { cs.new_witness_variable(|| Ok(xv))?; }
+			if self.commit { cs.set_committed(s0, cs.num_witness_variables() - s0); }
+			let k = if self.mode == 2 {
+				let v = cs.new_witness_variable(|| Ok(av[0] + av[1]))?;
+				cs.enforce_constraint(lc!() + a[0] + a[1], lc!() + Variable::One, lc!() + v)?;
+				2 } else { 0 };
+			for i in k..a.len() {
+				let b = cs.new_witness_variable(|| Ok(av[i] * (av[i] + xv)))?;
+				cs.enforce_constraint(lc!() + a[i], lc!() + a[i] + x, lc!() + b)?;
+			}
+			Ok(())
+		}
+	}
+	type G16 = Groth16<Bn254>;
+
+	/// T934-6: m = 0 is stock Groth16. The hex is the (A, B, C) that
+	/// registry ark-groth16 0.4.0 gives for this toy under test_rng.
+	#[test]
+	fn t934_fork_m0_matches_stock(){
+		use ark_serialize::CanonicalSerialize;
+		use ark_snark::SNARK;
+		use ark_ec::AffineRepr;
+		let mut rng = test_rng();
+		let toy = || T934Toy{ commit: false, mode: 0 };
+		let pk = G16::generate_random_parameters_with_reduction(toy(), &mut rng).unwrap();
+		let p = G16::create_random_proof_with_reduction(toy(), &pk, &mut rng).unwrap();
+		let mut buf = vec![];
+		(p.a, p.b, p.c).serialize_compressed(&mut buf).unwrap();
+		assert_eq!(buf.iter().map(|b| format!("{:02x}", b)).collect::<String>(),
+			"3acfa678f25ab9d770350edb0d050c714919b0849ec0d2a6e780e0f305000511e496af15d3d8e19e83e0773dc05d2a0bd7d6e74b67c83fbdba6d90ebce94e1230bdfd3cd3cb27443c916b22b940c617655fed8e80c3cd62b32d3c560b36d07190f09558f5bb895ce0caf2db65a6df1e1fdfb3b06d36995dd239f458356015eab");
+		assert!(p.d.is_zero() && pk.n_commit == 0 && G16::verify(&pk.vk, &[Fr::from(3u64)], &p).unwrap());
+	}
+
+	/// T934-6: D binds, hides, cannot absorb a public-basis shift, d_pre
+	/// reproduces the internal D, and setup / prover asserts fire.
+	#[test]
+	fn t934_fork_cp(){
+		use ark_snark::SNARK;
+		use ark_ec::CurveGroup;
+		use ark_std::One;
+		let mut rng = test_rng();
+		let x = Fr::from(3u64);
+		let toy = |mode| T934Toy{ commit: true, mode };
+		let pk = G16::generate_random_parameters_with_reduction(toy(0), &mut rng).unwrap();
+		assert_eq!((pk.commit_start, pk.n_commit, pk.d_query.len()), (1, 4, 4));
+		let v = |p: &ark_groth16::Proof<Bn254>, x: Fr| G16::verify(&pk.vk, &[x], p).unwrap();
+		let mut prove = || G16::create_random_proof_with_reduction(toy(0), &pk, &mut rng).unwrap();
+		let (p1, p2) = (prove(), prove());
+		assert!(v(&p1, x) && v(&p2, x) && p1.d != p2.d, "T934-6: honest / hiding");
+		let mut t = p1.clone();
+		t.d = (t.d + G1::generator()).into_affine();
+		assert!(!v(&t, x), "T934-6: tampered D accepted");
+		t.d = (p1.d + pk.vk.gamma_abc_g1[1]).into_affine();
+		assert!(!v(&t, x - Fr::one()), "T934-6: D shifted by gamma_abc_g1[1] accepted");
+		let (r, s, kappa) = (Fr::rand(&mut rng), Fr::rand(&mut rng), Fr::rand(&mut rng));
+		let d = G16::cp_commit(&pk, &(1..=4u64).map(Fr::from).collect::<Vec<_>>(), kappa);
+		let q = G16::create_proof_with_reduction(toy(0), &pk, r, s, kappa, None).unwrap();
+		assert!(q == G16::create_proof_with_reduction(toy(0), &pk, r, s, kappa, Some(d)).unwrap()
+			&& v(&q, x), "T934-6: d_pre != internal D");
+		let d2 = G16::cp_commit(&pk, &(2..=5u64).map(Fr::from).collect::<Vec<_>>(), kappa);
+		assert!(!v(&G16::create_proof_with_reduction(toy(0), &pk, r, s, kappa, Some(d2)).unwrap(), x),
+			"T934-6: D over another a_S accepted");
+		let panics = |f: &dyn Fn(), msg: &str| std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+			.err().map_or(false, |e| e.downcast_ref::<String>().map(String::as_str)
+			.or(e.downcast_ref::<&str>().copied()).map_or(false, |s| s.contains(msg)));
+		assert!(panics(&|| { let _ = G16::create_random_proof_with_reduction(
+			T934Toy{ commit: false, mode: 0 }, &pk, &mut test_rng()); }, "committed range"),
+			"T934-6: prover took a circuit whose range != pk");
+		for m in [1, 2] {
+			assert!(panics(&|| { let _ = G16::generate_random_parameters_with_reduction(toy(m), &mut test_rng()); }, "R9"),
+				"T934-6: R9 setup assert missed mode {}", m);
+		}
+	}
+
+	/// T934 key IO (A2): write / read round trip with the T934 fields, m = 4 and m = 0.
+	#[test]
+	fn t934_key_io(){
+		use ark_snark::SNARK;
+		use crate::folding::foldpot::utils::{write_g16_optimized_bn254, read_g16_optimized_bn254};
+		let dir = std::env::temp_dir().join(format!("t934_key_io_{}", std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		for commit in [true, false] {
+			let (mut rng, toy) = (test_rng(), || T934Toy{ commit, mode: 0 });
+			let pk = G16::generate_random_parameters_with_reduction(toy(), &mut rng).unwrap();
+			let path = dir.join(format!("g16_{}.key", commit));
+			write_g16_optimized_bn254(&path, &pk, &pk.vk);
+			let (pk2, vk2) = read_g16_optimized_bn254(&path);
+			let p = G16::create_random_proof_with_reduction(toy(), &pk2, &mut rng).unwrap();
+			assert!(pk2 == pk && vk2 == pk.vk && G16::verify(&vk2, &[Fr::from(3u64)], &p).unwrap(),
+				"T934: key IO round trip, commit = {}", commit);
+		}
+		std::fs::remove_dir_all(&dir).unwrap();
 	}
 }

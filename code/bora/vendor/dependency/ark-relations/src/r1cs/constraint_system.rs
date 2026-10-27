@@ -54,6 +54,8 @@ pub struct ConstraintSystem<F: Field> {
     pub num_constraints: usize,
     /// The number of linear combinations
     pub num_linear_combinations: usize,
+    /// T934: the committed witness range `[s, s + m)` as `(s, m)`, if any.
+    pub committed: Option<(usize, usize)>,
 
     /// The parameter we aim to minimize in this constraint system (either the
     /// number of constraints or their total weight).
@@ -144,6 +146,7 @@ impl<F: Field> ConstraintSystem<F> {
             num_witness_variables: 0,
             num_constraints: 0,
             num_linear_combinations: 0,
+            committed: None,
             a_constraints: Vec::new(),
             b_constraints: Vec::new(),
             c_constraints: Vec::new(),
@@ -1361,6 +1364,15 @@ impl<F: Field> ConstraintSystemRef<F> {
     pub fn num_witness_variables(&self) -> usize {
         self.inner()
             .map_or(0, |cs| cs.borrow().num_witness_variables)
+    }
+
+    /// T934: record the committed witness range `[s, s + m)`; one per system.
+    pub fn set_committed(&self, s: usize, m: usize) {
+        if let Some(cs) = self.inner() {
+            let c = &mut cs.borrow_mut().committed;
+            assert!(c.is_none(), "T934: a second committed range");
+            *c = Some((s, m));
+        }
     }
 
     /// Check whether this constraint system aims to optimize weight,

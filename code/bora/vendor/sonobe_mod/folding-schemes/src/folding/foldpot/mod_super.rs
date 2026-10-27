@@ -56,7 +56,6 @@ use crate::{
 		cyclepair::{CyclePairCircuit,fold_cyclepair_circuit},
 		qa_nizk::{QaNizkProverParams,QaNizkVerifierParams,SparseMatrix,setup_qa_nizk,prove_qa_nizk_fast},
 		sigma_cyclepair::{compute_hc},
-		decider_eth_circuit_super::{KZGChallengesGadgetSuper},
 		utils::{B_DEBUG, B_DEBUG2, B_DEBUG3},
 		utils::{set_gadget_sat, gadget_sat_check}
 	}
@@ -415,9 +414,8 @@ where
 
 	/// generate KZG commitment to all W||E from all witness, and also
 	/// the qa_nizk proof
-	/// return (com_all_w, r_all_w, prf_qa_nizk, prf_kzg, kzg_challenge) 
-	/// note proof kzg contains
-	/// the evaluation point (which is the Fiat shamir of U1 and com_all).
+	/// return (com_all_w, prf_qa_nizk, r_all_w). T934 D5: the KZG
+	/// opening moved to the driver, after D (r_2 = H(tag, com, D)).
 	/// Note the r_all_w is the random used. T933 s9 B3: it is the pair
 	/// (o_1, o_2), appended after W || E, so (com_all_w, e_2) stay
 	/// jointly uniform.
@@ -426,9 +424,8 @@ where
 			pkey: &QaNizkProverParams<E>, 
 			comkey: &CS1E::ProverParams, 
 			_vkey: &QaNizkVerifierParams<E>, 
-			Ui1: &CommittedInstanceFoldPotSuper<C>, 
-			poseidon_config: &PoseidonConfig<C::ScalarField>) 
-	-> (C, C, (C::ScalarField, C::ScalarField), CS1E::Proof, C::ScalarField)
+			Ui1: &CommittedInstanceFoldPotSuper<C>)
+	-> (C, C, (C::ScalarField, C::ScalarField))
 where
     C: CurveGroup,
     C::ScalarField: PrimeField,
@@ -455,9 +452,6 @@ where
 		all_w.push(r_all_w2);
 		let zero = C::ScalarField::zero();
 		let com_all = CS1E::commit(&comkey, &all_w, &zero).expect("err in cmt");
-		let kzg_all_com_ch = KZGChallengesGadgetSuper::<C>
-			::get_challenge_native(poseidon_config, Ui1.clone(), com_all);
-
 
 		if B_DEBUG {
 			use crate::folding::foldpot::qa_nizk::verify_qa_nizk;
@@ -471,13 +465,7 @@ where
 			}
 			assert!(verify_qa_nizk(&vec_x, &qa_prf, &_vkey), "qa_nizk failed");
 		}
-
-		let prf_kzg = CS1E::prove_with_challenge(&comkey,
-			kzg_all_com_ch,
-			&all_w,
-			&zero, None).expect("kzg prf err");
-
-		(com_all, prf, (r_all_w, r_all_w2), prf_kzg, kzg_all_com_ch)
+		(com_all, prf, (r_all_w, r_all_w2))
 	}
 
 

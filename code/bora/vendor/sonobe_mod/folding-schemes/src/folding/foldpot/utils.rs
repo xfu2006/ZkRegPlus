@@ -864,6 +864,9 @@ pub fn deserialize_affines_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affin
     v
 }
 
+/// T934 ruling F: g16 key file format, first item of .meta.
+pub const G16_KEY_VERSION: u32 = 2;
+
 pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254>, vk: &ark_groth16::VerifyingKey<Bn254>) {
 	let mut gt1 = GTimer::new();
     let b_debug = B_DEBUG;
@@ -872,6 +875,7 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     let meta_path = format!("{}.meta", path_str);
     let file = File::create(&meta_path).expect("create meta err");
     let mut writer = BufWriter::new(file);
+    G16_KEY_VERSION.serialize_compressed(&mut writer).expect("ser version");
     vk.alpha_g1.serialize_compressed(&mut writer).expect("ser vk.alpha_g1");
     vk.beta_g2.serialize_compressed(&mut writer).expect("ser vk.beta_g2");
     vk.gamma_g2.serialize_compressed(&mut writer).expect("ser vk.gamma_g2");
@@ -880,6 +884,8 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     pk.vk.alpha_g1.serialize_compressed(&mut writer).expect("ser pk.vk.alpha_g1");
     pk.beta_g1.serialize_compressed(&mut writer).expect("ser pk.beta_g1");
     pk.delta_g1.serialize_compressed(&mut writer).expect("ser pk.delta_g1");
+    (vk.delta_d_g2, pk.delta_d_g1, pk.commit_start, pk.n_commit)
+        .serialize_compressed(&mut writer).expect("ser T934 fields");
     std::io::Write::flush(&mut writer).expect("flush err");
 
     drop(writer);
@@ -889,6 +895,7 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     serialize_affines_compressed_raw(&pk.b_g2_query, &format!("{}_pk_b_g2_query", path_str));
     serialize_affines_compressed_raw(&pk.h_query, &format!("{}_pk_h_query", path_str));
     serialize_affines_compressed_raw(&pk.l_query, &format!("{}_pk_l_query", path_str));
+    serialize_affines_compressed_raw(&pk.d_query, &format!("{}_pk_d_query", path_str));
 
     // Calculate total size
     let mut total_size = metadata(&meta_path).map(|m| m.len()).unwrap_or(0);
@@ -899,6 +906,7 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
         format!("{}_pk_b_g2_query", path_str),
         format!("{}_pk_h_query", path_str),
         format!("{}_pk_l_query", path_str),
+        format!("{}_pk_d_query", path_str),
     ];
     for prefix in prefixes {
         total_size += metadata(&format!("{}_compressed.data", prefix)).map(|m| m.len()).unwrap_or(0);
@@ -919,8 +927,10 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
     let path_str = path.to_str().unwrap();
 
     let meta_path = format!("{}.meta", path_str);
-    let file = File::open(&meta_path).expect("open meta err");
+    let stale = || format!("T934: g16 key {} missing or stale (format != {}); delete the cache dir {:?} and rerun", meta_path, G16_KEY_VERSION, path.parent());
+    let file = File::open(&meta_path).unwrap_or_else(|_| panic!("{}", stale()));
     let mut reader = BufReader::new(file);
+    assert_eq!(u32::deserialize_compressed(&mut reader).ok(), Some(G16_KEY_VERSION), "{}", stale());
     
     let vk_alpha_g1 = <ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>::deserialize_compressed(&mut reader).expect("deser vk.alpha_g1");
     let vk_beta_g2 = <ark_ec::short_weierstrass::Affine<ark_bn254::g2::Config>>::deserialize_compressed(&mut reader).expect("deser vk.beta_g2");
@@ -930,6 +940,8 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
     let _pk_vk_alpha_g1 = <ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>::deserialize_compressed(&mut reader).expect("deser pk.vk.alpha_g1");
     let pk_beta_g1 = <ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>::deserialize_compressed(&mut reader).expect("deser pk.beta_g1");
     let pk_delta_g1 = <ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>::deserialize_compressed(&mut reader).expect("deser pk.delta_g1");
+    let (vk_delta_d_g2, pk_delta_d_g1, commit_start, n_commit) =
+        <(ark_bn254::G2Affine, ark_bn254::G1Affine, usize, usize)>::deserialize_compressed(&mut reader).expect("deser T934 fields");
 
     let vk_gamma_abc_g1 = deserialize_affines_compressed_raw(&format!("{}_vk_gamma_abc_g1", path_str));
     let pk_a_query = deserialize_affines_compressed_raw(&format!("{}_pk_a_query", path_str));
@@ -937,6 +949,10 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
     let pk_b_g2_query = deserialize_affines_compressed_raw(&format!("{}_pk_b_g2_query", path_str));
     let pk_h_query = deserialize_affines_compressed_raw(&format!("{}_pk_h_query", path_str));
     let pk_l_query = deserialize_affines_compressed_raw(&format!("{}_pk_l_query", path_str));
+    let dq = format!("{}_pk_d_query", path_str);
+    assert!(Path::new(&format!("{}_compressed.data", dq)).exists(), "{}", stale());
+    let pk_d_query = deserialize_affines_compressed_raw(&dq);
+    assert_eq!(pk_d_query.len(), n_commit, "{}", stale());
 
     let vk = ark_groth16::VerifyingKey {
         alpha_g1: vk_alpha_g1,
@@ -944,6 +960,7 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
         gamma_g2: vk_gamma_g2,
         delta_g2: vk_delta_g2,
         gamma_abc_g1: vk_gamma_abc_g1,
+        delta_d_g2: vk_delta_d_g2,
     };
 
     let pk = ark_groth16::ProvingKey {
@@ -955,6 +972,10 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
         b_g2_query: pk_b_g2_query,
         h_query: pk_h_query,
         l_query: pk_l_query,
+        delta_d_g1: pk_delta_d_g1,
+        d_query: pk_d_query,
+        commit_start,
+        n_commit,
     };
 
     // Calculate total size
@@ -966,6 +987,7 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
         format!("{}_pk_b_g2_query", path_str),
         format!("{}_pk_h_query", path_str),
         format!("{}_pk_l_query", path_str),
+        format!("{}_pk_d_query", path_str),
     ];
     for prefix in prefixes {
         total_size += metadata(&format!("{}_compressed.data", prefix)).map(|m| m.len()).unwrap_or(0);

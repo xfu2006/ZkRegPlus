@@ -44,6 +44,7 @@ use folding_schemes::{
 			sigma_ir1cs::{LookupTableTwoCol_Inst,SigmaIR1CS_Inst,WordInfo,SigmaIR1CS,LookupTableTwoCol},
 			from_field::{AffineFromField},
 			driver::{foldpot_main, FoldPotJob},
+			batch_proc::CpSnark,
 		}
 	}
 };
@@ -1497,7 +1498,7 @@ where
 	// enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
 	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
-	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
+	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField> + CpSnark<E>,
 	<C1 as CurveGroup>::BaseField: PrimeField,
 	<C2 as CurveGroup>::BaseField: PrimeField,
 	<C1 as Group>::ScalarField: Absorb,
@@ -1627,7 +1628,7 @@ where
 	// enforce that the CS2 is Pedersen commitment scheme, since we're at Ethereum's EVM decider
 	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
-	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
+	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField> + CpSnark<E>,
 	<C1 as CurveGroup>::BaseField: PrimeField,
 	<C2 as CurveGroup>::BaseField: PrimeField,
 	<C1 as Group>::ScalarField: Absorb,
@@ -1997,7 +1998,7 @@ where
 	<CS1 as CommitmentScheme<C1>>::VerifierParams: Send + Sync,
 	CS2: CommitmentScheme<C2, ProverParams = PedersenParams<C2>, VerifierParams = PedersenParams<C2>>,
 	<CS2 as CommitmentScheme<C2>>::VerifierParams: Send + Sync,
-	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField>,
+	S: SNARK<C1::ScalarField> + SNARK<<E as Pairing>::ScalarField> + CpSnark<E>,
 	<C1 as CurveGroup>::BaseField: PrimeField,
 	<C2 as CurveGroup>::BaseField: PrimeField,
 	<C1 as Group>::ScalarField: Absorb,

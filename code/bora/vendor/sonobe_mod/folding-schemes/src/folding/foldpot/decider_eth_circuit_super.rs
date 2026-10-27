@@ -60,7 +60,7 @@ use crate::folding::{
 	nova::{CommittedInstance, Witness},
 };
 use crate::frontend::FCircuit;
-use crate::transcript::{Transcript, TranscriptVar};
+use crate::transcript::Transcript;
 use crate::utils::{
     gadgets::{MatrixGadget, SparseMatrixVar, VectorGadget},
 };
@@ -502,7 +502,7 @@ where C::BaseField: PrimeField,
 ///                    kzg_eval, kzg_ch]
 /// (1) (U_i, W_i), (u_i, w_i) is the valid IVC proof for the given
 ///          circuits (that enforce the regex check logic)
-/// (2) kzg_ch is a fiat-shamir of (com_all_W and U_{i+1})
+/// (2) kzg_ch = H(tag, com_all_W, D), a witness here (T934: D binds W || E)
 /// (3) All witness W_i || E_i of W_{i+1} evaluates the kzg_eval (
 ///          which later outside of the circuit confirms with com_all_W).
 ///     And they satisfies all the R1CS's for each circuit.
@@ -609,6 +609,8 @@ where
 	/// the r_all_w used in generating com_all_w. T933 s9 B3: the
 	/// pair (o_1, o_2).
 	pub r_all_w: Option<(C1::ScalarField, C1::ScalarField)>,
+	/// T934 D2: r_2 (or r'), set once D is known (finalize / set_kzg_ch).
+	pub kzg_ch: Option<C1::ScalarField>,
 
 	// Added for super nova
 	/// the number of circuits
@@ -731,12 +733,21 @@ where
 
 			com_all_w: Some(com_all_w),
 			r_all_w: Some(r_all_w),
+			kzg_ch: None,
 
 			b_full_mode: nova.b_full_mode,
 			job_id: nova.job_id,
 
         })
     }
+
+	/// T934: the committed vector [W_1..W_k, E_1..E_k, o_1, o_2] (s9 order).
+	pub fn all_w(&self) -> Vec<C1::ScalarField> {
+		let w = &self.W_i1.as_ref().expect("W_i1 null").vec_wit;
+		let (o1, o2) = self.r_all_w.expect("r_all_w null");
+		w.iter().flat_map(|x| x.W.iter()).chain(w.iter().flat_map(|x| x.E.iter()))
+			.copied().chain([o1, o2]).collect()
+	}
 
 	/// In addition to generate constraints, for stage 1 circuit
 	/// return the <<com_E, com_W, com_F>>; for stage 2 circuit
@@ -800,9 +811,19 @@ where
         let U_i1 = CommittedInstanceVarFoldPotSuper::<C1>::new_witness(
 			cs.clone(), || { Ok(self.U_i1.clone().unwrap())
         })?;
-        let W_i1 = WitnessVarFoldPotSuper::<C1>::new_witness(cs.clone(), || {
-            Ok(self.W_i1.clone().unwrap())
-        })?;
+		//T934 D1: all_w is ONE contiguous witness range, recorded in cs
+		//for the Groth16 commitment D; W_i1 views slices of it.
+		let s0 = cs.num_witness_variables();
+		let all_w = Vec::<FpVar<CF1<C1>>>::new_witness(cs.clone(), || Ok(self.all_w()))?;
+		cs.set_committed(s0, all_w.len());
+		let w_nat = &self.W_i1.as_ref().unwrap().vec_wit;
+		let (mut ow, mut oe) = (0, w_nat.iter().map(|x| x.W.len()).sum::<usize>());
+		let W_i1 = WitnessVarFoldPotSuper::<C1>{ vec_wit: w_nat.iter().map(|x| {
+			let v = WitnessVarFoldPot{ W: all_w[ow..ow + x.W.len()].to_vec(),
+				E: all_w[oe..oe + x.E.len()].to_vec(), rE: new_var(&cs, x.rE),
+				rW: new_var(&cs, x.rW), size_F: x.size_F, rF: new_var(&cs, x.rF) };
+			ow += x.W.len(); oe += x.E.len(); v
+		}).collect() };
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		gadget_sat_check(&cs, "decider::p1s2"); //DEBUG USE 69801
@@ -812,23 +833,10 @@ where
 		let com_all_w = NonNativeAffineVar::<C1>::new_witness(cs.clone(),
 			|| Ok(self.com_all_w.expect("com_all null")))?;
 		let com_all_w_clone = com_all_w.clone();
-        let kzg_all_com_ch =
-            KZGChallengesGadgetSuper::<C1>::get_challenge_gadget(cs.clone(),
-				&self.poseidon_config, U_i1.clone(), com_all_w)?;
+		//T934 D2: r_2 = H(tag, C_WE, D) is computed outside, after D.
+		let kzg_all_com_ch = FpVar::<CF1<C1>>::new_witness(cs.clone(),
+			|| Ok(self.kzg_ch.expect("kzg_ch not set")))?;
 		let kzg_all_com_ch_clone= kzg_all_com_ch.clone();
-		let r_all_w = FpVar::<C1::ScalarField>::new_witness(cs.clone(),
-			|| Ok(self.r_all_w.expect("r_all_w null").0))?;
-		//T933 s9 B3. The second blind, on top of o_1.
-		let r_all_w2 = FpVar::<C1::ScalarField>::new_witness(cs.clone(),
-			|| Ok(self.r_all_w.expect("r_all_w null").1))?;
-
-		let mut all_w = W_i1.vec_wit.iter().map(|it| it.W.clone()
-		).flatten().collect::<Vec<FpVar<C1::ScalarField>>>();
-		let mut all_e = W_i1.vec_wit.iter().map(|it| it.E.clone()
-		).flatten().collect::<Vec<FpVar<C1::ScalarField>>>();
-		all_w.append(&mut all_e);
-		all_w.push(r_all_w);
-		all_w.push(r_all_w2);
 		let len_all_w_e = all_w.len();
 		//DEBUG USE 69801.8: all_w_e layout so a step-4 UNSAT row maps
 		//to a W (witness) vs E (error) region of a specific circuit.
@@ -846,6 +854,7 @@ where
 
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
 			Ok(C1::ScalarField::from(1u32)) ).unwrap();
+		one.enforce_equal(&FpVar::one())?; //T934 D3 (F1c)
         let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
@@ -1359,7 +1368,7 @@ where
 	_gm: PhantomData<GM>,
 
 	/// main circuit which handles its own proof 
-	main_circ:  Phase1Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM, H>,
+	pub main_circ:  Phase1Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM, H>,
 	/// its own cyclepair_inputs, need to be consistent with the
 	/// phase1circ (by the MainDeciderCircuit) return later in gen_constraints
     cyclepair_inputs: Vec<Vec<CF1<C1>>>,
@@ -1663,60 +1672,24 @@ fn evaluate_gadget<F: PrimeField>(
 	Ok(eval)
 }
 
-/// Gadget that computes the KZG challenges, also offers the rust native implementation compatible with the gadget.
-pub struct KZGChallengesGadgetSuper<C: CurveGroup> {
-    _c: PhantomData<C>,
+/// T934 D2 / ruling D: Fiat-Shamir tags of r_2 (Stage 1) and r' (Stage 2).
+pub const KZG_CH_TAG_S1: &[u8] = b"bora/kzg_ch/s1";
+pub const KZG_CH_TAG_S2: &[u8] = b"bora/kzg_ch/s2";
+
+/// T934 D2: r = H(tag, com, D), both points absorbed nonnative.
+pub fn kzg_ch<C: CurveGroup>(poseidon_config: &PoseidonConfig<C::ScalarField>,
+	tag: &[u8], com: C, d: C) -> C::ScalarField
+where C::ScalarField: Absorb, C::BaseField: PrimeField {
+	let mut t = PoseidonSponge::<C::ScalarField>::new(poseidon_config);
+	t.absorb(&tag);
+	t.absorb_nonnative(&com);
+	t.absorb_nonnative(&d);
+	t.get_challenge()
 }
 
-#[allow(clippy::type_complexity)]
-impl<C> KZGChallengesGadgetSuper<C>
-where
-    C: CurveGroup,
-    C::ScalarField: PrimeField,
-    <C as CurveGroup>::BaseField: PrimeField,
-    C::ScalarField: Absorb,
-{
-    pub fn get_challenge_native(
-		poseidon_config: &PoseidonConfig<C::ScalarField>,
-        U_i: CommittedInstanceFoldPotSuper<C>, _com_all: C
-    ) -> C::ScalarField{
-        let mut transcript = PoseidonSponge::<C::ScalarField>
-			::new(&poseidon_config);
-		for i in 0..U_i.vec_inst.len(){
-        	transcript.absorb_nonnative(&U_i.vec_inst[i].cmW);
-		}
-		for i in 0..U_i.vec_inst.len(){
-        	transcript.absorb_nonnative(&U_i.vec_inst[i].cmE);
-		}
-		for i in 0..U_i.vec_inst.len(){
-        	transcript.absorb_nonnative(&U_i.vec_inst[i].cmF);
-		}
-        let challenge = transcript.get_challenge();
-		challenge
-    }
-
-    // compatible with the native get_challenges_native
-    pub fn get_challenge_gadget(
-		cs: ConstraintSystemRef<CF1<C>>,
-		poseidon_config: &PoseidonConfig<C::ScalarField>,
-        U_i: CommittedInstanceVarFoldPotSuper<C>,
-		_com_all: NonNativeAffineVar<C>, 
-    ) -> Result<FpVar<C::ScalarField>, SynthesisError> {
-        let mut transcript = PoseidonSpongeVar::<C::ScalarField>
-			::new(cs.clone(), &poseidon_config);
-		for i in 0..U_i.vec_inst.len(){
-        	transcript.absorb(&U_i.vec_inst[i].cmW.to_constraint_field()?)?;
-		}
-		for i in 0..U_i.vec_inst.len(){
-        	transcript.absorb(&U_i.vec_inst[i].cmE.to_constraint_field()?)?;
-		}
-		for i in 0..U_i.vec_inst.len(){
-        	transcript.absorb(&U_i.vec_inst[i].cmF.to_constraint_field()?)?;
-		}
-        let challenge = transcript.get_challenge()?;
-
-        Ok( challenge )
-    }
+/// T934: native evaluate_gadget, sum_i v_i r^i.
+pub fn eval_all_w<F: PrimeField>(v: &[F], r: F) -> F {
+	v.iter().rev().fold(F::zero(), |acc, x| acc * r + x)
 }
 
 /// Represents the public i/o of the CyclePairCircInput,
@@ -1766,6 +1739,8 @@ pub struct CircPubInput<F: PrimeField+ColEle,C: CurveGroup<ScalarField=F>>{
 	pub comW2: C,
 	/// the comF of U_{i+1} of circ2
 	pub comF2: C,
+	/// T934 D4: C_WE of circ1, pinned to the circuit's com_all_w
+	pub kzg_all_com1: C,
 }
 
 impl <F: PrimeField+ColEle, C: CurveGroup<ScalarField=F>> CircPubInput<F,C>
@@ -1791,7 +1766,8 @@ CF2<C>: PrimeField
 		let (comEx, comEy) = 	NonNativeAffineVar::inputize(self.comE2)?;
 		let (comWx, comWy) = 	NonNativeAffineVar::inputize(self.comW2)?;
 		let (comFx, comFy) = 	NonNativeAffineVar::inputize(self.comF2)?;
-		let mut part2 = vec![comEx, comEy, comWx, comWy, comFx, comFy].concat();
+		let (cwex, cwey) = NonNativeAffineVar::inputize(self.kzg_all_com1)?;
+		let mut part2 = vec![comEx, comEy, comWx, comWy, comFx, comFy, cwex, cwey].concat();
 		res.append(&mut part2);
 		Ok(res)
 	}
@@ -1803,23 +1779,23 @@ CF2<C>: PrimeField
 			v[0..9].to_vec().into_iter().collect_tuple().unwrap();
 		let qa_nizk_vkey_hash = v[9];
 		let vec_rest = &v[10..v.len()];
-		assert!(vec_rest.len()==5*6);
+		assert!(vec_rest.len()==5*8);
 		let vec_fq = vec_rest.chunks(5).map(|chunk| {
 			f1_limbs_to_f2::<F, CF2<C>>(&chunk.to_vec())
 		}).collect::<Vec<CF2<C>>>();
-		assert!(vec_fq.len()==6);
+		assert!(vec_fq.len()==8);
 		let v_pt = vec_fq.chunks(2).map(|chunk|{
 			C::Affine::from_fields(chunk[0], chunk[1])
 		}
 		).collect::<Vec<C::Affine>>();
-		let (comE2, comW2, comF2): (C,C,C) = (v_pt[0].into(), 
-			v_pt[1].into(), v_pt[2].into());
+		let (comE2, comW2, comF2, kzg_all_com1): (C,C,C,C) = (v_pt[0].into(),
+			v_pt[1].into(), v_pt[2].into(), v_pt[3].into());
 		Self{
 			ch1, rc1, hash_cmF1, kzg_sum1, kzg_all_com_ch1, eval_w_e1,
 			kzg_all_com_ch2, eval_w_e2,
 			qa_nizk_vkey_hash,
 			mainres_hash,
-			comE2, comW2, comF2
+			comE2, comW2, comF2, kzg_all_com1
 		}
 	}
 }
@@ -1937,7 +1913,8 @@ where
 		use ark_relations::r1cs::ConstraintSystem;
 		use ark_r1cs_std::R1CSVar;
 		let job_id = nova1.job_id;
-		let circ1 = Phase1Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>::from_nova::<FC>(nova1, com_all_w_1, r_all_w_1)?;
+		let mut circ1 = Phase1Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>::from_nova::<FC>(nova1, com_all_w_1, r_all_w_1)?;
+		circ1.kzg_ch = Some(C1::ScalarField::zero()); //T934: placeholder until finalize
 
         let cs = ConstraintSystem::<CF1<C1>>::new_ref();
 		let res = circ1.generate_constraints_adv(0, cs.clone(), randf).unwrap();
@@ -1951,6 +1928,17 @@ where
 		}
 		Ok(Self{circ1, res: res_val, randf, res_hash, job_id})
     }
+
+	/// T934 ruling C: set r_2 and patch res natively (eval_w_e, hash).
+	pub fn finalize(&mut self, r_2: C1::ScalarField, all_w: &[C1::ScalarField]) {
+		use ark_r1cs_std::R1CSVar;
+		self.circ1.kzg_ch = Some(r_2);
+		self.res.kzg_all_com_ch = r_2;
+		self.res.eval_w_e = eval_all_w(all_w, r_2);
+		let cs = ark_relations::r1cs::ConstraintSystem::<CF1<C1>>::new_ref();
+		self.res_hash = Phase1CircuitRet::from(&self.res, &cs)
+			.hash(&self.circ1.poseidon_config, cs).value().expect("res hash");
+	}
 
 }
 
@@ -2132,7 +2120,7 @@ where
 	<C2G2 as ark_ec::Group>::ScalarField: ColEle
 {
 	/// circuit 2 for nova2
-	circ2:  Phase2Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>,
+	pub circ2:  Phase2Circuit<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>,
 	/// public input for the circuit
 	inp:  CircPubInput<CF1<C1>,C1>,
 	/// Maincirc res
@@ -2208,6 +2196,13 @@ where
 		let circ2 = Phase2Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM2,H>::from_nova::<SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, GM2, H>>(nova2, com_all_w_2, r_all_w_2, cyclepair_inputs)?;
 		Ok( Self{ circ2, inp, mainres, job_id } )
     }
+
+	/// T934 ruling C: set r' after D_2; also patches inp's ch2 / eval_w_e2.
+	pub fn set_kzg_ch(&mut self, r: C1::ScalarField, all_w: &[C1::ScalarField]) {
+		self.circ2.main_circ.kzg_ch = Some(r);
+		self.inp.kzg_all_com_ch2 = r;
+		self.inp.eval_w_e2 = eval_all_w(all_w, r);
+	}
 
 }
 
@@ -2309,14 +2304,15 @@ where
 
 		let limbs = phase2_ret.main_ret.u_i1_0_cmE.x.0.len();
 		let coms = vec![phase2_ret.main_ret.u_i1_0_cmE,
-			phase2_ret.main_ret.u_i1_0_cmW, phase2_ret.main_ret.u_i1_0_cmF];
+			phase2_ret.main_ret.u_i1_0_cmW, phase2_ret.main_ret.u_i1_0_cmF,
+			phase1_ret.vec_coms[0].clone()]; //T934 D4: C_WE
 		let mut part2 = coms.into_iter().map(|pt| {
 			vec![pt.x, pt.y].into_iter().map(|ui| 
 				ui.0.iter().map(|x| 
 					x.v.clone()).collect::<Vec<FpVar::<CF1::<C1>>>>()
 			).flatten().collect::<Vec<FpVar::<CF1::<C1>>>>()
 		}).flatten().collect::<Vec<FpVar::<CF1::<C1>>>>();
-		assert!(part2.len() == 6 * limbs); //5 limbs each
+		assert!(part2.len() == 8 * limbs); //5 limbs each
 		vec_ret.append(&mut part2);
 		assert!(vec_ret.len()==vec_inp.len());
 		for i in 0..vec_ret.len(){
@@ -2390,6 +2386,7 @@ pub mod tests_decider_eth_circuit_super {
 			comE2: Projective::rand(&mut rng),
 			comW2: Projective::rand(&mut rng),
 			comF2: Projective::rand(&mut rng),
+			kzg_all_com1: Projective::rand(&mut rng),
 		};
 
 		let vec = inp.to_vec().unwrap();
@@ -2715,17 +2712,24 @@ pub mod tests_decider_eth_circuit_super {
 		//driver.rs step 5: com_all_w / r_all_w over the folded witness.
 		let (u_i1, w_i1, _r, _cmt) = nova.gen_next_folded()
 			.expect("gen_next_folded err");
-		let (com_all_w, _qa, r_all_w, _kzg, _ch) = w_i1
+		let (com_all_w, _qa, r_all_w) = w_i1
 			.gen_com_all_w_and_qa_nizk_prf::<Bn254, S119Cm, false>(
 				params.0.qa_pp.as_ref().expect("qa_pp null"),
 				&params.0.cs1e_pp,
 				params.1.qa_vp.as_ref().expect("qa_vp null"),
-				&u_i1, &cfg);
+				&u_i1);
+		let mut circ = S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
+			.expect("from_nova err");
+		//T934: r_2 = H(tag, C_WE, D) needs a Groth16 pk; a fresh draw
+		//stands in for it here (the pins below do not read it).
+		let ch = Fr::rand(&mut rng);
+		circ.kzg_ch = Some(ch);
 		if let Some(p) = probe {
-			p(&w_i1, com_all_w, &_kzg, _ch, &params.0.cs1e_pp);
+			let prf = <S119Cm as CommitmentScheme<Projective, false>>::prove_with_challenge(
+				&params.0.cs1e_pp, ch, &circ.all_w(), &Fr::zero(), None).expect("kzg prf err");
+			p(&w_i1, com_all_w, &prf, ch, &params.0.cs1e_pp);
 		}
-		S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
-			.expect("from_nova err")
+		circ
 	}
 
 	/// T933-B1 on (C_WE, e_2), T933 s9. com_all_w commits W || E ||
@@ -3055,14 +3059,16 @@ pub mod tests_decider_eth_circuit_super {
 
 		let (u_i1, w_i1, _r, _cmt) = nova.gen_next_folded()
 			.expect("gen_next_folded err");
-		let (com_all_w, _qa, r_all_w, _kzg, _ch) = w_i1
+		let (com_all_w, _qa, r_all_w) = w_i1
 			.gen_com_all_w_and_qa_nizk_prf::<Bn254, S119Cm, false>(
 				params.0.qa_pp.as_ref().expect("qa_pp null"),
 				&params.0.cs1e_pp,
 				params.1.qa_vp.as_ref().expect("qa_vp null"),
-				&u_i1, &cfg);
-		S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
-			.expect("from_nova err")
+				&u_i1);
+		let mut circ = S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
+			.expect("from_nova err");
+		circ.kzg_ch = Some(Fr::rand(&mut rng)); //T934, as in s119_fold_probe
+		circ
 	}
 
 	/// EVERY unsatisfied row, not just the first: (num_constraints, set).
@@ -3070,9 +3076,16 @@ pub mod tests_decider_eth_circuit_super {
 	/// here (see the note above), so the rows are evaluated directly off
 	/// to_matrices() and the assignments.
 	fn s103_unsat_rows(circ: &S119Circ) -> (usize, Vec<usize>){
+		let (m, z, _) = synth_mats(|cs| { circ.generate_constraints_adv(0, cs,
+			Fr::zero()).expect("gen_cs err"); });
+		(m.num_constraints, unsat(&m, &z))
+	}
+
+	/// Synthesize on a fresh CS: (matrices, z, committed range).
+	fn synth_mats(f: impl FnOnce(ConstraintSystemRef<Fr>))
+		-> (ark_relations::r1cs::ConstraintMatrices<Fr>, Vec<Fr>, (usize, usize)){
 		let cs = ConstraintSystem::<Fr>::new_ref();
-		circ.generate_constraints_adv(0, cs.clone(), Fr::zero())
-			.expect("gen_cs err");
+		f(cs.clone());
 		//REQUIRED before to_matrices(): make_row calls
 		//get_index_unchecked, which panics on a SymbolicLc, and the LCs
 		//are symbolic until finalize() inlines them. It changes neither
@@ -3082,17 +3095,18 @@ pub mod tests_decider_eth_circuit_super {
 		//make_row indexes instance variables first (column 0 is the ONE
 		//variable) and then witness variables, so z is exactly the two
 		//assignment vectors concatenated in that order.
-		let z = {
-			let g = cs.borrow().expect("cs borrow null");
-			[g.instance_assignment.clone(),
-				g.witness_assignment.clone()].concat()
-		};
+		let g = cs.borrow().expect("cs borrow null");
+		let z = [g.instance_assignment.clone(), g.witness_assignment.clone()].concat();
+		(m, z, g.committed.unwrap_or((0, 0)))
+	}
+
+	/// The rows of `m` that `z` leaves unsatisfied.
+	fn unsat(m: &ark_relations::r1cs::ConstraintMatrices<Fr>, z: &[Fr]) -> Vec<usize>{
 		let dot = |row: &Vec<(Fr, usize)>| row.iter()
 			.map(|(c, i)| *c * z[*i]).sum::<Fr>();
-		let bad = (0..m.num_constraints)
+		(0..m.num_constraints)
 			.filter(|&r| dot(&m.a[r]) * dot(&m.b[r]) != dot(&m.c[r]))
-			.collect::<Vec<usize>>();
-		(m.num_constraints, bad)
+			.collect::<Vec<usize>>()
 	}
 
 	/// S103: at n_circ=2 the decider rejects a swapped INACTIVE-slot
@@ -3258,5 +3272,176 @@ pub mod tests_decider_eth_circuit_super {
 			 closed");
 	}
 
+	// ---------------------------------------------------------------
+	// T934 (commit-and-prove decider). Groth16 runs at S119 scale on the
+	// Main wrapper of the S119 Phase 1 circuit. Stage 2 runs on an
+	// S119-scale CyclePairCircuit whose cyclepair rows are zeros: it is
+	// UNSAT elsewhere, so its pins are read off the unsatisfied-row SET.
+	// ---------------------------------------------------------------
+	type S119Main = MainDeciderCircuit<Bn254, Bn254PairingVar, ProjectiveG2,
+		Projective, GVar, Projective2, GVar2, S119Cm, S119Cm2, S119Cm, S119Lk, S119Gm, false>;
+	type S119Cp = CyclePairCircuit<Bn254, Bn254PairingVar, ProjectiveG2,
+		Projective, GVar, Projective2, GVar2, S119Cm, S119Cm2, S119Cm, S119Lk, S119Gm, false>;
+	type G16 = ark_groth16::Groth16<Bn254>;
+	use crate::folding::foldpot::batch_proc::CpSnark;
+
+	/// As MainDeciderCircuit::from_nova + finalize(r): res from a
+	/// synthesis at the placeholder r = 0, then the native patch.
+	fn t934_main(mut c: S119Circ, r: Fr) -> S119Main{
+		c.kzg_ch = Some(Fr::zero());
+		let res = c.generate_constraints_adv(0, ConstraintSystem::<Fr>::new_ref(),
+			Fr::zero()).unwrap().val();
+		let all_w = c.all_w();
+		let mut m = S119Main{ circ1: c, res, randf: Fr::zero(), res_hash: Fr::zero(), job_id: 0 };
+		m.finalize(r, &all_w);
+		m
+	}
+
+	/// W[0] += dw and E := Az o Bz - u Cz (dw = 0 repairs the toy's own
+	/// step-7 row, see S119 ARM 0). With Some((r, e2)), o_2 is solved so
+	/// that all_w still evaluates to e2 at r (T934-2 F1).
+	fn t934_forge(circ: &S119Circ, dw: Fr, re: Option<(Fr, Fr)>) -> S119Circ{
+		use crate::utils::vec::mat_vec_mul;
+		let mut f = circ.clone();
+		{
+			let inst = &f.U_i1.as_ref().unwrap().vec_inst[0];
+			let w = &mut f.W_i1.as_mut().unwrap().vec_wit[0];
+			w.W[0] += dw;
+			let z = [vec![inst.u], inst.x.clone(), w.W.clone()].concat();
+			let m = |a| mat_vec_mul(a, &z).unwrap();
+			let (az, bz, cz) = (m(&f.r1cs[0].A), m(&f.r1cs[0].B), m(&f.r1cs[0].C));
+			w.E = az.iter().zip(&bz).zip(&cz).map(|((a, b), c)| *a * b - inst.u * c).collect();
+		}
+		if let Some((r, e2)) = re {
+			let v = f.all_w();
+			let (o1, o2) = f.r_all_w.unwrap();
+			f.r_all_w = Some((o1, o2 + (e2 - eval_all_w(&v, r)) / r.pow([v.len() as u64 - 1])));
+			f.kzg_ch = Some(r);
+		}
+		f
+	}
+
+	/// T934-2 (+ ruling C check, T934-7 Stage 1). Pre-T934 the same
+	/// forgery verifies (baseline red run): r_2 ignored W||E.
+	#[test]
+	fn test_t934_f1_forgery(){
+		use ark_r1cs_std::R1CSVar;
+		let circ = t934_forge(&s119_fold(5), Fr::zero(), None);
+		assert_eq!(s119_synth(&circ).1, None, "T934-2: repaired honest witness not SAT");
+		let (cfg, com, all_w) = (circ.poseidon_config.clone(), circ.com_all_w.unwrap(), circ.all_w());
+		let mut rng = ark_std::test_rng();
+		let pk = G16::generate_random_parameters_with_reduction(t934_main(circ.clone(), Fr::zero()),
+			&mut rng).unwrap();
+		let pvk = ark_groth16::prepare_verifying_key(&pk.vk);
+		let v = |p: &ark_groth16::Proof<Bn254>, h: Fr| G16::verify_proof(&pvk, p, &[h]).unwrap();
+		let kappa = Fr::rand(&mut rng);
+		let d = G16::cp_commit(&pk, &all_w, kappa);
+		let r2 = kzg_ch(&cfg, KZG_CH_TAG_S1, com, d);
+		assert!(kzg_ch(&cfg, KZG_CH_TAG_S1, d, d) != r2 && kzg_ch(&cfg, KZG_CH_TAG_S2, com, d) != r2,
+			"T934: r_2 ignores C_WE/tag");
+		let main = t934_main(circ.clone(), r2);
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let ret = main.circ1.generate_constraints_adv(0, cs.clone(), Fr::zero()).unwrap();
+		assert!(ret.val() == main.res && ret.hash(&cfg, cs.clone()).value().unwrap() == main.res_hash,
+			"T934 ruling C: finalize != re-synthesis at r_2");
+		let (s0, m) = cs.borrow().unwrap().committed.unwrap();
+		let (o1, o2) = circ.r_all_w.unwrap();
+		assert!(cs.borrow().unwrap().witness_assignment[s0..s0 + m] == all_w[..]
+			&& all_w[m - 2..] == [o1, o2], "T934-7: Stage-1 committed range != all_w || o_1 || o_2");
+		let h = main.res_hash;
+		let p = <G16 as CpSnark<Bn254>>::prove_cp(&pk, main, kappa, Some(d), &mut rng).unwrap();
+		assert!(v(&p, h), "T934-2: honest proof rejected");
+		//(a) forged W||E, same statement, honest D_1
+		let forged = t934_forge(&circ, Fr::one(), Some((r2, eval_all_w(&all_w, r2))));
+		let fa = forged.all_w();
+		assert_eq!(s119_synth(&forged).1, None, "T934-2: forged witness not SAT");
+		let mf = t934_main(forged, r2);
+		assert_eq!(mf.res_hash, h, "T934-2: forgery changed the statement");
+		let pf = <G16 as CpSnark<Bn254>>::prove_cp(&pk, mf, kappa, Some(d), &mut rng).unwrap();
+		assert!(!v(&pf, h), "T934-2(a): forged W||E accepted under the honest D_1");
+		//(b) D_1 recomputed over the forged W||E moves r_2 off e2
+		let r2f = kzg_ch(&cfg, KZG_CH_TAG_S1, com, G16::cp_commit(&pk, &fa, kappa));
+		assert!(r2f != r2 && eval_all_w(&fa, r2f) != eval_all_w(&all_w, r2f),
+			"T934-2(b): r_2 does not follow D_1");
+	}
+
+	/// T934-5 F1c: the Horner multiplier `one` (value 1, sole B entry of
+	/// rows over committed wires) is pinned by a row over {1, one} alone.
+	#[test]
+	fn test_t934_one_pinned(){
+		let (m, z, (s0, k)) = synth_mats(|cs| { s119_fold(5)
+			.generate_constraints_adv(0, cs, Fr::zero()).unwrap(); });
+		let n_in = m.num_instance_variables;
+		let com = n_in + s0..n_in + s0 + k;
+		let one = (0..m.num_constraints).filter_map(|r| match m.b[r].as_slice() {
+			[(c, i)] if *c == Fr::one() && z[*i] == Fr::one() && *i >= n_in && !com.contains(i)
+				&& m.a[r].iter().any(|(_, j)| com.contains(j)) => Some(*i),
+			_ => None }).collect::<std::collections::HashSet<usize>>();
+		assert_eq!(one.len(), 1, "T934-5: Horner multiplier not unique: {:?}", one);
+		let c = *one.iter().next().unwrap();
+		let mut z2 = z.clone();
+		z2[c] = Fr::from(2u64);
+		assert!(unsat(&m, &z2).iter().any(|&r| [&m.a[r], &m.b[r], &m.c[r]].iter()
+			.all(|l| l.iter().all(|(_, i)| *i == 0 || *i == c))),
+			"T934-5 F1c: witness one = 2 is not rejected by a pin");
+	}
+
+	/// Stage-2 fixture: the S119 circuit is both the main decider (res)
+	/// and main_circ2; dummy cp_U_i / cp_W_i keep full mode synthesizable.
+	fn t934_cp(circ: &S119Circ, res: &Phase1CircuitRetVal<Fr, Projective>) -> S119Cp{
+		let (mut c2, z) = (circ.clone(), Fr::zero());
+		let l = c2.cp_r1cs.l;
+		c2.cp_U_i = Some(CommittedInstance::<Projective2>::dummy(l));
+		c2.cp_W_i = Some(Witness::<Projective2>::dummy(c2.cp_r1cs.A.n_cols - 1 - l, c2.cp_r1cs.A.n_rows));
+		let inp = CircPubInput{ ch1: res.ch, rc1: res.rc, hash_cmF1: res.hash_cmF,
+			kzg_sum1: res.kzg_sum, kzg_all_com_ch1: res.kzg_all_com_ch, eval_w_e1: res.eval_w_e,
+			mainres_hash: z, kzg_all_com_ch2: z, eval_w_e2: z, qa_nizk_vkey_hash: z,
+			comE2: res.u_i1_0_cmE, comW2: res.u_i1_0_cmW, comF2: res.u_i1_0_cmF,
+			kzg_all_com1: res.vec_coms[0] };
+		S119Cp{ circ2: Phase2Circuit{ _gm: PhantomData, main_circ: c2,
+			cyclepair_inputs: vec![vec![z; 164]; res.vec_coms.len() + 1], job_id: 0 },
+			inp, mainres: res.clone(), job_id: 0 }
+	}
+
+	/// T934-4 (D4 pin), T934-3 (r_2 mismatch, c5 arm) and T934-7 Stage 2.
+	#[test]
+	fn test_t934_cp_pins(){
+		let circ = s119_fold(5);
+		let res = t934_main(circ.clone(), Fr::from(7u64)).res;
+		let run = |cp: S119Cp| { let (m, z, r) = synth_mats(|cs| cp.generate_constraints(cs).unwrap());
+			(unsat(&m, &z), z, r, m.num_instance_variables) };
+		let (base, z, (s0, k), n_in) = run(t934_cp(&circ, &res));
+		assert!(z[n_in + s0..n_in + s0 + k] == circ.all_w()[..],
+			"T934-7: Stage-2 committed range != main_circ2 all_w");
+		let grows = |cp: S119Cp| { let b = run(cp).0;
+			b.len() > base.len() && base.iter().all(|r| b.contains(r)) };
+		let mut cp = t934_cp(&circ, &res);
+		cp.inp.kzg_all_com1 = res.vec_coms[1];
+		assert!(grows(cp), "T934-4: verifier C_WE != circuit com_all_w accepted");
+		let mut bad = res.clone();
+		bad.kzg_all_com_ch += Fr::one();
+		let mut cp = t934_cp(&circ, &bad);
+		cp.inp.kzg_all_com_ch1 = res.kzg_all_com_ch;
+		assert!(grows(cp), "T934-3: decider r_2 != verifier r_2 accepted");
+	}
+
+	/// B1: W_i1 views the committed wires, so every committed E column is
+	/// read by its Horner row and by the relaxed-R1CS check (>= 2 rows).
+	#[test]
+	fn test_t934_committed_read(){
+		let circ = s119_fold(5);
+		let w = &circ.W_i1.as_ref().unwrap().vec_wit;
+		let nw = w.iter().map(|x| x.W.len()).sum::<usize>();
+		let ne = w.iter().map(|x| x.E.len()).sum::<usize>();
+		let (m, _, (s0, k)) = synth_mats(|cs| { circ.generate_constraints_adv(0, cs, Fr::zero()).unwrap(); });
+		let c0 = m.num_instance_variables + s0;
+		let mut cnt = vec![0usize; k];
+		for r in 0..m.num_constraints {
+			let cols = [&m.a[r], &m.b[r], &m.c[r]].iter().flat_map(|l| l.iter().map(|(_, i)| *i))
+				.filter(|i| (c0..c0 + k).contains(i)).collect::<std::collections::HashSet<usize>>();
+			cols.into_iter().for_each(|i| cnt[i - c0] += 1);
+		}
+		assert!(cnt[nw..nw + ne].iter().all(|&c| c >= 2), "T934 B1: a committed E column is read by its Horner row only");
+	}
 }
 

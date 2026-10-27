@@ -13,6 +13,8 @@ paths under `vendor/dependency/`:
 - `ark-bn254`     → `vendor/dependency/ark-curves-cherry-picked/bn254`
 - `ark-grumpkin`  → `vendor/dependency/ark-curves-cherry-picked/grumpkin`
 - `ark-relations` → `vendor/dependency/ark-relations`
+- `ark-groth16`   → `vendor/dependency/ark-groth16` (T934, below; also
+  patched in `vendor/sonobe_mod/Cargo.toml`)
 
 **What they change:** `ark-r1cs-std` and the two cherry-picked curve crates
 **add pairing support in R1CS** for BN254/Grumpkin (needed by the Groth16
@@ -51,6 +53,10 @@ built on top of these edits, so they are listed in full:
   in canonical form, so a nonzero-entry count read off them is an upper bound,
   not the stock arkworks figure. `num_constraints` is unaffected.
 - `src/r1cs/mod.rs:32` — `LcIndex` additionally derives `Hash`.
+- T934: `ConstraintSystem::committed: Option<(usize, usize)>` and
+  `ConstraintSystemRef::set_committed(s, m)` record ONE contiguous witness
+  range `[s, s + m)` that the Groth16 fork commits to (a second call
+  panics). Bookkeeping only: no constraint, variable or assignment changes.
 - Not on the measured path: `report_max_lc_len` (`constraint_system.rs:322`, a
   debug probe) and the rayon-parallel inliners `transform_lc_map_new_1` /
   `_new_2` (`:506`, `:647`), both dead — the dispatcher at `:352` hard-codes
@@ -60,6 +66,21 @@ built on top of these edits, so they are listed in full:
 stock ark-relations v0.4.0 would build, with a single representation-level
 exception (rows over 1000 terms left uncompactified, above), which changes a
 row's encoding but not its value.
+
+**`ark-groth16` (T934, commit-and-prove decider).** Registry 0.4.0 copied
+verbatim, then edited in four files so that the witness range recorded by
+`set_committed` gets its own pairing base delta_1 (Mirage-style split):
+`data_structures.rs` adds `Proof::d`, `VerifyingKey::delta_d_g2`,
+`PreparedVerifyingKey::delta_d_g2_neg_pc` and `ProvingKey::{delta_d_g1,
+d_query, commit_start, n_commit}`; `generator.rs` moves the committed
+columns from `l_query` into `d_query` (scaled by delta/delta_1, R9 assert:
+no zero and no duplicate column); `prover.rs` computes
+`D = MSM(d_query, a_S) + kappa [delta]_1` (or takes a precomputed `D`),
+runs the `l_query` MSM over the other wires and subtracts
+`kappa [delta_1]_1` from `C`; `verifier.rs` adds the fourth Miller pair
+`e(D, delta_1)`. With no recorded range (m = 0) delta_1 = delta, D is the
+identity, and the stock key and proof fields are unchanged.
+`constraints.rs` (feature `r1cs`, never enabled here) is not updated.
 
 ## 2. Sonobe fork — `foldpot` (`vendor/sonobe_mod/`)
 
@@ -117,7 +138,7 @@ construction).
 `Cargo.lock` deliberately carries two `aho-corasick` entries — `1.1.2` with no
 `source` (the path fork, used by `data_processor`) and `1.1.3` from crates.io
 (pulled in by `regex-automata 0.4.7` under `regex`) — because
-`[patch.crates-io]` covers only the four arkworks crates, so transitive users
+`[patch.crates-io]` covers only the five arkworks crates, so transitive users
 keep the registry copy.
 
 **`rustomaton` (fork of 0.2.1) — one behavioural change, the rest additive.**
