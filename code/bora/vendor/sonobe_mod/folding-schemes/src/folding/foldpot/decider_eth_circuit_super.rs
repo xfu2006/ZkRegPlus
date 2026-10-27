@@ -1059,6 +1059,16 @@ where
 		gadget_sat_check(&cs, "decider::p1s7"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 7");}
 
+		//T935 C3: pc_i in [0, n_circ), every n_circ. One selector per
+		//slot over a CONSTANT index (see S103b), shared by 7b and step 8.
+		//Stays ABOVE the !b_light_test gate, like 7b.
+		let b_sel_vec = (0..n_circ).map(|j| FpVar::<CF1<C1>>::new_constant(cs.clone(),
+			C1::ScalarField::from(j as u32))?.is_eq(&pc_i_var))
+			.collect::<Result<Vec<_>, _>>()?;
+		let mut sel_sum = FpVar::<CF1<C1>>::zero();
+		for b in &b_sel_vec { sel_sum += FpVar::from(b.clone()); }
+		sel_sum.enforce_equal(&FpVar::one())?;
+
 		//7b. S103: bind the INACTIVE accumulator slots. Step 7 above
 		//proves each U_i1[j] is INDIVIDUALLY valid; step 8 below proves
 		//only U_i1[pc_i] = NIFS.V(U_i[pc_i], u_i, cmT). Neither ties
@@ -1092,9 +1102,7 @@ where
 		//pair, so inactive slots are limb-identical clones.
 		if n_circ > 1 {
 			for j in 0..n_circ{
-				let fp_j = FpVar::<CF1<C1>>::new_constant(cs.clone(),
-					C1::ScalarField::from(j as u32))?;
-				let b_inact = fp_j.is_eq(&pc_i_var)?.not();
+				let b_inact = b_sel_vec[j].not();
 				let (a, b) = (&U_i1.vec_inst[j], &U_i.vec_inst[j]);
 				assert_eq!(a.x.len(), b.x.len(),
 					"S103: U_i1[{}].x len {} != U_i[{}].x len {}",
@@ -1170,10 +1178,9 @@ where
 				//initializers = slot 0), which redirects this whole
 				//NIFS check to a slot decoupled from pc_i. The
 				//augmented circuit already does it right
-				//(circuits_super.rs:734, :787, :859).
-				let var_i = FpVar::<CF1<C1>>::new_constant(cs.clone(),
-					C1::ScalarField::from(i as u32))?;
-				let b_sel = var_i.is_eq(&pc_i_var)?;
+				//(circuits_super.rs:734, :787, :859). b_sel_vec (T935
+				//C3) is built over constant indices.
+				let b_sel = b_sel_vec[i].clone();
 				Ui_pci = b_sel.select(&U_i.vec_inst[i], &Ui_pci)?;
 				expected_Ui1_pci = b_sel.select(&U_i1.vec_inst[i], &expected_Ui1_pci)?;
 			}
@@ -3177,13 +3184,14 @@ pub mod tests_decider_eth_circuit_super {
 		assert!(new_b.len() > 0,
 			"INACTIVE slot cmW swap ACCEPTED -- the S103 block is inert");
 		//ATTRIBUTION: in light mode gen_cs emits, at its very end,
-		//the S103 block (78 rows per slot x n_circ = 156, reported in
-		//the "Step 7b" log line) followed by the S107 cmF-limb pin
+		//the T935 C3 selectors and the S103 block (3n+1 + 75 per slot
+		//= 157 at n_circ = 2, reported in the "Step 7b" log line)
+		//followed by the S107 cmF-limb pin
 		//(4 nonnative limb equalities, measured 473 rows). Steps 8-10
 		//are gated out. So every new row must fall in the final
 		//`width` indices -- otherwise the rejection came from
 		//somewhere else and this test is measuring the wrong thing.
-		//156 + 473 = 629 today; asserted loosely as <= 1024 so a
+		//157 + 473 = 630 today; asserted loosely as <= 1024 so a
 		//gadget-level cost change does not turn this into a tripwire.
 		let width = 1024;
 		assert!(new_b.iter().all(|&&r| r + width >= n_a),
@@ -3442,6 +3450,181 @@ pub mod tests_decider_eth_circuit_super {
 			cols.into_iter().for_each(|i| cnt[i - c0] += 1);
 		}
 		assert!(cnt[nw..nw + ne].iter().all(|&c| c >= 2), "T934 B1: a committed E column is read by its Horner row only");
+	}
+
+	// ---------------------------------------------------------------
+	// T935. C1, Decision 1 and C2 on the step-0 augmented circuit (x and
+	// cf_x default to the in-circuit values, so the honest arm is SAT);
+	// C3 on the Phase 1 decider. Arms differ in witness values (and in
+	// the constant j for C1).
+	// ---------------------------------------------------------------
+	type T935Aug = crate::folding::foldpot::circuits_super::AugmentedFCircuitFoldPotSuper<
+		Projective, Projective2, GVar2, S119Lk, S119Fc, S119Gm, false>;
+	/// witness index of stmt[1]: 14 preamble vars + cmF (4) + extra (2) + 1.
+	const T935_STMT1: usize = 21;
+
+	/// (matrices, z) of the step-0 augmented circuit of slot j over n_circ
+	/// slots, one per arm (j, pc_i): stmt[0] = pc_i, stmt[1] = j.
+	fn t935_aug(n_circ: usize, arms: &[(usize, usize)])
+		-> Vec<(ark_relations::r1cs::ConstraintMatrices<Fr>, Vec<Fr>)>{
+		let mut rng = ark_std::test_rng();
+		let (cfg, zero, n_steps) = (poseidon_canonical_config::<Fr>(), Fr::zero(), 5);
+		let (lk, f_circ, vec_stmt) =
+			gen_six_root_adv::<Fr, Projective, S119Cm, S119Lk, false>(n_steps, false);
+		let vec_f = vec![f_circ.clone(); n_circ];
+		let prep = PreprocessorParamFoldPotSuper::<Projective, Projective2, S119Fc,
+			S119Cm, S119Cm2, S119Lk, S119Gm, false>::new(cfg.clone(), vec_f.clone(),
+			lk, vec![f_circ.get_size_f(); n_circ], false);
+		let params = S119Nova::preprocess(&mut rng, &prep, 0).expect("preprocess err");
+		let fq_bits = <<Projective as CurveGroup>::BaseField
+			as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
+		let z0_p2 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, false, fq_bits, n_steps);
+		let z_0 = [vec![zero, z0_p2.hash(&cfg)], vec![zero; 4]].concat();
+		let nova = S119Nova::init_adv(&params, vec_f, z_0, n_circ, 0, false,
+			zero, zero, n_steps, None, 0).expect("init_adv err");
+		arms.iter().map(|&(j, pc)| {
+			let mut st = vec_stmt[0].clone(); //counter repair as in s103_fold
+			(st.inp_buf[0], st.oup_buf[0]) = (zero, zero);
+			(st.pc_i, st.pc_i1, st.n_circ) = (Fr::from(pc as u32), Fr::from(j as u32), Fr::from(n_circ as u32));
+			st.n_circ_minus_pc = st.n_circ - st.pc_i;
+			let mut c = T935Aug::empty(&cfg, nova.F[j].clone(), n_circ, j, 0);
+			c.F.set_keygen_synth(false);
+			(c.pp_hash, c.i, c.i_usize) = (Some(nova.pp_hash), Some(zero), Some(0));
+			(c.z_0, c.z_i) = (Some(nova.z_0.clone()), Some(nova.z_i.clone()));
+			(c.z0_part2_inst, c.zi_part2_inst) = (Some(nova.z0_part2_inst.clone()), Some(nova.zi_part2_inst.clone()));
+			c.external_inputs = Some(st.to_vec());
+			let (m, z, _) = synth_mats(|cs| c.generate_constraints(cs).expect("gen_cs err"));
+			(m, z)
+		}).collect()
+	}
+
+	/// T935-1 (C1): circuit 1 rejects the honest witness of a stmt with
+	/// stmt[1] = 0, built as circuit 0 (passes the native assert, so it is
+	/// consistent everywhere). Pre-T935 j enters no row: SAT.
+	#[test]
+	fn test_t935_c1_stmt1_is_j(){
+		let a = t935_aug(2, &[(1, 0), (0, 0)]);
+		let ((m1, z1), (m0, z0)) = (&a[0], &a[1]);
+		let col = m1.num_instance_variables + T935_STMT1;
+		assert!(unsat(m1, z1).is_empty() && unsat(m0, z0).is_empty(), "T935-1: honest arms not SAT");
+		assert!(z1[col] == Fr::one() && z0[col] == Fr::zero(), "T935-1: stmt[1] is not witness {}", T935_STMT1);
+		let rows_j = (0..m1.num_constraints).filter(|&r| m1.a[r] != m0.a[r] || m1.b[r] != m0.b[r]
+			|| m1.c[r] != m0.c[r]).collect::<Vec<_>>();
+		let bad = unsat(m1, z0);
+		assert!(m1.num_constraints == m0.num_constraints && rows_j.len() == 1 && bad == rows_j,
+			"T935-1: circuit 1 vs stmt[1] = 0: unsat {:?}, rows naming j {:?}", bad, rows_j);
+	}
+
+	/// T935-1b (Decision 1): the u_{i+1}.x hashes read the committed
+	/// stmt[1]. Circuit 0's witness with stmt[1] reset to 1 meets C1 of
+	/// circuit 1 but hashes pc_i1 = 0. Pre-T935 the hashes read a fresh
+	/// witness, so this is SAT: the hashed pc_i1 is free.
+	#[test]
+	fn test_t935_d1_hashed_pc_i1(){
+		let a = t935_aug(2, &[(1, 0), (0, 0)]);
+		let ((m1, _), (_, z0)) = (&a[0], &a[1]);
+		let mut zh = z0.clone();
+		zh[m1.num_instance_variables + T935_STMT1] = Fr::one();
+		let bad = unsat(m1, &zh);
+		emit_stdout(format!("T935-1b: committed 1, hashed 0: unsat {:?}", bad));
+		assert!(!bad.is_empty(), "T935-1b: hashed pc_i1 = 0 accepted with committed stmt[1] = 1");
+	}
+
+	/// T935-1c (Decision 4): the committed stmt[0] is read in-circuit
+	/// (u_i.x hash and pc_i selects; M6 restores both fresh witnesses).
+	#[test]
+	fn test_t935_d4_hashed_pc_i(){
+		let a = t935_aug(2, &[(0, 1)]);
+		let (m, z) = &a[0];
+		let col = m.num_instance_variables + T935_STMT1 - 1;
+		assert!(unsat(m, z).is_empty(), "T935-1c: honest arm not SAT");
+		assert!(z[col] == Fr::one() && z[col + 1] == Fr::zero(), "T935-1c: stmt[0] is not witness {}", T935_STMT1 - 1);
+		let mut zt = z.clone();
+		zt[col] = Fr::zero();
+		let bad = unsat(m, &zt);
+		emit_stdout(format!("T935-1c: committed 0, hashed 1: unsat {:?}", bad));
+		assert!(!bad.is_empty(), "T935-1c: committed stmt[0] = 0 accepted with hashed pc_i = 1");
+	}
+
+	/// T935-2 (C2): pc_i = n_circ and n_circ + 5 select no slot and fail
+	/// exactly one row, the sel_sum row. n_circ = 1 is the Stage-2 shape.
+	#[test]
+	fn test_t935_c2_pc_i_range(){
+		for n in [1usize, 2]{
+			let a = t935_aug(n, &[(0, 0), (0, n), (0, n + 5)]);
+			let m = &a[0].0;
+			assert!(a.iter().all(|x| x.0.num_constraints == m.num_constraints), "T935-2: arms not shape-identical");
+			assert!(unsat(m, &a[0].1).is_empty(), "T935-2: honest arm not SAT");
+			let (b1, b2) = (unsat(m, &a[1].1), unsat(m, &a[2].1));
+			assert!(b1.len() == 1 && b1 == b2,
+				"T935-2: n_circ {}: pc_i = n_circ unsat {:?}, pc_i = n_circ + 5 unsat {:?}", n, b1, b2);
+		}
+	}
+
+	/// b_light_test guard, as in test_s126: restored on drop.
+	struct T935Light(bool);
+	impl Drop for T935Light{
+		fn drop(&mut self){ utils::consts::get_global_config().b_light_test = self.0; }
+	}
+
+	/// T935-3 (C3, TASK s7.3 test 1) arm: n_circ = 1, pc_N = 1, u_i.x[0]
+	/// rehashed. Returns the number of NEW unsatisfied rows.
+	fn t935_c3_n1_new() -> usize{
+		let c0 = s119_fold(5);
+		let mut c1 = c0.clone();
+		c1.pc_i = Fr::one();
+		s119_rehash_u_i(&mut c1);
+		let ((n0, b0), (n1, b1)) = (s103_unsat_rows(&c0), s103_unsat_rows(&c1));
+		assert_eq!(n0, n1, "T935-3: arms not shape-identical");
+		let new = b1.iter().filter(|r| !b0.contains(r)).count();
+		emit_stdout(format!("T935-3 light={}: {} rows, {} honest unsat, {} new",
+			utils::consts::read_global_config().b_light_test, n0, b0.len(), new));
+		new
+	}
+
+	/// T935-3, light (the default): no row past step 5 reads pc_i, so
+	/// only C3 can reject pc_N = 1 at n_circ = 1.
+	#[test]
+	fn test_t935_c3_pc_n_n1(){
+		assert!(utils::consts::read_global_config().b_light_test, "T935-3: needs light mode");
+		assert!(t935_c3_n1_new() > 0, "T935-3: pc_N = 1 at n_circ = 1 accepted (light)");
+	}
+
+	/// T935-3, full: step 8 rejects it too (its challenge absorbs u_i),
+	/// so more rows fail than the one light-mode C3 row.
+	/// 17M rows: next to test_s126 in the parallel lib run it OOMs at
+	/// 90 GB, so run it alone with --ignored.
+	#[test]
+	#[ignore]
+	fn test_t935_c3_pc_n_n1_full(){
+		let _g = T935Light(utils::consts::read_global_config().b_light_test);
+		utils::consts::get_global_config().b_light_test = false;
+		assert!(t935_c3_n1_new() >= 2, "T935-3: step 8 does not reject pc_N = 1 (full)");
+	}
+
+	/// T935-4 (TASK s7.3 test 2): n_circ = 2, pc_N = 2, light. UNSAT before
+	/// T935 (S103: every slot reads inactive). Now it also fails the C3
+	/// row, the one row an in-range wrong pc_N leaves intact.
+	#[test]
+	fn test_t935_c3_pc_n_n2(){
+		assert!(utils::consts::read_global_config().b_light_test, "T935-4: needs light mode");
+		let c0 = s103_fold(5, 2, &[1, 0, 1, 0, 1]);
+		let pci = field_to_usize(&c0.pc_i);
+		let (n0, b0) = s103_unsat_rows(&c0);
+		let new = |pc: usize| {
+			let mut c = c0.clone();
+			c.pc_i = Fr::from(pc as u32);
+			s119_rehash_u_i(&mut c);
+			let (n, b) = s103_unsat_rows(&c);
+			assert_eq!(n, n0, "T935-4: arms not shape-identical");
+			b.into_iter().filter(|r| !b0.contains(r)).collect::<Vec<_>>()
+		};
+		let (out, wrong) = (new(2), new(1 - pci));
+		let c3 = out.iter().filter(|r| !wrong.contains(r)).collect::<Vec<_>>();
+		emit_stdout(format!("T935-4: pc_N = 2: {} new rows, {} not shared with pc_N = {}: {:?}",
+			out.len(), c3.len(), 1 - pci, c3));
+		assert!(!out.is_empty(), "T935-4: pc_N = 2 accepted");
+		assert_eq!(c3.len(), 1, "T935-4: pc_N = 2 does not fail one C3 row");
 	}
 }
 

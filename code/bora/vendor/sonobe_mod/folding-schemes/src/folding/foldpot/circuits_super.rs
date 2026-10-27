@@ -516,6 +516,12 @@ where
 		nv = cs.num_witness_variables();
 
   		let wtns_vec = witness.to_vec_fp_var(cs.clone(), &wit_cfg);
+		//T935 C1: the committed stmt[1] (pc_i1) is this circuit's j.
+		//Decision 1: U_i1.pc_i and the u_{i+1}.x hashes read this variable.
+		let pc_i1 = wtns_vec[wit_cfg.cmF_size + wit_cfg.extra_var_size + 1].clone();
+		pc_i1.enforce_equal(&FpVar::constant(self.j))?;
+		//Decision 4: the u_i.x hash and the pc_i selects read stmt[0].
+		let pc_i = wtns_vec[wit_cfg.cmF_size + wit_cfg.extra_var_size].clone();
 		census("s3_1_tovec", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: {}, vars: {}, wtns_vec: {}",
@@ -656,10 +662,6 @@ where
 		//5. compute u_i.x as Var
         // u_i.x[0] = H(i, pc_i, z_0, z_i, U_i) (as Supernova)
 		// note U_i is already a vector of folded instances
-		let pc_i1 = FpVar::<C1::ScalarField>::new_witness(cs.clone(),
-			|| Ok(pc_i1_val)).unwrap();
-		let pc_i = FpVar::<C1::ScalarField>::new_witness(cs.clone(),
-			|| Ok(pc_i_val)).unwrap();
         let (u_i_x, U_i_vec) = U_i.clone().hash(
             &sponge,
             pp_hash.clone(),
@@ -767,12 +769,14 @@ where
 		let mut new_x_0 = FpVar::zero(); //hash(U_i..)
 		let mut new_x_1 = FpVar::zero(); //for hash(cyclefold_U_i)
 		let mut new_x_2 = FpVar::zero(); //for hash(cyclepair_U_i), optional
+		let mut sel_sum = FpVar::<CF1<C1>>::zero(); //T935 C2: pc_i in [0, n_circ)
 		for i in 0..self.n_circ{
 			//NOTE: have to use select  in a loop.
 			//otherwise will result in different R1CS for pc_i value
 			let fp_i = FpVar::new_constant(cs.clone(), 
 				C1::ScalarField::from(i as u32))?;
 			let b_eq = fp_i.is_eq(&pc_i)?;
+			sel_sum += FpVar::from(b_eq.clone());
 			new_u = b_eq.select(&U_i.vec_inst[i].u, &new_u)?;
 			new_x_0 = b_eq.select(&U_i.vec_inst[i].x[0], &new_x_0)?;
 			new_x_1 = b_eq.select(&U_i.vec_inst[i].x[1], &new_x_1)?;
@@ -780,6 +784,7 @@ where
 				new_x_2 = b_eq.select(&U_i.vec_inst[i].x[2], &new_x_2)?;
 			}
 		}
+		sel_sum.enforce_equal(&FpVar::one())?;
 		new_u = &new_u + &r * &u_i.u;
 		new_x_0 = &new_x_0 + &r * &u_i.x[0];
 		new_x_1 = &new_x_1 + &r * &u_i.x[1];
