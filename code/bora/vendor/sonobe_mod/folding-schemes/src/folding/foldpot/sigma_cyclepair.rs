@@ -84,8 +84,8 @@ pub fn compute_hc_var<F:PrimeField>(
 /// respectively. hashchain(a)_out = hash(hashchain(a)_in, a).
 ///
 /// Each Fq is represented non-natively as 5 Fr (as each limb
-/// is 55 bits). Note that the [gt1, a, b, gt2] part is actually
-/// will be mapped to zi_part2.cyclepair part (which is 160 Fr elements)
+/// is 55 bits). Note that the [gt1, a, b, gt2] part (160 Fr elements)
+/// is the x of the folded CyclePair instance (T931, circuits_super.rs H4)
 ///
 /// Total: (12 + 3 + 5 + 12)*5 + 1 + 1 + 1 + 1 = 164 Fr elements.
 /// Total cost: main circuit: 45k R1CS (because there are 164 Fr elements
@@ -264,7 +264,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 	/// inp: gt1, hc_a_in, hc_b_in (size 62 = 12*5 + 1 + 1 Fr)
 	/// oup: gt2, hc_a_out, hc_b_out (size 62 Fr)
 	/// word: a and b (size 8*5 = 40 Fr)
-	/// [gt1, a, b, gt2] 160Fr maps to zi_inp.cyclepair_input
+	/// [gt1, a, b, gt2] 160Fr is the folded CyclePair x (T931)
 	/// We do not rely on prev_stmt
 	fn build_statement(&self, word: &Vec<F>, _prev_stmt: &Option<StatementInst<F,LK>>, _lkup: Arc<LK>, ea: &StatementExtraInfo<F>, _advice: Arc<dyn NdAdvice + Send + Sync>, _lkup_size: usize, _b_dummy: bool, _job_id: usize) -> Result<StatementInst<F,LK>, Error>{
 		//1. retrieve the information
@@ -359,7 +359,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		// inp: gt1, hc_a_in, hc_b_in (size 62 = 12*5 + 1 + 1 Fr)
 		// oup: gt2, hc_a_out, hc_b_out (size 62 Fr)
 		// word: a and b (size 8*5 = 40 Fr)
-		// [gt1, a, b, gt2] 160Fr maps to zi_inp.cyclepair_input
+		// [gt1, a, b, gt2] 160Fr is the folded CyclePair x (T931)
 
 		let opt_join_constraints = vec![];
 		let gt1_idx = (0..12*5).into_iter().map(
@@ -374,9 +374,10 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 		let hc_b_in_idx = vec![cfg.idx_inp + 12*5 + 1];
 		let hc_a_out_idx = vec![cfg.idx_oup + 12*5];
 		let hc_b_out_idx = vec![cfg.idx_oup + 12*5 + 1];
-		let cyclepair_map = vec![gt1_idx.clone(), a_idx.clone(), 
-			b_idx.clone(), gt2_idx.clone()].concat();
 		let comp_map = vec![ gt1_idx, a_idx, b_idx, gt2_idx, hc_a_in_idx, hc_b_in_idx, hc_a_out_idx, hc_b_out_idx].concat();
+		//T931 D2: the whole row, hc indices included (164). Builders of
+		//the 160-limb CyclePair x take [..160].
+		let cyclepair_map = comp_map.clone();
 
 		//3. return
 		let stmt_len = cfg.total_size();
@@ -464,7 +465,7 @@ pub mod tests_sigma_cyclepair{
 			foldpot::{
 				sigma_ir1cs::{LookupTableTwoCol_Inst,StatementExtraInfo,LookupTableTwoCol,ZiPartTwoInst,SigmaIR1CS,GadgetMapper,DummyNdAdvice}, 
 				utils::{f1_to_f2_limbs},
-				sigma_cyclepair::{create_sigma_fold_pair, compute_hc, compute_hc_var},
+				sigma_cyclepair::{create_sigma_fold_pair, compute_hc, compute_hc_var, FoldPairMapper},
 			},
 		}
 	};
@@ -479,7 +480,8 @@ pub mod tests_sigma_cyclepair{
 	use ark_std::{UniformRand,test_rng,One,Zero};
 	use ark_ff::{PrimeField,ToConstraintField};
 	//use std::{rc::{Rc}, cell::{RefCell}};
-	use ark_relations::r1cs::{ConstraintSystem};
+	use ark_relations::r1cs::{ConstraintSystem, ConstraintMatrices};
+	use core::marker::PhantomData;
 	use ark_r1cs_std::{
 		R1CSVar,
 		fields::{fp::FpVar},
@@ -547,9 +549,8 @@ pub mod tests_sigma_cyclepair{
 		let a =  Bn254G1::rand(&mut rng);
 		let b =  Bn254G2::rand(&mut rng);
 
-		let t1 =  Bn254G1::rand(&mut rng);
-		let t2 =  Bn254G2::rand(&mut rng);
-		let gt1 = Bn254::pairing(t1, t2).0;
+		//T931: z_0 pins row 0 to gt1 = [0]_T and hc_in = 0
+		let gt1 = Fq12::one();
 		let gt2 = gt1 * Bn254::pairing(a,b).0;
 		let vec_a_raw:Vec<Fq> = a.to_field_elements().unwrap(); 
 		let vec_a = vec_a_raw.into_iter().map(|a|
@@ -575,8 +576,7 @@ pub mod tests_sigma_cyclepair{
 			.concat();
 		assert!(vec_gt2.len()==12*5);
 
-		let hc_a_in = Fr::rand(&mut rng);
-		let hc_b_in = Fr::rand(&mut rng);
+		let (hc_a_in, hc_b_in) = (Fr::zero(), Fr::zero());
 		let hc_a_out = compute_hc::<Fr>(&cfg, &hc_a_in, &vec_a);
 		let hc_b_out = compute_hc::<Fr>(&cfg, &hc_b_in, &vec_b);
 
@@ -614,5 +614,137 @@ pub mod tests_sigma_cyclepair{
 			external_inputs).expect("gen step err");
 
 		assert!(cs.is_satisfied().unwrap());
+	}
+
+	// ---------------------------------------------------------------
+	// T931 (TASK_T931 s7). Stage-2 row chaining on the sigma step. Arms
+	// differ in witness values only, so their rows compare.
+	// ---------------------------------------------------------------
+	pub type Fq12 = <Bn254 as Pairing>::TargetField;
+
+	/// T931: limbs of a pairing-side element, laid out as the
+	/// mod_super.rs row encoder does (to_field_elements, f1_to_f2_limbs).
+	pub fn t931_enc<T: ToConstraintField<Fq>>(x: &T) -> Vec<Fr>{
+		x.to_field_elements().unwrap().iter()
+			.flat_map(|f| f1_to_f2_limbs::<Fq, Fr>(f)).collect()
+	}
+
+	/// T931: g_k = sum_t 2^(55t) limb[4k+t], computed independently.
+	pub fn t931_pack4(l: &[Fr]) -> Vec<Fr>{
+		l.chunks(4).map(|c| c.iter().rev()
+			.fold(Fr::zero(), |s, x| s * Fr::from(1u64 << 55) + x)).collect()
+	}
+
+	/// T931: re-run both hash chains over rows, from `hc`.
+	pub fn t931_rechain(rows: &mut [Vec<Fr>], hc: (Fr, Fr)){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let (mut ha, mut hb) = hc;
+		for r in rows.iter_mut(){
+			(r[160], r[161]) = (ha, hb);
+			ha = compute_hc(&cfg, &ha, &r[60..75].to_vec());
+			hb = compute_hc(&cfg, &hb, &r[75..100].to_vec());
+			(r[162], r[163]) = (ha, hb);
+		}
+	}
+
+	/// T931: honest row [gt1, a, b, gt1 e(a,b), hc_in (2), hc_out (2)].
+	pub fn t931_row(gt1: Fq12, a: Bn254G1, b: Bn254G2, hc: (Fr, Fr)) -> Vec<Fr>{
+		let mut r = [t931_enc(&gt1), t931_enc(&a), t931_enc(&b),
+			t931_enc(&(gt1 * Bn254::pairing(a, b).0)), vec![Fr::zero(); 4]].concat();
+		t931_rechain(std::slice::from_mut(&mut r), hc);
+		r
+	}
+
+	/// T931: statement of row w (1-based) of n, fields as driver.rs pass_all.
+	pub fn t931_stmt(row: &Vec<Fr>, w: usize, n: usize) -> Vec<Fr>{
+		let (zero, one, len) = (Fr::zero(), Fr::one(), Fr::from(164u32));
+		let ea = StatementExtraInfo::<Fr>{ total_words: Fr::from(n as u32),
+			word_id: Fr::from(w as u32), subseg_id: one, total_word_len: len,
+			total_word_segs: one, n_circ: one, pc_i: zero, pc_i1: zero,
+			act_word_subseg_size: len, batch_r: zero, batch_v: zero,
+			r_all_words: zero, r_kzg_len: zero, r_vec_r: zero, r_vec_v: zero,
+			r_word_i: zero, r_word_i2: zero, r_all_words2: zero, r_kzg_len2: zero,
+			r_vec_r2: zero, r_vec_v2: zero, accumulated_word_len: len };
+		let m = FoldPairMapper::<Fr, LK>{_f: PhantomData, _lk: PhantomData,
+			poseidon_config: poseidon_canonical_config::<Fr>(), job_id: 0};
+		m.build_statement(row, &None, Arc::new(LK::new(vec![])), &ea,
+			Arc::new(DummyNdAdvice{}), 0, false, 0).unwrap().to_vec()
+	}
+
+	/// T931: rows of m that z leaves unsatisfied.
+	pub fn t931_unsat(m: &ConstraintMatrices<Fr>, z: &[Fr]) -> Vec<usize>{
+		let dot = |r: &Vec<(Fr, usize)>| r.iter().map(|(c, i)| *c * z[*i]).sum::<Fr>();
+		(0..m.num_constraints).filter(|&r| dot(&m.a[r]) * dot(&m.b[r]) != dot(&m.c[r]))
+			.collect()
+	}
+
+	/// T931: Stage-2 sigma step 0 on (row, input state zi, z_i[1]). Returns
+	/// (matrices, z, native output state, in-circuit z_{i+1}[1]).
+	pub fn t931_step(row: &Vec<Fr>, zi: &ZiPartTwoInst<Fr>, z1: Fr)
+		-> (ConstraintMatrices<Fr>, Vec<Fr>, ZiPartTwoInst<Fr>, Fr){
+		let sigma = create_sigma_fold_pair::<Fr,C,CS,LK,false>(1,
+			poseidon_canonical_config::<Fr>());
+		let (wtns, wcfg, out) = sigma.gen_witness(&t931_stmt(row, 1, 1), zi, None);
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let ext = wtns.to_vec_fp_var(cs.clone(), &wcfg);
+		let z_i = [vec![Fr::zero(), z1], vec![Fr::zero(); 4]].concat().into_iter()
+			.map(|v| FpVar::new_witness(cs.clone(), || Ok(v)).unwrap()).collect();
+		let h = sigma.generate_step_constraints(cs.clone(), 0, z_i, ext)
+			.expect("gen step err")[1].value().unwrap();
+		cs.finalize();
+		let m = cs.to_matrices().unwrap();
+		let g = cs.borrow().unwrap();
+		let z = [g.instance_assignment.clone(), g.witness_assignment.clone()].concat();
+		(m, z, out, h)
+	}
+
+	/// T931 T-10 (N3, P1) and the H3 export on the Stage-2 sigma step.
+	/// The input state is bound whole (no free split digest) and chained
+	/// to the row: gt1 == z_i.g, hc_in == z_i.hc_out. z_{i+1} carries the
+	/// row's hc_out and pack4(gt2). Baseline: every tampered arm is SAT.
+	#[test]
+	fn test_t931_t10_step_chain(){
+		let (cfg, fq_bits) = (poseidon_canonical_config::<Fr>(), Fq::MODULUS_BIT_SIZE as usize);
+		let (zero, mut rng) = (Fr::zero(), test_rng());
+		let (a, b) = (Bn254G1::rand(&mut rng), Bn254G2::rand(&mut rng));
+		let row = t931_row(Fq12::one(), a, b, (zero, zero));
+		let z0 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, true, fq_bits, 1);
+		let (m, z, out, h_out) = t931_step(&row, &z0, z0.hash(&cfg));
+		println!("T931 T-13 Stage-2 sigma step: cs {}, witness {}",
+			m.num_constraints, m.num_witness_variables);
+		assert!(t931_unsat(&m, &z).is_empty(), "T931: honest Stage-2 step 0 not SAT");
+		//H3 export: z_{i+1} = [21 fixed, hc_a_out, hc_b_out, pack4(gt2)]
+		let v = out.to_vec();
+		let exp = [row[162..164].to_vec(), t931_pack4(&row[100..160])].concat();
+		let b_exp = v.len() == 38 && v[21..] == exp[..] && h_out == out.hash(&cfg);
+		//carried arms: z_i's entry len-k moved, digest consistent
+		//(k = 17 hc_a_out, 16 hc_b_out, 15 g[0])
+		let carried = |k: usize| {
+			let mut v = z0.to_vec();
+			let j = v.len() - k;
+			v[j] += Fr::one();
+			let zi = ZiPartTwoInst::<Fr>::from_vec(&v, fq_bits);
+			let (m2, z2, _, _) = t931_step(&row, &zi, zi.hash(&cfg));
+			assert_eq!(m2.num_constraints, m.num_constraints, "T931: arms not shape-identical");
+			(t931_unsat(&m2, &z2).len(), z2)
+		};
+		let ((n_ha, _), (n_hb, _), (n_g, z_g)) = (carried(17), carried(16), carried(15));
+		//row side: gt1 != z_i.g with z_0 honest
+		let (m3, z3, _, _) = t931_step(&t931_row(Bn254::pairing(a, b).0, a, b,
+			(zero, zero)), &z0, z0.hash(&cfg));
+		let n_row = t931_unsat(&m3, &z3).len();
+		//stale digest: the honest assignment with only the carried g[0]
+		//column moved (the first column where the g arm differs)
+		let c = (0..z.len()).find(|&i| z[i] != z_g[i]).unwrap();
+		let mut z4 = z.clone();
+		z4[c] = z_g[c];
+		let n_stale = t931_unsat(&m, &z4).len();
+		println!("T931 T-10: export {} | unsat rows: hc_a {} hc_b {} g {} row gt1 {} \
+			stale digest (col {}) {}", b_exp, n_ha, n_hb, n_g, n_row, c, n_stale);
+		assert!(b_exp, "T931 H3: z_(i+1) does not carry (hc_out, pack4(gt2)), len {}", v.len());
+		assert!(n_ha > 0 && n_hb > 0, "T931 P1: hc_in != z_i.hc_out accepted");
+		assert!(n_g > 0 && n_row > 0, "T931 P1: gt1 != z_i.g accepted");
+		//P1 alone rejects the moved g[0] (n_g rows), so the digest must add rows
+		assert!(n_stale > n_g, "T931 N3: input state column unbound by the digest");
 	}
 }

@@ -33,7 +33,7 @@ use crate::folding::foldpot::{
 	circuits::{CommittedInstanceVarFoldPot, 
 //		ChallengeGadgetFoldPot
 	},
-	sigma_ir1cs::{SigmaIR1CS,ZiPartTwoInst,LookupTableTwoCol,CyclePairInput,CyclePairInputVar,GadgetMapper},
+	sigma_ir1cs::{SigmaIR1CS,ZiPartTwoInst,LookupTableTwoCol,CyclePairInputVar,GadgetMapper},
 	mod_super::{CommittedInstanceFoldPotSuper},
 	cyclepair::{CyclePairCommittedInstanceVar,CyclePairChallengeGadget, NIFSFullGadgetCyclePair,cp_io_len},
 	utils::{B_DEBUG, gadget_sat_on},
@@ -522,6 +522,15 @@ where
 		pc_i1.enforce_equal(&FpVar::constant(self.j))?;
 		//Decision 4: the u_i.x hash and the pc_i selects read stmt[0].
 		let pc_i = wtns_vec[wit_cfg.cmF_size + wit_cfg.extra_var_size].clone();
+		//T931 H4 (P0): the folded CyclePair x is the row's statement vars
+		//[gt1, a, b, gt2] (same offset rule as C1), the copy that the hash
+		//chains and z_{i+1} read too.
+		let cp_stmt = if self.b_full_mode {
+			let map = self.F.get_mapper().lock().unwrap()
+				.gen_statement_structure(self.F.get_lkup_share_size()).4;
+			map[..160].iter().map(|k| wtns_vec[wit_cfg.cmF_size
+				+ wit_cfg.extra_var_size + k].clone()).collect::<Vec<_>>()
+		} else {vec![]};
 		census("s3_1_tovec", &cs);
 		log_perf(self.job_id, log_level, &format!(
 			"-- circuit_super gen_cs step 3.1: to_vec_fp_var: cs: {}, vars: {}, wtns_vec: {}",
@@ -709,7 +718,7 @@ where
                 Ok(self.u_i_cmW.unwrap_or(C1::zero()))
             })?,
             // u_i.x is computed in step 1
-            x: if self.b_full_mode { vec![u_i_x, cf_u_i_x, cp_u_i_x.unwrap()] 
+            x: if self.b_full_mode { vec![u_i_x, cf_u_i_x, cp_u_i_x.clone().unwrap()] 
 				}else{ vec![u_i_x, cf_u_i_x] },
             cmF: NonNativeAffineVar::new_witness(cs.clone(), || {
                 Ok(self.u_i_cmF.unwrap_or(C1::zero()))
@@ -1097,8 +1106,13 @@ where
 
 		//12. Cyclepair part only if it's full mode
 		if self.b_full_mode{
-			//1. read the input
-			let ci:CyclePairInput<CF1<C1>>=z_i1_part2.cyclepair_input.unwrap();				let cpi= CyclePairInputVar::from(cs.clone(), &ci);
+			//1. read the input: the statement vars (H4 above)
+			//T931: pack4 (H2/H3) is injective only for limbs of at most 55
+			//bits, and the only range check on these vars is the cp challenge
+			//absorb below (NonNativeUintVar::to_constraint_field decomposes
+			//every limb to 55 bits). Do not drop it without re-adding one.
+			let fq_bits = <<C1 as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
+			let cpi = CyclePairInputVar::from_vars(&cp_stmt, fq_bits);
 			//NOTE: x should be 32 elements (NonNativeUint essentially
 			//captures 32 Fq elements), so that they can be involved in
 			//R1CS computation in the decider proof
@@ -1116,9 +1130,12 @@ where
 			//3. create the folding factor r (should be over Fq), as nonnative
         	let cp_cmT = GC2::new_witness(cs.clone(), 
 				|| Ok(self.cp_cm_T.unwrap_or_else(C2::zero)))?;
+			//T931 D1: a FRESH sponge, not the shared transcript, which at
+			//i = 0 holds base-case CycleFold absorbs the native side never
+			//makes. Still absorbs pp_hash, cp_U_i, cp_u_i and cp_cmT.
         	let cp_r_bits = CyclePairChallengeGadget::<C2, GC2>
 				::get_challenge_gadget(
-				&mut transcript,
+				&mut sponge.clone(),
 				pp_hash.clone(),
 				cp_U_i_vec.unwrap().clone(),
 				cp_u_i.clone(),
@@ -1149,17 +1166,22 @@ where
 				new_constant(cs.clone(), cp_u_dummy)?
                 .hash(&sponge, pp_hash)?;
 			assert!(cp_U_i1.x.len() == cp_u_dummy_x_len);
-			if self.b_full_mode && !is_basecase.value()?{
+			//T931 O1: the row is folded at EVERY step, i = 0 included
+			//(keygen's empty() carries no x and no cp_x).
+			if self.x.is_some(){
 				assert!(self.cp_x.is_some());
 			}
         	let cp_x = FpVar::new_input(cs.clone(), || {
-            	Ok(self.cp_x.unwrap_or(cp_u_i1_x_base.value()?))
+            	Ok(self.cp_x.unwrap_or(cp_u_i1_x.value()?))
         	})?;
-			let exp_cp_x = is_basecase.select(&cp_u_i1_x_base, &cp_u_i1_x)?;
-        	cp_x.enforce_equal(&exp_cp_x)?;
+        	cp_x.enforce_equal(&cp_u_i1_x)?;
+			//T931: cp_U_0 is the dummy. u_0.x[2] is never checked, so an
+			//unpinned prover would seed a satisfying accumulator.
+			cp_u_i_x.unwrap().conditional_enforce_equal(&cp_u_i1_x_base,
+				&is_basecase)?;
 
 			if B_DEBUG {
-				assert!(exp_cp_x.value()?==cp_x.value()?, "exp_cp_x error");
+				assert!(cp_u_i1_x.value()?==cp_x.value()?, "exp_cp_x error");
 			}
 
         }; //end of cyclepair part

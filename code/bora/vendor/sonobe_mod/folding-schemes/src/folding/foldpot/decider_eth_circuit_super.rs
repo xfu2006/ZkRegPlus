@@ -39,12 +39,12 @@ use crate::transcript::AbsorbNonNativeGadget;
 use crate::folding::{
 	foldpot::{
 		CommittedInstanceFoldPot, WitnessFoldPot, 
-		sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,ZiPartTwoInstVar,GadgetMapper},
+		sigma_ir1cs::{SigmaIR1CS,LookupTableTwoCol,SigmaIR1CS_Inst,ZiPartTwoInst,ZiPartTwoInstVar,GadgetMapper,cp_g0},
 		circuits::{CommittedInstanceVarFoldPot},
 		//decider_eth_circuit::{RelaxedR1CSGadget, R1CSVar,WitnessVarFoldPot,CycleFoldWitnessVar},
 		mod_super::{WitnessFoldPotSuper,CommittedInstanceFoldPotSuper, FoldPotSuper},
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
-		sigma_cyclepair::{compute_hc_var, hash_var},
+		sigma_cyclepair::{compute_hc_var},
 		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs,
 			gadget_sat_check, gadget_sat_on}, //DEBUG USE 69801: +gadget_sat_check +.11 gate
 		container_config::ColEle,
@@ -344,6 +344,10 @@ where C::BaseField: PrimeField,
 	/// a randf which allows generate a random hash for the same
 	/// data
 	pub randf: FpVar<F>,
+
+	/// T931 P2: (z_n.hc_a_out, z_n.hc_b_out), full mode only. Not in
+	/// Phase1CircuitRetVal or to_vec, so mainres_hash is unchanged.
+	pub cp_hc_out: Option<(FpVar<F>, FpVar<F>)>,
 }
 
 impl <F:PrimeField, C: CurveGroup<ScalarField=F>> Phase1CircuitRet<F,C>
@@ -375,7 +379,8 @@ where C::BaseField: PrimeField,
 			u_i1_0_cmW: avar.clone(),
 			u_i1_0_cmF: avar.clone(),
 
-			randf
+			randf,
+			cp_hc_out: None,
 		}
 	}
 
@@ -403,6 +408,7 @@ where C::BaseField: PrimeField,
 			u_i1_0_cmF: NonNativeAffineVar::<C>::new_variable(cs.clone(), ||
 				Ok(val.u_i1_0_cmF), AllocationMode::Witness).unwrap(),
 			randf: new_var(cs, val.randf),
+			cp_hc_out: None,
 		};
 		if b_debug{
 			use ark_r1cs_std::R1CSVar;
@@ -751,7 +757,7 @@ where
 
 	/// In addition to generate constraints, for stage 1 circuit
 	/// return the <<com_E, com_W, com_F>>; for stage 2 circuit
-	/// return the final_result = hash_a_b
+	/// also z_n's (hc_a_out, hc_b_out) via cp_hc_out (T931 P2)
     pub fn generate_constraints_adv(&self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>, _randf: CF1<C1>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
     	//1. generate Vector the R1CS var (one for each circuit)
     	let log_level = LOG3;
@@ -972,6 +978,15 @@ where
 			let zp = &zi_part2_inst_var;
 			zp.accumulated_word_len
 				.enforce_equal(&zp.total_word_len)?;
+		} else {
+			//T931 P3: the last row's gt2 is [0]_T, z_n.g == g0 (15 eq).
+			//Same placement rule as S106.
+			let link = zi_part2_inst_var.cp_link.as_ref().expect("T931: no cp_link");
+			let g0 = cp_g0::<E, CF1<C1>, CF2<C1>>();
+			assert_eq!(link.g.len(), g0.len(), "T931 P3: z_n.g len != g0 len");
+			for (g, g0) in link.g.iter().zip(g0){
+				g.enforce_equal(&FpVar::constant(g0))?;
+			}
 		}
 
 		//S105b: pin z_0[1] to the CANONICAL initial state. Without it
@@ -1014,27 +1029,25 @@ where
 				//S102/F4: batch_r, batch_v -- zero in z_0.
 				zero_v.clone(), zero_v.clone(),
 			];
-			let h_fixed = ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
-				&self.poseidon_config, cs.clone(), &v_fixed);
-			//full mode: z_0's cyclepair limbs are all zero, so their
-			//half of the split digest is a compile-time constant --
-			//computed natively, injected as a constant, 0 R1CS.
-			let zp_native = self.zi_part2_inst.clone()
-				.expect("zi_part null");
-			let n_limbs = zp_native.to_vec().len().saturating_sub(21);
-			let z0_hash = if n_limbs==0 { h_fixed } else {
-				let h_cp0 = {
-					let mut sp2 = PoseidonSponge::<CF1<C1>>::new(
-						&self.poseidon_config);
-					sp2.absorb(&vec![CF1::<C1>::zero(); n_limbs]);
-					sp2.squeeze_field_elements::<CF1<C1>>(1)[0]
-				};
-				let h_cp0_var = FpVar::<CF1<C1>>::new_constant(
-					cs.clone(), h_cp0)?;
-				ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
-					&self.poseidon_config, cs.clone(), &[h_fixed, h_cp0_var])
-			};
+			//T931 H6: full mode appends z_0's CpLink (hc_out = 0 and g0,
+			//see ZiPartTwoInst::new), one plain hash like ZiPartTwoInst::
+			//hash. Branch on the mode, never on the native length.
+			let mut v_z0 = v_fixed;
+			if self.b_full_mode {
+				assert_eq!(self.zi_part2_inst.as_ref().expect("zi_part null")
+					.to_vec().len(), 38, "T931: full-mode state is not 38 fields");
+				v_z0.extend([zero_v.clone(), zero_v.clone()]);
+				v_z0.extend(cp_g0::<E, CF1<C1>, CF2<C1>>().into_iter()
+					.map(FpVar::constant));
+			}
+			let z0_hash = ZiPartTwoInstVar::<CF1<C1>>::hash_slice(
+				&self.poseidon_config, cs.clone(), &v_z0);
 			z0_hash.enforce_equal(&z_0[1])?;
+			//T934 K3: the rest of z_0 (chain seed z_0[0], cmF limbs
+			//z_0[2..]) is honest 0. z_0[0] is not in zi_part2, so the
+			//digest above cannot cover it.
+			z_0[0].enforce_equal(&zero_v)?;
+			for k in 2..z_0.len(){ z_0[k].enforce_equal(&zero_v)?; }
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 6: verify zi_part2. INCREASED r1cs: {}, memory usage: {}.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 		c1 = cs.num_constraints();
@@ -1268,6 +1281,10 @@ where
 		let randf = FpVar::<CF1<C1>>::new_witness(cs.clone(), ||{
 			Ok(randf_val)
 		})?;
+		let cp_hc_out = if self.b_full_mode {
+			let link = zi_part2_inst_var.cp_link.as_ref().expect("T931: no cp_link");
+			Some((link.hc_a_out.clone(), link.hc_b_out.clone()))
+		} else {None};
 		let res = Phase1CircuitRet::<C1::ScalarField, C1>{
 			ch: zi_part2_inst_var.ch,
 			rc: zi_part2_inst_var.rc,
@@ -1286,7 +1303,8 @@ where
 			u_i1_0_cmW: U_i1.vec_inst[0].cmW.clone(),
 			u_i1_0_cmF: U_i1.vec_inst[0].cmF.clone(),
 
-			randf
+			randf,
+			cp_hc_out,
 		};
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
@@ -1323,8 +1341,8 @@ where
 ///              it's the MAIN zkregplus circ).
 /// (3) compute the hashchain(G_1): [com_All_w, (comW, com_E, com_F)_i=1^k, prf]
 ///             hashchain(G_2): the qa-nizk key series
-///     and verify that hash(hashchain(G_1), hashchain(G_2)) is the same
-///     as computed by the cyclepair circuits's final result (in ZiPart2)
+///     and verify that they are z_n's (hc_a_out, hc_b_out), which the
+///     cyclepair circuits chained row by row (T931 P2)
 /// (4) verify that hashchain(G_2) is the same as the QA-NIZK verifier key
 ///     hash
 /// --> the above essentially finishes the proof of circ1's (MainDeciderCircuit
@@ -1334,8 +1352,8 @@ where
 /// As this is a "sub-circuit", it does NOT have public I/O, instead,
 /// It returns to the caller a Return Package of Wires 
 ///  In addition to the Phase1CircRet of its main circuit,
-///  It returns (final_result_of_circ2, hashchain(b)) where
-/// final_result_of_circ2 is hash(hashchain(a), hashchain(b))
+///  It returns hashchain(b). Stage 2's z_n (hc_a_out, hc_b_out) reach
+/// it via cp_hc_out and are checked against both chains (T931 P2)
 #[derive(Clone, Debug)]
 pub struct Phase2Circuit<E:Pairing<G1=C1,G2=C2G2>, P: PairingVar<E,CF3<C2G2>> + Debug, C2G2, C1, GC1, C2, GC2, CS1, CS2, CS1E, LK, GM, const H: bool = false>
 where
@@ -1447,11 +1465,10 @@ where
         	})
     }
 
-	/// generate FpVar version of cyclepair_inputs and the 
-	/// compute the hash(hash_chain(a), hash_chain(b))
-	/// which will match the final_result of z_n output of 
-	/// the last circuit.
-	/// return (cyclapair_inputs_var, expected_final_result, hashchain(b))
+	/// generate FpVar version of cyclepair_inputs and compute
+	/// hash_chain(a), hash_chain(b), which must match z_n's
+	/// (hc_a_out, hc_b_out) (T931 P2).
+	/// return (cyclapair_inputs_var, hashchain(a), hashchain(b))
 	/// where hashchain(b) should match the hash of the qa_nizk_ver_key.hash()
 	fn process_cyclepair_inp(&self, cs: ConstraintSystemRef<CF1<C1>>)->(Vec<Vec<FpVar<C1::ScalarField>>>, FpVar<C1::ScalarField>, FpVar<C1::ScalarField>){
 		//1. build the cyclepair_inputs_var
@@ -1475,23 +1492,20 @@ where
 			hc_b = compute_hc_var(&self.main_circ.poseidon_config, 
 				&hc_b, &b, cs.clone());
 		}
-		let final_result = hash_var(&self.main_circ.poseidon_config, &vec![hc_a, hc_b.clone()], cs.clone()); 
-		(cyclepair_inputs_var, final_result, hc_b)
+		(cyclepair_inputs_var, hc_a, hc_b)
 	}
 
 	/// In addition to generate constraints, for stage 1 circuit
 	/// return the <<com_E, com_W, com_F>>; for stage 2 circuit
-	/// return the final_result = hash_a_b
+	/// return hashchain(b) (T931 P2 checks both chains in-circuit)
     pub fn generate_constraints_adv(self, circ1_res: &Phase1CircuitRet<CF1<C1>,C1>, cs: ConstraintSystemRef<CF1<C1>>) -> Result<Phase2CircuitRet<CF1<C1>,C1>, Error> {
-		//1. generate the cyclepair input and expected result 
-		// expected result is hash(hashchain(a), hashchain(b))
-		// which is the final result of last circuit
+		//1. generate the cyclepair input and its hash chains
+		// hashchain(a), hashchain(b), checked against z_n in step 4
 		let c0 = cs.num_constraints();
 		let mut c1 = cs.num_constraints();
 		let mut t1 = GTimer::new();
 		let log_level = LOG3;
-		let b_debug = B_DEBUG;
-		let (cyclepair_inputs_var, expected_final_result, hashchain_b) = 
+		let (cyclepair_inputs_var, hashchain_a, hashchain_b) = 
 			self.process_cyclepair_inp(cs.clone());
 		log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 1: gen_expected_final_result. r1cs: {}", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
@@ -1532,15 +1546,14 @@ where
 		log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 3: Main circ construction. r1cs: {}", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 
-		//4. validate the final_result
-		if b_debug{
-			use ark_r1cs_std::R1CSVar;
-			if expected_final_result.value().is_ok(){
-				assert!(expected_final_result.value()?
-					==my_phase1_ret.final_result.value()?);
-			} 
+		//4. T931 P2: the rows' hash chains are z_n's (hc_a_out,
+		//hc_b_out), which the step circuit chained row by row from
+		//z_0's zeros. Replaces the compare against the free f_result.
+		if self.main_circ.b_full_mode {
+			let (ha, hb) = my_phase1_ret.cp_hc_out.clone().expect("T931: no cp_hc_out");
+			hashchain_a.enforce_equal(&ha)?;
+			hashchain_b.enforce_equal(&hb)?;
 		}
-		expected_final_result.enforce_equal(&my_phase1_ret.final_result)?;
 
 		//5. perform an extra cyclepair check!
         //#[cfg(feature = "light-test")]
@@ -2644,6 +2657,13 @@ pub mod tests_decider_eth_circuit_super {
 
 	/// s119_fold with an optional probe on the step-5 values.
 	fn s119_fold_probe(n_steps: usize, probe: Option<S119Probe>) -> S119Circ{
+		s119_fold_rows(n_steps, probe).0
+	}
+
+	/// T931: s119_fold_probe plus the Stage-2 rows of its QA-NIZK (the
+	/// driver.rs:3547 encoder), the vkey hash and b_0 = vkey.c[0].
+	fn s119_fold_rows(n_steps: usize, probe: Option<S119Probe>)
+		-> (S119Circ, Vec<Vec<Fr>>, Fr, ProjectiveG2){
 		let mut rng = ark_std::test_rng();
 		let cfg = poseidon_canonical_config::<Fr>();
 		let b_full = false;
@@ -2719,12 +2739,15 @@ pub mod tests_decider_eth_circuit_super {
 		//driver.rs step 5: com_all_w / r_all_w over the folded witness.
 		let (u_i1, w_i1, _r, _cmt) = nova.gen_next_folded()
 			.expect("gen_next_folded err");
-		let (com_all_w, _qa, r_all_w) = w_i1
+		let (com_all_w, qa, r_all_w) = w_i1
 			.gen_com_all_w_and_qa_nizk_prf::<Bn254, S119Cm, false>(
 				params.0.qa_pp.as_ref().expect("qa_pp null"),
 				&params.0.cs1e_pp,
 				params.1.qa_vp.as_ref().expect("qa_vp null"),
 				&u_i1);
+		let vp = params.1.qa_vp.as_ref().expect("qa_vp null");
+		let rows = u_i1.generate_cyclepair_inputs::<Bn254>(
+			params.0.qa_pp.as_ref().expect("qa_pp null"), vp, &com_all_w, &qa, &cfg);
 		let mut circ = S119Circ::from_nova::<S119Fc>(nova, com_all_w, r_all_w)
 			.expect("from_nova err");
 		//T934: r_2 = H(tag, C_WE, D) needs a Groth16 pk; a fresh draw
@@ -2736,7 +2759,7 @@ pub mod tests_decider_eth_circuit_super {
 				&params.0.cs1e_pp, ch, &circ.all_w(), &Fr::zero(), None).expect("kzg prf err");
 			p(&w_i1, com_all_w, &prf, ch, &params.0.cs1e_pp);
 		}
-		circ
+		(circ, rows, vp.hash(&cfg), vp.c[0])
 	}
 
 	/// T933-B1 on (C_WE, e_2), T933 s9. com_all_w commits W || E ||
@@ -2811,7 +2834,9 @@ pub mod tests_decider_eth_circuit_super {
 	/// Repoint u_i.x[0] at the circuit's CURRENT z_0/z_i so a state
 	/// edit does not die at step 5's hash before reaching the pins.
 	/// u_i is a decider witness, so a prover can make this same move.
-	fn s119_rehash_u_i(circ: &mut S119Circ){
+	fn s119_rehash_u_i<GM: GadgetMapper<Fr, S119Lk> + Clone + Debug>(circ: &mut Phase1Circuit<
+		Bn254, Bn254PairingVar, ProjectiveG2, Projective, GVar, Projective2, GVar2,
+		S119Cm, S119Cm2, S119Cm, S119Lk, GM, false>){
 		let sponge = PoseidonSponge::<Fr>::new(&circ.poseidon_config);
 		let x0 = circ.U_i.as_ref().expect("U_i null").hash(
 			&sponge,
@@ -2954,6 +2979,21 @@ pub mod tests_decider_eth_circuit_super {
 		assert!(i4b == i0,
 			"length pin rejects acc == total == 2, {:?} vs {:?}",
 			i4b, i0);
+		//ARM 5 (T934 K3). Honest state, z_0[0] or one of z_0[2..] moved off zero,
+		//u_i.x[0] repointed. Only K3, right after S105b, reads them past
+		//step 5, so the first failure sits between S105b and step 7.
+		for k in [0usize, 2, 3, 4, 5]{
+			circ.zi_part2_inst = Some(zi_ok.clone());
+			circ.z_i = Some(z_i_ok.clone());
+			let mut z_0_k3 = z_0_ok.clone();
+			z_0_k3[k] += Fr::one();
+			circ.z_0 = Some(z_0_k3);
+			s119_rehash_u_i(&mut circ);
+			let (n5, i5) = s119_synth(&circ);
+			assert!(n5 == n0 && i5.map_or(false, |i| i_z0 < i && i < i_honest),
+				"K3: z_0[{}] = 1 not rejected after S105b: {:?} (z0 {} honest {})",
+				k, i5, i_z0, i_honest);
+		}
 	}
 
 	// ---------------------------------------------------------------
@@ -3626,5 +3666,321 @@ pub mod tests_decider_eth_circuit_super {
 		assert!(!out.is_empty(), "T935-4: pc_N = 2 accepted");
 		assert_eq!(c3.len(), 1, "T935-4: pc_N = 2 does not fail one C3 row");
 	}
-}
 
+	// ---------------------------------------------------------------
+	// T931 (TASK_T931 s7). Stage 2 = FoldPairMapper in full mode. Rows
+	// come from the S119 Stage-1 fold through the driver.rs:3547 encoder.
+	// Arms differ in witness values only (shape asserted), so rows compare.
+	// ---------------------------------------------------------------
+	use crate::folding::nova::traits::NovaR1CS;
+	use crate::folding::foldpot::{
+		cyclepair::cp_io_len,
+		sigma_cyclepair::{create_sigma_fold_pair, FoldPairMapper,
+			tests_sigma_cyclepair::{Fq12, t931_enc, t931_pack4, t931_rechain,
+				t931_row, t931_stmt}},
+	};
+	use ark_bn254::Fq;
+	type T931Gm = FoldPairMapper<Fr, S119Lk>;
+	type T931Fc = SigmaIR1CS_Inst<Fr, Projective, S119Cm, S119Lk, T931Gm, false>;
+	type T931Nova = FoldPotSuper<Bn254, Bn254PairingVar, ProjectiveG2,
+		Projective, GVar, Projective2, GVar2, T931Fc, S119Cm, S119Cm2,
+		S119Cm, S119Lk, T931Gm, false>;
+	type T931Circ = Phase1Circuit<Bn254, Bn254PairingVar, ProjectiveG2,
+		Projective, GVar, Projective2, GVar2, S119Cm, S119Cm2, S119Cm, S119Lk, T931Gm, false>;
+	type T931Cp = CyclePairCircuit<Bn254, Bn254PairingVar, ProjectiveG2,
+		Projective, GVar, Projective2, GVar2, S119Cm, S119Cm2, S119Cm, S119Lk, T931Gm, false>;
+	type T931Aug = crate::folding::foldpot::circuits_super::AugmentedFCircuitFoldPotSuper<
+		Projective, Projective2, GVar2, S119Lk, T931Fc, T931Gm, false>;
+	const T931_FQ: usize = 254;
+
+	/// T931: Stage-2 params and the step-0 nova over n rows (driver.rs
+	/// driver2: one FoldPair circuit, empty table, z_0 canonical, ch = rc = 0).
+	macro_rules! t931_nova { ($rng: expr, $n: expr) => {{
+		let (cfg, zero) = (poseidon_canonical_config::<Fr>(), Fr::zero());
+		let f = create_sigma_fold_pair::<Fr, Projective, S119Cm, S119Lk, false>(1, cfg.clone());
+		let prep = PreprocessorParamFoldPotSuper::<Projective, Projective2, T931Fc,
+			S119Cm, S119Cm2, S119Lk, T931Gm, false>::new(cfg.clone(), vec![f.clone()],
+			Arc::new(S119Lk::new(vec![])), vec![f.get_size_f()], true);
+		let params = T931Nova::preprocess($rng, &prep, 0).expect("preprocess err");
+		let z0 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, true, T931_FQ, $n);
+		let nova = T931Nova::init_adv(&params, vec![f], [vec![zero, z0.hash(&cfg)],
+			vec![zero; 4]].concat(), 1, 0, true, zero, zero, $n, None, 0)
+			.expect("init_adv err");
+		(params, nova)
+	}}}
+
+	/// T931: Stage-2 fold over rows (one row per step), then its Phase 1
+	/// circuit (driver.rs from_nova path).
+	fn t931_fold2(rows: &[Vec<Fr>]) -> T931Circ{
+		let mut rng = ark_std::test_rng();
+		let (params, mut nova) = t931_nova!(&mut rng, rows.len());
+		for (j, r) in rows.iter().enumerate(){
+			nova.prove_step(&mut rng, t931_stmt(r, j + 1, rows.len()), None)
+				.expect("prove_step err");
+		}
+		let (u, w, _, _) = nova.gen_next_folded().expect("gen_next_folded err");
+		let (com, _, r) = w.gen_com_all_w_and_qa_nizk_prf::<Bn254, S119Cm, false>(
+			params.0.qa_pp.as_ref().expect("qa_pp null"), &params.0.cs1e_pp,
+			params.1.qa_vp.as_ref().expect("qa_vp null"), &u);
+		T931Circ::from_nova::<T931Fc>(nova, com, r).expect("from_nova err")
+	}
+
+	/// T931: the cp decider over (Stage-1 main, Stage-2 circuit, rows), with
+	/// every public input honest (driver.rs CircPubInput + set_kzg_ch).
+	fn t931_cp(main: &S119Main, c2: &T931Circ, rows: &[Vec<Fr>], vk: Fr) -> T931Cp{
+		let (res, r) = (&main.res, Fr::from(11u64));
+		let mut c2 = c2.clone();
+		c2.kzg_ch = Some(r);
+		let u0 = c2.U_i1.as_ref().unwrap().vec_inst[0].clone();
+		let inp = CircPubInput{ ch1: res.ch, rc1: res.rc, hash_cmF1: res.hash_cmF,
+			kzg_sum1: res.kzg_sum, kzg_all_com_ch1: res.kzg_all_com_ch, eval_w_e1: res.eval_w_e,
+			mainres_hash: main.res_hash, kzg_all_com_ch2: r, eval_w_e2: eval_all_w(&c2.all_w(), r),
+			qa_nizk_vkey_hash: vk, comE2: u0.cmE, comW2: u0.cmW, comF2: u0.cmF,
+			kzg_all_com1: res.vec_coms[0] };
+		T931Cp{ circ2: Phase2Circuit{ _gm: PhantomData, main_circ: c2,
+			cyclepair_inputs: rows.to_vec(), job_id: 0 }, inp, mainres: res.clone(), job_id: 0 }
+	}
+
+	/// T931: (num_constraints, unsat rows) of the cp decider.
+	fn t931_cp_unsat(main: &S119Main, c2: &T931Circ, rows: &[Vec<Fr>], vk: Fr)
+		-> (usize, Vec<usize>){
+		let (m, z, _) = synth_mats(|cs| t931_cp(main, c2, rows, vk)
+			.generate_constraints(cs).expect("gen_cs err"));
+		(m.num_constraints, unsat(&m, &z))
+	}
+
+	/// T931 T-8 / T-9 forgery: fake C_WE (a_0 += G). m = 0 keeps every gt,
+	/// so row 0 is invalid (T-8, gt2_0 = (prod_(j>=1) e(a_j,b_j))^-1);
+	/// m = 1 re-chains row 0 (valid) so row 1 is the invalid one (T-9).
+	/// The Stage-1 main res carries a_0', so every light pin holds.
+	fn t931_forged(m: usize) -> (S119Main, T931Circ, Vec<Vec<Fr>>, Fr){
+		use ark_r1cs_std::R1CSVar;
+		let (circ, mut rows, vk, b0) = s119_fold_rows(5, None);
+		let a0 = circ.com_all_w.unwrap() + Projective::generator();
+		rows[0][60..75].copy_from_slice(&t931_enc(&a0));
+		if m == 1 {
+			let g = t931_enc(&Bn254::pairing(a0, b0).0);
+			rows[0][100..160].copy_from_slice(&g);
+			rows[1][..60].copy_from_slice(&g);
+		}
+		t931_rechain(&mut rows, (Fr::zero(), Fr::zero()));
+		let mut main = t934_main(circ, Fr::from(7u64));
+		main.res.vec_coms[0] = a0;
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		main.res_hash = Phase1CircuitRet::from(&main.res, &cs)
+			.hash(&main.circ1.poseidon_config, cs).value().unwrap();
+		let c2 = t931_fold2(&rows);
+		(main, c2, rows, vk)
+	}
+
+	/// T931 P2, P3 (+ T-12b) and S105b-full on the cp decider, light. The
+	/// honest Stage-2 fixture is SAT. Each arm moves one state field and
+	/// carries it consistently (digest rehashed, u_i.x[0] repointed), so
+	/// only its pin can reject. Baseline: the P2, P3, T-12b arms are SAT.
+	#[test]
+	fn test_t931_cp_pins(){
+		let (circ, rows, vk, _) = s119_fold_rows(5, None);
+		let main = t934_main(circ, Fr::from(7u64));
+		let c2 = t931_fold2(&rows);
+		let cfg = c2.poseidon_config.clone();
+		let (n0, b0) = t931_cp_unsat(&main, &c2, &rows, vk);
+		emit_stdout(format!("T931 T-13 cp decider (light, 5 rows): {} cs", n0));
+		assert!(b0.is_empty(), "T931: honest cp decider not SAT, {} rows {:?}",
+			b0.len(), &b0[..b0.len().min(8)]);
+		assert!(c2.cp_r1cs.check_relaxed_instance_relation(c2.cp_W_i.as_ref().unwrap(),
+			c2.cp_U_i.as_ref().unwrap()).is_ok(), "T931: honest cp_U_n not satisfying");
+		let run = |c: &T931Circ| { let (n, b) = t931_cp_unsat(&main, c, &rows, vk);
+			assert_eq!(n, n0, "T931: arms not shape-identical"); b.len() };
+		//z_n arms: f edits z_n.to_vec(), the rest is carried
+		let zn = |f: &dyn Fn(&mut Vec<Fr>)| {
+			let mut c = c2.clone();
+			let mut v = c.zi_part2_inst.as_ref().unwrap().to_vec();
+			f(&mut v);
+			let zi = ZiPartTwoInst::<Fr>::from_vec(&v, T931_FQ);
+			let mut z_i = c.z_i.clone().unwrap();
+			z_i[1] = zi.hash(&cfg);
+			(c.zi_part2_inst, c.z_i) = (Some(zi), Some(z_i));
+			s119_rehash_u_i(&mut c);
+			run(&c)
+		};
+		let bump = |k: usize| move |v: &mut Vec<Fr>| { let j = v.len() - k; v[j] += Fr::one(); };
+		let (p2a, p2b, p3) = (zn(&bump(17)), zn(&bump(16)), zn(&bump(15)));
+		//T-12b: last gt2 = [0]_T with coordinate 0 encoded as 1 + q. Every
+		//limb < 2^55 and the limbs reduce to the same Fq, so the chain stays
+		//consistent; only the endpoint pin sees the other encoding.
+		let x = num_bigint::BigUint::from(Fq::MODULUS) + 1u32;
+		let mask = (num_bigint::BigUint::from(1u32) << 55) - 1u32;
+		let mut nc = t931_enc(&Fq12::one());
+		for t in 0..5 { nc[t] = Fr::from((&x >> (55 * t)) & &mask); }
+		assert!(f1_limbs_to_f2::<Fr, Fq>(&nc[..5].to_vec()) == Fq::one()
+			&& nc[..5] != t931_enc(&Fq12::one())[..5], "T931 T-12b: bad encoding");
+		let g_nc = t931_pack4(&nc);
+		let p3nc = zn(&|v: &mut Vec<Fr>| { let j = v.len() - 15; v[j..].copy_from_slice(&g_nc); });
+		//S105b-full: z_0's g[0] moved, z_0[1] rehashed
+		let s105 = {
+			let mut c = c2.clone();
+			let mut v = ZiPartTwoInst::<Fr>::new(Fr::zero(), Fr::zero(), &cfg, true,
+				T931_FQ, rows.len()).to_vec();
+			let j = v.len() - 15;
+			v[j] += Fr::one();
+			let mut z_0 = c.z_0.clone().unwrap();
+			z_0[1] = ZiPartTwoInst::<Fr>::from_vec(&v, T931_FQ).hash(&cfg);
+			c.z_0 = Some(z_0);
+			s119_rehash_u_i(&mut c);
+			run(&c)
+		};
+		emit_stdout(format!("T931 cp pins, new unsat rows: P2 hc_a {} hc_b {} | P3 g {} \
+			T-12b {} | S105b z_0.g {}", p2a, p2b, p3, p3nc, s105));
+		assert_eq!((p2a, p2b, p3, p3nc, s105), (1, 1, 1, 2, 1),
+			"T931 (P2 hc_a, P2 hc_b, P3, T-12b, S105b) rows off");
+	}
+
+	/// T931: step-0 Stage-2 augmented circuit, one synthesis per arm
+	/// (row, cp_U_0, cp_u_0.cmW, unfold). x, cf_x, cp_x default to the
+	/// in-circuit values; unfold sets cp_x = H(dummy cp_U_0), the value the
+	/// baseline prover sends at i = 0 (row 0 left out of cp_U_1).
+	fn t931_aug(arms: &[(Vec<Fr>, Option<CommittedInstance<Projective2>>, Option<Projective2>, bool)])
+		-> Vec<(ark_relations::r1cs::ConstraintMatrices<Fr>, Vec<Fr>)>{
+		let mut rng = ark_std::test_rng();
+		let (cfg, zero) = (poseidon_canonical_config::<Fr>(), Fr::zero());
+		let (_, nova) = t931_nova!(&mut rng, 1);
+		let cp_x0 = CommittedInstance::<Projective2>::dummy(cp_io_len())
+			.hash_cyclefold(&PoseidonSponge::<Fr>::new(&cfg), nova.pp_hash);
+		arms.iter().map(|(row, cp_u, cm_w, unfold)| {
+			let mut c = T931Aug::empty(&cfg, nova.F[0].clone(), 1, 0, 0);
+			c.F.set_keygen_synth(false);
+			(c.pp_hash, c.i, c.i_usize) = (Some(nova.pp_hash), Some(zero), Some(0));
+			(c.z_0, c.z_i) = (Some(nova.z_0.clone()), Some(nova.z_i.clone()));
+			(c.z0_part2_inst, c.zi_part2_inst) = (Some(nova.z0_part2_inst.clone()),
+				Some(nova.zi_part2_inst.clone()));
+			(c.external_inputs, c.cp_U_i, c.cp_u_i_cmW) = (Some(t931_stmt(row, 1, 1)),
+				cp_u.clone(), *cm_w);
+			if *unfold { c.cp_x = Some(cp_x0); }
+			let (m, z, _) = synth_mats(|cs| c.generate_constraints(cs).expect("gen_cs err"));
+			(m, z)
+		}).collect()
+	}
+
+	/// T931 T-8 local and T-11 (O1), T-9 local (O2) and T-12a (pack4 range)
+	/// on the step-0 Stage-2 augmented circuit. k0 = column of cp_u_0.cmW. A hybrid
+	/// takes one arm's prefix and another's suffix from k0 - 160 (on the
+	/// baseline the 160 fresh cp_u_i.x copies, now cyclefold columns that
+	/// no row of the step reads) plus its cp_x. Baseline: T-11 and every
+	/// hybrid are SAT, and no CyclePair row reads a statement column.
+	#[test]
+	fn test_t931_wrapper_cp(){
+		let mut rng = ark_std::test_rng();
+		let zero = Fr::zero();
+		let (a, b) = (Projective::rand(&mut rng), ProjectiveG2::rand(&mut rng));
+		let row = t931_row(Fq12::one(), a, b, (zero, zero));
+		//T-9 tuple (gt1, O, b, gt1): a valid CyclePair, not this row
+		let row_o = t931_row(Fq12::one(), Projective::zero(), b, (zero, zero));
+		//T-12a: one gt2 group re-split, a limb >= 2^55, same pack4 value
+		let mut row_p = row.clone();
+		let k = (0..15).find(|&k| row[100 + 4 * k + 1] != zero).unwrap();
+		row_p[100 + 4 * k] += Fr::from(1u64 << 55);
+		row_p[100 + 4 * k + 1] -= Fr::one();
+		assert_eq!(t931_pack4(&row_p[100..160]), t931_pack4(&row[100..160]));
+		let mut cp_bad = CommittedInstance::<Projective2>::dummy(cp_io_len());
+		cp_bad.u = Fq::one();
+		let arms = t931_aug(&[(row.clone(), None, None, false),
+			(row.clone(), None, Some(Projective2::generator()), false),
+			(row.clone(), Some(cp_bad), None, false), (row_o, None, None, false),
+			(row_p, None, None, false), (row.clone(), None, None, true)]);
+		let (m, za) = (&arms[0].0, &arms[0].1);
+		let n_in = m.num_instance_variables;
+		emit_stdout(format!("T931 T-13 Stage-2 augmented step: cs {}, witness {}",
+			m.num_constraints, m.num_witness_variables));
+		assert!(arms.iter().all(|x| x.0.num_constraints == m.num_constraints) && n_in == 4,
+			"T931: arms not shape-identical");
+		assert!(unsat(m, za).is_empty(), "T931: honest Stage-2 step 0 not SAT");
+		let k0 = (n_in..za.len()).find(|&i| za[i] != arms[1].1[i]).unwrap();
+		let cols = |r: usize| [&m.a[r], &m.b[r], &m.c[r]].into_iter()
+			.flat_map(|l| l.iter().map(|(_, i)| *i)).collect::<Vec<usize>>();
+		let in_cp = |r: usize| cols(r).iter().any(|&c| c >= k0);
+		let hyb = |p: &Vec<Fr>, s: &Vec<Fr>| {
+			let mut h = [&p[..k0 - 160], &s[k0 - 160..]].concat();
+			h[n_in - 1] = s[n_in - 1];
+			unsat(m, &h)
+		};
+		//T-11: cp_U_0 != dummy, everything else honest
+		let n11 = unsat(m, &arms[2].1).len();
+		//T-8 local: u_1.x[2] = H(cp_U_0), so row 0 never enters cp_U_1
+		let n8 = unsat(m, &arms[5].1).len();
+		//T-9 by variable index: a CyclePair row reads every statement cp column
+		let stmt = t931_stmt(&row, 1, 1);
+		let map = FoldPairMapper::<Fr, S119Lk>{ _f: PhantomData, _lk: PhantomData,
+			poseidon_config: poseidon_canonical_config::<Fr>(), job_id: 0 }
+			.gen_statement_structure(0).4;
+		let mut read = vec![false; za.len()];
+		for r in (0..m.num_constraints).filter(|&r| in_cp(r)){
+			for c in cols(r){ read[c] = true; }
+		}
+		assert!(map[..160].iter().all(|&j| za[n_in + 20 + j] == stmt[j]),
+			"T931: statement columns not at 20 + idx");
+		let n_unread = map[..160].iter().filter(|&&j| !read[n_in + 20 + j]).count();
+		//hybrids: control (same row, other cmW), T-9 row, T-12a statement
+		let ctl = hyb(za, &arms[1].1);
+		let h9 = hyb(za, &arms[3].1);
+		let d12 = unsat(m, &arms[4].1);
+		let h12 = hyb(&arms[4].1, za);
+		emit_stdout(format!("T931 wrapper: k0 {} | T-8 {} | T-11 {} | T-9 unread stmt cols {} \
+			hybrid {} (control {}) | T-12a direct {} hybrid {}", k0, n8, n11, n_unread,
+			h9.len(), ctl.len(), d12.len(), h12.len()));
+		assert!(ctl.is_empty(), "T931: hybrid control not SAT {:?}", ctl);
+		assert_eq!(n8, 1, "T931 T-8: step 0 accepted u_1.x[2] = H(cp_U_0), row 0 unfolded");
+		assert_eq!(n11, 1, "T931 T-11: cp_U_0 != dummy not rejected by one pin row");
+		assert_eq!(n_unread, 0, "T931 T-9: folded cp_u_i.x is not the statement vars");
+		assert!(!h9.is_empty() && h9.iter().all(|&r| in_cp(r)),
+			"T931 T-9: folded tuple != statement row accepted {:?}", h9);
+		assert!(!d12.is_empty() && d12.iter().all(|&r| in_cp(r)),
+			"T931 T-12a: statement limb >= 2^55 not rejected by the cp absorb {:?}", d12);
+		assert!(!h12.is_empty() && h12.iter().all(|&r| in_cp(r)),
+			"T931 T-12a: limb >= 2^55 accepted with an in-range folded copy {:?}", h12);
+	}
+
+	/// T931 T-8 (O1) / T-9 (O2), native (TASK s7.8 (b)): the folded
+	/// (cp_W_n, cp_U_n) fails the CyclePair relaxed R1CS, while the light
+	/// cp decider (every pin) accepts the forgery. Baseline: row 0 is not
+	/// folded, so T-8 passes the relaxed check.
+	#[test]
+	fn test_t931_t8_t9_native(){
+		let mut res = vec![];
+		for m in [0usize, 1]{
+			let (main, c2, rows, vk) = t931_forged(m);
+			let ok = c2.cp_r1cs.check_relaxed_instance_relation(
+				c2.cp_W_i.as_ref().unwrap(), c2.cp_U_i.as_ref().unwrap()).is_ok();
+			let light = t931_cp_unsat(&main, &c2, &rows, vk).1;
+			emit_stdout(format!("T931 T-{}: relaxed R1CS ok {} | light unsat {}",
+				8 + m, ok, light.len()));
+			res.push((ok, light.len()));
+		}
+		//informational: the light pins accept both forgeries (0 rows expected)
+		emit_stdout(format!("T931 T-8/T-9 light unsat rows: {:?}", res));
+		assert!(!res[0].0, "T931 T-8: row 0 not folded, (cp_W_n, cp_U_n) satisfied");
+		assert!(!res[1].0, "T931 T-9: (cp_W_n, cp_U_n) satisfied");
+	}
+
+	/// T931 T-8 / T-9 in-circuit (TASK s7.8 (b)), b_light_test = false:
+	/// the gated cp_U_n checks reject the forgery. Full decider: run alone
+	/// with --ignored (jet1tb, T935-3 full pattern).
+	fn t931_full(m: usize){
+		let _g = T935Light(utils::consts::read_global_config().b_light_test);
+		utils::consts::get_global_config().b_light_test = false;
+		let (circ, rows, vk, _) = s119_fold_rows(5, None);
+		let main = t934_main(circ, Fr::from(7u64));
+		let (n_h, hon) = t931_cp_unsat(&main, &t931_fold2(&rows), &rows, vk);
+		let (main, c2, rows, vk) = t931_forged(m);
+		let (n, bad) = t931_cp_unsat(&main, &c2, &rows, vk);
+		emit_stdout(format!("T931 T-{} full: honest {} rows, {} unsat; forged {} rows, {} unsat",
+			8 + m, n_h, hon.len(), n, bad.len()));
+		assert!(bad.iter().any(|x| !hon.contains(x)),
+			"T931 T-{}: forged Stage 2 accepted (full)", 8 + m);
+	}
+	#[test]
+	#[ignore]
+	fn test_t931_t8_full(){ t931_full(0) }
+	#[test]
+	#[ignore]
+	fn test_t931_t9_full(){ t931_full(1) }
+}

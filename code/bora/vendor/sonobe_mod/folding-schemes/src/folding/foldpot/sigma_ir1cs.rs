@@ -905,8 +905,8 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Send + Sync{
 
 	/// generate the structure of statment (total len, structure of statement,
 	/// and statement mapping, extra_join_constraints, map of 
-	/// 160 elements of CyclePairInpVar in ZiPartTwoInst to the indices
-	/// in Witness)
+	/// the CyclePair row [gt1, a, b, gt2, hc_a_in, hc_b_in, hc_a_out,
+	/// hc_b_out] (164, T931) to the statement indices)
 	/// Note specifically for statement mapping: for each
 	/// component gadget, it provides a Vector of ranges that
 	/// map from its problem statement to the GLOBAL statement vector.
@@ -1889,9 +1889,8 @@ impl <F:PrimeField> StatementInstVar<F>{
 /// for supernova. Note that hashchain is necessary, as
 /// the folded commitment relies on the nonce that is the random
 /// oracle of all (including msg3 and ZiPartTwoInst).
-/// We also include an optional CyclePairInputVar (160 FpVar)
-/// when it is running in full mode. This incurs extra cost of 40k R1CS
-/// however, not impacting the main circuit (only used in driver stage 2).
+/// In full mode (driver stage 2 only) it also carries the CyclePair
+/// chain link, CpLink (T931).
 #[derive(Clone,Debug)]
 pub struct ZiPartTwoInst<F:PrimeField>{
 	/// random nonce for computing sum of input and output
@@ -1972,8 +1971,58 @@ pub struct ZiPartTwoInst<F:PrimeField>{
 	/// the F's logical output (if there are more, compress them using hash)
 	pub f_result: F,
 
-	/// input represented as field elements optional only when Zi is full mode
-	pub cyclepair_input: Option<CyclePairInput<F>>,
+	/// T931: the Stage-2 chain link, full mode only
+	pub cp_link: Option<CpLink<F>>,
+}
+
+/// T931: what Stage 2 chains through z (full mode only): the last row's
+/// hash chains and its gt2 packed 4 limbs per field (pack4, 15 fields).
+/// pack4 is injective because every statement limb is at most 55 bits,
+/// which the CyclePair challenge absorb enforces (circuits_super.rs H4).
+/// T = F natively, FpVar<F> in circuit.
+#[derive(Clone,Debug)]
+pub struct CpLink<T>{
+	pub hc_a_out: T,
+	pub hc_b_out: T,
+	pub g: Vec<T>,
+}
+
+/// T931: CpLink length, 2 hash chains + 15 packed gt2 fields
+pub const CP_LINK_LEN: usize = 17;
+
+impl <T: Clone> CpLink<T>{
+	/// [hc_a_out, hc_b_out, g]
+	pub fn to_vec(&self)->Vec<T>{
+		[vec![self.hc_a_out.clone(), self.hc_b_out.clone()], self.g.clone()].concat()
+	}
+	/// inverse of to_vec
+	pub fn from_vec(v: &[T])->Self{
+		assert!(v.len()==CP_LINK_LEN, "CpLink len {}", v.len());
+		Self{hc_a_out: v[0].clone(), hc_b_out: v[1].clone(), g: v[2..].to_vec()}
+	}
+}
+
+/// T931: g_k = sum_{t<4} 2^(55t) l[4k+t] (60 gt limbs -> 15 fields).
+pub fn pack4<F:PrimeField>(l: &[F])->Vec<F>{
+	let s = F::from(1u64 << NonNativeUintVar::<F>::bits_per_limb());
+	l.chunks(4).map(|c| c.iter().rev().fold(F::zero(), |a, x| a * s + x)).collect()
+}
+
+/// T931: pack4 in circuit, linear combinations only (no new witness).
+pub fn pack4_var<F:PrimeField>(l: &[FpVar<F>])->Vec<FpVar<F>>{
+	let s = F::from(1u64 << NonNativeUintVar::<F>::bits_per_limb());
+	l.chunks(4).map(|c| c.iter().rev().fold(FpVar::<F>::zero(), |a, x| a * s + x))
+		.collect()
+}
+
+/// T931 D3: g of [0]_T = TargetField::one() through the row encoder
+/// path (mod_super.rs: to_field_elements, f1_to_f2_limbs) and pack4.
+/// The one helper behind the decider's z_0 (S105b) and z_n (P3) pins.
+pub fn cp_g0<E:Pairing, F:PrimeField, Fq:PrimeField>()->Vec<F>
+	where E::TargetField: ToConstraintField<Fq>{
+	let l = E::TargetField::one().to_field_elements().expect("enc([0]_T)")
+		.iter().flat_map(|x| f1_to_f2_limbs::<Fq, F>(x)).collect::<Vec<F>>();
+	pack4(&l)
 }
 
 #[derive(Clone,Debug)]
@@ -2080,6 +2129,15 @@ impl <F:PrimeField> CyclePairInputVar<F>{
 			.collect::<Vec<NonNativeUintVar<F>>>();
 		assert!(nvars.len()==chunks);		
 		Self{x: nvars, fq_bits: ci.fq_bits}
+	}
+
+	/// T931 H4: re-chunk existing vars (the statement's [gt1, a, b, gt2])
+	/// into 32 NonNativeUintVar with pack_fp_nonnative. No new witness.
+	pub fn from_vars(v: &[FpVar<F>], fq_bits: usize)->Self{
+		let ratio = fq_bits.div_ceil(NonNativeUintVar::<F>::bits_per_limb());
+		assert!(v.len() == 32 * ratio);
+		Self{x: v.chunks(ratio).map(|c| pack_fp_nonnative(&c.to_vec())).collect(),
+			fq_bits}
 	}
 
 	/// converting a FpVar (keeping the ratio at 55-bits each - e.g.,
@@ -2201,8 +2259,8 @@ pub struct ZiPartTwoInstVar<F:PrimeField>{
 	/// the logical result of the F function.
 	pub f_result: FpVar<F>,
 
-	/// optional when it's in full mode
-	pub cyclepair_input: Option<CyclePairInputVar<F>>,
+	/// T931: the Stage-2 chain link, full mode only
+	pub cp_link: Option<CpLink<FpVar<F>>>,
 }
 
 impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
@@ -2220,26 +2278,22 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			//S102/F4: appended AFTER f_result so indices 0..18 keep
 			//their meaning; only fixed_part moves 19 -> 21.
 			self.batch_r, self.batch_v];
-		let mut cp = self.cyclepair_input.as_ref().map_or(vec![], |cp_i| 
-			cp_i.x.clone());
+		let mut cp = self.cp_link.as_ref().map_or(vec![], |l| l.to_vec());
 		res.append(&mut cp);
 
 		res
 	}
 
 	/// deserialize
-	pub fn from_vec(vec: &Vec<F>, fq_bits: usize) ->Self{
+	pub fn from_vec(vec: &Vec<F>, _fq_bits: usize) ->Self{
 		//1. length check
 		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
 		//half (the step READS them on input, so they must be bound).
+		//T931: full mode appends the CpLink, 38 in all.
 		let fixed_part = 21;
-		if vec.len()!=fixed_part{ 
-			assert!(vec.len() == 
-				fixed_part+CyclePairInput::<F>::total_size(fq_bits));
-		}
-		let cp_input = if vec.len()>fixed_part {
-			Some(CyclePairInput{x: vec[fixed_part..]
-				.to_vec(), fq_bits: fq_bits})
+		assert!(vec.len()==fixed_part || vec.len()==fixed_part+CP_LINK_LEN);
+		let cp_link = if vec.len()>fixed_part {
+			Some(CpLink::from_vec(&vec[fixed_part..]))
 		} else {None};
 		Self{
 			ch: vec[0].clone(),
@@ -2272,7 +2326,7 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			batch_r: vec[19].clone(),
 			batch_v: vec[20].clone(),
 
-			cyclepair_input:  cp_input,
+			cp_link,
 		}
 	}
 
@@ -2289,15 +2343,20 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 
 	/// use hash(hc_cmF, kzg_lookup, kzg_word) as random nonce seed.
 	pub fn new(ch: F, rc: F, ps_cfg: &PoseidonConfig<F>, b_full: bool, 
-		fq_bits: usize, num_words: usize)->Self{
+		_fq_bits: usize, num_words: usize)->Self{
 		let zero = F::zero();
         let mut sponge_alpha = PoseidonSponge::<F>::new(&ps_cfg);
 		sponge_alpha.absorb(&rc);
 		let alpha = sponge_alpha.squeeze_field_elements(1)[0];
 		sponge_alpha.absorb(&alpha);
 		let beta = sponge_alpha.squeeze_field_elements(1)[0];
-		let cp_inp = if b_full {
-			Some(CyclePairInput::<F>::dummy(fq_bits))
+		//T931 D3: z_0's link is hc_out = 0 and g0 = pack4(enc([0]_T))
+		//= (1, 0, ..., 0). cp_g0 derives it from the encoder and
+		//test_t931_g0 asserts that the two agree.
+		let cp_link = if b_full {
+			let mut g = vec![zero; CP_LINK_LEN - 2];
+			g[0] = F::one();
+			Some(CpLink{hc_a_out: zero, hc_b_out: zero, g})
 		} else {None};
 		Self{ch: ch, rc: rc, 
 			sum_inp: zero, sum_oup:zero,
@@ -2315,62 +2374,18 @@ impl <F:PrimeField + Absorb> ZiPartTwoInst<F>{
 			//S102/F4: z_0 has accumulated_word_len == total_word_len == 0,
 			//so b_cont is false on step 0 and these are never compared.
 			batch_r: zero, batch_v: zero,
-			cyclepair_input: cp_inp,
+			cp_link,
 			}
 	}
 
-	/// hash to one element to use as zi.1
-	/// S104 SPLIT: with cyclepair limbs present the digest is
-	/// H( H(fixed fields), H(limbs) ), so a step can bind its INPUT
-	/// state by recomputing only the fixed half -- the limbs are
-	/// overwritten wholesale each step and are never read on input.
-	/// Without limbs the digest is unchanged, keeping the non-full
-	/// (production) path byte-identical.
+	/// hash to one element to use as zi.1: one plain Poseidon over
+	/// to_vec(), 21 fields (38 in full mode). T931 dropped the S104 split
+	/// with the 160 limbs: the whole state is bound (N3).
 	/// MUST stay in lockstep with ZiPartTwoInstVar::hash.
 	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>)->F{
-		let vec = self.to_vec();
-		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
-		//half (the step READS them on input, so they must be bound).
-		let fixed_part = 21;
-		if vec.len()<=fixed_part{
-        	let mut sponge = PoseidonSponge::<F>::new(ps_cfg);
-			sponge.absorb(&vec);
-			return sponge.squeeze_field_elements(1)[0];
-		}
-		let h_fixed = {
-			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
-			sp.absorb(&vec[..fixed_part].to_vec());
-			sp.squeeze_field_elements::<F>(1)[0]
-		};
-		let h_cp = {
-			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
-			sp.absorb(&vec[fixed_part..].to_vec());
-			sp.squeeze_field_elements::<F>(1)[0]
-		};
-		let mut sp = PoseidonSponge::<F>::new(ps_cfg);
-		sp.absorb(&vec![h_fixed, h_cp]);
-		sp.squeeze_field_elements(1)[0]
-	}
-
-	/// The fixed half of the split digest, plus the limb half.
-	/// Returned separately so the step circuit can bind the half it
-	/// actually reads and carry the other as a witness.
-	pub fn hash_halves(&self, ps_cfg: &PoseidonConfig<F>)->(F, F){
-		let vec = self.to_vec();
-		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
-		//half (the step READS them on input, so they must be bound).
-		let fixed_part = 21;
-		let h_fixed = {
-			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
-			sp.absorb(&vec[..fixed_part].to_vec());
-			sp.squeeze_field_elements::<F>(1)[0]
-		};
-		let h_cp = if vec.len()>fixed_part{
-			let mut sp = PoseidonSponge::<F>::new(ps_cfg);
-			sp.absorb(&vec[fixed_part..].to_vec());
-			sp.squeeze_field_elements::<F>(1)[0]
-		} else { F::zero() };
-		(h_fixed, h_cp)
+		let mut sponge = PoseidonSponge::<F>::new(ps_cfg);
+		sponge.absorb(&self.to_vec());
+		sponge.squeeze_field_elements(1)[0]
 	}
 }
 
@@ -2390,26 +2405,21 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 			self.f_result.clone(),
 			//S102/F4: see ZiPartTwoInst::to_vec -- same order.
 			self.batch_r.clone(), self.batch_v.clone()];
-		if self.cyclepair_input.is_some(){
-			let mut v1 = self.cyclepair_input.as_ref().expect("cp null")
-				.to_vec();
-			res.append(&mut v1);
+		if let Some(l) = &self.cp_link{
+			res.append(&mut l.to_vec());
 		}
 		res
 	}
 
 	/// deserialize
-	pub fn from_vec(vec: &Vec<FpVar<F>>, fq_bits: usize) ->Self{
+	pub fn from_vec(vec: &Vec<FpVar<F>>, _fq_bits: usize) ->Self{
 		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
 		//half (the step READS them on input, so they must be bound).
+		//T931: full mode appends the CpLink (the same vars, no copy).
 		let fixed_part = 21;
-		if vec.len()!=fixed_part{ 
-			assert!(vec.len() == fixed_part
-				+CyclePairInput::<F>::total_size(fq_bits));
-		}
-		let cp_input = if vec.len()>fixed_part {
-			let vec_fp = vec[fixed_part..].to_vec();
-			Some(CyclePairInputVar::from_vec(&vec_fp, fq_bits))
+		assert!(vec.len()==fixed_part || vec.len()==fixed_part+CP_LINK_LEN);
+		let cp_link = if vec.len()>fixed_part {
+			Some(CpLink::from_vec(&vec[fixed_part..]))
 		} else {None};
 		Self{
 			ch: vec[0].clone(),
@@ -2441,7 +2451,7 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 			batch_r: vec[19].clone(),
 			batch_v: vec[20].clone(),
 
-			cyclepair_input: cp_input,
+			cp_link,
 		}
 	}
 
@@ -2457,27 +2467,15 @@ impl <F:PrimeField + Absorb> ZiPartTwoInstVar<F>{
 		ZiPartTwoInstVar::from_vec(&vec_zi_var, fq_bits)
 	}
 
-	/// hash to one element to use as zi.1
-	/// S104 SPLIT -- mirrors ZiPartTwoInst::hash exactly. Diverging
-	/// from the native version makes the whole chain unsatisfiable
-	/// rather than failing to compile, so change the two together.
+	/// hash to one element to use as zi.1 -- mirrors ZiPartTwoInst::hash
+	/// exactly (one plain hash over to_vec). Diverging from the native
+	/// version makes the whole chain unsatisfiable rather than failing to
+	/// compile, so change the two together.
 	pub fn hash(&self, ps_cfg: &PoseidonConfig<F>, cs: ConstraintSystemRef<F>)->FpVar<F>{
-		let vec = self.to_vec();
-		//S102/F4: 19 -> 21, batch_r and batch_v now ride in the fixed
-		//half (the step READS them on input, so they must be bound).
-		let fixed_part = 21;
-		if vec.len()<=fixed_part{
-        	let mut sponge = PoseidonSpongeVar::<F>::new(cs, ps_cfg);
-			sponge.absorb(&vec).expect("absort err");
-			return sponge.squeeze_field_elements(1)
-				.expect("hash err")[0].clone();
-		}
-		let h_fixed = Self::hash_slice(ps_cfg, cs.clone(), &vec[..fixed_part]);
-		let h_cp = Self::hash_slice(ps_cfg, cs.clone(), &vec[fixed_part..]);
-		Self::hash_slice(ps_cfg, cs.clone(), &[h_fixed, h_cp])
+		Self::hash_slice(ps_cfg, cs, &self.to_vec())
 	}
 
-	/// one-sponge helper shared by hash() and the S104 input binding
+	/// one-sponge helper shared by hash() and the decider's S105b pin
 	pub fn hash_slice(ps_cfg: &PoseidonConfig<F>,
 		cs: ConstraintSystemRef<F>, v: &[FpVar<F>])->FpVar<F>{
 		let mut sp = PoseidonSpongeVar::<F>::new(cs, ps_cfg);
@@ -3650,11 +3648,13 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 		log_perf(self.job_id, log_level, &format!("gen_witness step 10: gen inp/oup"),
 			&mut gt1);
 
-		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
-		let cp = if self.b_full_mode {
-			let cp_vec = cp_inp.into_iter().map(|idx|
-				v_stmt[idx]).collect::<Vec<F>>();	
-			Some(CyclePairInput{x: cp_vec, fq_bits: fq_bits})
+		//T931 H3 mirror: z_{i+1}'s link is the row's hc_out and
+		//pack4(gt2), cyclepair_map order [gt1 60, a 15, b 25, gt2 60,
+		//hc_a_in, hc_b_in, hc_a_out, hc_b_out].
+		let cp_link = if self.b_full_mode {
+			let gt2 = cp_inp[100..160].iter().map(|&k| v_stmt[k]).collect::<Vec<F>>();
+			Some(CpLink{hc_a_out: v_stmt[cp_inp[162]], hc_b_out: v_stmt[cp_inp[163]],
+				g: pack4(&gt2)})
 		} else {None};
 
 		let zi1_part2 = ZiPartTwoInst::<F>{
@@ -3690,7 +3690,7 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 			batch_r: si.batch_r,
 			batch_v: si.batch_v,
 			
-			cyclepair_input: cp,
+			cp_link,
 		};
 		log_perf(self.job_id, log_level, &format!("gen_witness step 11: assemble ret"),
 			&mut gt1);
@@ -4040,40 +4040,24 @@ where 	C: CurveGroup<ScalarField=F>,
 		//KZG anchor. EVERYTHING ELSE IN THIS FIX SET RESTS ON THIS.
 		//Honest-satisfiable by construction: mod_super.rs already
 		//asserts the same equality natively on every prove_step.
-		//S104 SPLIT: in full mode recompute only the fixed half and
-		//carry the limb half as a witness. The limbs are overwritten
-		//wholesale each step (see the zi1_part2 build below) and are
-		//never read here, so leaving them unrecomputed costs nothing:
-		//the witness half still has to equal the previous step's, or
-		//the outer hash misses z_i[1]. Saves ~12k R1CS/step in full
-		//mode; the non-full path takes the plain hash unchanged.
-		let zi_vec = zi_part2.to_vec();
-		//S102/F4: 19 -> 21, and MUST stay in lockstep with the five
-		//`let fixed_part` sites in the ZiPartTwoInst{,Var} impls --
-		//a split mismatch here makes the recomputed input-state hash
-		//disagree with the native one and the decider rejects honest
-		//proofs (measured: "snark main fails").
-		let fixed_part = 21usize;
-		let zi_in_hash = if zi_vec.len()<=fixed_part{
-			zi_part2.hash(&self.poseidon_config, cs.clone())
-		}else{
-			let h_fixed = ZiPartTwoInstVar::<F>::hash_slice(
-				&self.poseidon_config, cs.clone(), &zi_vec[..fixed_part]);
-			let h_cp_val = {
-				let mut sp = PoseidonSponge::<F>::new(
-					&self.poseidon_config);
-				let vals = zi_vec[fixed_part..].iter()
-					.map(|v| v.value().unwrap_or(F::zero()))
-					.collect::<Vec<F>>();
-				sp.absorb(&vals);
-				sp.squeeze_field_elements::<F>(1)[0]
-			};
-			let h_cp = FpVar::<F>::new_witness(cs.clone(),
-				|| Ok(h_cp_val))?;
-			ZiPartTwoInstVar::<F>::hash_slice(&self.poseidon_config,
-				cs.clone(), &[h_fixed, h_cp])
-		};
+		//T931 H2 (N3): the whole state is hashed, CpLink included. The
+		//S104 split left the full-mode limb half a free witness.
+		let zi_in_hash = zi_part2.hash(&self.poseidon_config, cs.clone());
 		zi_in_hash.enforce_equal(&z_i[1])?;
+		//T931 P1: chain this row to z_i on the statement vars: gt1 ==
+		//z_i.g (packed, 15 eq) and hc_*_in == z_i.hc_*_out (2 eq).
+		let (_stmt_len, _stmt_cfg, _v_idx, extra_join_constraints, vec_idx_cpi) 
+			= lock_unwrap!(self.gadget_mapper).gen_statement_structure(self.stmt_config.lookup_share_size);
+		if self.b_full_mode{
+			let link = zi_part2.cp_link.as_ref().expect("T931: no cp_link");
+			let st = |k: usize| wtns_var.statement[vec_idx_cpi[k]].clone();
+			let gt1 = (0..60).map(st).collect::<Vec<FpVar<F>>>();
+			for (g, g_in) in pack4_var(&gt1).iter().zip(&link.g){
+				g.enforce_equal(g_in)?;
+			}
+			st(160).enforce_equal(&link.hc_a_out)?;
+			st(161).enforce_equal(&link.hc_b_out)?;
+		}
 		//S106: b_last compares word_id against the CARRIED total_words,
 		//not the free per-step si.total_words. Combined with the
 		//decider's terminality pin on the final state, pin => final_step
@@ -4689,8 +4673,6 @@ where 	C: CurveGroup<ScalarField=F>,
 
 
 		//8. VERIFY join constraints
-		let (_stmt_len, _stmt_cfg, _v_idx, extra_join_constraints, vec_idx_cpi) 
-			= lock_unwrap!(self.gadget_mapper).gen_statement_structure(self.stmt_config.lookup_share_size);
 		let v_stmt = wtns_var.statement;
 		if extra_join_constraints.len()>0{
 			for (rg1,rg2) in extra_join_constraints{
@@ -4721,10 +4703,13 @@ where 	C: CurveGroup<ScalarField=F>,
 		nl = cs.num_lc();
 
 		//9. build the new zi_part's cycle input.
-		let cp_inp = if self.b_full_mode{
-			let cp_vec = vec_idx_cpi.into_iter().map(|x|
-				v_stmt[x].clone()).collect::<Vec<FpVar<F>>>();
-			Some(CyclePairInputVar::from_vec(&cp_vec, fq_bits))
+		//T931 H3: z_{i+1}'s link = the row's hc_*_out and pack4(gt2), as
+		//linear combinations of the statement vars (no new witness).
+		let cp_link = if self.b_full_mode{
+			let gt2 = vec_idx_cpi[100..160].iter().map(|&k| v_stmt[k].clone())
+				.collect::<Vec<FpVar<F>>>();
+			Some(CpLink{hc_a_out: v_stmt[vec_idx_cpi[162]].clone(),
+				hc_b_out: v_stmt[vec_idx_cpi[163]].clone(), g: pack4_var(&gt2)})
 		} else {None};
 
 
@@ -4768,7 +4753,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			batch_r: si.batch_r.clone(),
 			batch_v: si.batch_v.clone(),
 
-			cyclepair_input: cp_inp,
+			cp_link,
 		};
 
 		if B_DEBUG3{
@@ -6348,6 +6333,24 @@ pub mod tests_sigma_ir1cs{
 			let v2 = zi2.to_vec();
 			assert!(v1==v2, "ERROR in stmt serialize");
 		}
+	}
+
+	/// T931 D3: z_0 carries g0 = pack4(enc([0]_T)), enc as the mod_super.rs
+	/// row encoder (to_field_elements, f1_to_f2_limbs), and hc_out = 0. The
+	/// decider's helper cp_g0 equals the g0 hard-coded in new().
+	#[test]
+	pub fn test_t931_g0(){
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let limbs = <Bn254 as Pairing>::TargetField::one().to_field_elements().unwrap()
+			.iter().flat_map(|x| f1_to_f2_limbs::<Fq, Fr>(x)).collect::<Vec<Fr>>();
+		let g0 = limbs.chunks(4).map(|c| c.iter().rev()
+			.fold(Fr::zero(), |s, x| s * Fr::from(1u64 << 55) + x)).collect::<Vec<Fr>>();
+		assert_eq!(g0, [vec![Fr::one()], vec![Fr::zero(); 14]].concat());
+		assert_eq!(super::cp_g0::<Bn254, Fr, Fq>(), g0, "T931 D3: cp_g0 != pack4(enc([0]_T))");
+		let v = ZiPartTwoInst::<Fr>::new(Fr::zero(), Fr::zero(),
+			&poseidon_canonical_config::<Fr>(), true, fq_bits, 1).to_vec();
+		assert!(v.len() == 38 && v[21..23] == [Fr::zero(); 2] && v[23..] == g0[..],
+			"T931: full-mode z_0 does not carry (0, 0, g0), len {}", v.len());
 	}
 
 	#[test]

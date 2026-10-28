@@ -1620,10 +1620,42 @@ where
         // u_{i+1}.x[1] = H(cf_U_{i+1})
         let cf_u_i1_x: C1::ScalarField;
 		let _zero = C1::ScalarField::zero();
-		let mut cp_u_i1_x: Option<C1::ScalarField> = None;
+
+		//T931 H5 (O1): fold this step's CyclePair row at EVERY step, i = 0
+		//included, on a fresh sponge (D1, as the circuit). x is the row's
+		//[gt1, a, b, gt2] statement limbs, the vars H4 folds in circuit.
+		let (cp_u_i_cmW, cp_U_i, cp_cm_T, cp_u_i1_x, cp_W_i1, cp_U_i1, _cp_w_i, _cp_u_i) = 
+		if self.b_full_mode{
+			let map = self.F[j_pci1].get_mapper().lock().unwrap()
+				.gen_statement_structure(self.F[j_pci1].get_lkup_share_size()).4;
+			let cp_u_i_x = map[..160].iter().map(|&k| external_inputs[k])
+				.collect::<Vec<CF1<C1>>>();
+			let ratio = 5;
+			let cp_u_i_x_fq = cp_u_i_x.chunks(ratio)
+				.map(|chunk| 
+					f1_limbs_to_f2::<CF1<C1>,CF3<C1>>(&chunk.to_vec()))
+				.collect::<Vec<CF3<C1>>>();
+            let cp_circuit = CyclePairCircuit::<E, P, C1, C2G2>::
+				from_vec_fq(&cp_u_i_x_fq);
+
+            let (cp_w_i, cp_u_i, cp_W_i1, cp_U_i1, cp_cmT, _) = 
+				fold_cyclepair_circuit
+					::<E,P,C1,GC1,C2G2,C2,GC2,FC,CS1,CS2,H>(
+					&mut sponge.clone(),
+					&*self.cp_r1cs,
+					(*self.cp_cs_pp).clone(),
+					self.pp_hash,
+					self.cp_W_i.as_ref().clone().unwrap().clone(),
+					self.cp_U_i.as_ref().clone().unwrap().clone(),
+					cp_u_i_x_fq,
+					cp_circuit, 
+					&mut rng,
+			).unwrap();
+			let cp_u_i1_x = Some(cp_U_i1.hash_cyclefold(&sponge, self.pp_hash));
+			(Some(cp_u_i.cmW), Some(self.cp_U_i.as_ref().clone().unwrap().clone()), Some(cp_cmT), cp_u_i1_x, Some(cp_W_i1), Some(cp_U_i1), Some(cp_w_i), Some(cp_u_i))
+		}else{ (None, None, None, None, None, None, None, None) };
 
         if self.i == C1::ScalarField::zero() {
-			cp_u_i1_x = if self.b_full_mode {Some(self.cp_U_i.as_ref().expect("cp_U_i null").hash_cyclefold(&sponge, self.pp_hash)) } else {None};
             cf_u_i1_x = self.cf_U_i.hash_cyclefold(&sponge, self.pp_hash);
 
             // base case
@@ -1659,9 +1691,9 @@ where
                 cf3_cmT: None,
                 cf_x: Some(cf_u_i1_x),
 
-				cp_u_i_cmW: None, 
-				cp_U_i: None, //-> it's essentially dummy in circuit_super
-				cp_cm_T: None,
+				cp_u_i_cmW: cp_u_i_cmW, 
+				cp_U_i: cp_U_i,
+				cp_cm_T: cp_cm_T,
 				cp_x: cp_u_i1_x, 
 				b_full_mode: self.b_full_mode,
 
@@ -1756,44 +1788,6 @@ where
             )?;
 
             cf_u_i1_x = cfF_U_i1.hash_cyclefold(&sponge, self.pp_hash);
-
-			// fold the cyclepair
-			// build the x input and then fold circuit
-			let (cp_u_i_cmW, cp_U_i, cp_cm_T, cp_x, cp_W_i1, cp_U_i1, _cp_w_i, _cp_u_i) = 
-			if self.b_full_mode{
-				assert!(z_i1_part2.cyclepair_input.is_some());
-				let cp_u_i_x: Vec<CF1<C1>> = z_i1_part2.cyclepair_input
-					.as_ref().unwrap().x.to_vec();
-				assert!(cp_u_i_x.len()==160);
-				let _chunks = 32;
-				let ratio = 5;
-				let _chunk = cp_u_i_x[0..5].to_vec();
-				let cp_u_i_x_fq = cp_u_i_x.chunks(ratio)
-					.map(|chunk| 
-						f1_limbs_to_f2::<CF1<C1>,CF3<C1>>(&chunk.to_vec()))
-					.collect::<Vec<CF3<C1>>>();
-            	let cp_circuit = CyclePairCircuit::<E, P, C1, C2G2>::
-					from_vec_fq(&cp_u_i_x_fq);
-
-
-            	let (cp_w_i, cp_u_i, cp_W_i1, cp_U_i1, cp_cmT, _) = 
-					fold_cyclepair_circuit
-						::<E,P,C1,GC1,C2G2,C2,GC2,FC,CS1,CS2,H>(
-						&mut transcript,
-						&*self.cp_r1cs,
-						(*self.cp_cs_pp).clone(),
-						self.pp_hash,
-						self.cp_W_i.as_ref().clone().unwrap().clone(),
-						self.cp_U_i.as_ref().clone().unwrap().clone(),
-						cp_u_i_x_fq,
-						cp_circuit, 
-						&mut rng,
-				).unwrap();
-				cp_u_i1_x = Some(cp_U_i1.hash_cyclefold(&sponge, self.pp_hash));
-
-
-				(Some(cp_u_i.cmW), Some(self.cp_U_i.as_ref().clone().unwrap().clone()), Some(cp_cmT), cp_u_i1_x, Some(cp_W_i1), Some(cp_U_i1), Some(cp_w_i), Some(cp_u_i))
-			}else{ (None, None, None, None, None, None, None, None) };
 			log_perf(self.job_id, log_level, &format!("prove_step: Step 3. fold cyclefold and cyclepair circuits."), &mut gt2);
 
             augmented_F_circuit = AugmentedFCircuitFoldPotSuper
@@ -1833,7 +1827,7 @@ where
 				cp_u_i_cmW: cp_u_i_cmW ,
 				cp_U_i:  cp_U_i,
 				cp_cm_T: cp_cm_T,
-				cp_x: cp_x,
+				cp_x: cp_u_i1_x,
 				b_full_mode: self.b_full_mode,
 
 				n_circ: field_to_usize(&self.n_circ), 
@@ -1844,20 +1838,20 @@ where
 
             self.cf_W_i = cfF_W_i1;
             self.cf_U_i = cfF_U_i1;
-			self.cp_W_i = cp_W_i1.clone();
-			self.cp_U_i = cp_U_i1.clone();
 
             if B_DEBUG {
                 self.cf_r1cs.check_instance_relation(&_cfW_w_i, &cfW_u_i)?;
                 self.cf_r1cs.check_instance_relation(&_cfE_w_i, &cfE_u_i)?;
                 self.cf_r1cs
                     .check_relaxed_instance_relation(&self.cf_W_i, &self.cf_U_i)?;
-				if self.b_full_mode{
-                	self.cp_r1cs.check_instance_relation(&_cp_w_i.as_ref().unwrap().clone(), &_cp_u_i.as_ref().unwrap().clone())?;
-                	self.cp_r1cs.check_relaxed_instance_relation(&self.cp_W_i.as_ref().unwrap().clone(), &self.cp_U_i.as_ref().unwrap().clone())?;
-				}
             }
         }
+		self.cp_W_i = cp_W_i1;
+		self.cp_U_i = cp_U_i1;
+		if B_DEBUG && self.b_full_mode{
+			self.cp_r1cs.check_instance_relation(&_cp_w_i.as_ref().unwrap().clone(), &_cp_u_i.as_ref().unwrap().clone())?;
+			self.cp_r1cs.check_relaxed_instance_relation(&self.cp_W_i.as_ref().unwrap().clone(), &self.cp_U_i.as_ref().unwrap().clone())?;
+		}
 
 		//println!(">*>*>* prove_step step 1, augment circ: j: {}, pc_i: {}", &augmented_F_circuit.j, &self.pc_i);
         let cs = ConstraintSystem::<C1::ScalarField>::new_ref();

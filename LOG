@@ -31893,6 +31893,7 @@ Goal 1. fix remaining bugs in testing
 Goal 2. N1, 2-A, C3: rane check , tie index with pc_i1 and range check pc_i
 	[a] impl
 	[b] test
+Goal 3. 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
 *Big server: started 08/15 4am -> 08/24 0am (almost 9 days!)
