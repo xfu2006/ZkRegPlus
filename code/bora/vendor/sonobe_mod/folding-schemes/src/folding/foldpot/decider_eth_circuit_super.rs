@@ -796,10 +796,10 @@ where
 		//2. generate Var version of pp_hash, z_0, z_i
 		// U_i, u_i, U_i1, given the advice from nova instance
 		// NOTE: they are private witness (some vars will be
-		// returned to TwoPhaseCircuit for verification)
-        let pp_hash = FpVar::<CF1<C1>>::new_witness(cs.clone(), || {
-            Ok(self.pp_hash.unwrap_or_else(CF1::<C1>::zero))
-        })?;
+		// returned to TwoPhaseCircuit for verification), except
+		// pp_hash: a constant (T934 K4), so the key fixes it
+        let pp_hash = FpVar::<CF1<C1>>::new_constant(cs.clone(),
+            self.pp_hash.expect("T934 K4: pp_hash null"))?;
         let i = FpVar::<CF1<C1>>::new_witness(cs.clone(), || 
 			Ok(self.i.unwrap_or_else(CF1::<C1>::zero)))?;
         let z_0 = Vec::<FpVar<CF1<C1>>>::new_witness(cs.clone(), || {
@@ -1572,9 +1572,8 @@ where
 			//(2) cp_W_i satisfies the cyclepair R1CS
 			//(3) cp_U_i is the commitment of cp_W_i
 			//-- cost: 14M for commitment keys 
-        	let pp_hash = FpVar::<CF1<C1>>::new_witness(cs.clone(), || {
-            	Ok(self.main_circ.pp_hash.unwrap_or_else(CF1::<C1>::zero))
-        	})?;
+        	let pp_hash = FpVar::<CF1<C1>>::new_constant(cs.clone(),
+            	self.main_circ.pp_hash.expect("T934 K4: pp_hash null"))?;
         	let sponge = PoseidonSpongeVar::<C1::ScalarField>::new(
 				cs.clone(), &self.main_circ.poseidon_config);
 			assert!(self.main_circ.cp_U_i.is_some());
@@ -2663,6 +2662,10 @@ pub mod tests_decider_eth_circuit_super {
 	/// T931: s119_fold_probe plus the Stage-2 rows of its QA-NIZK (the
 	/// driver.rs:3547 encoder), the vkey hash and b_0 = vkey.c[0].
 	fn s119_fold_rows(n_steps: usize, probe: Option<S119Probe>)
+		-> (S119Circ, Vec<Vec<Fr>>, Fr, ProjectiveG2){ s119_fold_pp(n_steps, probe, None) }
+
+	/// T934 K4: s119_fold_rows with the IVC folded under pp_hash `pp`.
+	fn s119_fold_pp(n_steps: usize, probe: Option<S119Probe>, pp: Option<Fr>)
 		-> (S119Circ, Vec<Vec<Fr>>, Fr, ProjectiveG2){
 		let mut rng = ark_std::test_rng();
 		let cfg = poseidon_canonical_config::<Fr>();
@@ -2730,6 +2733,7 @@ pub mod tests_decider_eth_circuit_super {
 		let mut nova = S119Nova::init_adv(&params,
 			vec![f_circ.clone()], z_0, 1, 0, b_full, hash_cmf, zero,
 			n_steps, None, 0).expect("init_adv pass2 err");
+		if let Some(h) = pp { nova.pp_hash = h; }
 		for j in 0..n_steps{
 			nova.prove_step(&mut rng, vec_stmt[j].to_vec(), None)
 				.expect("prove_step err");
@@ -3983,4 +3987,113 @@ pub mod tests_decider_eth_circuit_super {
 	#[test]
 	#[ignore]
 	fn test_t931_t9_full(){ t931_full(1) }
+
+	// ---------------------------------------------------------------
+	// T934 K4 (pp_hash a decider constant) and F71 (Stage-2 pp_hash
+	// covers the CyclePair R1CS dims and key).
+	// ---------------------------------------------------------------
+	/// T934 K4, light: the matrices follow pp_hash and no witness holds
+	/// it. The cp decider's own copy (Step 5) is gated out in light mode
+	/// (R8b covers it).
+	#[test]
+	fn test_t934_k4_pp_hash_const(){
+		let circ = s119_fold(5);
+		let res = t934_main(circ.clone(), Fr::from(7u64)).res;
+		let x = circ.pp_hash.unwrap();
+		let with = |h: Fr| { let mut c = circ.clone(); c.pp_hash = Some(h); c };
+		let main = |h: Fr| synth_mats(|cs| { with(h).generate_constraints_adv(0, cs, Fr::zero()).unwrap(); });
+		let cp = |h: Fr| synth_mats(|cs| t934_cp(&with(h), &res).generate_constraints(cs).unwrap());
+		for (name, (mx, z, _), my) in [("main", main(x), main(x + Fr::one()).0),
+			("cp", cp(x), cp(x + Fr::one()).0)] {
+			emit_stdout(format!("T934 K4 {}: cs {}, witness {}", name, mx.num_constraints, mx.num_witness_variables));
+			assert!(mx != my, "T934 K4 {}: pp_hash X and X + 1 give the same matrices", name);
+			assert!(!z[mx.num_instance_variables..].contains(&x), "T934 K4 {}: a witness holds pp_hash", name);
+		}
+	}
+
+	/// T934 K4 (R8, jet1tb, run alone with --ignored): full-mode main
+	/// decider, Groth16 key at pp_hash X. A proof of an IVC folded under
+	/// X + 1 fails; the X/X control verifies. Baseline: both verify.
+	#[test]
+	#[ignore]
+	fn test_t934_k4_g16_full(){
+		let _g = T935Light(utils::consts::read_global_config().b_light_test);
+		utils::consts::get_global_config().b_light_test = false;
+		let fold = |pp: Option<Fr>| t934_forge(&s119_fold_pp(5, None, pp).0, Fr::zero(), None);
+		let circ = fold(None);
+		let (cfg, x) = (circ.poseidon_config.clone(), circ.pp_hash.unwrap());
+		let circ_y = fold(Some(x + Fr::one()));
+		let sat = |c: &S119Circ| { let cs = ConstraintSystem::<Fr>::new_ref();
+			t934_main(c.clone(), Fr::zero()).generate_constraints(cs.clone()).unwrap();
+			cs.is_satisfied().unwrap() };
+		assert!(sat(&circ) && sat(&circ_y), "T934 K4: honest full main decider (X or X + 1) not SAT");
+		let mut rng = ark_std::test_rng();
+		let pk = G16::generate_random_parameters_with_reduction(t934_main(circ.clone(), Fr::zero()),
+			&mut rng).unwrap();
+		let pvk = ark_groth16::prepare_verifying_key(&pk.vk);
+		let kappa = Fr::rand(&mut rng);
+		let mut run = |c: S119Circ| {
+			let d = G16::cp_commit(&pk, &c.all_w(), kappa);
+			let m = t934_main(c.clone(), kzg_ch(&cfg, KZG_CH_TAG_S1, c.com_all_w.unwrap(), d));
+			let h = m.res_hash;
+			let p = <G16 as CpSnark<Bn254>>::prove_cp(&pk, m, kappa, Some(d), &mut rng).unwrap();
+			G16::verify_proof(&pvk, &p, &[h]).unwrap()
+		};
+		assert!(run(circ), "T934 K4: X/X control rejected");
+		assert!(!run(circ_y), "T934 K4: key for pp_hash X accepts an X + 1 proof");
+	}
+
+	/// T934 K4 (R8b, jet1tb, run alone with --ignored): one full-mode cp
+	/// decider synthesis over the T931 fixture. It is SAT and no witness
+	/// holds pp_hash. This covers Step 5's copy (:1575), which only full
+	/// mode synthesizes.
+	#[test]
+	#[ignore]
+	fn test_t934_k4_cp_full_scan(){
+		let _g = T935Light(utils::consts::read_global_config().b_light_test);
+		utils::consts::get_global_config().b_light_test = false;
+		let (circ, rows, vk, _) = s119_fold_rows(5, None);
+		let c2 = t931_fold2(&rows);
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		t931_cp(&t934_main(circ, Fr::from(7u64)), &c2, &rows, vk).generate_constraints(cs.clone()).unwrap();
+		assert!(cs.is_satisfied().unwrap(), "T934 K4: honest full cp decider not SAT");
+		assert!(!cs.borrow().unwrap().witness_assignment.contains(&c2.pp_hash.unwrap()),
+			"T934 K4: a cp decider witness holds pp_hash");
+	}
+
+	/// T934 F71: Stage 1 keeps the pre-F71 pp_hash. Stage 2 also hashes
+	/// the CyclePair R1CS dims and key (the R1CS the decider checks).
+	#[test]
+	fn test_t934_f71_pp_hash(){
+		use crate::arith::Arith;
+		use sha3::{Digest, Sha3_256};
+		use ark_serialize::CanonicalSerialize;
+		type Vp = crate::folding::foldpot::mod_super::VerifierParamsFoldPotSuper<Bn254, Projective,
+			Projective2, S119Cm, S119Cm2, S119Cm, false>;
+		let ser = |x: &dyn Fn(&mut Vec<u8>)| { let mut b = vec![]; x(&mut b); b };
+		//pre-F71 formula: SHA3 over the per-circuit hashes
+		let old = |vp: &Vp| { let mut h = Sha3_256::new();
+			for v in &vp.vec_vp { h.update(ser(&|b| v.pp_hash().unwrap().serialize_uncompressed(b).unwrap())); }
+			h };
+		let fr = |h: Sha3_256| Fr::from_le_bytes_mod_order(&h.finalize());
+		let mut rng = ark_std::test_rng();
+		let cfg = poseidon_canonical_config::<Fr>();
+		let (lk, f, _) = gen_six_root_adv::<Fr, Projective, S119Cm, S119Lk, false>(5, false);
+		let prep = PreprocessorParamFoldPotSuper::<Projective, Projective2, S119Fc, S119Cm, S119Cm2,
+			S119Lk, S119Gm, false>::new(cfg, vec![f.clone()], lk, vec![f.get_size_f()], false);
+		let vp1 = S119Nova::preprocess(&mut rng, &prep, 0).expect("preprocess err").1;
+		assert!(vp1.cp_r1cs.is_none() && vp1.pp_hash().unwrap() == fr(old(&vp1)),
+			"T934 F71: Stage-1 pp_hash changed");
+		let (params, nova) = t931_nova!(&mut rng, 1);
+		let vp2 = &params.1;
+		let cp = vp2.cp_r1cs.as_ref().expect("T934 F71: Stage 2 without cp_r1cs");
+		assert!(cp.params_to_le_bytes() == nova.cp_r1cs.params_to_le_bytes(),
+			"T934 F71: hashed cp R1CS != the decider's");
+		let mut h = old(vp2);
+		h.update(cp.params_to_le_bytes());
+		h.update(ser(&|b| vp2.vec_vp[0].cp_cs_vp.serialize_uncompressed(b).unwrap()));
+		let p2 = vp2.pp_hash().unwrap();
+		assert!(p2 != fr(old(vp2)) && p2 == fr(h) && nova.pp_hash == p2,
+			"T934 F71: Stage-2 pp_hash misses the CyclePair R1CS / key");
+	}
 }

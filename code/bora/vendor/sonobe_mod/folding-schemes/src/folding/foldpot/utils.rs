@@ -864,10 +864,33 @@ pub fn deserialize_affines_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affin
     v
 }
 
-/// T934 ruling F: g16 key file format, first item of .meta.
-pub const G16_KEY_VERSION: u32 = 2;
+/// T934 ruling F: g16 key file format, first item of .meta. v3
+/// (T934 D2): the key's pp_hash follows it.
+/// pp_hash binds the IVC params, not the decider circuit: bump this
+/// on any decider circuit change.
+pub const G16_KEY_VERSION: u32 = 3;
 
-pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254>, vk: &ark_groth16::VerifyingKey<Bn254>) {
+/// T934 D2: the stale-key message for the g16 key at path.
+fn g16_stale(path: &Path) -> String {
+    format!("T934: g16 key {}.meta missing or stale (format or pp_hash mismatch); delete the cache dir {:?} and rerun", path.to_str().unwrap(), path.parent())
+}
+
+/// T934 D2: a cached g16 key must be the one for this pp_hash.
+pub fn check_g16_pp_hash<F: PartialEq + std::fmt::Debug>(path: &Path, stored: F, expected: F) {
+    assert_eq!(stored, expected, "{}", g16_stale(path));
+}
+
+/// T934 D2: open the .meta of the g16 key at path and read its header,
+/// the version (asserted) and the stored pp_hash.
+pub fn read_g16_meta_header(path: &Path) -> (BufReader<File>, ark_bn254::Fr) {
+    let file = File::open(format!("{}.meta", path.to_str().unwrap())).unwrap_or_else(|_| panic!("{}", g16_stale(path)));
+    let mut reader = BufReader::new(file);
+    assert_eq!(u32::deserialize_compressed(&mut reader).ok(), Some(G16_KEY_VERSION), "{}", g16_stale(path));
+    let pp_hash = ark_bn254::Fr::deserialize_compressed(&mut reader).unwrap_or_else(|_| panic!("{}", g16_stale(path)));
+    (reader, pp_hash)
+}
+
+pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254>, vk: &ark_groth16::VerifyingKey<Bn254>, pp_hash: ark_bn254::Fr) {
 	let mut gt1 = GTimer::new();
     let b_debug = B_DEBUG;
     let path_str = path.to_str().unwrap();
@@ -876,6 +899,7 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     let file = File::create(&meta_path).expect("create meta err");
     let mut writer = BufWriter::new(file);
     G16_KEY_VERSION.serialize_compressed(&mut writer).expect("ser version");
+    pp_hash.serialize_compressed(&mut writer).expect("ser pp_hash");
     vk.alpha_g1.serialize_compressed(&mut writer).expect("ser vk.alpha_g1");
     vk.beta_g2.serialize_compressed(&mut writer).expect("ser vk.beta_g2");
     vk.gamma_g2.serialize_compressed(&mut writer).expect("ser vk.gamma_g2");
@@ -915,22 +939,22 @@ pub fn write_g16_optimized_bn254(path: &Path, pk: &ark_groth16::ProvingKey<Bn254
     log_perf(job_id, LOGL2, &format!("PERF 1003: [write_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes", path, pk.a_query.len(), total_size),&mut gt1);
 
     if b_debug {
-        let (pk_read, vk_read) = read_g16_optimized_bn254(path);
+        let (pk_read, vk_read, pp_read) = read_g16_optimized_bn254(path);
+        assert_eq!(pp_hash, pp_read, "pp_hash mismatch!");
         assert_eq!(*pk, pk_read, "ProvingKey mismatch!");
         assert_eq!(*vk, vk_read, "VerifyingKey mismatch!");
         println!("Debug verification passed!");
     }
 }
 
-pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>, ark_groth16::VerifyingKey<Bn254>) {
+/// Also returns the stored pp_hash (T934 D2): callers check it.
+pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>, ark_groth16::VerifyingKey<Bn254>, ark_bn254::Fr) {
 	let mut gt1 = GTimer::new();
     let path_str = path.to_str().unwrap();
 
     let meta_path = format!("{}.meta", path_str);
-    let stale = || format!("T934: g16 key {} missing or stale (format != {}); delete the cache dir {:?} and rerun", meta_path, G16_KEY_VERSION, path.parent());
-    let file = File::open(&meta_path).unwrap_or_else(|_| panic!("{}", stale()));
-    let mut reader = BufReader::new(file);
-    assert_eq!(u32::deserialize_compressed(&mut reader).ok(), Some(G16_KEY_VERSION), "{}", stale());
+    let stale = || g16_stale(path);
+    let (mut reader, pp_hash) = read_g16_meta_header(path);
     
     let vk_alpha_g1 = <ark_ec::short_weierstrass::Affine<ark_bn254::g1::Config>>::deserialize_compressed(&mut reader).expect("deser vk.alpha_g1");
     let vk_beta_g2 = <ark_ec::short_weierstrass::Affine<ark_bn254::g2::Config>>::deserialize_compressed(&mut reader).expect("deser vk.beta_g2");
@@ -996,7 +1020,7 @@ pub fn read_g16_optimized_bn254(path: &Path) -> (ark_groth16::ProvingKey<Bn254>,
     log_perf(job_id, LOGL2, &format!("PERF 1003: [read_g16_optimized_bn254] path: {:?}, elements: {}, size: {} bytes", path, pk.a_query.len(), total_size, 
 	), &mut gt1);
 
-    (pk, vk)
+    (pk, vk, pp_hash)
 }
 
 // --- Added for R1CS serialization and diagnostics ---

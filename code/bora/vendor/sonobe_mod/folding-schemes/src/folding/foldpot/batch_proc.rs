@@ -2410,12 +2410,42 @@ mod tests_batch_proc {
 			let (mut rng, toy) = (test_rng(), || T934Toy{ commit, mode: 0 });
 			let pk = G16::generate_random_parameters_with_reduction(toy(), &mut rng).unwrap();
 			let path = dir.join(format!("g16_{}.key", commit));
-			write_g16_optimized_bn254(&path, &pk, &pk.vk);
-			let (pk2, vk2) = read_g16_optimized_bn254(&path);
+			write_g16_optimized_bn254(&path, &pk, &pk.vk, Fr::from(5u64));
+			let (pk2, vk2, pp) = read_g16_optimized_bn254(&path);
 			let p = G16::create_random_proof_with_reduction(toy(), &pk2, &mut rng).unwrap();
-			assert!(pk2 == pk && vk2 == pk.vk && G16::verify(&vk2, &[Fr::from(3u64)], &p).unwrap(),
+			assert!(pk2 == pk && vk2 == pk.vk && pp == Fr::from(5u64) && G16::verify(&vk2, &[Fr::from(3u64)], &p).unwrap(),
 				"T934: key IO round trip, commit = {}", commit);
 		}
 		std::fs::remove_dir_all(&dir).unwrap();
 	}
+
+	/// T934 D2 (T-META): write a key at pp_hash X = 5, read it (with the
+	/// .meta version patched to `ver` when Some) and check it against `chk`.
+	fn t934_meta(tag: &str, chk: Fr, ver: Option<u32>){
+		use crate::folding::foldpot::utils::{write_g16_optimized_bn254, read_g16_optimized_bn254, check_g16_pp_hash};
+		let dir = std::env::temp_dir().join(format!("t934_meta_{}_{}", tag, std::process::id()));
+		std::fs::create_dir_all(&dir).unwrap();
+		let pk = G16::generate_random_parameters_with_reduction(T934Toy{ commit: true, mode: 0 }, &mut test_rng()).unwrap();
+		let path = dir.join("g16.key");
+		write_g16_optimized_bn254(&path, &pk, &pk.vk, Fr::from(5u64));
+		if let Some(v) = ver {
+			let m = dir.join("g16.key.meta");
+			let mut b = std::fs::read(&m).unwrap();
+			b[..4].copy_from_slice(&v.to_le_bytes());
+			std::fs::write(&m, b).unwrap();
+		}
+		let r = std::panic::catch_unwind(|| read_g16_optimized_bn254(&path));
+		std::fs::remove_dir_all(&dir).unwrap();
+		let (pk2, _, pp) = r.unwrap_or_else(|e| std::panic::resume_unwind(e));
+		assert!(pk2 == pk, "T934 D2: key round trip");
+		check_g16_pp_hash(&path, pp, chk);
+	}
+	#[test]
+	fn t934_meta_ok(){ t934_meta("ok", Fr::from(5u64), None) }
+	#[test]
+	#[should_panic(expected = "missing or stale")]
+	fn t934_meta_pp(){ t934_meta("pp", Fr::from(6u64), None) }
+	#[test]
+	#[should_panic(expected = "missing or stale")]
+	fn t934_meta_v2(){ t934_meta("v2", Fr::from(5u64), Some(2)) }
 }

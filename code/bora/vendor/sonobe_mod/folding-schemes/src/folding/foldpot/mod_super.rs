@@ -589,6 +589,14 @@ where
 			x.serialize_uncompressed(&mut bytes)?;
 			hasher.update(&bytes);
 		}
+		//T934 F71: Stage 2 also covers the CyclePair R1CS (dims) and key
+		if let Some(cp) = &self.cp_r1cs {
+			use crate::arith::Arith;
+			hasher.update(cp.params_to_le_bytes());
+			let mut bytes = Vec::new();
+			self.vec_vp[0].cp_cs_vp.serialize_uncompressed(&mut bytes)?;
+			hasher.update(&bytes);
+		}
 		let res = hasher.finalize();
 		Ok( C1::ScalarField::from_le_bytes_mod_order(&res) )
     }

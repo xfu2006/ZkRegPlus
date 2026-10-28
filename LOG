@@ -31893,7 +31893,17 @@ Goal 1. fix remaining bugs in testing
 Goal 2. N1, 2-A, C3: rane check , tie index with pc_i1 and range check pc_i
 	[a] impl
 	[b] test
-Goal 3. 
+Goal 3. others D1: cyclepair pub inp, CpLink struct
+	[a] H5 and O1: i=0 case for cyclepair
+	[b] H6: add attribute to connect phase1 and phase2 circ
+	[c] D4: recompute row hash
+Goal 4. T934 K4 + F71: pp_hash is a free witness
+	[a] improve pp_hash vkey
+	[b] impl + testing
+
+Wed 10/28/2026
+Goal 1. finish T934 K4 + F71
+	[a]
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
 *Big server: started 08/15 4am -> 08/24 0am (almost 9 days!)

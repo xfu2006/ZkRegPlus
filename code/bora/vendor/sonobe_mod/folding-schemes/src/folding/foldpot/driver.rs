@@ -138,30 +138,34 @@ fn read_sidecar_meta(path: &Path) -> (Vec<[u8; 32]>, [u8; 32]) {
     (hashes, cf)
 }
 
-fn write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, job_id: usize)
+fn write_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, pk: &S::ProvingKey, vk: &S::VerifyingKey, pp_hash: F, job_id: usize)
 where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize + 'static
 {
     if let (Some(pk_g16), Some(vk_g16)) = ((pk as &dyn Any).downcast_ref::<ark_groth16::ProvingKey<Bn254>>(), (vk as &dyn Any).downcast_ref::<ark_groth16::VerifyingKey<Bn254>>()) {
-        crate::folding::foldpot::utils::write_g16_optimized_bn254(path, pk_g16, vk_g16);
+        let pp = *(&pp_hash as &dyn Any).downcast_ref::<ark_bn254::Fr>().expect("downcast pp_hash error");
+        crate::folding::foldpot::utils::write_g16_optimized_bn254(path, pk_g16, vk_g16, pp);
     } else {
         old_write_g16key::<F, S>(path, pk, vk, job_id);
     }
 }
 
-fn read_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, job_id: usize) -> Result<(S::ProvingKey, S::VerifyingKey), Error>
+/// The third item is the stored pp_hash (Groth16 .meta v3 only, T934 D2).
+fn read_g16key<F: PrimeField, S: SNARK<F>>(path: &Path, job_id: usize) -> Result<(S::ProvingKey, S::VerifyingKey, Option<F>), Error>
 where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSerialize + 'static
 {
     if std::any::TypeId::of::<S::ProvingKey>() == std::any::TypeId::of::<ark_groth16::ProvingKey<Bn254>>() {
-        let (pk_g16, vk_g16) = crate::folding::foldpot::utils::read_g16_optimized_bn254(path);
+        let (pk_g16, vk_g16, pp) = crate::folding::foldpot::utils::read_g16_optimized_bn254(path);
         let pk_any: Box<dyn Any> = Box::new(pk_g16);
         let vk_any: Box<dyn Any> = Box::new(vk_g16);
+        let pp_any: Box<dyn Any> = Box::new(pp);
         
         let pk_s = *pk_any.downcast::<S::ProvingKey>().expect("downcast pk error");
         let vk_s = *vk_any.downcast::<S::VerifyingKey>().expect("downcast vk error");
+        let pp_s = *pp_any.downcast::<F>().expect("downcast pp_hash error");
         
-        Ok((pk_s, vk_s))
+        Ok((pk_s, vk_s, Some(pp_s)))
     } else {
-        old_read_g16key::<F, S>(path, job_id)
+        old_read_g16key::<F, S>(path, job_id).map(|(pk, vk)| (pk, vk, None))
     }
 }
 
@@ -3097,6 +3101,8 @@ where
         // still asserted upfront so a missing cache fails fast.
         let mut cached_main_keys_init: Option<(S::ProvingKey,
             S::VerifyingKey)> = None;
+        //T934 D2: checked against driver1's pp_hash once it exists
+        let mut main_pp_stored: Option<C1::ScalarField> = None;
 
         if b_read_snark_cache {
 			let main_path = cache_base.join("g16_main.key");
@@ -3106,8 +3112,10 @@ where
 				"main: {:?} not exist", main_path_meta);
 			assert!(cp_path_meta.exists(), "cp_path: {:?} not exist",
 				cp_path_meta);
-			if let Ok(keys) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
-				cached_main_keys_init = Some(keys);
+			//non-Groth16 S has no .meta: pp is None, check skipped
+			if let Ok((pk, vk, pp)) = read_g16key::<C1::ScalarField, S>(&main_path, 0) {
+				cached_main_keys_init = Some((pk, vk));
+				main_pp_stored = pp;
 			}
         }
         // 2026-05-21 (Lever 2+3): wrap both keys in Arc<RwLock> so the
@@ -3252,6 +3260,10 @@ where
 		global_max_total_n, global_max_words
 	);
 	log_perf(0, log_level, &format!("PERF 1005: FoldPot: Step 2: set up driver 1"), &mut gt_all);
+	if let Some(pp) = main_pp_stored {
+		crate::folding::foldpot::utils::check_g16_pp_hash(&cache_base.join("g16_main.key"),
+			pp, driver1.nova_param.1.pp_hash().expect("pp_hash err"));
+	}
 
 	//3. create the driver2 for Phase2 CyclePair Circ
 	let n_circs_cp = 1;
@@ -3262,6 +3274,18 @@ where
 	let lkup_p2 = Arc::new(lk_p2);
 	let mut driver2 = Driver::<E,P,C2G2, C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<C1::ScalarField, C1, CS1, LK, FoldPairMapper<CF1<C1>,LK>,H>,S,LK,FoldPairMapper<CF1<C1>,LK>,H>
 		::new(poseidon_config_global.clone(), lkup_p2, vec_circ_cp, rand::rngs::OsRng, b_full2, global_max_total_n, global_max_words);
+	//T934 D2: fail fast on a stale cp key; the key itself stays lazy.
+	//non-Groth16 S has no .meta: check skipped
+	if b_read_snark_cache && std::any::TypeId::of::<S::ProvingKey>()
+		== std::any::TypeId::of::<ark_groth16::ProvingKey<Bn254>>() {
+		use crate::folding::foldpot::utils::{check_g16_pp_hash,
+			read_g16_meta_header};
+		let cp_path = cache_base.join("g16_cp.key");
+		let pp: Box<dyn Any> = Box::new(read_g16_meta_header(&cp_path).1);
+		check_g16_pp_hash(&cp_path, *pp.downcast::<C1::ScalarField>()
+			.expect("downcast pp_hash error"),
+			driver2.nova_param.1.pp_hash().expect("pp_hash err"));
+	}
 
 	//cols=variables, io_l=public io len). Removable measurement print.
 	for (i,vp) in driver1.nova_param.1.vec_vp.iter().enumerate(){
@@ -3644,7 +3668,8 @@ where
 							let main_path = cache_base
 								.join("g16_main.key");
 							write_g16key::<C1::ScalarField, S>(&main_path,
-								&pk, &vk, job_id);
+								&pk, &vk, main_circ.circ1.pp_hash
+								.expect("pp_hash null"), job_id);
 						}
 						pk_main_owned = pk;
 						vk_main_owned = vk;
@@ -3816,9 +3841,13 @@ set; exit(0) before Phase 2.");
 				let mut w = cached_cp_keys.write().unwrap();
 				if w.is_none() {
 					let cp_path = cache_base.join("g16_cp.key");
-					if let Ok(keys) =
+					if let Ok((pk, vk, pp)) =
 						read_g16key::<C1::ScalarField, S>(&cp_path, 0) {
-						*w = Some(keys);
+						if let Some(pp) = pp {
+							crate::folding::foldpot::utils::check_g16_pp_hash(&cp_path, pp,
+								cp_circuit.circ2.main_circ.pp_hash.expect("pp_hash null"));
+						}
+						*w = Some((pk, vk));
 					}
 				}
 			}
@@ -3836,7 +3865,8 @@ set; exit(0) before Phase 2.");
 				if job_id == 0 && read_global_config().b_write_snark_cache {
 						let cp_path = cache_base.join("g16_cp.key");
 						write_g16key::<C1::ScalarField, S>(
-							&cp_path, &pk, &vk, job_id);
+							&cp_path, &pk, &vk, cp_circuit.circ2.main_circ
+							.pp_hash.expect("pp_hash null"), job_id);
 				}
 				pk_cp_owned = pk;
 				vk_cp_owned = vk;
