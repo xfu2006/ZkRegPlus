@@ -866,10 +866,10 @@ pub fn deserialize_affines_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affin
 
 /// T934 ruling F: g16 key file format, first item of .meta. v3
 /// (T934 D2): the key's pp_hash follows it. v4: T938/T935 C4 step
-/// circuit change.
+/// circuit change. v5: T932 B-R7 step circuit change.
 /// pp_hash binds the IVC params, not the decider circuit: bump this
 /// on any decider circuit change.
-pub const G16_KEY_VERSION: u32 = 4;
+pub const G16_KEY_VERSION: u32 = 5;
 
 /// T934 D2: the stale-key message for the g16 key at path.
 fn g16_stale(path: &Path) -> String {

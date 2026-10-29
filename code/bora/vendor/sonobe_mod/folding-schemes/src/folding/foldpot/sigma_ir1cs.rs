@@ -2915,7 +2915,7 @@ where 	C: CurveGroup<ScalarField=F>,
 	/// true only on the keygen R1CS-extraction synthesis, whose dummy
 	/// stmt has no m_share fill (all-zero word end). Gates the native
 	/// asserts it cannot satisfy: hab22, C4 act sizes, H1 word-end io,
-	/// D1 pins, b_correct. Never read in-circuit, so it cannot change
+	/// D1 pins, B-R7 act bound, b_correct. Never read in-circuit, so it cannot change
 	/// the constraint shape.
 	pub b_keygen_synth: bool,
 
@@ -3581,6 +3581,10 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 				let val2_wd = word_size_left- one;
 				word_size_left= if b_wd_left_zero {zero} else {val2_wd};
 			}
+			//T932 B-R7: act <= word_subseg_size, mirror of the circuit.
+			assert!(self.b_keygen_synth || word_size_left.is_zero(),
+				"B-R7: act_word_subseg_size {} > word_subseg_size {}",
+				si.act_word_subseg_size, self.stmt_config.word_subseg_size);
 			sum_kzg_eval_word= if si.act_word_subseg_size.is_zero()
 				{old_sum_kzg_eval_word} else {sum_kzg_eval_word};
 			//T932-F2W. Mirror of the circuit's rho_i fold, on the
@@ -4625,6 +4629,11 @@ where 	C: CurveGroup<ScalarField=F>,
 				word_size_left= b_wd_left_zero.select(&zero_var, 
 					&val2_wd)?;
 			}
+			//T932 B-R7: the countdown must end at 0, so act is in
+			//[0, word_subseg_size] and accumulated_word_len counts the
+			//cells streamed above. Only the CP extractor pins act; the
+			//DFA/SED extractors do not (+1).
+			word_size_left.enforce_equal(&zero_var)?;
 			sum_kzg_eval_word= si.act_word_subseg_size.is_zero()?.select(
 				&old_sum_kzg_eval_word, &sum_kzg_eval_word)?;
 			//T932-F2W. Fold this word's blind into the evaluation
@@ -6428,6 +6437,44 @@ pub mod tests_sigma_ir1cs{
 		assert!(s106_synth(&inst, &z0)==Ok(true), "honest act = cfg rejected");
 	}
 
+	/// T932 B-R7. act_word_subseg_size must be in [0, word_subseg_size]
+	/// (2 here). The six_root mapper does not pin act, like the DFA and
+	/// SED extractors. seg is the first subseg of a 2-subseg word (the
+	/// T935 C4 seg1), so the last-subseg batch_v pin is off. act = 3
+	/// streams the same 2 cells as act = 2 but adds 3 to
+	/// accumulated_word_len.
+	#[test]
+	pub fn test_t932_br7_act_bound(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		let (one, two) = (Fr::one(), Fr::from(2u32));
+		let mut seg = stmts[0].clone();
+		seg.inp_buf[0] = one; seg.oup_buf[0] = one;
+		seg.word_id = one; seg.subseg_id = one;
+		seg.total_word_segs = two; seg.total_words = one;
+		seg.total_word_len = two;
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 1);
+		//control: honest act = 1
+		let _z = s106_step_native(&mut inst, &z0, &seg);
+		let r0 = s106_synth(&inst, &z0);
+		assert!(r0==Ok(true), "honest act = 1 rejected: {:?}", r0);
+		//top of the range, act = word_subseg_size
+		let mut s_top = seg.clone();
+		s_top.act_word_subseg_size = two;
+		let _z = s106_step_native(&mut inst, &z0, &s_top);
+		let r1 = s106_synth(&inst, &z0);
+		assert!(r1==Ok(true), "act = word_subseg_size rejected: {:?}", r1);
+		//act = word_subseg_size + 1
+		let mut s_bad = seg.clone();
+		s_bad.act_word_subseg_size = Fr::from(3u32);
+		let _z = s106_step_forged(&mut inst, &z0, &s_bad);
+		let r2 = s106_synth(&inst, &z0);
+		assert!(r2==Ok(false), "B-R7: act = 3 > 2 accepted: {:?}", r2);
+	}
+
 	/// S109: at a final step with every m_share zero the Hab'22 equality
 	/// is ENFORCED. The removed zero-waiver used to pass it vacuously.
 	/// Negative arm only -- this toy cannot reach a BALANCED final step
@@ -6942,6 +6989,7 @@ pub mod tests_sigma_ir1cs{
 	/// (5 fixed-segment fields, 9 products).
 	/// T935 C4 (T938-E): +2 constraints (act == cfg x2 and unused == 0
 	/// x2 replace cfg - act == unused x2). T938 H1/H2: +0.
+	/// T932 B-R7: +1 constraint (word_size_left == 0), +0 vars.
 	#[test]
 	pub fn test_s11_measure_step_cs(){
 		let n_steps = 4usize;
@@ -6958,7 +7006,7 @@ pub mod tests_sigma_ir1cs{
 			empty sat={} cs={} vars={}", s0, c0, w0, s3, c3, w3);
 		assert!(s0, "honest full step UNSAT");
 		assert!(c0==c3 && w0==w3, "full and empty shapes differ");
-		assert!(c0==5755-129+9+2 && w0==5800-128+14,
+		assert!(c0==5755-129+9+2+1 && w0==5800-128+14,
 			"six_root step shape moved: cs {} vars {}", c0, w0);
 	}
 

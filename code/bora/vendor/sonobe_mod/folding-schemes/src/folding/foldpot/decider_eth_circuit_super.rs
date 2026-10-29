@@ -969,7 +969,9 @@ where
 		//final state. total_word_len is the copy S106b ties to the
 		//first subseg (bound to kzg_length, Horner start of v_n), and
 		//accumulated_word_len counts the symbols the circuit
-		//processed. Read the digest-bound zi_part2_inst_var above,
+		//processed. Each step's act is at most word_subseg_size
+		//(T932 B-R7), so the sum cannot wrap. Read the digest-bound
+		//zi_part2_inst_var above,
 		//never a second ZiPartTwoInstVar::from, whose fresh witnesses
 		//no digest binds. Stage 1 only, since Stage-2 words are
 		//cyclepair rows, and so the cp decider stays unchanged. Same
