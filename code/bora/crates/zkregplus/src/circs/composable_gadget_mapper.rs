@@ -17,7 +17,7 @@ use std::any::{Any};
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{LookupTableTwoCol,GadgetMapper,GadgetMapperDeepClone,SigmaGadget,StatementConfig,StatementInst,StatementExtraInfo,NdAdvice,Capacity,WordInfo} 	}
+		sigma_ir1cs::{LookupTableTwoCol,GadgetMapper,GadgetMapperDeepClone,SigmaGadget,StatementConfig,StatementInst,StatementExtraInfo,NdAdvice,Capacity,WordInfo,StmtPin} 	}
 };
 use ark_ff::{PrimeField, BigInteger};
 use std::collections::{HashMap, HashSet};
@@ -111,6 +111,11 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>:
 	/// stmg_cfg provides statement structure info.
 	/// cmp_cfgs: each tuple is (idx_inp, idx_oup, idx_data) for each component.
 	fn get_joins(&self, i: usize, stmt_cfg: &StatementConfig, comp_cfgs: &Vec<Vec<usize>>)->Vec<( (usize,usize), (usize,usize) )>;
+
+	/// T938 D1: constant pins on its own statement cells, global
+	/// indices as in get_joins. Default: none.
+	fn get_const_pins(&self, _i: usize, _stmt_cfg: &StatementConfig,
+		_comp_cfgs: &Vec<Vec<usize>>)->Vec<(usize, StmtPin<F>)>{ vec![] }
 
 	/// Also responsible for generating nd_advice with its own capacity.
 	/// seg_id is for debugging purpose only.
@@ -969,6 +974,20 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 
 
 		(cfg.total_size(), cfg, vec_maps, opt_joins, cyclepair_map)
+	}
+
+	/// T938 D1: the components' constant pins (starts as in step 1 of
+	/// gen_statement_structure).
+	fn gen_stmt_pins(&self, lkup_share_size: usize) -> Vec<(usize, StmtPin<F>)>{
+		let (_, cfg, _, _, _) = self.gen_statement_structure(lkup_share_size);
+		let mut starts = vec![vec![0usize; 5]];
+		for c in &self.vec_components{
+			let sz = c.lock().unwrap().get_sizes();
+			let last = &starts[starts.len()-1];
+			starts.push(last.iter().zip(sz.iter()).map(|(a, b)| a+b).collect());
+		}
+		self.vec_components.iter().enumerate().flat_map(|(i, c)|
+			c.lock().unwrap().get_const_pins(i, &cfg, &starts)).collect()
 	}
 
 

@@ -106,6 +106,22 @@ where S::ProvingKey: CanonicalSerialize + 'static, S::VerifyingKey: CanonicalSer
 
 
 
+/// Files a complete snark cache holds. A warm run reads them; if one is
+/// missing the run rebuilds and persists the cache. T938: names as the
+/// writers create them (no bare .key; a sidecar prefix X is X_h.meta +
+/// X_generators_compressed.data). _pk_d_query is the last key file
+/// written, so it marks a complete key.
+pub(crate) const G16_CACHE_NEED: [&str; 10] = [
+	"g16_main.key.meta", "g16_cp.key.meta",
+	"g16_main.key_pk_d_query_compressed.data",
+	"g16_cp.key_pk_d_query_compressed.data",
+	"g16_main.sidecar.cf_h.meta",
+	"g16_main.sidecar.cf_generators_compressed.data",
+	"g16_cp.sidecar.cf_h.meta",
+	"g16_cp.sidecar.cf_generators_compressed.data",
+	"g16_cp.sidecar.cp_h.meta",
+	"g16_cp.sidecar.cp_generators_compressed.data"];
+
 /// Sidecar-meta binary layout: write a list of 32-byte r1cs hashes
 /// plus a single 32-byte cf_r1cs hash. Used together with the
 /// Pedersen-param sidecar files to keep circuit constants stable
@@ -3076,13 +3092,7 @@ where
         // sidecars persisted, so the next run reads them. A complete
         // cache flips nothing, so warm runs are byte-identical.
         if read_global_config().b_read_snark_cache {
-            let need = ["g16_main.key", "g16_main.key.meta",
-                "g16_cp.key", "g16_cp.key.meta",
-                "g16_main.key_pk_d_query_compressed.data",
-                "g16_cp.key_pk_d_query_compressed.data",
-                "g16_main.sidecar.cf", "g16_cp.sidecar.cf",
-                "g16_cp.sidecar.cp"];
-            let missing: Vec<&str> = need.iter().copied()
+            let missing: Vec<&str> = G16_CACHE_NEED.iter().copied()
                 .filter(|f| !cache_base.join(f).exists()).collect();
             if !missing.is_empty() {
                 let _ = std::fs::create_dir_all(&cache_base);
@@ -4487,6 +4497,69 @@ pub mod tests_driver{
 		let _prf = foldpot_main::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,SigmaIR1CS_Inst<Fr,C1,CS1,LK,SumMapper<Fr,LK>,H>,S,LK,SumMapper<Fr,LK>, false>(lkup, vec_circ, &mut jobs, "cache");
 	}
 
+	/// A toy Groth16 key (generators only) for the cache writers.
+	fn t938_toy_g16() -> ark_groth16::ProvingKey<Bn254>{
+		use ark_ec::AffineRepr;
+		let (g1, g2) = (ark_bn254::G1Affine::generator(),
+			ark_bn254::G2Affine::generator());
+		let vk = ark_groth16::VerifyingKey::<Bn254>{alpha_g1: g1, beta_g2: g2,
+			gamma_g2: g2, delta_g2: g2, gamma_abc_g1: vec![g1], delta_d_g2: g2};
+		ark_groth16::ProvingKey::<Bn254>{vk, beta_g1: g1, delta_g1: g1,
+			a_query: vec![g1], b_g1_query: vec![g1], b_g2_query: vec![g2],
+			h_query: vec![g1], l_query: vec![g1], delta_d_g1: g1,
+			d_query: vec![g1], commit_start: 0, n_commit: 1}
+	}
+
+	/// T938 (D, g16 need-list): every name the cold/partial cache check
+	/// needs is created by the cache writers, else a warm read never
+	/// happens. Writes a toy key and the three sidecars.
+	#[test]
+	fn test_t938_g16_need_list(){
+		use crate::folding::foldpot::utils::{write_g16_optimized_bn254,
+			write_pedersen_params};
+		use crate::commitment::pedersen::Params as PedersenParams;
+		let d = std::path::Path::new(&utils::os::proj_root())
+			.join("data/debug/t938_g16_need");
+		let _ = std::fs::remove_dir_all(&d);
+		std::fs::create_dir_all(&d).unwrap();
+		let pk = t938_toy_g16();
+		for k in ["g16_main.key", "g16_cp.key"]{
+			write_g16_optimized_bn254(&d.join(k), &pk, &pk.vk, Fr::from(5u32));
+		}
+		let pp = PedersenParams::<Projective>{h: Projective::generator(),
+			generators: vec![pk.vk.alpha_g1]};
+		for k in ["g16_main.sidecar.cf", "g16_cp.sidecar.cf", "g16_cp.sidecar.cp"]{
+			write_pedersen_params(&d.join(k), &pp);
+		}
+		let missing: Vec<&str> = G16_CACHE_NEED.iter().copied()
+			.filter(|f| !d.join(f).exists()).collect();
+		let _ = std::fs::remove_dir_all(&d);
+		assert!(missing.is_empty(), "no writer creates {:?}", missing);
+	}
+
+	/// T938 (D3 a): the decider circuit changed, so a version-3 key
+	/// meta is stale and must panic on load.
+	#[test]
+	fn test_t938_g16_v3_meta_panics(){
+		use crate::folding::foldpot::utils::{write_g16_optimized_bn254,
+			read_g16_meta_header};
+		let d = std::path::Path::new(&utils::os::proj_root())
+			.join("data/debug/t938_g16_v3");
+		let _ = std::fs::remove_dir_all(&d);
+		std::fs::create_dir_all(&d).unwrap();
+		let path = d.join("g16_main.key");
+		let pk = t938_toy_g16();
+		write_g16_optimized_bn254(&path, &pk, &pk.vk, Fr::from(5u32));
+		assert!(std::panic::catch_unwind(|| read_g16_meta_header(&path))
+			.is_ok(), "current meta fails to load");
+		let meta = d.join("g16_main.key.meta");
+		let mut b = std::fs::read(&meta).unwrap();
+		b[0..4].copy_from_slice(&3u32.to_le_bytes());
+		std::fs::write(&meta, &b).unwrap();
+		let r = std::panic::catch_unwind(|| read_g16_meta_header(&path));
+		let _ = std::fs::remove_dir_all(&d);
+		assert!(r.is_err(), "version-3 g16 meta loaded");
+	}
 }
 
 

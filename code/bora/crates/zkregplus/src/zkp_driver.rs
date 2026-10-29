@@ -9194,4 +9194,320 @@ range2_bit={}", ds, b, nu, rb);
 		println!("[M2] flag-off dna fingerprint matches ({} fields)",
 			fp.fields.len());
 	}
+
+	// ---------------------------------------------------------------
+	// T938 H3/H4/S1: one REAL step circuit (CP + SED + DFA mappers),
+	// built as zkp_driver_adv + foldpot_main do (keygen shape: dummy
+	// advice -> container cfg -> dummy stmt), honest statements per
+	// segment as pass_all builds them. Lookup check off, Fiat-Shamir
+	// randomness 0 (as the six_root toy). The global config is
+	// process-wide: run each test with --exact.
+	// ---------------------------------------------------------------
+	type T938Fc = super::FC<Fr,C1,CS1>;
+	type T938Stmt = folding_schemes::folding::foldpot::sigma_ir1cs
+		::StatementInst<Fr,super::LK<Fr>>;
+
+	/// Build the circuit and the honest statements of the word in file
+	/// `fw` (segment k chained to k-1 through its advice). The word info
+	/// is load_files' quick discharge without its all-clean assert, so a
+	/// truly matching word gets through.
+	fn t938_env(db: data_processor::clam_db::ClamavDB<Fr>, fw: &str,
+		chunk: usize, cp: &CpCapacity, sed: &SedCapacity, dfa: &DfaCapacity)
+		-> (T938Fc, Vec<Vec<T938Stmt>>){
+		use folding_schemes::folding::foldpot::sigma_ir1cs::{GadgetMapper,
+			SigmaIR1CS, StatementExtraInfo, LookupTableTwoCol};
+		use ark_std::{Zero, One};
+		use std::sync::Arc;
+		get_global_config().b_check_lkup = false;
+		let cfg = data_processor::clamav::default_clamav_cfg();
+		let nib = utils::os::read_nibbles(fw);
+		let (_, wi) = super::quick_discharge_file_by_crit_bag_pm(fw, &nib,
+			&db.vec_sigs, &db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+			&db.map_crit_pat_igc, &db.dfa_crit, &db.bundle_subsig.vec_acdfa[0],
+			&db.dfa_crit_igc, &db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+			&db.sig_to_id, chunk, chunk);
+		let words = vec![utils::data::pad_word_to_multiple(&utils::data::pack_nibbles(
+			&nib.iter().map(|x| Fr::from(*x as u32)).collect()), chunk)];
+		let infos = vec![wi];
+		let n: usize = words.iter().map(|w| w.len()).sum();
+		let lkup = Arc::new(db.lkup.clone());
+		let mut circ = super::build_circs_adv::<Fr,C1,CS1>(
+			&folding_schemes::transcript::poseidon::poseidon_canonical_config::<Fr>(),
+			n, chunk, db.lkup.get_size(), Arc::new(db), cp, sed, dfa, cp, sed,
+			&vec![], 1, false).remove(0).remove(0);
+		let share = circ.get_lkup_share_size();
+		let f = |x: usize| Fr::from(x as u64);
+		let ei = |wid: usize, tw: usize, k: usize, segs: usize, len: usize|
+			StatementExtraInfo::<Fr>{ total_words: f(tw), word_id: f(wid),
+			subseg_id: f(k), total_word_len: f(len), total_word_segs: f(segs),
+			n_circ: Fr::one(), pc_i: Fr::zero(), pc_i1: Fr::zero(),
+			act_word_subseg_size: f(chunk), batch_r: Fr::zero(),
+			batch_v: Fr::zero(), r_all_words: Fr::zero(), r_kzg_len: Fr::zero(),
+			r_vec_r: Fr::zero(), r_vec_v: Fr::zero(), r_word_i: Fr::zero(),
+			r_word_i2: Fr::zero(), r_all_words2: Fr::zero(),
+			r_kzg_len2: Fr::zero(), r_vec_r2: Fr::zero(), r_vec_v2: Fr::zero(),
+			accumulated_word_len: f(k*chunk)};
+		let frag = utils::data::pack_nibbles(
+			&utils::data::gen_pad_nibbles_fe::<Fr>(0, chunk * 62));
+		let mapper = circ.get_mapper();
+		let adv = Arc::clone(&mapper).lock().unwrap().gen_nd_advice(&frag,
+			&WordInfo::dummy(), None, 0, 0).expect("dummy advice");
+		circ.set_container_config(&adv);
+		let st = mapper.lock().unwrap().build_statement(&frag, &None,
+			lkup.clone(), &ei(1, 1, 1, 1, chunk), adv, share, true, 0)
+			.expect("dummy stmt");
+		circ.set_dummy_stmt(st);
+		let tw = words.len();
+		let stmts = words.iter().zip(infos.iter()).enumerate()
+			.map(|(i, (w, wi))|{
+			let segs = w.len()/chunk;
+			let mut prev = None;
+			(1..segs+1).map(|k|{
+				let frag = w[(k-1)*chunk..k*chunk].to_vec();
+				let adv = mapper.lock().unwrap().gen_nd_advice(&frag, wi,
+					prev.clone(), k-1, 0).expect("advice");
+				prev = Some(adv.clone());
+				mapper.lock().unwrap().build_statement(&frag, &None,
+					lkup.clone(), &ei(i+1, tw, k, segs, w.len()), adv, share,
+					false, 0).expect("stmt")
+			}).collect()
+		}).collect();
+		(circ, stmts)
+	}
+
+	/// Fold `st` natively from `z` and synthesize the step. Ok(sat) or
+	/// Err(panic msg) when a native/prover assert trips. `forged`: a
+	/// cheating prover skips the native asserts (keygen flag).
+	fn t938_step(circ: &mut T938Fc, z: &folding_schemes::folding::foldpot
+		::sigma_ir1cs::ZiPartTwoInst<Fr>, st: &T938Stmt, forged: bool)
+		-> Result<bool, String>{
+		use folding_schemes::frontend::FCircuit;
+		use folding_schemes::folding::foldpot::sigma_ir1cs::SigmaIR1CS;
+		use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar};
+		use ark_relations::r1cs::ConstraintSystem;
+		use ark_std::Zero;
+		let zi_hash = z.hash(&folding_schemes::transcript::poseidon
+			::poseidon_canonical_config::<Fr>());
+		let old_hook = std::panic::take_hook();
+		std::panic::set_hook(Box::new(|_|{}));
+		let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||{
+			circ.set_keygen_synth(forged);
+			circ.step_native_mut(0, z, st.to_vec()).expect("native step");
+			circ.set_keygen_synth(false);
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let ext_in = circ.witness_to_vec_fp_var(cs.clone());
+			let z_i = vec![Fr::zero(), zi_hash, Fr::zero(), Fr::zero(),
+				Fr::zero(), Fr::zero()].into_iter().map(|v|
+				FpVar::<Fr>::new_witness(cs.clone(), || Ok(v)).unwrap())
+				.collect::<Vec<_>>();
+			circ.generate_step_constraints(cs.clone(), 0, z_i, ext_in)
+				.expect("gen step err");
+			cs.is_satisfied().unwrap()
+		}));
+		std::panic::set_hook(old_hook);
+		res.map_err(|e| e.downcast_ref::<&str>().map(|s| s.to_string())
+			.or(e.downcast_ref::<String>().cloned())
+			.unwrap_or("unknown panic".to_string()))
+	}
+
+	/// A fresh 1-word z_0.
+	fn t938_z0() -> folding_schemes::folding::foldpot::sigma_ir1cs
+		::ZiPartTwoInst<Fr>{
+		folding_schemes::folding::foldpot::sigma_ir1cs::ZiPartTwoInst::new(
+			Fr::from(2u32), Fr::from(3u32),
+			&folding_schemes::transcript::poseidon::poseidon_canonical_config::<Fr>(),
+			false, <ark_bn254::Fq as PrimeField>::MODULUS_BIT_SIZE as usize, 1)
+	}
+
+	/// T938: the t938 tests share the process-wide global config and
+	/// panic hook, so the guard also holds this lock for the test.
+	static T938_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+	/// T938: restores on drop the global config fields the t938 tests
+	/// set (also on panic).
+	struct T938CfgGuard(Option<Box<dyn FnOnce()>>,
+		std::sync::MutexGuard<'static, ()>);
+	impl Drop for T938CfgGuard{
+		fn drop(&mut self){ if let Some(f) = self.0.take() { f() } }
+	}
+	fn t938_cfg_guard() -> T938CfgGuard{
+		let lock = T938_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+		let c = get_global_config();
+		let (lk, aggr, neo, rb, rc, ans, bfs, rsc) = (c.b_check_lkup,
+			c.clamav_cfg.b_aggressive_sde_for_rep,
+			c.clamav_cfg.b_use_discharge_neo, c.range2_bit, c.b_read_cache,
+			c.aggr_needs_subsigs, c.basis_failed_subsigs, c.res_small_cost);
+		drop(c);
+		T938CfgGuard(Some(Box::new(move ||{
+			let mut c = get_global_config();
+			c.b_check_lkup = lk;
+			c.clamav_cfg.b_aggressive_sde_for_rep = aggr;
+			c.clamav_cfg.b_use_discharge_neo = neo;
+			c.range2_bit = rb; c.b_read_cache = rc;
+			c.aggr_needs_subsigs = ans; c.basis_failed_subsigs = bfs;
+			c.res_small_cost = rsc;
+		})), lock)
+	}
+
+	/// Write `bytes` as a word file under data/debug/t938.
+	fn t938_word(name: &str, bytes: &[u8]) -> String{
+		let d = format!("{}/data/debug/t938", utils::os::proj_root());
+		std::fs::create_dir_all(&d).unwrap();
+		let fw = format!("{}/{}.bin", d, name);
+		std::fs::write(&fw, bytes).unwrap();
+		fw
+	}
+
+	/// The small_data DB and capacities (non-aggressive, chunk 1).
+	fn t938_small() -> (data_processor::clam_db::ClamavDB<Fr>, CpCapacity,
+		SedCapacity, DfaCapacity){
+		let mut c = get_global_config();
+		c.clamav_cfg.b_aggressive_sde_for_rep = false;
+		c.clamav_cfg.b_use_discharge_neo = false;
+		c.range2_bit = 8;
+		c.b_read_cache = false;
+		drop(c);
+		let set1 = "data/debug/small_data_set/config_dfa";
+		let mut vlog = vec![];
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_or_load(
+			&data_processor::clamav::default_clamav_cfg(),
+			&format!("{}/sigs.dat",set1), &format!("{}/dfa.dat", set1),
+			&format!("{}/ised.dat", set1), &format!("{}/ised_igc.dat",set1),
+			&mut vlog, "t938_small", false, false).expect("db");
+		let cp = CpCapacity{max_word_len: 1, basis_unique_states: 2300,
+			subsigs: 4, avg_pats_per_subsig: 3};
+		let sed = SedCapacity::new(1, 8, 4, 3, 2, 1291, 171, 2, 26, 2300, 646);
+		(db, cp, sed, DfaCapacity::new(1, 2, 4))
+	}
+
+	/// Statement copy with every failed sig that discharged_sigs does
+	/// not cover replaced by 0, m-table recomputed.
+	fn t938_zero_failed(st: &T938Stmt) -> T938Stmt{
+		use ark_std::Zero;
+		let mut s = st.clone();
+		for v in s.failed_sigs.iter_mut(){
+			if !st.discharged_sigs.contains(v) { *v = Fr::zero(); }
+		}
+		s.mtbl_sigs = crate::gadgets::commons::gen_m_table(&s.failed_sigs,
+			&s.discharged_sigs);
+		s
+	}
+
+	/// T938-F (H3, non-aggressive). A word that truly matches sed_cs
+	/// ("Aaaaa??bbbbc") fails its final acceptance test. Zeroing the
+	/// CP failed_sigs (free before H3) passed it: a false negative.
+	#[test]
+	fn test_t938_f_cp_failed_join(){
+		let _cfg = t938_cfg_guard();
+		let (db, cp, sed, dfa) = t938_small();
+		let fw = t938_word("t938_f", b"AaaaaXYbbbbc");
+		let (mut circ, stmts) = t938_env(db, &fw, 1, &cp, &sed, &dfa);
+		let st = &stmts[0][0];
+		assert!(stmts[0].len()==1, "one segment expected");
+		assert!(st.failed_sigs.iter().any(|v| !st.discharged_sigs.contains(v)),
+			"fixture: no undischarged failed sig");
+		let r = t938_step(&mut circ, &t938_z0(), st, false);
+		assert!(r==Ok(false) || r.as_ref().is_err_and(|m| m.contains("b_correct")),
+			"true match accepted: {:?}", r);
+		let r = t938_step(&mut circ, &t938_z0(), &t938_zero_failed(st), true);
+		let _ = std::fs::remove_file(&fw);
+		assert!(r==Ok(false), "zeroed CP failed_sigs accepted: {:?}", r);
+	}
+
+	/// T938-F control (H3, non-aggressive). The near-miss word
+	/// "AaaaaXYbbbbX" fires CP but not sed_cs: it must stay SAT with
+	/// nonzero CP failed_sigs, so the H3 join is not just 0 == 0.
+	#[test]
+	fn test_t938_f_cp_failed_join_honest(){
+		use ark_std::Zero;
+		let _cfg = t938_cfg_guard();
+		let (db, cp, sed, dfa) = t938_small();
+		let fw = t938_word("t938_f_ok", b"AaaaaXYbbbbX");
+		let (mut circ, stmts) = t938_env(db, &fw, 1, &cp, &sed, &dfa);
+		let st = &stmts[0][0];
+		assert!(stmts[0].len()==1, "one segment expected");
+		assert!(st.failed_sigs.iter().any(|v| !v.is_zero()),
+			"fixture: CP failed_sigs all zero");
+		assert!(st.failed_sigs.iter().all(|v| v.is_zero()
+			|| st.discharged_sigs.contains(v)),
+			"fixture: undischarged failed sig");
+		let r = t938_step(&mut circ, &t938_z0(), st, false);
+		let _ = std::fs::remove_file(&fw);
+		assert!(r==Ok(true), "honest near-miss rejected: {:?}", r);
+	}
+
+	/// S1 (D2 b). A first segment must start the SDE at inp_loc 1. Seg 2
+	/// of a 2-segment word (carried loc 1+62) relabelled "first and
+	/// only" used to be SAT. Control: seg 1 as is.
+	#[test]
+	fn test_t938_s1_sde_loc_first_seg(){
+		let _cfg = t938_cfg_guard();
+		use ark_std::One;
+		let (db, cp, sed, dfa) = t938_small();
+		let fw = t938_word("t938_s1", &[b'0'; 40]);
+		let (mut circ, stmts) = t938_env(db, &fw, 1, &cp, &sed, &dfa);
+		assert!(stmts[0].len()==2, "two segments expected");
+		let mut s1 = stmts[0][0].clone();
+		s1.total_word_segs = Fr::one(); s1.total_word_len = Fr::one();
+		let r = t938_step(&mut circ, &t938_z0(), &s1, false);
+		assert!(r==Ok(true), "honest first segment rejected: {:?}", r);
+		let mut s2 = stmts[0][1].clone();
+		s2.subseg_id = Fr::one(); s2.total_word_segs = Fr::one();
+		s2.total_word_len = Fr::one(); s2.accumulated_word_len = Fr::one();
+		let r = t938_step(&mut circ, &t938_z0(), &s2, true);
+		let _ = std::fs::remove_file(&fw);
+		assert!(r==Ok(false), "first segment at a carried SDE loc accepted: {:?}", r);
+	}
+
+	/// T938-G (H4, aggressive). /HELLO.{0,4}[ab][ab]/ truly matches
+	/// "HELLOab": failed_sigs (inv2) holds the sig and nothing
+	/// discharges it. Putting the sig id into CP's unbound discharged
+	/// slot covered it.
+	#[test]
+	fn test_t938_g_cp_discharged_pin(){
+		let _cfg = t938_cfg_guard();
+		use ark_std::Zero;
+		{
+			let mut c = get_global_config();
+			c.clamav_cfg.b_aggressive_sde_for_rep = true;
+			c.clamav_cfg.b_use_discharge_neo = false;
+			c.aggr_needs_subsigs = 0;
+			c.range2_bit = 14;
+			c.b_read_cache = false;
+			c.basis_failed_subsigs = 10000;
+			c.res_small_cost = 20;
+		}
+		let mut cfg = data_processor::clamav::default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let dir = "debug/t938/aggr";
+		std::fs::create_dir_all(format!("{}/data/{}", utils::os::proj_root(),
+			dir)).unwrap();
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_test_db(&cfg,
+			dir, &vec!["aggneo.fwd;Engine:51-255,Target:1;0;/HELLO.{0,4}[ab][ab]/"
+			.to_string()], &vec![], &vec![], &vec![]).expect("aggr db");
+		let (w, sigs, subsigs, apps) = (8, 2, 8, 6);
+		let cp = CpCapacity{max_word_len: w, basis_unique_states: 4000,
+			subsigs, avg_pats_per_subsig: apps};
+		let sed = SedCapacity::new(w, 14, subsigs, apps, 16, 4000, 200, sigs,
+			26, 4000, 2000);
+		let fw = t938_word("t938_g", b"__HELLOab__");
+		let (mut circ, stmts) = t938_env(db, &fw, w, &cp, &sed,
+			&DfaCapacity::new(w, sigs, subsigs));
+		let st = &stmts[0][0];
+		let x = *st.failed_sigs.iter().find(|v| !st.discharged_sigs.contains(v))
+			.expect("fixture: no undischarged failed sig");
+		let r = t938_step(&mut circ, &t938_z0(), st, false);
+		assert!(r==Ok(false) || r.as_ref().is_err_and(|m| m.contains("b_correct")),
+			"true match accepted: {:?}", r);
+		//CP cs is component 0: its one discharged slot is the first cell
+		let mut s = st.clone();
+		assert!(s.discharged_sigs[0].is_zero(), "CP slot not at index 0");
+		s.discharged_sigs[0] = x;
+		s.mtbl_sigs = crate::gadgets::commons::gen_m_table(&s.failed_sigs,
+			&s.discharged_sigs);
+		let r = t938_step(&mut circ, &t938_z0(), &s, true);
+		let _ = std::fs::remove_file(&fw);
+		assert!(r==Ok(false), "CP discharged slot covered a failed sig: {:?}", r);
+	}
 }

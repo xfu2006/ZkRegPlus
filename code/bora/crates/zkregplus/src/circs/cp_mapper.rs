@@ -49,7 +49,7 @@ use std::{
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,DummyNdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo},
+		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,DummyNdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,StmtPin},
 		circuits_super::field_to_usize,
 	}
 };
@@ -548,9 +548,28 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 
 		//2. no join for fsm (dfa_crit) gadget
 		//3. no joins for pack_crit gadget
-		//4. no joins for sigs gadget
-		
-		vec![ (rg_g_ext, rg_g_ext_upper) ]
+		//4. T938 H3: non-aggr GetSig never reads failed_sigs, so join it
+		//to the oup sig carry (oup = [ext 0, dfa 1, sigs slen]).
+		//Aggressive: inv2 binds failed_sigs and there is no oup carry.
+		let mut res = vec![ (rg_g_ext, rg_g_ext_upper) ];
+		if !read_global_config().clamav_cfg.b_aggressive_sde_for_rep {
+			let slen = self.capacity.get_old_stats().2;
+			assert!(slen>0, "T938 H3: no sig slots");
+			let s_failed = stmt_cfg.idx_failed_sigs + my_cfg[3];
+			let s_oup_sigs = stmt_cfg.idx_oup + my_cfg[1] + 1;
+			res.push(((s_failed, s_failed + slen - 1),
+				(s_oup_sigs, s_oup_sigs + slen - 1)));
+		}
+		res
+	}
+
+	/// T938 H4: the one discharged_sigs slot maps to no gadget. It is
+	/// 0 natively; pin it to 0 so it cannot cover a failed sig.
+	fn get_const_pins(&self, i: usize, stmt_cfg: &StatementConfig,
+		comp_cfgs: &Vec<Vec<usize>>)->Vec<(usize, StmtPin<F>)>{
+		if self.b_skip { return vec![]; }
+		vec![(stmt_cfg.idx_discharged_sigs + comp_cfgs[i][4],
+			StmtPin::Always(F::zero()))]
 	}
 
 	fn gen_nd_advice(&self, word: &Vec<F>, _word_info: &WordInfo,

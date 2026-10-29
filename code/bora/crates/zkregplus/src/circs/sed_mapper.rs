@@ -54,7 +54,7 @@ use std::{
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo},
+		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo,StmtPin},
 		circuits_super::field_to_usize,
 		container_config::{ContainerConfig},
 	}
@@ -67,6 +67,7 @@ use crate::{
 		cp_mapper::{b_skip_igc_arm}},
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
+	gadgets::traits::IDX_INP,
 	gadgets::fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
 	gadgets::discharge_adv::{DischargeAdvGadget,DischargeAdvAdvice,DischargeAdvCapacity,StepQueue, StepQueueType},
 	gadgets::discharge_adv_neo::{DischargeAdvNeoGadget,
@@ -1485,6 +1486,30 @@ failed_c_segs={} failed_c_total={}", seg_id,
 
 		//2. no join for fsm_adv and discharge_adv
 		vec![ (rg_g_ext, rg_g_ext_upper) ]
+	}
+
+	/// T938 S1: a word's first segment starts the SDE at the init loc
+	/// (1, or M+1 aggressive, see gen_nd_advice), cs and igc arms.
+	fn get_const_pins(&self, i: usize, stmt_cfg: &StatementConfig,
+		comp_cfgs: &Vec<Vec<usize>>)->Vec<(usize, StmtPin<F>)>{
+		let m_aggr = self.clamdb.aggressive_max_span_nibbles;
+		let init_loc = F::from((if m_aggr>0 {m_aggr+1} else {1}) as u64);
+		let s_inp = stmt_cfg.idx_inp + comp_cfgs[i][0];
+		let res: Vec<(usize, StmtPin<F>)> = self.gadgets.iter()
+			.flat_map(|g| ["cs", "igc"].map(|a| g.lock().unwrap()
+				.get_container_config().search_by_path(
+				&format!("fsm_adv_stmt_{} fsm_acc locs inp_loc", a))))
+			.flatten().map(|c| match c{
+				ContainerConfig::Column(loc, _, _, _) => {
+					assert!(loc.src.0==0 && loc.src.1==IDX_INP && loc.src.3==1,
+						"T938 S1: inp_loc is not one own inp cell");
+					(s_inp + loc.src.2, StmtPin::FirstSeg(init_loc))
+				},
+				_ => panic!("T938 S1: inp_loc is not a column"),
+			}).collect();
+		assert!(res.len()==if self.b_skip_igc {1} else {2},
+			"T938 S1: {} inp_loc cells", res.len());
+		res
 	}
 
 

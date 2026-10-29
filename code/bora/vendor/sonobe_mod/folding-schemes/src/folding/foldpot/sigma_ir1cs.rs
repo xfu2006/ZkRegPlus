@@ -875,6 +875,15 @@ pub trait CloneDeep {
 	fn clone_deep_self(&self) -> Self where Self: Sized;
 }
 
+/// T938 D1: a constant pin on one statement cell, fixed at keygen.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum StmtPin<F>{
+	/// cell == c on every step (1 cs)
+	Always(F),
+	/// b_first_seg => cell == c (1 cs)
+	FirstSeg(F),
+}
+
 /// a SigmaIR1CS_Inst object to its components, and map the I/O
 /// It is mainly responsible for defining the logic and
 /// SigmaIR1CS_Inst just executes gadgets one by one (without
@@ -955,6 +964,12 @@ pub trait GadgetMapper<F:PrimeField, LK: LookupTableTwoCol<F>>: Send + Sync{
 	/// overrides this to expose per-component (CP/SED/DFA) boundaries.
 	fn component_spans(&self) -> Vec<(String, usize)>{
 		vec![(self.get_name(), self.get_gadgets().len())]
+	}
+
+	/// T938 D1: (statement index, pin) pairs, indices as in the extra
+	/// join constraints. Default: none.
+	fn gen_stmt_pins(&self, _lkup_share_size: usize) -> Vec<(usize, StmtPin<F>)>{
+		vec![]
 	}
 }
 
@@ -1790,10 +1805,8 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 		//2. prepare the witness for extra_vars:
 		// unused_inp_size and unused_oup_size
 		// They carry sid 0, so in-circuit they are case 1 (constant
-		// zero sid): NOT looked up and NOT range-checked. That is
-		// harmless (T933 s11.7, SN2): act_input/output_size are only
-		// loop counters, and an out-of-range act saturates like
-		// act = N.
+		// zero sid): NOT looked up and NOT range-checked. T935 C4 pins
+		// act == cfg and both to 0 in-circuit.
 		let (zero,_one) = (F::zero(), F::one());
 		let tbl_ids_wit = vec![zero, zero]; 
 		let vals_wit= vec![
@@ -2900,8 +2913,10 @@ where 	C: CurveGroup<ScalarField=F>,
 	pub dummy_stmt: Option<Vec<F>>,
 
 	/// true only on the keygen R1CS-extraction synthesis, whose dummy
-	/// stmt has no m_share fill; gates the native hab22 assert. Never
-	/// read in-circuit, so it cannot change the constraint shape.
+	/// stmt has no m_share fill (all-zero word end). Gates the native
+	/// asserts it cannot satisfy: hab22, C4 act sizes, H1 word-end io,
+	/// D1 pins, b_correct. Never read in-circuit, so it cannot change
+	/// the constraint shape.
 	pub b_keygen_synth: bool,
 
 	pub job_id: usize,
@@ -3626,12 +3641,15 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 		let mut sum_inp = if b_first_seg {zero} else {zi_part2.sum_inp};
 		let mut sum_oup = if b_first_seg {zero} else {zi_part2.sum_oup};
 
-		assert!(si.act_input_size<=F::from(self.stmt_config.input_size as u32),
-			"si.act_input_size: {} > stmt_config.input_size: {}",
+		//T935 C4: act == cfg, pinned in-circuit. The keygen dummy (all
+		//zero without a dummy stmt) only feeds extract_r1cs.
+		assert!(self.b_keygen_synth || si.act_input_size==
+			F::from(self.stmt_config.input_size as u32),
+			"si.act_input_size: {} != stmt_config.input_size: {}",
 			si.act_input_size, self.stmt_config.input_size);
-		assert!(si.act_output_size<=
+		assert!(self.b_keygen_synth || si.act_output_size==
 			F::from(self.stmt_config.output_size as u32),
-			"si.act_output_size: {}> stmt_config.input_size: {}",
+			"si.act_output_size: {} != stmt_config.output_size: {}",
 			si.act_output_size, self.stmt_config.output_size);
 		let mut inp_left = si.act_input_size.clone();
 		let mut oup_left = si.act_output_size.clone();
@@ -3645,8 +3663,21 @@ cfg_lk {} act_lk {} bad_c1 {} bad_c2 {} first_bad {}",
 			else{ sum_oup * ch + si.oup_buf[i] };
 			oup_left = if oup_left.is_zero() {zero} else {oup_left - one};
 		}
+		//T938 H1 mirror: the I/O sums agree at every word end
+		assert!(self.b_keygen_synth || !b_last_seg || sum_inp==sum_oup,
+			"T938 H1: io not match at word end");
 		log_perf(self.job_id, log_level, &format!("gen_witness step 10: gen inp/oup"),
 			&mut gt1);
+		//T938 D1 mirror of the in-circuit statement pins
+		for (j, pin) in lock_unwrap!(self.gadget_mapper)
+			.gen_stmt_pins(lkup_share_size){
+			let (c, b_on) = match pin{
+				StmtPin::Always(c) => (c, true),
+				StmtPin::FirstSeg(c) => (c, b_first_seg),
+			};
+			assert!(self.b_keygen_synth || !b_on || v_stmt[j]==c,
+				"T938: stmt[{}] = {} != pin {:?}", j, v_stmt[j], pin);
+		}
 
 		//T931 H3 mirror: z_{i+1}'s link is the row's hc_out and
 		//pack4(gt2), cyclepair_map order [gt1 60, a 15, b 25, gt2 60,
@@ -4014,21 +4045,22 @@ where 	C: CurveGroup<ScalarField=F>,
 		//wire. b_last now lives after zi_part2 (see below).
 		let b_first_seg = si.subseg_id.is_eq(&one_var)?;
 		let b_last_seg = si.subseg_id.is_eq(&si.total_word_segs)?;
-		//NOTE: later needs to set sub-table id for unused_input_size
+		//T935 C4: act == cfg, so the eta loops below absorb every cell.
+		//unused_* keep their lookup slots and are pinned to 0.
 		let cfg_input_size = FpVar::<F>::new_constant(cs.clone(),
 			F::from(self.stmt_config.input_size as u32))?;
-		let diff1 = cfg_input_size - &si.act_input_size;
- 		diff1.enforce_equal(&wtns_var.unused_input_size)?;
+		si.act_input_size.enforce_equal(&cfg_input_size)?;
+		wtns_var.unused_input_size.enforce_equal(&zero_var)?;
 
 		let cfg_output_size = FpVar::<F>::new_constant(cs.clone(),
 			F::from(self.stmt_config.output_size as u32))?;
-		let diff2 = cfg_output_size - &si.act_output_size;
- 		diff2.enforce_equal(&wtns_var.unused_output_size)?;
-		if B_DEBUG {
-			assert!(diff1.value().unwrap()
-				==wtns_var.unused_input_size.value().unwrap());
-			assert!(diff2.value().unwrap()
-				==wtns_var.unused_output_size.value().unwrap());
+		si.act_output_size.enforce_equal(&cfg_output_size)?;
+		wtns_var.unused_output_size.enforce_equal(&zero_var)?;
+		if B_DEBUG && !self.b_keygen_synth{
+			assert!(si.act_input_size.value().unwrap()
+				==cfg_input_size.value().unwrap());
+			assert!(si.act_output_size.value().unwrap()
+				==cfg_output_size.value().unwrap());
 		}
 
 		let fq_bits = <<C as CurveGroup>::BaseField as Field>::BasePrimeField::MODULUS_BIT_SIZE as usize;
@@ -4122,9 +4154,12 @@ where 	C: CurveGroup<ScalarField=F>,
 		//firing on a step where the three real checks do not.
 		let final_step = b_last.clone();
 		let not_final_step = final_step.not();
-		let io_res = not_final_step.or(&eq_inp_oup)?;
+		//T938 H1 (F75): the sums reset at b_first_seg, so compare them
+		//at every word end (Fig 14 Step (9), realised per word).
+		let not_word_end = b_last_seg.not();
+		let io_res = not_word_end.or(&eq_inp_oup)?;
 		if B_DEBUG {
-			assert!(io_res.value()?, "io not match at final step!");
+			assert!(io_res.value()?, "io not match at word end!");
 		}
 		io_res.enforce_equal(&Boolean::TRUE)?;
 		gadget_sat_check(&cs, "sigma_ir1cs::io_buffer");
@@ -4521,8 +4556,9 @@ where 	C: CurveGroup<ScalarField=F>,
 			let ch = zi_part2.ch.clone();
 			let rc = zi_part2.rc.clone();
 			//S106: same carried-total_words operand as the outer b_last
-			//(:3703), so the KZG closure and the three real checks fire
-			//on exactly the same predicate.
+			//(:3703). The KZG closure and hab22 fire on b_last only.
+			//The io check and the non-aggr b_correct fire at every word
+			//end (T938), which includes b_last.
 			let b_last = si.word_id.is_eq(&zi_part2.total_words)?.and(&
 				si.subseg_id.is_eq(&si.total_word_segs)?)?;
 			let b_first_seg = si.subseg_id.is_one()?;
@@ -4687,6 +4723,16 @@ where 	C: CurveGroup<ScalarField=F>,
 				}
 			}
 		}
+		//T938 D1: the mapper's constant statement pins (keygen-fixed)
+		for (j, pin) in lock_unwrap!(self.gadget_mapper)
+			.gen_stmt_pins(self.stmt_config.lookup_share_size){
+			match pin{
+				StmtPin::Always(c) =>
+					v_stmt[j].enforce_equal(&FpVar::constant(c))?,
+				StmtPin::FirstSeg(c) => v_stmt[j].conditional_enforce_equal(
+					&FpVar::constant(c), &b_first_seg)?,
+			}
+		}
 
 		if B_DEBUG3{
 			check_cs(&cs, "gen_step_cs 8");
@@ -4802,13 +4848,12 @@ where 	C: CurveGroup<ScalarField=F>,
 			&rc2,
 		)?;
 		//Aggressive locality enforces failed-subset-of-discharged per
-		//chunk (b_sigs every step); else final-step-only relaxation.
-		//Flag-off path is the original expression, byte-identical.
+		//chunk (b_sigs every step); else at every word end.
 		let b_correct = if utils::consts::read_global_config()
 			.clamav_cfg.b_aggressive_sde_for_rep {
 			b_sigs.clone()
 		} else {
-			not_final_step.or(&b_sigs)?
+			not_word_end.or(&b_sigs)? //T938 H2 (F76)
 		};
 
 		if B_DEBUG3{
@@ -4819,7 +4864,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		}
 
 		b_correct.enforce_equal(&Boolean::TRUE)?;
-		if b_correct.value().is_ok(){
+		//T938 H2: the all-zero keygen dummy is a word end (subseg 0 ==
+		//segs 0); it only feeds extract_r1cs, as for hab22.
+		if b_correct.value().is_ok() && !self.b_keygen_synth{
 			assert!(b_correct.value()?, "failed b_correct");
 		}
 
@@ -5267,8 +5314,8 @@ pub mod tests_sigma_ir1cs{
 				pc_i1: pc_i1, //will be reset later
 				n_circ: f_n_circ,
 				n_circ_minus_pc: ncirc_minus_pci,
-				act_input_size: one,
-				act_output_size: one,
+				act_input_size: two, //T935 C4: act == cfg (2)
+				act_output_size: two,
 				act_lookup_share_size: F::from(4u32),
 				act_word_subseg_size: one,
 				word_id: ea.word_id,
@@ -5565,6 +5612,16 @@ pub mod tests_sigma_ir1cs{
 		stmt: &S106Stmt)-> ZiPartTwoInst<Fr>{
 		inst.step_native_mut(0, z_in, stmt.to_vec())
 			.expect("step_native_mut err")
+	}
+
+	/// s106_step_native for a forged statement: a cheating prover skips
+	/// the native asserts (keygen flag), so the circuit must reject.
+	fn s106_step_forged(inst: &mut S106Inst, z_in: &ZiPartTwoInst<Fr>,
+		stmt: &S106Stmt)-> ZiPartTwoInst<Fr>{
+		inst.set_keygen_synth(true);
+		let z = s106_step_native(inst, z_in, stmt);
+		inst.set_keygen_synth(false);
+		z
 	}
 
 	/// Synthesize the step whose witness `inst` currently holds.
@@ -5949,10 +6006,6 @@ pub mod tests_sigma_ir1cs{
 		stmts[2].subseg_id = two;
 		stmts[2].total_word_segs = two;
 		stmts[2].total_word_len = two;
-		//inert input loop on the last step, so sum_inp passes the
-		//carried value through and the I/O check reduces to the two
-		//carried accumulators -- the arms then differ in nothing else.
-		stmts[2].act_input_size = Fr::zero();
 	}
 
 	/// S106b: relabelling the last subsegment "first and only" zeroes
@@ -5971,19 +6024,32 @@ pub mod tests_sigma_ir1cs{
 		let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
 		let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
 
-		//control -- carried buffers agree, honest last subsegment
+		//control -- carried buffers agree, honest last subsegment. The
+		//last segment absorbs its 2 input cells (both 0): 11*ch^2.
+		let ch2 = z2.ch * z2.ch;
 		let mut z2_ok = z2.clone();
 		z2_ok.sum_inp = Fr::from(11u32);
-		z2_ok.sum_oup = Fr::from(11u32);
+		z2_ok.sum_oup = Fr::from(11u32) * ch2;
 		let _zk = s106_step_native(&mut inst, &z2_ok, &stmts[2]);
 		let r0 = s106_synth(&inst, &z2_ok);
 		assert!(r0==Ok(true), "honest last subsegment rejected: {:?}", r0);
 
+		//T935 C4: the old control, act_input_size = 0 so the input loop
+		//is inert and 11 == 11 passes. act is pinned to cfg now.
+		let mut z2_eq = z2.clone();
+		z2_eq.sum_inp = Fr::from(11u32);
+		z2_eq.sum_oup = Fr::from(11u32);
+		let mut s_act0 = stmts[2].clone();
+		s_act0.act_input_size = Fr::zero();
+		let _za = s106_step_forged(&mut inst, &z2_eq, &s_act0);
+		let rc4 = s106_synth(&inst, &z2_eq);
+		assert!(rc4==Ok(false), "C4: act_input_size = 0 accepted: {:?}", rc4);
+
 		//carried buffers disagree -> rejected under honest labels
 		let mut z2_bad = z2.clone();
 		z2_bad.sum_inp = Fr::from(11u32);
-		z2_bad.sum_oup = Fr::from(12u32);
-		let _zc = s106_step_native(&mut inst, &z2_bad, &stmts[2]);
+		z2_bad.sum_oup = Fr::from(11u32) * ch2 + Fr::one();
+		let _zc = s106_step_forged(&mut inst, &z2_bad, &stmts[2]);
 		let ra = s106_synth(&inst, &z2_bad);
 		assert!(ra==Ok(false),
 			"mismatched carried I/O sums accepted: {:?}", ra);
@@ -6050,7 +6116,10 @@ pub mod tests_sigma_ir1cs{
 		//is unstatable. Rejection is by check 6, not by b_correct.
 		//The exploit was only ever reachable MID-word, where check 6
 		//used to go vacuous -- see test_s106b_first_seg_io_hatch.
-		assert!(sat2==Ok(false), "arm2 (S106 exploit) is SAT: {:?}", sat2);
+		//T938 H2: the step is a word end, so b_correct is checked too
+		//and its prover assert may trip first.
+		assert!(sat2==Ok(false) || sat2.as_ref().is_err_and(|m|
+			m.contains("b_correct")), "arm2 (S106 exploit) is SAT: {:?}", sat2);
 		assert!(!s106_pin_holds(&z3_exp),
 			"S106 exploit still satisfies the terminality pin");
 
@@ -6093,7 +6162,7 @@ pub mod tests_sigma_ir1cs{
 		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
 			&cfg, false, fq_bits, 1);
 		let z1 = s106_step_native(&mut inst, &z0, &seg1);
-		assert!(z1.sum_oup==one, "seg1 did not emit the carry: {}",
+		assert!(z1.sum_oup==z1.ch, "seg1 did not emit the carry: {}",
 			z1.sum_oup);
 
 		//arm 0 -- honest carry, honest terminality (word_id=total_words=1)
@@ -6105,7 +6174,7 @@ pub mod tests_sigma_ir1cs{
 		let mut s_bad = seg2.clone();
 		s_bad.inp_buf[0] = Fr::from(5u32);
 		s_bad.oup_buf[0] = Fr::from(5u32);
-		let z2_bad = s106_step_native(&mut inst, &z1, &s_bad);
+		let z2_bad = s106_step_forged(&mut inst, &z1, &s_bad);
 		assert!(z2_bad.sum_inp!=z2_bad.sum_oup, "carry not broken");
 		let r1 = s106_synth(&inst, &z1);
 		assert!(r1==Ok(false), "arm1 (broken carry) accepted: {:?}", r1);
@@ -6114,7 +6183,7 @@ pub mod tests_sigma_ir1cs{
 		let mut s_exp = s_bad.clone();
 		s_exp.word_id = Fr::zero();
 		s_exp.total_words = Fr::zero();
-		let z2_exp = s106_step_native(&mut inst, &z1, &s_exp);
+		let z2_exp = s106_step_forged(&mut inst, &z1, &s_exp);
 		let sat2 = s106_synth(&inst, &z1);
 		//S106b: this is the MID-word case -- the one where the exploit
 		//really was reachable, because b_last_full is FALSE at seg2 and
@@ -6176,6 +6245,187 @@ pub mod tests_sigma_ir1cs{
 		//on a 1-subsegment word. See test_s106b_first_seg_io_hatch for
 		//the mid-word case where the exploit really was reachable.
 		assert!(sat2==Ok(false), "arm2 (S106 exploit) is SAT: {:?}", sat2);
+	}
+
+	/// T938: relabel the toy as a 2-word batch. Word 1 = seg1 (stmts[0],
+	/// passes a carry of 1 through) + seg2 (stmts[2], honest carry), word
+	/// 2 = stmts[0] in one segment. Returns (seg1, seg2, w2). stmts[1]
+	/// (n = 64) is not used: its own step is UNSAT (build_statement note).
+	fn t938_two_words(stmts: &Vec<S106Stmt>) -> (S106Stmt, S106Stmt, S106Stmt){
+		let (one, two) = (Fr::one(), Fr::from(2u32));
+		let mut seg1 = stmts[0].clone();
+		seg1.inp_buf[0] = one; seg1.oup_buf[0] = one;
+		seg1.word_id = one; seg1.subseg_id = one;
+		seg1.total_word_segs = two; seg1.total_word_len = two;
+		let mut seg2 = stmts[2].clone();
+		seg2.word_id = one; seg2.subseg_id = two;
+		seg2.total_word_segs = two; seg2.total_word_len = two;
+		seg2.accumulated_word_len = two; //native z copies it (s932w note)
+		seg2.inp_buf[0] = one; //honest: consumes seg1's carry
+		seg2.oup_buf[0] = one; //CounterIOGadget: oup == inp here
+		let mut w2 = stmts[0].clone();
+		w2.word_id = two;
+		for s in [&mut seg1, &mut seg2, &mut w2]{ s.total_words = two; }
+		(seg1, seg2, w2)
+	}
+
+	/// T938: run seg1, seg2, w2 of t938_two_words from a fresh 2-word
+	/// state. Returns the verdict of each step and the final state.
+	/// `forged`: seg2 is forged (native asserts skipped).
+	fn t938_run(inst: &mut S106Inst, seg1: &S106Stmt, seg2: &S106Stmt,
+		w2: &S106Stmt, forged: bool) -> (Vec<Result<bool, String>>,
+		ZiPartTwoInst<Fr>){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 2);
+		let mut z = z0;
+		let mut res = vec![];
+		for (k, s) in [seg1, seg2, w2].into_iter().enumerate(){
+			let z_next = if forged && k==1 {s106_step_forged(inst, &z, s)}
+				else {s106_step_native(inst, &z, s)};
+			res.push(s106_synth(inst, &z));
+			z = z_next;
+		}
+		(res, z)
+	}
+
+	/// T938-A (F75). A broken carry inside word 1 of 2 was waived: the
+	/// I/O sums reset at word 2's first segment and were compared only
+	/// at the last step. Now compared at every word end.
+	#[test]
+	pub fn test_t938_a_io_word_end(){
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		let (seg1, mut seg2, w2) = t938_two_words(&stmts);
+		seg2.inp_buf[0] = Fr::from(5u32); //carry dropped: claims 5, not 1
+		seg2.oup_buf[0] = Fr::from(5u32);
+		let (r, z3) = t938_run(&mut inst, &seg1, &seg2, &w2, true);
+		assert!(r[0]==Ok(true), "seg1 rejected: {:?}", r[0]);
+		assert!(r[1]==Ok(false), "broken carry at word 1 end accepted: {:?}",
+			r[1]);
+		assert!(r[2]==Ok(true) && s106_pin_holds(&z3),
+			"rest of the run must stay acceptable: {:?}", r[2]);
+	}
+
+	/// T938-B (control). Honest carry: every step satisfiable.
+	#[test]
+	pub fn test_t938_b_honest_two_words(){
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		let (seg1, seg2, w2) = t938_two_words(&stmts);
+		let (r, z3) = t938_run(&mut inst, &seg1, &seg2, &w2, false);
+		assert!(r.iter().all(|x| *x==Ok(true)), "honest run rejected: {:?}", r);
+		assert!(s106_pin_holds(&z3), "honest run fails the terminality pin");
+	}
+
+	/// T938-C (F76, non-aggressive). Word 1 of 2 fires sig 7 that is not
+	/// discharged. Its acceptance test used to wait for the final step,
+	/// which sees only word 2.
+	#[test]
+	pub fn test_t938_c_sigs_word_end(){
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		assert!(!utils::consts::read_global_config().clamav_cfg
+			.b_aggressive_sde_for_rep);
+		let two = Fr::from(2u32);
+		let mut w1 = stmts[0].clone();
+		w1.total_words = two;
+		w1.failed_sigs[0] = Fr::from(7u32);
+		let mut w2 = stmts[2].clone();
+		w2.word_id = two; w2.total_words = two;
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 2);
+		let z1 = s106_step_native(&mut inst, &z0, &w1);
+		let r1 = s106_synth(&inst, &z0);
+		match &r1{
+			Ok(b) => assert!(!b, "undischarged sig at word 1 end accepted"),
+			Err(m) => assert!(m.contains("b_correct"),
+				"rejected by the wrong check: {}", m),
+		}
+		let z2 = s106_step_native(&mut inst, &z1, &w2);
+		let r2 = s106_synth(&inst, &z1);
+		assert!(r2==Ok(true) && s106_pin_holds(&z2), "word 2 rejected: {:?}", r2);
+	}
+
+	/// T938-D (joint). The toy's carry stands for the CP sig carry: seg1
+	/// emits sig 1, seg2 reports it as failed. Honest: rejected by the
+	/// word-end acceptance test (H2). Dropping the carry clears failed,
+	/// so only the word-end I/O check (H1) catches it. Variant "honest
+	/// carry, failed zeroed": the toy has no failed binding, so it stays
+	/// SAT here; the CP mapper join (H3) closes it, see
+	/// zkp_driver.rs test_t938_f_cp_failed_join.
+	#[test]
+	pub fn test_t938_d_joint(){
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		assert!(!utils::consts::read_global_config().clamav_cfg
+			.b_aggressive_sde_for_rep);
+		let (seg1, seg2, w2) = t938_two_words(&stmts);
+		//honest: seg2's failed holds the carried sig 1
+		let mut s_hon = seg2.clone();
+		s_hon.failed_sigs[0] = Fr::one();
+		let (r, _) = t938_run(&mut inst, &seg1, &s_hon, &w2, false);
+		match &r[1]{
+			Ok(b) => assert!(!b, "undischarged carried sig accepted"),
+			Err(m) => assert!(m.contains("b_correct"),
+				"rejected by the wrong check: {}", m),
+		}
+		//forged: carry dropped, nothing failed -> only H1 rejects
+		let mut s_drop = seg2.clone();
+		s_drop.inp_buf[0] = Fr::zero();
+		s_drop.oup_buf[0] = Fr::zero();
+		let (r, _) = t938_run(&mut inst, &seg1, &s_drop, &w2, true);
+		assert!(r[1]==Ok(false), "dropped sig carry accepted: {:?}", r[1]);
+		//variant: honest carry, failed zeroed (toy: no H3 join)
+		let (r, _) = t938_run(&mut inst, &seg1, &seg2, &w2, false);
+		assert!(r[1]==Ok(true), "toy has no failed binding: {:?}", r[1]);
+	}
+
+	/// T935 C4. act sizes are pinned to cfg. Arm 1 is the intra-word
+	/// hatch: seg1 emits nothing (act_output_size = 0), seg2 absorbs
+	/// nothing (act_input_size = 0) and starts from a free carry (5).
+	/// Arm 2: act_input_size = cfg - 1 on an honest step.
+	#[test]
+	pub fn test_t935_c4_act_pin(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		let (_lk, mut inst, stmts) = gen_six_root_adv::<Fr,Projective,
+			S106Cm,S106Lk,false>(3, false);
+		let (one, two) = (Fr::one(), Fr::from(2u32));
+		let mut seg1 = stmts[0].clone(); //passes a carry of 1 through
+		seg1.inp_buf[0] = one; seg1.oup_buf[0] = one;
+		seg1.word_id = one; seg1.subseg_id = one;
+		seg1.total_word_segs = two; seg1.total_words = one;
+		seg1.total_word_len = two;
+		seg1.act_output_size = Fr::zero();
+		let mut s_bad = stmts[2].clone();
+		s_bad.word_id = one; s_bad.subseg_id = two;
+		s_bad.total_word_segs = two; s_bad.total_words = one;
+		s_bad.total_word_len = two;
+		s_bad.inp_buf[0] = Fr::from(5u32);
+		s_bad.oup_buf[0] = Fr::from(5u32);
+		s_bad.act_input_size = Fr::zero();
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 1);
+		let z1 = s106_step_forged(&mut inst, &z0, &seg1);
+		let r1 = s106_synth(&inst, &z0);
+		assert!(r1==Ok(false), "act_output_size = 0 accepted: {:?}", r1);
+		let _z2 = s106_step_forged(&mut inst, &z1, &s_bad);
+		let r2 = s106_synth(&inst, &z1);
+		assert!(r2==Ok(false), "act_input_size = 0 hatch accepted: {:?}", r2);
+		//arm 2: act_input_size = cfg - 1
+		let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32), Fr::from(3u32),
+			&cfg, false, fq_bits, 3);
+		let mut s_m1 = stmts[0].clone();
+		s_m1.act_input_size = one;
+		let _z = s106_step_forged(&mut inst, &z0, &s_m1);
+		let r3 = s106_synth(&inst, &z0);
+		assert!(r3==Ok(false), "act_input_size = cfg-1 accepted: {:?}", r3);
+		let _z = s106_step_native(&mut inst, &z0, &stmts[0]);
+		assert!(s106_synth(&inst, &z0)==Ok(true), "honest act = cfg rejected");
 	}
 
 	/// S109: at a final step with every m_share zero the Hab'22 equality
@@ -6690,6 +6940,8 @@ pub mod tests_sigma_ir1cs{
 	/// T933-B4 (s9): the second blinds add 9 constraints (v_i 1, o_i2
 	/// fold 2, r_all_words2 2, the other three 4) and 14 witness vars
 	/// (5 fixed-segment fields, 9 products).
+	/// T935 C4 (T938-E): +2 constraints (act == cfg x2 and unused == 0
+	/// x2 replace cfg - act == unused x2). T938 H1/H2: +0.
 	#[test]
 	pub fn test_s11_measure_step_cs(){
 		let n_steps = 4usize;
@@ -6706,7 +6958,7 @@ pub mod tests_sigma_ir1cs{
 			empty sat={} cs={} vars={}", s0, c0, w0, s3, c3, w3);
 		assert!(s0, "honest full step UNSAT");
 		assert!(c0==c3 && w0==w3, "full and empty shapes differ");
-		assert!(c0==5755-129+9 && w0==5800-128+14,
+		assert!(c0==5755-129+9+2 && w0==5800-128+14,
 			"six_root step shape moved: cs {} vars {}", c0, w0);
 	}
 
