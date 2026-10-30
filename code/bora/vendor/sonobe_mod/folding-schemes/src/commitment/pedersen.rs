@@ -500,4 +500,25 @@ mod tests {
         assert_ne!(a.generators[0], e.generators[0], "cf and cp keys equal");
         check_key_independent::<G>(&a.generators);
     }
+
+    /// T939 T-7 (R7): wall time of the production key path
+    /// (setup_tagged, BN254 G1) at 2^k for each k in PED_BENCH_LOGS
+    /// (comma list, default "25,26" = one Stage-1 job).
+    #[test]
+    #[ignore]
+    fn test_t939_setup_timing() {
+        type G = ark_bn254::G1Projective;
+        let logs = std::env::var("PED_BENCH_LOGS").unwrap_or("25,26".into());
+        let mut total = 0f64;
+        for k in logs.split(',').map(|s| s.trim().parse::<u32>().unwrap()) {
+            let t = std::time::Instant::now();
+            let (p, _) = Pedersen::<G>::setup_tagged(
+                ark_std::test_rng(), 1usize << k, b"t7").unwrap();
+            let s = t.elapsed().as_secs_f64();
+            total += s;
+            println!("T939 T-7: setup 2^{} = {} pts, {:.2} s, threads {}",
+                k, p.generators.len(), s, rayon::current_num_threads());
+        }
+        println!("T939 T-7: total {:.2} s", total);
+    }
 }

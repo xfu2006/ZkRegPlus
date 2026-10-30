@@ -31922,9 +31922,15 @@ Goal 2. prepare for server run
 	[c] step 7 -> fix substration of emoemory shrink.
 
 Friday 10/30/2026
-Goal 1. ocntinue to fix.
+Goal 1. continue to fix.
 	[a] item 4: measure time of increase of real perderseon commitment
-	[b]
+	[b] item 5: running test
+	[c] step 6: update doc
+	[e] Item 3
+		#1 step 1. ready-only doc check
+		#2 step 2. 
+		#3 step 3. hook patch: furter tests about
+			fix of loosing witness -> write server test
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
