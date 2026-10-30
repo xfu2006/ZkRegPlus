@@ -31917,6 +31917,8 @@ Goal 1. step 11: T935 C4 + T938 H1-H4 + S1
 	[a] test review
 	[b] GRP1 done
 Goal 2. prepare for server run
+	[a] #1. enforce act_left len
+	[b] #2. s103: various act bound issues minor fix.
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)

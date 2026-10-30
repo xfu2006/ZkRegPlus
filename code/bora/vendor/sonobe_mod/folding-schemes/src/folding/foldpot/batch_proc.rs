@@ -592,7 +592,7 @@ where
 		let kzg =  KZG::<E>::setup(&mut rng, max_total_n+2)
 			.expect("kzg key fail");
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, logl, &format!("BatchProcessor step 2. setting up kzg: {}, INCREASED RAM now: {}. ", max_total_n, mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 2. setting up kzg: {}, INCREASED RAM now: {}. ", max_total_n, mb2s(m2.saturating_sub(m1))), &mut gt);
 		m1 = m2;
 
 		//T933 s9 B2. n_words entries plus two blind slots.
@@ -604,7 +604,7 @@ where
 		let mut vec_frag = VecCom::<E>::pkey_in_affine(&vec.0, n_words+2);
 		vec_frag.reverse(); //because it's order is the REVERSE
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, logl, &format!("BatchProcessor step 3. setting up veccom: {}, INCREASED RAM: {} ", n_words, mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 3. setting up veccom: {}, INCREASED RAM: {} ", n_words, mb2s(m2.saturating_sub(m1))), &mut gt);
 		m1 = m2;
 
 		//of the vector which generates kzg
@@ -617,13 +617,13 @@ where
 			vec![vz.clone(), vec_frag.clone(),vec![lg]].concat(), // -> vecom_vec_v
 		];
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, logl, &format!("BatchProcessor step 4. setting up matrix: {}, INCREASED RAM now: {}", (&matrix[0]).len(), mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 4. setting up matrix: {}, INCREASED RAM now: {}", (&matrix[0]).len(), mb2s(m2.saturating_sub(m1))), &mut gt);
 		m1 = m2;
 		let mat = Matrix::<E::G1>{rows: matrix.len(), cols: matrix[0].len(), 
 			matrix};
 		let (pkey_qanizk, vkey_qanizk) = setup_qa_nizk_standard::<E>(&mat, b_debug);
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt);
+		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}. ", mb2s(m2.saturating_sub(m1))), &mut gt);
 
 		//T933 s10. Commit the public table once (2 MSMs of its size).
 		let (lk_cm1, lk_cm2) = Self::commit_lkup_cols(&kzg.0, lkup)
@@ -651,7 +651,7 @@ where
 			lk_cm1, lk_cm2,
 		};
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}, TOTAL RAM now: {}. ", mb2s(m2-m0), mb2s(m2)), &mut gt2);
+		log_perf(job_id, logl, &format!("BatchProcessor step 5. setting up qa_nizk, INCREASED RAM: {}, TOTAL RAM now: {}. ", mb2s(m2.saturating_sub(m0)), mb2s(m2)), &mut gt2);
 		(pkey, vkey)
 	}
 

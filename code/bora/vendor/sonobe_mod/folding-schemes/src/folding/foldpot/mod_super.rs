@@ -1161,7 +1161,7 @@ where
 		let mut vec_pp = vec![];
 		let mut vec_vp = vec![];
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, log_level, &format!("preprocess() Step 1: INCREASED RAM: {}. ", mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 1: INCREASED RAM: {}. ", mb2s(m2.saturating_sub(m1))), &mut gt1);
 		m1 = m2;
 
 		//TO IMPROVE: can be distributed. However, it's not trivial.
@@ -1278,7 +1278,7 @@ where
 			vec_vp.push(verifier_params);
 		}
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, log_level, &format!("preprocess() Step 2: setup circ params. circs: {}, max_circ_pp: {}, total_w: {}, total_e: {}, increased RAM: {}. ", vec_pp.len(), max_circ_pp_size, total_w_len, total_e_len, mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 2: setup circ params. circs: {}, max_circ_pp: {}, total_w: {}, total_e: {}, increased RAM: {}. ", vec_pp.len(), max_circ_pp_size, total_w_len, total_e_len, mb2s(m2.saturating_sub(m1))), &mut gt1);
 		m1 = m2;
 
 		let b_full_mode = prep_param_src.b_full_mode;
@@ -1291,7 +1291,7 @@ where
 			else {panic!("cs1e setup failed");};
 		if b_full_mode {assert!(n_circ==1);}
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, log_level, &format!("preprocess() Step 3: cs1e_pp: {}, INCREASED RAM: {}. ", new_total_cs_pp_len, mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 3: cs1e_pp: {}, INCREASED RAM: {}. ", new_total_cs_pp_len, mb2s(m2.saturating_sub(m1))), &mut gt1);
 		m1 = m2;
 
 		let (qa_pp, qa_vp, cols_len) = {
@@ -1346,7 +1346,7 @@ where
 			(Some(pkey), Some(vkey), cols_len)
 		};
 		let m2 = get_mem_usage_mb();
-		log_perf(job_id, log_level, &format!("preprocess() Step 4 qa_nizk: rows: {}, cols: {}, INCREASED RAM: {}. ", 3*n_circ+1, cols_len, mb2s(m2-m1)), &mut gt1);
+		log_perf(job_id, log_level, &format!("preprocess() Step 4 qa_nizk: rows: {}, cols: {}, INCREASED RAM: {}. ", 3*n_circ+1, cols_len, mb2s(m2.saturating_sub(m1))), &mut gt1);
 
 		//5. build up the cp_r1cs if needed
 		let cp_r1cs = if !b_full_mode{
@@ -1366,7 +1366,7 @@ where
 		let verifier_params = VerifierParamsFoldPotSuper{
 			vec_vp, cp_r1cs: cp_r1cs.map(Arc::new), qa_vp, cs1e_vp};
 		let m2 = get_mem_usage_mb();
-		log(0, log_level-1, &format!("- KEYS info: n_circs: {}, total_w: {}, total_e: {}, cs1e: {}, max_pp: {}, INCREASED RAM: {}, TOTAL RAM: {}.", n_circ, total_w_len, total_e_len, new_total_cs_pp_len, max_circ_pp_size, mb2s(m2-m0), mb2s(m2)) ); 
+		log(0, log_level-1, &format!("- KEYS info: n_circs: {}, total_w: {}, total_e: {}, cs1e: {}, max_pp: {}, INCREASED RAM: {}, TOTAL RAM: {}.", n_circ, total_w_len, total_e_len, new_total_cs_pp_len, max_circ_pp_size, mb2s(m2.saturating_sub(m0)), mb2s(m2)) ); 
 
         Ok((prover_params, verifier_params))
     }
