@@ -7486,6 +7486,14 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let (core, ct_qi, ct_qc, _nat) = gen
 			.gen_core_stmt_nonaggr(pat_loc, subsig_store_info,
 				inp_step_queue, last_loc + F::one(), job_id)?;
+		// GRP1 item 11 (R6 harness, test builds only): K1-K3, K2, and
+		// the K5 forge (rebuilds the core from the forged natives).
+		#[cfg(test)]
+		let core = match tp_g3::hook(b_igc, &gen, subsig_store_info,
+			&_nat, last_loc + F::one(), job_id) {
+			Some(forged) => StepQueueNeo::<F>::core_container(&forged,
+				false),
+			None => core };
 		stmt_container.lock().unwrap().add_container(core);
 		stmt_container.lock().unwrap().add_container(ct_qi);
 		stmt_container.lock().unwrap().add_container(ct_qc);
@@ -15334,5 +15342,430 @@ mod tests_t929_fs_adaptive {
 		}
 		assert!(bad.is_empty(),
 			"drop C 27 + m_seed[0] solved at r1 accepted on {:?}", bad);
+	}
+}
+
+// ===================================================================
+// GRP1 item 11 (R6 harness), TEST BUILDS ONLY. DEBUG USE 66103.y.
+// new_nonaggr calls hook() after gen_core_stmt_nonaggr. It is a no-op
+// unless the tp_g3 walk (bora_data_driver tests) set ACTIVE and the
+// env has TP_G3_ARM=1. K1 native D2 oracle + native h twin, K2
+// capture (TP_G3_CAP_GB), K3 carry check, K5 forges. C1 = c1() on a
+// capture, C5 = c5_store(). P7 = tp_g3_unit_k5_c5.
+// ===================================================================
+#[cfg(test)]
+pub(crate) mod tp_g3 {
+	use super::*;
+	use ark_bn254::Fr;
+	use ark_relations::r1cs::ConstraintSystem;
+	use data_processor::clam_db::ID_ENCODED_FZ;
+	use std::collections::{BTreeMap, BTreeSet, VecDeque};
+	use std::sync::OnceLock;
+	use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering::SeqCst};
+
+	/// walk context, written by the serial tp_g3 walk only.
+	pub(crate) static ACTIVE: AtomicBool = AtomicBool::new(false);
+	/// K1-K3 + K2 on; off during the K5 replays.
+	pub(crate) static RECORD: AtomicBool = AtomicBool::new(true);
+	pub(crate) static WORD: AtomicUsize = AtomicUsize::new(0);
+	pub(crate) static SEG: AtomicUsize = AtomicUsize::new(0);
+	/// K5 mode: 0 off, 1 = (a) slot s_k := 2^rb, 2 = (b) d_bp -= 2^rb.
+	/// Fires once, cs arm, at (WORD, SEG) == FORGE_AT.
+	pub(crate) static FORGE: AtomicUsize = AtomicUsize::new(0);
+	pub(crate) static FORGE_AT: Mutex<(usize, usize)> = Mutex::new((0, 0));
+
+	fn arm_env() -> bool {
+		static A: OnceLock<bool> = OnceLock::new();
+		*A.get_or_init(|| std::env::var("TP_G3_ARM")
+			.map(|v| v == "1").unwrap_or(false))
+	}
+	pub(crate) fn armed() -> bool { ACTIVE.load(SeqCst) && arm_env() }
+
+	/// K1 + K3 totals over the walk.
+	#[derive(Debug, Default, Clone)]
+	pub(crate) struct Tot {
+		pub records: usize, pub bad: usize,
+		pub d2a_c: usize, pub d2a_sp: usize, pub d2b_c: usize,
+		pub freeze_disagree: usize, pub fz0_mismatch: usize,
+		pub seed_literal: usize, pub h_bad: usize, pub neg_gap: usize,
+		pub n_tracked_c: usize, pub n_frozen_c: usize, pub h1: usize,
+		pub max_gap: u64, pub max_dbp_c: u64,
+		pub n_sp: usize, pub n_bp: usize, pub tracked: usize,
+		pub k3_ok: usize, pub k3_seg0: usize, pub k3_skip: usize,
+		pub k3_fail: usize,
+		/// (word, igc) -> segs the hook saw
+		pub cover: BTreeMap<(usize, bool), BTreeSet<usize>>,
+		/// word -> first cs-arm seg holding a BP row (K5 target)
+		pub first_bp: BTreeMap<usize, usize>,
+	}
+	pub(crate) struct Cap { pub word: usize, pub seg: usize,
+		pub igc: bool, pub nat: NeoCore<Fr>, pub dmin: Fr }
+	/// K5: what was forged, the (tbl, val) pair K4 must report.
+	pub(crate) struct Forged { pub what: String,
+		pub want: (String, String), pub nat: NeoCore<Fr>, pub dmin: Fr }
+
+	#[derive(Default)]
+	struct St { tot: Tot,
+		carry: HashMap<(usize, bool), (usize, Vec<(Fr, Fr)>)>,
+		caps: Vec<Cap>, tail: HashMap<(usize, bool), VecDeque<Cap>>,
+		cap_bytes: usize, n_seen: usize, forged: Option<Forged> }
+	fn st() -> &'static Mutex<St> {
+		static S: OnceLock<Mutex<St>> = OnceLock::new();
+		S.get_or_init(|| Mutex::new(St::default()))
+	}
+	pub(crate) fn tot() -> Tot { st().lock().unwrap().tot.clone() }
+	/// all captures (tail rings drained), seen count, ESTIMATE bytes.
+	pub(crate) fn take_caps() -> (Vec<Cap>, usize, usize) {
+		let mut g = st().lock().unwrap();
+		let tails: Vec<_> = g.tail.drain().collect();
+		for (_, q) in tails { g.caps.extend(q); }
+		(std::mem::take(&mut g.caps), g.n_seen, g.cap_bytes)
+	}
+	pub(crate) fn take_forged() -> Option<Forged> {
+		st().lock().unwrap().forged.take()
+	}
+	fn cap_limit() -> usize {
+		std::env::var("TP_G3_CAP_GB").ok().and_then(|v| v.parse().ok())
+			.unwrap_or(20usize) << 30
+	}
+	/// ESTIMATE: ~64 Fr columns per T_qm row plus the side tables.
+	fn nat_bytes(n: &NeoCore<Fr>) -> usize {
+		32 * (64 * n.t.enc.len() + 3 * n.l_pat.len()
+			+ 2 * (n.qi_enc.len() + n.qc_enc.len()) + n.mtbl_qr.len()
+			+ n.mtbl_tm.len() + n.mtbl_qc.len() + n.mtbl_ns.len()
+			+ 3 * n.ns_pat.len() + n.subsig_nat.len())
+	}
+
+	/// native h twin of assert_bwd_pruning on the successor family:
+	/// BP d_bp = min_eff - loc - rg2n - 1; tracked C/SP d_bp =
+	/// gap - h*2^rb, gap = loc + rg2n - min_eff, h = gap >= 2^rb.
+	#[derive(Debug, Default)]
+	pub(crate) struct HRep { pub bp: usize, pub tracked: usize,
+		pub h1: usize, pub h_bad: usize, pub max_gap: u64,
+		pub neg_gap: usize }
+	pub(crate) fn native_h(nat: &NeoCore<Fr>, dmin: Fr) -> HRep {
+		let rb = read_global_config().range2_bit;
+		let (max, sh) = (Fr::from((1u64 << rb) - 1), Fr::from(1u64 << rb));
+		let (t, na) = (&nat.t, &nat.t.nonaggr);
+		let mut r = HRep::default();
+		for i in t.n_pad..t.enc.len() {
+			if t.cat[i].is_zero()
+				|| !d2_families(t.cat[i], t.step[i], na.fz[i]).1 {
+				continue;
+			}
+			let me = if na.w_next[i] == max { dmin } else { na.w_next[i] };
+			if t.cat[i] == Fr::from(CAT_BP) {
+				r.bp += 1;
+				if na.d_bp[i] != me - t.loc[i] - na.rg2_next[i] - Fr::from(1u32) {
+					r.h_bad += 1;
+				}
+				continue;
+			}
+			r.tracked += 1;
+			let u = |x: &Fr| field_to_usize(x) as i128;
+			let gap = u(&t.loc[i]) + u(&na.rg2_next[i]) - u(&me);
+			if gap < 0 { r.neg_gap += 1; continue; }
+			let h = gap >= (1i128 << rb);
+			if h { r.h1 += 1; }
+			r.max_gap = r.max_gap.max(gap as u64);
+			let want = t.loc[i] + na.rg2_next[i] - me
+				- if h { sh } else { Fr::zero() };
+			if na.d_bp[i] != want { r.h_bad += 1; }
+		}
+		r
+	}
+
+	/// K5 forge on a clone. (a) the first real slot s_k := 2^rb;
+	/// (b) d_bp -= 2^rb on a BP row, else a tracked row, else row 0.
+	pub(crate) fn forge(nat: &NeoCore<Fr>, dmin: Fr, mode: usize)
+	-> Forged {
+		let sh = Fr::from(1u64 << read_global_config().range2_bit);
+		let mut n = nat.clone();
+		let (what, val) = if mode == 1 {
+			let k = (0..n.subsig_nat.len())
+				.find(|&k| !n.subsig_nat[k].is_zero()).unwrap_or(0);
+			n.subsig_nat[k] = sh;
+			(format!("(a) slot s_{} := 2^rb", k), sh)
+		} else {
+			let t = &n.t;
+			let real = |i: &usize| *i >= t.n_pad && !t.cat[*i].is_zero();
+			let bp = (0..t.enc.len()).filter(real)
+				.find(|&i| t.cat[i] == Fr::from(CAT_BP));
+			let trk = (0..t.enc.len()).filter(real).find(|&i|
+				d2_families(t.cat[i], t.step[i], t.nonaggr.fz[i]).1);
+			let (i, kind) = match (bp, trk) {
+				(Some(i), _) => (i, "BP"), (None, Some(i)) => (i, "tracked"),
+				_ => (0, "coef-0") };
+			n.t.nonaggr.d_bp[i] -= sh;
+			(format!("(b) d_bp[{}] ({}) -= 2^rb", i, kind),
+				n.t.nonaggr.d_bp[i])
+		};
+		Forged { what, want: (format!("{}", Fr::from(RANGE2)),
+			format!("{}", val)), nat: n, dmin }
+	}
+
+	fn ms(enc: &[Fr], loc: &[Fr]) -> Vec<(Fr, Fr)> {
+		let mut v: Vec<(Fr, Fr)> = enc.iter().zip(loc.iter())
+			.filter(|(e, _)| !e.is_zero()).map(|(e, l)| (*e, *l)).collect();
+		v.sort();
+		v
+	}
+
+	/// the new_nonaggr hook. Some(forged) only on the K5 target.
+	pub(crate) fn hook<F: PrimeField + ColEle>(b_igc: bool,
+		gen: &StepQueueNeo<F>, info: &SubsigStepStore, nat: &NeoCore<F>,
+		dmin: F, job_id: usize) -> Option<NeoCore<F>> {
+		if !armed() { return None; }
+		let nat: &NeoCore<Fr> = (nat as &dyn Any).downcast_ref()
+			.expect("tp_g3: Fr only");
+		let dmin: Fr = *(&dmin as &dyn Any).downcast_ref::<Fr>()
+			.expect("tp_g3: Fr only");
+		let (w, s) = (WORD.load(SeqCst), SEG.load(SeqCst));
+		let mode = FORGE.load(SeqCst);
+		if mode != 0 && !b_igc && *FORGE_AT.lock().unwrap() == (w, s) {
+			FORGE.store(0, SeqCst);
+			let f = forge(nat, dmin, mode);
+			println!("DEBUG USE 66103.6: K5 fired word {} seg {} igc false \
+				{} expect pair ({}, {})", w, s, f.what, f.want.0, f.want.1);
+			let b: Box<dyn Any> = Box::new(f.nat.clone());
+			st().lock().unwrap().forged = Some(f);
+			return Some(*b.downcast::<NeoCore<F>>().expect("F = Fr"));
+		}
+		if !RECORD.load(SeqCst) { return None; }
+		// K1
+		let rep = d2_native_check(&gen.d2_probe_rows(), info,
+			field_to_usize(&dmin) as u64);
+		let h = native_h(nat, dmin);
+		let bad = !rep.clean() || h.h_bad > 0 || h.neg_gap > 0;
+		let nz = |v: &Vec<Fr>| v.iter().filter(|x| !x.is_zero()).count();
+		println!("DEBUG USE 66103.1: K1 word {} seg {} igc {} job {} \
+			d2a_c={} d2a_sp={} d2b_c={} freeze_disagree={} fz0_mismatch={} \
+			h_bad={} | n_tracked_c={} n_frozen_c={} max_dbp_c={} max_gap={} \
+			neg_gap={} h1={} | rows={} C={} SP={} BP={} tracked={} \
+			seed_literal={} K={} qi={} qc={} n_T={}", w, s, b_igc, job_id,
+			rep.d2a_c.len(), rep.d2a_sp.len(), rep.d2b_c.len(),
+			rep.freeze_disagree.len(), rep.fz0_mismatch.len(), h.h_bad,
+			rep.n_tracked_c, rep.n_frozen_c, rep.max_dbp_c, h.max_gap,
+			h.neg_gap, h.h1, rep.n_rows, rep.n_c, rep.n_sp, h.bp, h.tracked,
+			rep.seed_literal.len(), nat.subsig_nat.len(), nz(&nat.qi_enc),
+			nz(&nat.qc_enc), nat.t.enc.len());
+		if bad {
+			for v in rep.all().iter().take(20) {
+				println!("DEBUG USE 66103.1: K1 BAD word {} seg {} igc {} {}",
+					w, s, b_igc, v);
+			}
+		}
+		let mut g = st().lock().unwrap();
+		let t = &mut g.tot;
+		t.records += 1;
+		if bad { t.bad += 1; }
+		t.d2a_c += rep.d2a_c.len(); t.d2a_sp += rep.d2a_sp.len();
+		t.d2b_c += rep.d2b_c.len();
+		t.freeze_disagree += rep.freeze_disagree.len();
+		t.fz0_mismatch += rep.fz0_mismatch.len();
+		t.seed_literal += rep.seed_literal.len();
+		t.h_bad += h.h_bad; t.neg_gap += h.neg_gap; t.h1 += h.h1;
+		t.n_tracked_c += rep.n_tracked_c; t.n_frozen_c += rep.n_frozen_c;
+		t.max_gap = t.max_gap.max(h.max_gap);
+		t.max_dbp_c = t.max_dbp_c.max(rep.max_dbp_c);
+		t.n_sp += rep.n_sp; t.n_bp += h.bp; t.tracked += h.tracked;
+		t.cover.entry((w, b_igc)).or_default().insert(s);
+		if !b_igc && h.bp > 0 { t.first_bp.entry(w).or_insert(s); }
+		// K3: this q_i == the previous segment's q_c (multiset)
+		let (qi, qc) = (ms(&nat.qi_enc, &nat.qi_loc),
+			ms(&nat.qc_enc, &nat.qc_loc));
+		match g.carry.insert((w, b_igc), (s, qc)) {
+			_ if s == 0 => {
+				g.tot.k3_seg0 += 1;
+				println!("DEBUG USE 66103.3: K3 NOTE word {} seg 0 igc {}: \
+					q_i holds {} rows at the first segment", w, b_igc, qi.len());
+			}
+			Some((ps, pqc)) if ps + 1 == s => {
+				if pqc == qi { g.tot.k3_ok += 1; } else {
+					g.tot.k3_fail += 1;
+					let d = pqc.iter().zip(qi.iter()).position(|(a, b)| a != b);
+					println!("DEBUG USE 66103.3: K3 FAIL word {} seg {} igc {} \
+						|q_c(prev)| {} |q_i| {} first diff {:?}", w, s, b_igc,
+						pqc.len(), qi.len(), d);
+				}
+			}
+			_ => { g.tot.k3_skip += 1; }
+		}
+		// K2: keep all under the cap; above it keep segs 0, 1, every
+		// 8th, flagged (bad or h = 1), plus a last-4 ring per arm
+		let b = nat_bytes(nat);
+		let cap = Cap { word: w, seg: s, igc: b_igc, nat: nat.clone(), dmin };
+		g.n_seen += 1;
+		let lim = cap_limit();
+		if bad || g.cap_bytes + b <= lim || ((s < 2 || s % 8 == 0
+			|| h.h1 > 0) && g.cap_bytes + b <= 2 * lim) {
+			g.cap_bytes += b;
+			g.caps.push(cap);
+		} else {
+			let q = g.tail.entry((w, b_igc)).or_default();
+			q.push_back(cap);
+			if q.len() > 4 { q.pop_front(); }
+		}
+		None
+	}
+
+	/// P2 (C1 helper): the non-aggressive neo core at (r1, r2), serial.
+	pub(crate) fn tp_run_nat_r(nat: &NeoCore<Fr>, dmin: Fr, r1: Fr,
+		r2: Fr) -> ConstraintSystemRef<Fr> {
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let vars = super::tests_neo_m6::alloc_vars(&cs, nat);
+		let (r1v, r2v) = (new_var(&cs, r1), new_var(&cs, r2));
+		let dm = new_var(&cs, dmin);
+		DischargeAdvNeoGadget::<Fr>::assert_neo_nonaggr(cs.clone(), nat,
+			&vars, &dm, &r1v, &r2v, 0).expect("assert core nonaggr");
+		cs
+	}
+	/// (12345, 67890) as run_nat_nonaggr, then 2 seeded pairs (StdRng
+	/// seed 66103; no new dev-dep).
+	pub(crate) fn tp_r_pairs() -> Vec<(Fr, Fr)> {
+		use rand::{SeedableRng, rngs::StdRng};
+		use ark_ff::UniformRand;
+		let mut rng = StdRng::seed_from_u64(66103);
+		let mut v = vec![(Fr::from(12345u32), Fr::from(67890u32))];
+		for _ in 0..2 { v.push((Fr::rand(&mut rng), Fr::rand(&mut rng))); }
+		v
+	}
+	/// C1 on one capture: (sat, unsat) over tp_r_pairs.
+	pub(crate) fn c1(cap: &Cap) -> (usize, usize) {
+		let mut r = (0, 0);
+		for (k, (r1, r2)) in tp_r_pairs().iter().enumerate() {
+			let cs = tp_run_nat_r(&cap.nat, cap.dmin, *r1, *r2);
+			let sat = cs.is_satisfied().unwrap();
+			println!("DEBUG USE 66103.2: C1 word {} seg {} igc {} r#{} \
+				sat={} cs={}", cap.word, cap.seg, cap.igc, k, sat,
+				cs.num_constraints());
+			if sat { r.0 += 1; } else {
+				r.1 += 1;
+				println!("DEBUG USE 66103.2: C1 UNSAT word {} seg {} igc {} \
+					first {:?}", cap.word, cap.seg, cap.igc,
+					cs.which_is_unsatisfied());
+			}
+		}
+		r
+	}
+
+	/// C5 over one SED step store: every real row's FZ tuple value ==
+	/// fz_from_pm_bounds(pm)[step - 1], key == tag(enc, ID_ENCODED_FZ),
+	/// and one value per key over every store seen (`seen`).
+	#[derive(Debug, Default)]
+	pub(crate) struct C5Rep { pub stores: usize, pub rows: usize,
+		pub real: usize, pub tuples: usize, pub mism: Vec<String>,
+		pub lk_checked: usize, pub lk_same_dup: usize,
+		pub lk_bad: Vec<String>, pub lk_in_tbl: usize }
+	impl C5Rep {
+		pub(crate) fn clean(&self) -> bool {
+			self.mism.is_empty() && self.lk_bad.is_empty()
+		}
+	}
+	/// `tbl`: also require each (key, value) in the built table.
+	pub(crate) fn c5_store(store: &SubsigStepStore,
+		seen: &mut HashMap<Fr, Fr>, rep: &mut C5Rep,
+		tbl: Option<&folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol_Inst<Fr>>) {
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let rb = read_global_config().range2_bit;
+		let mx = (1usize << rb) - 1;
+		let max = Fr::from(mx as u64);
+		let cols = store.gen_cols::<Fr>(rb, None);
+		let tup = SubsigStepStore::gen_fz_tuples::<Fr>(&cols, max);
+		let (sub, ids, pats, enc) = (&cols[0], &cols[1], &cols[2], &cols[5]);
+		rep.stores += 1; rep.rows += pats.len(); rep.tuples += tup.len();
+		let mut j = 0;
+		for r in 0..pats.len() {
+			let b_dummy = pats[r].is_zero() || pats[r] == max;
+			if b_dummy && !sub[r].is_zero() { continue; }
+			if j >= tup.len() { rep.mism.push("tuple count".into()); break; }
+			let (key, val) = tup[j];
+			j += 1;
+			if key != SubsigStepStore::gen_step_tbl_id(enc[r], ID_ENCODED_FZ) {
+				rep.mism.push(format!("row {} key misaligned", r));
+			}
+			if !b_dummy {
+				rep.real += 1;
+				let (s, k) = (field_to_usize(&sub[r]), field_to_usize(&ids[r]));
+				match store.subsig_to_steps.get(&s) {
+					None => rep.mism.push(format!("row {} subsig {} no rec",
+						r, s)),
+					Some(rec) => {
+						let pm = if rec.is_backward { reverse_pm_bounds(
+							&rec.vec_pm_bounds, (0, mx)) }
+							else { rec.vec_pm_bounds.clone() };
+						let fz = fz_from_pm_bounds::<Fr>(&pm, mx);
+						if k == 0 || k > fz.len() || fz[k - 1] != val {
+							rep.mism.push(format!("subsig {} step {} fz {} \
+								want {:?}", s, k, val, fz.get(k.wrapping_sub(1))));
+						}
+					}
+				}
+			}
+			rep.lk_checked += 1;
+			if let Some(t) = tbl {
+				if t.find(key, val).is_ok() { rep.lk_in_tbl += 1; }
+				else { rep.lk_bad.push(format!("key {} fz {} not in table",
+					key, val)); }
+			}
+			match seen.get(&key) {
+				Some(v) if *v == val => rep.lk_same_dup += 1,
+				Some(v) => rep.lk_bad.push(format!("key {} fz {} and {}",
+					key, v, val)),
+				None => { seen.insert(key, val); }
+			}
+		}
+		if j != tup.len() { rep.mism.push(format!("tuples {} used {}",
+			tup.len(), j)); }
+	}
+
+	/// RANGE2-bound native cells (core_container's const-RANGE2 cols
+	/// plus subsig_nat) holding a value >= 2^rb.
+	fn range2_over(nat: &NeoCore<Fr>) -> Vec<String> {
+		let lim = Fr::from(1u64 << read_global_config().range2_bit);
+		let (t, na) = (&nat.t, &nat.t.nonaggr);
+		[&t.d_c1, &t.d_c2, &na.d_bp, &na.d_fz, &na.d_kept, &nat.subsig_nat]
+			.iter().flat_map(|c| c.iter().filter(|x| **x >= lim)
+				.map(|x| format!("{}", x))).collect()
+	}
+
+	/// P7: K5 forges, native h twin, C1 and C5 on the fig-14 chunk-2
+	/// fixture (~0.1 GB). The live K5 through K4 runs in tp_g3_mal.
+	#[test]
+	fn tp_g3_unit_k5_c5() {
+		use super::tests_neo_m4::A18_DEFAULT_MIN;
+		use super::tests_neo_m5::{a18_store, a18_carried};
+		use super::tests_neo_nonaggr::run_core_nonaggr;
+		let info = a18_store();
+		let mut hm = HashMap::new();
+		hm.insert(2, vec![111]); hm.insert(5, vec![106]);
+		hm.insert(6, vec![96, 141]); hm.insert(7, vec![101, 131]);
+		let (_cs, nat) = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &hm, A18_DEFAULT_MIN, None);
+		let dmin = Fr::from(A18_DEFAULT_MIN);
+		let cap = Cap { word: 0, seg: 0, igc: false, nat: nat.clone(), dmin };
+		assert_eq!(c1(&cap), (3, 0), "honest C1");
+		let h = native_h(&nat, dmin);
+		println!("DEBUG USE 66103.7: unit native_h {:?}", h);
+		assert!(h.bp >= 1 && h.tracked >= 1 && h.h_bad == 0 && h.neg_gap == 0);
+		assert!(range2_over(&nat).is_empty());
+		for mode in [1, 2] {
+			let f = forge(&nat, dmin, mode);
+			println!("DEBUG USE 66103.7: unit K5 {} want {:?}", f.what, f.want);
+			assert_eq!(f.want.0, format!("{}", Fr::from(RANGE2)));
+			assert_eq!(range2_over(&f.nat), vec![f.want.1.clone()], "{}", f.what);
+			if mode == 2 {
+				assert!(f.what.contains("(BP)"), "{}", f.what);
+				let cs = tp_run_nat_r(&f.nat, dmin, Fr::from(12345u32),
+					Fr::from(67890u32));
+				assert!(cs.is_satisfied().unwrap(), "K5b: h absorbs");
+			}
+		}
+		let (mut seen, mut rep) = (HashMap::new(), C5Rep::default());
+		c5_store(&info, &mut seen, &mut rep, None);
+		println!("DEBUG USE 66103.7: unit C5 {:?}", rep);
+		assert!(rep.clean() && rep.real >= 8, "{:?}", rep);
 	}
 }

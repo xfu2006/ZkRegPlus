@@ -6771,4 +6771,538 @@ pub mod tests_bora_data_driver {
 		let _g = cfg_lock();
 		small_full_snark(false);
 	}
+
+	// ---------------------------------------------------------------
+	// GRP1 item 11 (R6): tp_g3 harness, DEBUG USE 66103.y. No prove,
+	// no fold. Mal: K1-K3/K2/K5 via the new_nonaggr hook (tp_g3 in
+	// discharge_adv_neo), K4 + K6 per segment of the serial walk,
+	// then C1, C5 and the verdict. Dlp (aggressive, hook inert): C5
+	// plus the K4 + K6 walk of its 2 scale emails at the top rung.
+	// Env: TP_G3_ARM=1 (required past the DB), TP_G3_DB_ONLY=1,
+	// TP_G3_CAP_GB (20), TP_G3_DRY=1 (laptop Mal smoke).
+	// ---------------------------------------------------------------
+	use crate::gadgets::discharge_adv_neo::tp_g3;
+
+	fn tp_env(k: &str) -> bool {
+		std::env::var(k).map(|v| v == "1").unwrap_or(false)
+	}
+	/// /proc/self/status VmHWM + VmRSS.
+	fn tp_mem() -> String {
+		fs::read_to_string("/proc/self/status").unwrap_or_default()
+			.lines().filter(|l| l.starts_with("VmHWM")
+				|| l.starts_with("VmRSS"))
+			.map(|l| l.split_whitespace().collect::<Vec<_>>().join(" "))
+			.collect::<Vec<_>>().join(" ")
+	}
+
+	type TpStmt = folding_schemes::folding::foldpot::sigma_ir1cs
+		::StatementInst<Fr, LK<Fr>>;
+	#[derive(Debug, Default)]
+	struct TpWalk { segs: usize, pairs: usize, k6: usize,
+		/// first statement + its virt slots (K4 negative control)
+		first: Option<(TpStmt, (Vec<Fr>, Vec<Fr>))> }
+	/// Resets the hook statics on any exit, panics included.
+	struct TpReset;
+	impl Drop for TpReset {
+		fn drop(&mut self) {
+			use std::sync::atomic::Ordering::SeqCst;
+			tp_g3::ACTIVE.store(false, SeqCst);
+			tp_g3::FORGE.store(0, SeqCst);
+			tp_g3::RECORD.store(true, SeqCst);
+		}
+	}
+
+	/// One circuit at the caps `p`, in keygen shape (foldpot_main and
+	/// t938_env: dummy advice -> container cfg -> dummy stmt).
+	fn tp_g3_circ(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
+		lkup: &Arc<LK<Fr>>, total_word_n: usize, p: &CapParams)
+		-> FC<Fr, C1, CS1> {
+		use folding_schemes::folding::foldpot::sigma_ir1cs::{
+			GadgetMapper, LookupTableTwoCol, SigmaIR1CS};
+		let poseidon = poseidon_canonical_config::<Fr>();
+		let mw = spec.chunk_len;
+		let mut layered = if spec.b_aggressive {
+			build_circs_adv_aggr::<Fr, C1, CS1>(&poseidon, total_word_n,
+				mw, lkup.get_size(), db.clone(),
+				&vec![caps_from_params_aggr(p)], false)
+		} else {
+			let (cp, sed, dfa, cp_i, sed_i) = caps_from_params_general(p);
+			build_circs_adv::<Fr, C1, CS1>(&poseidon, total_word_n, mw,
+				lkup.get_size(), db.clone(), &cp, &sed, &dfa, &cp_i,
+				&sed_i, &vec![], 1, false)
+		};
+		let mut circ = layered.remove(0).remove(0);
+		let share = circ.get_lkup_share_size();
+		let frag = utils::data::pack_nibbles(
+			&utils::data::gen_pad_nibbles_fe::<Fr>(0, mw * 62));
+		let mapper = circ.get_mapper();
+		let adv = mapper.lock().unwrap().gen_nd_advice(&frag,
+			&WordInfo::dummy(), None, 0, 0).expect("tp_g3 dummy advice");
+		circ.set_container_config(&adv);
+		let st = mapper.lock().unwrap().build_statement(&frag, &None,
+			lkup.clone(), &tp_ei(1, 1, 1, 1, mw, mw, mw, Fr::from(0u32)),
+			adv, share, true, 0).expect("tp_g3 dummy stmt");
+		circ.set_dummy_stmt(st);
+		circ
+	}
+
+	/// Pass-1 extra info. The 9 randomness slots are NONZERO
+	/// constants (T933 B4 two-blind); batch_v is the word's honest
+	/// Horner value (tp_batch_v), which gen_witness's S110 mirror
+	/// checks at the last segment.
+	fn tp_ei(wid: usize, tw: usize, k: usize, segs: usize, len: usize,
+		act: usize, acc: usize, bv: Fr)
+		-> folding_schemes::folding::foldpot::sigma_ir1cs
+			::StatementExtraInfo<Fr> {
+		let f = |x: usize| Fr::from(x as u64);
+		let r = |x: u64| Fr::from(66_103_000 + x);
+		folding_schemes::folding::foldpot::sigma_ir1cs::StatementExtraInfo {
+			pc_i: f(0), pc_i1: f(0), total_words: f(tw), subseg_id: f(k),
+			total_word_len: f(len), word_id: f(wid), n_circ: f(1),
+			total_word_segs: f(segs), act_word_subseg_size: f(act),
+			batch_r: r(10 * wid as u64 + 1), batch_v: bv,
+			r_all_words: r(2), r_kzg_len: r(3), r_vec_r: r(4),
+			r_vec_v: r(5), r_word_i: r(10 * wid as u64 + 6),
+			r_word_i2: r(10 * wid as u64 + 7), r_all_words2: r(8),
+			r_kzg_len2: r(9), r_vec_r2: r(10), r_vec_v2: r(11),
+			accumulated_word_len: f(acc) }
+	}
+	/// batch_proc's v_i: Horner over [len, w.., r_word_i, r_word_i2]
+	/// at batch_r.
+	fn tp_batch_v(w: &[Fr], wid: usize) -> Fr {
+		let e = tp_ei(wid, 1, 1, 1, 0, 0, 0, Fr::from(0u32));
+		let mut v = Fr::from(w.len() as u64);
+		for x in w { v = v * e.batch_r + x; }
+		(v * e.batch_r + e.r_word_i) * e.batch_r + e.r_word_i2
+	}
+
+	/// P3: serial walk. Per segment: set the hook context, gen advice
+	/// (aggr forward halo as driver.rs with_chunk_halo), build the
+	/// Pass-1 statement, K4 = fill_lkup_mvec (panics "Cannot find
+	/// entry" on any missing pair), K6 = gen_witness with a dummy cmF
+	/// (skips the Pedersen commit), zi_part2 carried over all words.
+	/// `only` = Some((word, last seg)): walk that prefix only (K5).
+	fn tp_g3_walk(circ: &FC<Fr, C1, CS1>, lkup: &Arc<LK<Fr>>,
+		words: &[Vec<Fr>], infos: &[WordInfo], mw: usize,
+		only: Option<(usize, usize)>, b_k6: bool) -> TpWalk {
+		use folding_schemes::folding::foldpot::sigma_ir1cs::{Capacity,
+			GadgetMapper, SigmaIR1CS, ZiPartTwoInst};
+		use std::sync::atomic::Ordering::SeqCst;
+		let mapper = circ.get_mapper();
+		let share = circ.get_lkup_share_size();
+		let m_halo = mapper.lock().unwrap().get_capacity().halo_nibbles();
+		let poseidon = poseidon_canonical_config::<Fr>();
+		let fq_bits = <ark_bn254::Fq as ark_ff::PrimeField>
+			::MODULUS_BIT_SIZE as usize;
+		let mut zi = ZiPartTwoInst::new(Fr::from(66103u32),
+			Fr::from(66104u32), &poseidon, circ.is_full_mode(), fq_bits,
+			words.len());
+		let cm = <C1 as ark_ec::Group>::generator();
+		let mut out = TpWalk::default();
+		tp_g3::ACTIVE.store(true, SeqCst);
+		let _rs = TpReset;
+		for (wi, w) in words.iter().enumerate() {
+			if only.map_or(false, |(ow, _)| ow != wi) { continue; }
+			let pw = utils::data::pad_word_to_multiple::<Fr>(w, mw);
+			let (segs, bv) = (pw.len() / mw, tp_batch_v(&pw, wi + 1));
+			let (mut prev_adv, mut prev_stmt) = (None, None);
+			for k in 0..segs {
+				if only.map_or(false, |(_, os)| k > os) { break; }
+				let frag = pw[k * mw..(k + 1) * mw].to_vec();
+				let rest = &pw[(k + 1) * mw..];
+				let wi_h = (m_halo > 0 && !rest.is_empty()).then(|| {
+					let n = (m_halo / 62 + 1).min(rest.len());
+					let nib = utils::data::packed_to_nibbles(&rest[0..n]
+						.to_vec());
+					let mut x = infos[wi].clone();
+					x.halo_nibbles = nib[0..m_halo.min(nib.len())].iter()
+						.map(|f| folding_schemes::folding::foldpot::circuits_super
+						::field_to_usize(f) as u8).collect();
+					x });
+				tp_g3::WORD.store(wi, SeqCst);
+				tp_g3::SEG.store(k, SeqCst);
+				let adv = mapper.lock().unwrap().gen_nd_advice(&frag,
+					wi_h.as_ref().unwrap_or(&infos[wi]), prev_adv.clone(),
+					k, 0).unwrap_or_else(|e| panic!("tp_g3 advice word {} \
+					seg {}: {:?}", wi, k, e));
+				let ei = tp_ei(wi + 1, words.len(), k + 1, segs, pw.len(),
+					mw, (k + 1) * mw, bv);
+				let stmt = mapper.lock().unwrap().build_statement(&frag,
+					&prev_stmt, lkup.clone(), &ei, adv.clone(), share, false,
+					0).unwrap_or_else(|e| panic!("tp_g3 stmt word {} seg {}: \
+					{:?}", wi, k, e));
+				prev_adv = Some(adv);
+				let v = stmt.to_vec();
+				let virt = circ.eval_virt_queries_all(&v);
+				let mut m_map = HashMap::new();
+				stmt.fill_lkup_mvec(&mut m_map, lkup, &virt);
+				let pairs: usize = m_map.values().sum();
+				println!("DEBUG USE 66103.4: K4 word {} seg {} share {} \
+					pairs {} distinct {} virt {}", wi, k, share, pairs,
+					m_map.len(), virt.0.len());
+				out.pairs += pairs;
+				if out.first.is_none() {
+					out.first = Some((stmt.clone(), virt.clone()));
+				}
+				if b_k6 {
+					let (_w, _c, z1) = circ.gen_witness(&v, &zi, Some(cm));
+					zi = z1;
+					out.k6 += 1;
+				}
+				out.segs += 1;
+				prev_stmt = Some(stmt);
+			}
+			println!("DEBUG USE 66103.8: K6 word {} segs {} len {} k6 {} {}",
+				wi, segs, pw.len(), b_k6, tp_mem());
+		}
+		tp_g3::ACTIVE.store(false, SeqCst);
+		out
+	}
+
+	/// K5 replay of `word` up to seg `seg` with forge `mode`: must panic
+	/// in K4 with the forged (RANGE2, value) pair. Returns ok.
+	fn tp_g3_k5(circ: &FC<Fr, C1, CS1>, lkup: &Arc<LK<Fr>>,
+		ts: &TuningSet, mw: usize, word: usize, seg: usize, mode: usize)
+		-> bool {
+		use std::sync::atomic::Ordering::SeqCst;
+		*tp_g3::FORGE_AT.lock().unwrap() = (word, seg);
+		tp_g3::FORGE.store(mode, SeqCst);
+		tp_g3::RECORD.store(false, SeqCst);
+		let hook = std::panic::take_hook();
+		std::panic::set_hook(Box::new(|_| {}));
+		let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+			tp_g3_walk(circ, lkup, &ts.words, &ts.infos, mw,
+				Some((word, seg)), false)));
+		std::panic::set_hook(hook);
+		tp_g3::ACTIVE.store(false, SeqCst);
+		tp_g3::RECORD.store(true, SeqCst);
+		tp_g3::FORGE.store(0, SeqCst);
+		let msg = match &r {
+			Ok(_) => "no panic".to_string(),
+			Err(e) => e.downcast_ref::<String>().cloned()
+				.or(e.downcast_ref::<&str>().map(|s| s.to_string()))
+				.unwrap_or("unknown panic".into()) };
+		// "Cannot find entry for tbl_id[i]: (tbl, val): ..."
+		let pair = msg.find("Cannot find entry for tbl_id[")
+			.and_then(|i| msg[i..].find("]: (").map(|j| i + j + 4))
+			.and_then(|s| msg[s..].find(')').map(|e| &msg[s..s + e]))
+			.and_then(|p| p.split_once(", "))
+			.map(|(a, b)| (a.to_string(), b.to_string()));
+		let f = tp_g3::take_forged();
+		let ok = match (&f, &pair) {
+			(Some(f), Some(p)) => *p == f.want, _ => false };
+		println!("DEBUG USE 66103.6: K5{} {} panic pair {:?} want {:?} \
+			ok={} msg_head {:?}", if mode == 1 { "a" } else { "b" },
+			f.as_ref().map_or("NOT FIRED", |f| f.what.as_str()), pair,
+			f.as_ref().map(|f| &f.want), ok,
+			&msg[..msg.len().min(160)]);
+		// K5b: the cs alone takes h = 1 and stays SAT (h absorbs)
+		if mode == 2 && ok {
+			let f = f.unwrap();
+			let s = std::panic::catch_unwind(|| tp_g3::tp_run_nat_r(&f.nat,
+				f.dmin, Fr::from(12345u32), Fr::from(67890u32))
+				.is_satisfied().unwrap());
+			println!("DEBUG USE 66103.6: K5b tampered cs sat={:?} (expected \
+				Ok(true): h absorbs the shift)", s);
+			return s.ok() == Some(true);
+		}
+		ok
+	}
+
+	/// K4 negative control (aggr arm, no hook): one RANGE2 cell of the
+	/// first statement + 2^rb must make fill_lkup_mvec panic with
+	/// exactly that (RANGE2, value) pair.
+	fn tp_g3_k4neg(lkup: &Arc<LK<Fr>>,
+		first: &Option<(TpStmt, (Vec<Fr>, Vec<Fr>))>) -> bool {
+		let Some((st0, virt)) = first else { return false };
+		let r2 = Fr::from(data_processor::clam_db::RANGE2);
+		let Some(j) = st0.subtable_id.iter().position(|t| *t == r2) else {
+			println!("DEBUG USE 66103.4: K4NEG no RANGE2 cell");
+			return false };
+		let mut st = st0.clone();
+		let (ni, no) = (st.inp_buf.len(), st.oup_buf.len());
+		let c = if j < ni { &mut st.inp_buf[j] }
+			else if j < ni + no { &mut st.oup_buf[j - ni] }
+			else { &mut st.data[j - ni - no] };
+		*c += Fr::from(1u64 << read_global_config().range2_bit);
+		let want = format!("({}, {})", r2, *c);
+		let hook = std::panic::take_hook();
+		std::panic::set_hook(Box::new(|_| {}));
+		let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+			st.fill_lkup_mvec(&mut HashMap::new(), lkup, virt)));
+		std::panic::set_hook(hook);
+		let msg = match &r {
+			Ok(_) => "no panic".to_string(),
+			Err(e) => e.downcast_ref::<String>().cloned()
+				.or(e.downcast_ref::<&str>().map(|s| s.to_string()))
+				.unwrap_or("unknown panic".into()) };
+		let ok = msg.contains("Cannot find entry") && msg.contains(&want);
+		println!("DEBUG USE 66103.4: K4NEG cell {} want {} ok={} msg_head \
+			{:?}", j, want, ok, &msg[..msg.len().min(160)]);
+		ok
+	}
+
+	/// C5 over every SED step store of both bundles.
+
+	fn tp_g3_c5(name: &str, db: &ClamavDB<Fr>) -> bool {
+		use folding_schemes::folding::foldpot::sigma_ir1cs
+			::LookupTableTwoCol as _;
+		let mut seen = HashMap::new();
+		let mut rep = tp_g3::C5Rep::default();
+		for b in [&db.bundle_subsig, &db.bundle_subsig_igc] {
+			for s in b.vec_subsig_step_stores.iter() {
+				tp_g3::c5_store(s, &mut seen, &mut rep, Some(&db.lkup));
+			}
+		}
+		for m in rep.mism.iter().chain(rep.lk_bad.iter()).take(20) {
+			println!("DEBUG USE 66103.7: C5 {} BAD {}", name, m);
+		}
+		println!("DEBUG USE 66103.7: C5 {} stores={} rows={} real={} \
+			tuples={} lk_checked={} lk_same_dup={} lk_in_tbl={} mism={} \
+			lk_bad={} clean={}", name, rep.stores, rep.rows, rep.real,
+			rep.tuples, rep.lk_checked, rep.lk_same_dup, rep.lk_in_tbl,
+			rep.mism.len(), rep.lk_bad.len(), rep.clean());
+		rep.clean() && rep.real > 0 && rep.lk_in_tbl == rep.lk_checked
+	}
+
+	/// P4: DB, C5, discharge + tune, the walk at the top rung, then
+	/// (non-aggr) K5, coverage, C1, K1/K3 totals, verdict.
+	fn tp_g3_run(spec: &DatasetSpec, bins: Vec<Vec<String>>,
+		num_circs: usize, db_count: Option<usize>) {
+		let t0 = std::time::Instant::now();
+		let name = spec.name;
+		let proot = utils::os::proj_root();
+		apply_spec_config(spec, false, &part_role(0, 1, 1));
+		println!("DEBUG USE 66103.0: G3 {} rb {} chunk_len {} check_lkup \
+			{} aggr {} root {}", name, spec.range2_bit, spec.chunk_len,
+			spec.b_check_lkup, spec.b_aggressive, proot);
+		for p in bins.iter().flatten() {
+			let a = if Path::new(p).is_absolute() { p.clone() }
+				else { format!("{}/{}", proot, p) };
+			println!("DEBUG USE 66103.0: G3 {} file {} {} B", name, p,
+				fs::metadata(&a).map(|m| m.len()).unwrap_or(0));
+		}
+		let src = format!("{}/{}", proot, spec.config_dir);
+		let n_sigs = read_lines_nonblank(
+			&format!("{}/{}", src, spec.sig_file)).len();
+		let _tc = TmpConfigDir(PathBuf::from(plan_dir(name, 0)));
+		let cfg_dir = match db_count {
+			Some(n) => {
+				let d = format!("{}/config", plan_dir(name, 0));
+				create_smaller_config_bounded(&src, spec.sig_file, n, &d,
+					(1usize << spec.range2_bit) - spec.chunk_len * 62);
+				d }
+			None => src.clone() };
+		let _td = TmpConfigDir(PathBuf::from(format!("{}/data/cache/{}",
+			proot, cache_dir_for(spec, 0))));
+		// build only: no cache read, no cache write (save() is heavy)
+		let db = {
+			let [sig, dfa, ised, ised_igc] = cfg_paths(spec, &cfg_dir);
+			Arc::new(ClamavDB::<Fr>::build_or_load(&default_clamav_cfg(),
+				&sig, &dfa, &ised, &ised_igc, &mut vec![],
+				&cache_dir_for(spec, 0), false, false)
+				.unwrap_or_else(|e| panic!("tp_g3 {} db: {:?}", name, e))) };
+		let lkup_n = {
+			use folding_schemes::folding::foldpot::sigma_ir1cs
+				::LookupTableTwoCol as _;
+			db.lkup.get_size() };
+		println!("DEBUG USE 66103.5: G3 {} after DB sig_lines {} (of {}) \
+			lkup {} db_s {:.1} debug_assertions {} {}", name,
+			db_count.unwrap_or(n_sigs), n_sigs, lkup_n,
+			t0.elapsed().as_secs_f64(), cfg!(debug_assertions), tp_mem());
+		if tp_env("TP_G3_DB_ONLY") {
+			println!("DEBUG USE 66103.9: G3 {} VERDICT DB_ONLY no checks \
+				run total_s {:.1}", name, t0.elapsed().as_secs_f64());
+			return;
+		}
+		assert!(tp_env("TP_G3_ARM"), "tp_g3: set TP_G3_ARM=1");
+		let c5 = tp_g3_c5(name, &db);
+		let (ts, lad) = {
+			let _est = EstimateCapsGuard::on();
+			let ts = discharge_for_tuning(spec, &db, &bins);
+			let lad = tune(spec, &db, &ts, num_circs);
+			(ts, lad) };
+		println!("DEBUG USE 66103.5: G3 {} after tune rungs {} words {} \
+			total_word_n {} t_s {:.1} {}", name, lad.len(), ts.words.len(),
+			ts.total_word_n, t0.elapsed().as_secs_f64(), tp_mem());
+		// move the table out (no 2nd copy): circuits read only its
+		// size. Still shared: clone it (Mal ~16 GB more, ESTIMATE).
+		let (lkup, db) = match Arc::try_unwrap(db) {
+			Ok(mut d) => (Arc::new(std::mem::replace(&mut d.lkup,
+				LookupTableTwoCol_Inst::dummy())), Arc::new(d)),
+			Err(a) => {
+				println!("DEBUG USE 66103.5: G3 {} db shared, lkup cloned",
+					name);
+				(Arc::new(a.lkup.clone()), a) } };
+		// top rung: non-aggr tune returns 1 rung, aggr lowest-first
+		let top = lad.last().expect("tp_g3: empty ladder");
+		let mw = spec.chunk_len;
+		let want_segs: Vec<usize> = ts.words.iter().map(|w|
+			utils::data::pad_word_to_multiple::<Fr>(w, mw).len() / mw)
+			.collect();
+		// aggr: CapErr bump-retry as fold's retry_caperr (the walk rung
+		// can need more than tune proved); non-aggr: fail fast
+		let mut bumps = 0u32;
+		let (circ, wk) = if spec.b_aggressive {
+			let _cg = CatchGuard::on();
+			let mut p = top.clone();
+			loop {
+				get_global_config().aggr_needs_subsigs = p.aggr_needs_subsigs;
+				let hook = std::panic::take_hook();
+				std::panic::set_hook(Box::new(|_| {}));
+				let r = probe_catching(|| {
+					let c = tp_g3_circ(spec, &db, &lkup, ts.total_word_n, &p);
+					let w = tp_g3_walk(&c, &lkup, &ts.words, &ts.infos, mw,
+						None, true);
+					Ok::<_, Vec<(String, usize)>>((c, w)) });
+				std::panic::set_hook(hook);
+				match r {
+					Ok(Ok(x)) => break x,
+					Ok(Err(errs)) => {
+						let (ch, un) = apply_caperr_bumps(&mut p, true, &errs);
+						bumps += 1;
+						println!("DEBUG USE 66103.5: G3 {} walk CapErr bump try \
+							{}: {:?}", name, bumps, errs);
+						assert!(ch && un.is_empty() && bumps <= 30,
+							"tp_g3 {}: CapErr retry stuck ({} tries, unmapped \
+							{:?}): {:?}", name, bumps, un, errs);
+					}
+					Err(m) => panic!("tp_g3 {}: {}", name, m),
+				}
+			}
+		} else {
+			let c = tp_g3_circ(spec, &db, &lkup, ts.total_word_n, top);
+			let w = tp_g3_walk(&c, &lkup, &ts.words, &ts.infos, mw, None,
+				true);
+			(c, w) };
+		let all = want_segs.iter().sum::<usize>();
+		let c2 = wk.segs == all && wk.pairs > 0;
+		let k6 = wk.k6 == all;
+		println!("DEBUG USE 66103.4: K4 SUMMARY {} segs {} of {} pairs {}",
+			name, wk.segs, all, wk.pairs);
+		println!("DEBUG USE 66103.8: K6 SUMMARY {} gen_witness {} of {}",
+			name, wk.k6, all);
+		let mut v = format!("replay={} pairs={} bumps={} C5={} K6={}", c2,
+			wk.pairs, bumps, c5, k6);
+		let mut ok = c2 && c5 && k6;
+		if spec.b_aggressive {
+			let k4n = tp_g3_k4neg(&lkup, &wk.first);
+			v = format!("{} K4neg={}", v, k4n);
+			ok &= k4n;
+		}
+		if !spec.b_aggressive {
+			// K5 at the cs-arm BP row with the smallest seg (cheapest
+			// replay); no BP row = K5 fails
+			let tot = tp_g3::tot();
+			let k5t = tot.first_bp.iter()
+				.min_by_key(|(w, s)| (**s, ts.words[**w].len()))
+				.map(|(w, s)| (*w, *s));
+			println!("DEBUG USE 66103.6: K5 target {:?}", k5t);
+			let (k5a, k5b) = match k5t {
+				Some((w, s)) => (tp_g3_k5(&circ, &lkup, &ts, mw, w, s, 1),
+					tp_g3_k5(&circ, &lkup, &ts, mw, w, s, 2)),
+				None => (false, false) };
+			// coverage: both arms saw every segment of every word
+			let mut cover = true;
+			for (wi, n) in want_segs.iter().enumerate() {
+				for igc in [false, true] {
+					let got = tot.cover.get(&(wi, igc)).map_or(0, |s| s.len());
+					let full = got == *n && tot.cover.get(&(wi, igc))
+						.map_or(*n == 0, |s| s.iter().max() == Some(&(n - 1)));
+					cover &= full;
+					println!("DEBUG USE 66103.1: K1 COVER word {} ({}) igc {} \
+						records {} of {} full={}", wi, ts.vdata[wi].fname, igc,
+						got, n, full);
+				}
+			}
+			let t = &tot;
+			let k1 = t.bad == 0 && t.d2a_c + t.d2a_sp + t.d2b_c
+				+ t.freeze_disagree + t.fz0_mismatch + t.h_bad
+				+ t.neg_gap == 0 && t.records > 0;
+			println!("DEBUG USE 66103.1: K1 SUMMARY {} {:?}", name,
+				tp_g3::Tot { cover: Default::default(),
+					first_bp: Default::default(), ..t.clone() });
+			let c6 = t.k3_fail == 0 && t.k3_ok > 0;
+			// C1 on every capture, serial on this thread
+			let (caps, seen, bytes) = tp_g3::take_caps();
+			println!("DEBUG USE 66103.2: K2 kept {} of {} captured, est {} MB",
+				caps.len(), seen, bytes >> 20);
+			let t1 = std::time::Instant::now();
+			let (mut c1s, mut c1b) = (0, 0);
+			for c in caps.iter() {
+				let (s, b) = tp_g3::c1(c);
+				c1s += s; c1b += b;
+			}
+			let c1 = c1b == 0 && c1s > 0;
+			println!("DEBUG USE 66103.2: C1 SUMMARY {} synth_ok {} synth_bad \
+				{} c1_s {:.1}", name, c1s, c1b, t1.elapsed().as_secs_f64());
+			v = format!("{} cover={} K1_zero={} bp={} tracked={} \
+				tracked_c={} frozen_c={} h1={} C1={} C6={} K5a={} K5b={}", v,
+				cover, k1, t.n_bp, t.tracked, t.n_tracked_c, t.n_frozen_c,
+				t.h1, c1, c6, k5a, k5b);
+			// known gap (owner 10/31): only the top rung is walked
+			v = format!("{} lower_rung=not_walked", v);
+			// liveness: data-dependent, 0 on the DRY smoke corpus
+			let live = tp_env("TP_G3_DRY") || (t.n_bp > 0 && t.tracked > 0
+				&& t.n_tracked_c > 0 && t.n_frozen_c > 0);
+			ok &= cover && k1 && live && c1 && c6 && k5a && k5b;
+		}
+		println!("DEBUG USE 66103.5: G3 {} end {}", name, tp_mem());
+		println!("DEBUG USE 66103.9: G3 {} VERDICT {} total_s {:.1}", name, v,
+			t0.elapsed().as_secs_f64());
+		assert!(ok, "tp_g3 {}: {}", name, v);
+	}
+
+	/// P5: Mal at production shape (rb 26, chunk 4096, full main.dat),
+	/// bins = the two largest CLAM files + gdb, 2-rung v2 tune.
+	/// TP_G3_DRY=1: laptop smoke (rb 22, chunk 128, 5% of the sigs,
+	/// readelf + a 5% gdb prefix, the dry_range2_bit bound).
+	#[test]
+	#[ignore]
+	fn tp_g3_mal() {
+		let _g = cfg_lock();
+		let b_dry = tp_env("TP_G3_DRY");
+		let mut spec = effective_spec(&CLAM, b_dry, 100.0);
+		spec.name = "tp_g3_clam";
+		spec.db_cache_dir = "tp_g3_clam_neo";
+		spec.b_check_lkup = false; // K4 checks the walk; no share bloat
+		spec.b_tune_v2 = true;
+		let d = "data/samples/binexec_merged128k";
+		if !b_dry {
+			tp_g3_run(&spec, vec![vec![format!("{}/anthoscli__00", d)],
+				vec![format!("{}/anthoscli__01", d)],
+				vec![format!("{}/gdb", d)]], 2, None);
+			return;
+		}
+		let proot = utils::os::proj_root();
+		let gdb = fs::read(format!("{}/{}/gdb", proot, d)).unwrap();
+		let pre = "/tmp/bora/tp_g3_gdb_5pct.bin";
+		fs::create_dir_all("/tmp/bora").unwrap();
+		fs::write(pre, &gdb[..gdb.len() * 5 / 100]).unwrap();
+		let n = read_lines_nonblank(&format!("{}/{}/{}", proot,
+			spec.config_dir, spec.sig_file)).len();
+		tp_g3_run(&spec, vec![vec![CLAM.scale_sources[0].to_string()],
+			vec![pre.to_string()]], 2, Some((n * 5 / 100).max(1)));
+		let _ = fs::remove_file(pre);
+	}
+
+	/// P6: Dlp (aggressive) full DB: C5, then the K4 + K6 walk of the
+	/// two scale emails (2-seg + 1-seg word) at the top rung of a
+	/// 1-rung tune. No K1-K3/K5 (aggr arm), no rung-change coverage.
+	/// TP_G3_DRY=1: laptop smoke (rb 22, 5% of the sigs, same emails).
+	#[test]
+	#[ignore]
+	fn tp_g3_dlp_fz() {
+		let _g = cfg_lock();
+		let b_dry = tp_env("TP_G3_DRY");
+		let mut spec = effective_spec(&DLP, b_dry, 100.0);
+		spec.name = "tp_g3_dlp";
+		spec.db_cache_dir = "tp_g3_dlp_neo";
+		spec.b_check_lkup = false; // K4 checks the walk; no share bloat
+		let n = read_lines_nonblank(&format!("{}/{}/{}",
+			utils::os::proj_root(), spec.config_dir, spec.sig_file)).len();
+		tp_g3_run(&spec, DLP.scale_sources.iter()
+			.map(|p| vec![p.to_string()]).collect(), 1,
+			b_dry.then(|| (n * 5 / 100).max(1)));
+	}
 }

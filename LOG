@@ -31931,6 +31931,32 @@ Goal 1. continue to fix.
 		#2 step 2. 
 		#3 step 3. hook patch: furter tests about
 			fix of loosing witness -> write server test
+		#4 step 4. fix dead doc lines
+		#5 step 5. pdate doc
+	[f] item 7
+		->1. map the data paths the serer runs read
+		->2. prepare bundle + data tar
+		->3. clone bundle and comparea
+		->4. fetch and release builda
+		->5. verify data paths
+		->6. update doc.
+	[g] item 10.
+		-> 1. fix spec
+		-> 2. fix test code
+		-> 3. further testing not main code
+		-> 4. bulid + smoke
+	[h] item 11
+		-> 1. double check GRP1 and GRP2  instructions
+		-> 2. design additional test.
+
+Saturday 10/31/2026
+Goal 1. continue to fix
+	[a] decisions on more unit testing in the server test
+	[b] step 3 of 6 (item 11): design to code (mostly unit tests)
+	[c] step 6 of item 11: build + local run
+	[d] step 5: review tests again
+	[e] step 6 of item 11: apply changes in doc
+	[f] 
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
