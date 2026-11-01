@@ -6078,6 +6078,74 @@ pub mod tests_sigma_ir1cs{
 			"hatch state non-terminal, the decider would catch it");
 	}
 
+	/// T932W-G G1-step (C4.5). The step circuit cannot see a last word
+	/// that declares length 0. Green before and after C5.1, the red test
+	/// is the decider's ARM 4. The statements carry the running count
+	/// 1, 1, 2, because the native step copies accumulated_word_len from
+	/// the statement while the circuit computes it. The circuit's z_3[1]
+	/// is not compared with the native hash: in the six_root toy they
+	/// differ already in sum_hab22_left (see s932w_run). The native acc
+	/// is checked against the circuit's formula instead.
+	#[test]
+	pub fn test_s932w_last_len_free_in_step(){
+		let cfg = poseidon_canonical_config::<Fr>();
+		let fq_bits = Fq::MODULUS_BIT_SIZE as usize;
+		//One arm, word 2 declares length len2. Returns step 3's SAT
+		//flag, its input z2 (patched), its act_word_subseg_size and the
+		//native z3.
+		let arm = |len2: Fr| -> (bool, ZiPartTwoInst<Fr>, Fr,
+			ZiPartTwoInst<Fr>){
+			let (_lk, mut inst, mut stmts) = gen_six_root_adv::<Fr,
+				Projective,S106Cm,S106Lk,false>(3, false);
+			s106_two_seg(&mut stmts);
+			stmts[2].accumulated_word_len = Fr::from(2u32);
+			//S106b demands equal copies on both subsegments
+			stmts[1].total_word_len = len2;
+			stmts[2].total_word_len = len2;
+			let z0 = ZiPartTwoInst::<Fr>::new(Fr::from(2u32),
+				Fr::from(3u32), &cfg, false, fq_bits, 2);
+			let z1 = s106_step_native(&mut inst, &z0, &stmts[0]);
+			let z2 = s106_step_native(&mut inst, &z1, &stmts[1]);
+			//carried I/O sums, as the honest control of
+			//test_s106b_first_seg_io_hatch
+			let mut z2p = z2.clone();
+			z2p.sum_inp = Fr::from(11u32);
+			z2p.sum_oup = Fr::from(11u32) * z2.ch * z2.ch;
+			let z3 = s106_step_native(&mut inst, &z2p, &stmts[2]);
+			let (sat, _z_out1) = s932w_synth_out(&inst, &z2p);
+			(sat, z2p, stmts[2].act_word_subseg_size, z3)
+		};
+		//The circuit's acc: b_last_full.select(act, acc + act), with
+		//b_last_full = (z2 acc == z2 total_word_len). True when the
+		//native z3 carries the circuit's value.
+		let acc_is_circuit = |z2: &ZiPartTwoInst<Fr>, act: Fr,
+			z3: &ZiPartTwoInst<Fr>| -> bool{
+			z2.accumulated_word_len != z2.total_word_len
+				&& z3.accumulated_word_len == z2.accumulated_word_len + act
+		};
+		let (two, zero) = (Fr::from(2u32), Fr::zero());
+
+		//honest, word 2 keeps total_word_len 2
+		let (sat, z2, act, z3) = arm(two);
+		assert!(sat, "G1-step honest: step 3 UNSAT");
+		assert!(acc_is_circuit(&z2, act, &z3) && z3.accumulated_word_len
+			== two, "G1-step honest: native acc is not the circuit's 2");
+		assert!(s932w_len_pin_holds(&z3),
+			"G1-step honest: length pin rejects the honest state");
+
+		//forged, word 2 declares total_word_len 0. The step circuit
+		//accepts it (the G1 gap), only the C5.1 length pin rejects it.
+		let (sat, z2, act, z3) = arm(zero);
+		assert!(sat, "G1-step forged: step 3 UNSAT, gap no longer open");
+		assert!(acc_is_circuit(&z2, act, &z3) && z3.accumulated_word_len
+			== two && z3.total_word_len == zero,
+			"G1-step forged: z3 is not the circuit's acc 2, total 0");
+		assert!(s106_pin_holds(&z3),
+			"G1-step forged: the S106 pin should not see the length");
+		assert!(!s932w_len_pin_holds(&z3),
+			"G1-step forged: the length pin accepts acc 2, total 0");
+	}
+
 	/// S106: a failed sig absent from discharged_sigs is REJECTED at an
 	/// honest last step and ACCEPTED with word_id=total_words=0.
 	#[test]

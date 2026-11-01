@@ -31956,7 +31956,27 @@ Goal 1. continue to fix
 	[c] step 6 of item 11: build + local run
 	[d] step 5: review tests again
 	[e] step 6 of item 11: apply changes in doc
-	[f] 
+Goal 2. item 8 of 11 items before server run
+	[a] goal: prepare the run instruction for cloudlab
+	[b] step 1: find errors in spec
+	[c] step 2: propose changes on spec in cloudlab instructions doc
+	[d] step 3. review
+	[e] step 4. runbook rewrite
+	[f] step 5: independent review
+	[g] step 6: update memory. 
+Goal 3. item 9 (set up ssh host)
+	[a] set up ssh key
+	[b] check portal setting
+
+Sunday 11/01/2026
+Goal 1. item 5
+	[a] step 1: check git status and packing
+	[b] step 2: git diff
+	[c] step 3: build on scratchpad 
+Goal 2. item 2
+	[a] step1: add test for test word_lena
+	[b] step 5: git apply
+Goal 3. item 6.
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
