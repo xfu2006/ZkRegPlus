@@ -31977,6 +31977,8 @@ Goal 2. item 2
 	[a] step1: add test for test word_lena
 	[b] step 5: git apply
 Goal 3. item 6.
+	[a] imrpove speed of gen_stmt_pin
+	[b]
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
