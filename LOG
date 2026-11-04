@@ -31978,7 +31978,31 @@ Goal 2. item 2
 	[b] step 5: git apply
 Goal 3. item 6.
 	[a] imrpove speed of gen_stmt_pin
-	[b]
+	[b] clean up temp dirs.
+
+Monday 11/02/2026
+Goal 1. start cloudlab experiment
+	[a] plan
+	[b] go over the list of actions
+	[c] check how to deal with Internet out TRF.
+	[d] orchestrate workflow to execute the tests
+
+Tuesday 11/03/2026
+Goal 1. continue test
+	[a] imprve RAM usage and swap space
+	[b] but unclear of the saving
+	[c] define T940: improving snark prover
+Goal 2. check the status -> ongoing.
+
+Wed 11/04/2026
+Goal 1. check status
+	[a] ongoing
+	[b] all tests done
+	[c] update doc
+	[d] reservation deleted
+	[e] GRP1 completed
+Goal 2. GRP2
+	[a] item1: improve RAM of prover.
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
