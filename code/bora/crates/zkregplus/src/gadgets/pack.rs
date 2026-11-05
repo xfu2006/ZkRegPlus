@@ -29,7 +29,7 @@ use ark_r1cs_std::{
 		fp::FpVar
 	},
 	alloc::AllocVar,
-	//eq::EqGadget,
+	eq::EqGadget,
 };
 use std::any::Any;
 use crate::{
@@ -236,7 +236,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 			+2*mlen + olen];
 		assert!(data_seg.len() + subtbl_id.len()
 			== self.get_msg_size().0 + ilen); //because ilen is not counted
-		let (_alpha, beta) = (wtns.msg2[msg2_idx].clone(), 
+		let (alpha, beta) = (wtns.msg2[msg2_idx].clone(), 
 			wtns.msg2[msg2_idx+1].clone());
 
 		//3. assert that all unique_states is the compressed
@@ -339,7 +339,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 		// is genereated in logup check in earlier inp_states -> unique_states
 		// But m_tbl for 
 		//
-		//COST: 4*mlen + 4*olen 
+		//COST: 4*mlen + 4*olen + 1 (final multiset equality)
+		let alpha_val = alpha.value()?;
 
 		//4.1 compute the grand prod of the unique_states
 		let sel_unique = subtbl_unique_states.iter().map(|s|
@@ -359,7 +360,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 			//i.e. item -1 + sel - sel*unique[i] = 0
 			//i.e., sel * unique[i] = sel + item -1
 			let item_val = if sel_unique[i].value()?.is_one(){
-				unique_states[i].value()?
+				unique_states[i].value()? + alpha_val
 			} else {F::one()};
 			let item = new_var(&cs, item_val);
 			let tp_sel = var_to_tuple_adv(&sel_unique[i], F::one());
@@ -372,7 +373,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 			]);
 			cs.enforce_constraint(
 				lb_sel.clone(),
-				vec_lb_unique[i].clone(),
+				vec_lb_unique[i].clone() + var_to_tuple(&alpha),
 				//lb_sel + lb_item + lb_neg_one.clone()
 				lb_four
 			)?;
@@ -391,13 +392,14 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 			//i.e. item -1 + sel - sel*oup[i] = 0
 			//i.e., sel * oup[i] = sel + item -1
 			let item_val = if sel_oup[i].value()?.is_one(){
-				oup_states[i].value()?
+				oup_states[i].value()? + alpha_val
 			} else {F::one()};
 			let item = new_var(&cs, item_val);
 			let lb_sel = var_to_lb(&sel_oup[i], F::one());
 			let tp_sel = var_to_tuple_adv(&sel_oup[i], F::one());
 			//let lb_item = var_to_lb(&item, F::one());
-			let lb_oup = var_to_lb(&oup_states[i], F::one());
+			let lb_oup = var_to_lb(&oup_states[i], F::one())
+				+ var_to_tuple(&alpha);
 			let lb_four = LinearCombination::<F>(vec![
 				tp_sel,
 				var_to_tuple(&item),
@@ -411,6 +413,8 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for PackFinalGadget<F>{
 			)?;
 			prod_oup = &prod_oup * &item;
 		}
+		//4.3 multiset equality: final-tagged unique states == oup_states
+		prod_unique.enforce_equal(&prod_oup)?;
 		if b_debug{
 			println!("## pack step.  ilen: {}, mlen: {}, olen: {},  r1cs: {}, vars: {}", 
 					ilen, mlen, olen,
@@ -609,5 +613,68 @@ pub mod tests_pack_gadget{
 		let lkup_share_size = 4usize;
 		test_gadget::<Fr>(rg, &vec![], &inp, &oup, &data, &adv.subtbl_id, 
 			lkup_share_size);
+	}
+
+	/// T936 S1: PackFinal on a small trace (finals {2,3}), with the
+	/// advice oup_states rewritten by `forge`. Returns true iff SAT.
+	fn t936_s1_pack_sat(forge: &dyn Fn(&mut Vec<Fr>)) -> bool{
+		let fsm_id: u32 = 0x10001001;
+		let fin = vec![Fr::from(2u32), Fr::from(3u32)];
+		let non = vec![101u32, 123, 134, 201].into_iter()
+			.map(|x| Fr::from(x)).collect::<Vec<Fr>>();
+		let (ilen, mlen, olen) = (40usize, 12usize, 6usize);
+		let mut inp_states = vec![];
+		let mut vec_b_final = vec![];
+		for i in 0..ilen{
+			let b = i%4==0;
+			inp_states.push(if b {fin[(i/4)%2]} else {non[i%4]});
+			vec_b_final.push(b);
+		}
+		let rg = Arc::new(PackFinalGadget::<Fr>::new(ilen, mlen, olen,
+			fsm_id));
+		let mut adv = PackFinalAdvice::new(&inp_states, &vec_b_final,
+			mlen, olen, fsm_id).unwrap();
+		forge(&mut adv.oup_states);
+		let data = vec![inp_states.clone(), adv.unique_states,
+			adv.m_table, adv.oup_states].concat();
+		let pad = data.len() - adv.subtbl_id.len();
+		let sid = [&adv.subtbl_id[..], &vec![Fr::zero(); pad][..]]
+			.concat();
+		std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+			test_gadget::<Fr>(rg, &vec![], &vec![], &vec![], &data,
+				&sid, 4))).is_ok()
+	}
+
+	#[test]
+	fn test_t936_s1_honest(){
+		assert!(t936_s1_pack_sat(&|_o: &mut Vec<Fr>| {}));
+	}
+
+	#[test]
+	fn test_t936_s1_forged_zero(){
+		//all final states zeroed: no sig can be joined downstream
+		let sat = t936_s1_pack_sat(&|o: &mut Vec<Fr>|
+			o.iter_mut().for_each(|x| *x = Fr::zero()));
+		println!("DEBUG USE 69361.1: forged sat = {}", sat);
+		assert!(!sat);
+	}
+
+	#[test]
+	fn test_t936_s1_forged_drop_one(){
+		//hide one reached final state (3)
+		let sat = t936_s1_pack_sat(&|o: &mut Vec<Fr>|{
+			let n = o.len(); o[n-1] = Fr::zero(); });
+		println!("DEBUG USE 69361.2: forged sat = {}", sat);
+		assert!(!sat);
+	}
+
+	#[test]
+	fn test_t936_s1_forged_alias(){
+		//{2,3} replaced by {6}: raw products alias, needs +alpha
+		let sat = t936_s1_pack_sat(&|o: &mut Vec<Fr>|{
+			let n = o.len(); o[n-2] = Fr::zero();
+			o[n-1] = Fr::from(6u32); });
+		println!("DEBUG USE 69361.3: forged sat = {}", sat);
+		assert!(!sat);
 	}
 }

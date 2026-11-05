@@ -50,7 +50,7 @@ use crate::{
 	type_def::{PcreInfo,ClamSigType,SubSigType,SubSigObj,ClamavApproxConfig,TriVal,ClamavSig,EvalDNF,CompOp},
 	hex_acdfa::{HexACDFA},
 	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, expose_hi_nibble_anchor, to_hir, analyze_aggressive_shape, direction_from_name, AggShapeErr},
-	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size},
+	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size,start_at_zero},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger,extract_clamav_reg},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
 };
@@ -653,7 +653,7 @@ impl ClamavSig{
 			log(0, log_level, &format!(" gen_vec_automaton build dfa size: {:?}", size_dfa(&dfa)));
 			log_perf(0, log_level, " gen_vec_automaton build dfa: ", &mut timer);
 			dfa.raw_str = subsig.value.clone();
-			vec_subsig_automaton.push( Arc::new(dfa) );
+			vec_subsig_automaton.push( Arc::new(start_at_zero(dfa)) );
 		}
 		vec_subsig_automaton
 	}

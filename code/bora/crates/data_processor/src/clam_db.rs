@@ -1407,10 +1407,9 @@ impl <F:PrimeField> ClamavDB<F>{
 		let f_trans_id = F::from(trans_tbl_id);
 		let unit = acdfa.state_part_bits;
 		let _num_states = acdfa.num_states;
-		if B_DEBUG {
-			assert!(unit*2 + 4 < 64);
-			assert!( (1<<unit) > _num_states );
-		}
+		//T936 S7: slot c+16(src+1)+2^(4+unit)(dst+1) < 2^56, states 1..=N
+		assert!(unit <= 27 && _num_states < 1usize << unit.min(52 - unit),
+			"T936 S7: trans pack overflow, unit={} N={}", unit, _num_states);
 		let vec_trans = acdfa.trans.par_iter().
 			map( |(k, v)|{
 				let src = k;
@@ -1600,7 +1599,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		lk.vals.append(&mut tuples);
 	}
 
-	/// add the init, non-final states, final states, and transitions
+	/// add the non-final states, final states, transitions, all states
+	/// (no init row: never looked up)
 	/// of a standard (note not ACDFA) into lookup table.
 	/// This is similar to add_acdfa_to_lkup
 	fn gen_dfa_lkup(
@@ -1608,16 +1608,13 @@ impl <F:PrimeField> ClamavDB<F>{
 		tbl_id_init: u32,  //the starting ID of four sub-tables
 	)->Vec<(F,F)>
 	{
+		assert!(dfa.initial==0, "T936 S6: DFA start != 0");
 		//1. set up the table IDs
-		let init_tbl_id = tbl_id_init;
 		let nonfinal_tbl_id = tbl_id_init+1;
 		let final_tbl_id = tbl_id_init+2;
 		let trans_tbl_id = tbl_id_init+3;
 		let all_states_id = tbl_id_init+6;
 
-		//2. build the single entry sub-table for init
-		let init_st = dfa.initial as u32;
-		let vec_init = vec![(F::from(init_tbl_id+1), F::from(init_st))]; 
 		let num_states = dfa.transitions.len();
 		let set_states = (0..num_states).collect::<HashSet<usize>>();
 		let set_finals = &dfa.finals;
@@ -1651,14 +1648,14 @@ impl <F:PrimeField> ClamavDB<F>{
 		//4. transitions
 		let f_trans_id = F::from(trans_tbl_id);
 		let unit = read_global_config().range2_bit;
-		if B_DEBUG {
-			assert!(unit*2 + 4 < 64);
-			assert!( (1<<unit) > num_states );
-		}
+		//T936 S7: same bound as add_acdfa_to_lkup
+		assert!(unit <= 27 && num_states < 1usize << unit.min(52 - unit),
+			"T936 S7: trans pack overflow, unit={} N={}", unit, num_states);
 		let vec_trans = dfa.transitions.par_iter().enumerate()
 			.map(|(src,hm)|{
 				let vec = hm.iter().map(|(ch, dst)|{
-					let trans = (*ch as usize) 
+					assert!(matches!(*ch, '0'..='9' | 'a'..='f'), "T936 S2: char {}", ch);
+					let trans = (ch.to_digit(16).unwrap() as usize) 
 						+ ((src+1)<<4) + ((dst+1)<<(4+unit));
 					(f_trans_id, F::from(trans as u64))
 				}).collect::<Vec<(F,F)>>();
@@ -1666,7 +1663,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			}).flatten().collect::<Vec<(F,F)>>();
 
 		//5. assemble
-		let v2d = vec![vec_init,vec_non_final,vec_final,vec_trans, 
+		let v2d = vec![vec_non_final,vec_final,vec_trans, 
 			vec_all_states];
 
 		v2d.concat()
@@ -1702,7 +1699,7 @@ impl <F:PrimeField> ClamavDB<F>{
 
 		//2. generate for dummy (sig=0, subsig=0, dfa=dummy)
 		let dummy_dfa = build_trap_dfa();
-		let tbl_id = Self::dfa_id(0, 0);
+		let tbl_id = Self::dfa_id_of_subsig(0);
 		let tuples_dummy = Self::gen_dfa_lkup(&dummy_dfa, tbl_id);
 		let mut tuples = [&tuples_dummy[..], &tuples_all[..]].concat();
 		lk.vals.append(&mut tuples);
@@ -2122,15 +2119,19 @@ impl <F:PrimeField> ClamavDB<F>{
 		mixed
 	}
 
-	/// Here we assume sig_id is at most 13-bit,
-	/// subsig_id is at most 6-bit
-	/// there will be no-conflicts with pm_acdfa_id
+	/// base of the trap DFA (v_subsig = 0); stride > largest offset (+6)
+	pub const DFA_ID_START: u32 = 0x40000000;
+	pub const DFA_ID_STRIDE: u32 = 8;
+	/// sub-table base of encoded subsig v_subsig; dfa_adv step 1 recomputes it
+	pub fn dfa_id_of_subsig(v_subsig: usize)-> u32{
+		let id = Self::DFA_ID_START as usize + Self::DFA_ID_STRIDE as usize*v_subsig;
+		assert!(id + 6 < CHAR as usize, "dfa_id overflow: {:#x}", id);
+		id as u32
+	}
+	/// subsig_id 0-based
 	pub fn dfa_id(sig_id: u32, subsig_id: u32)-> u32{
-		//allows about 256 subtbls
-		let start:u32 = 0x40000000;
-		let mixed = start + ((sig_id as u32)<<8) + subsig_id; 
-
-		mixed
+		Self::dfa_id_of_subsig(HexACDFA::gen_subsig_id_worker(
+			sig_id as usize, subsig_id as usize + 1))
 	}
 
 	/// Given a collection of signatures, write them to disk
@@ -2596,6 +2597,8 @@ impl <F:PrimeField> ClamavDB<F>{
 			&self.aggressive_max_span_nibbles).unwrap();
 		write_to_file(&format!("{}/aggressive_meta.txt", &sdir),
 			&s_agg);
+		//T936: cache format tag; caches without it are rebuilt
+		write_to_file(&format!("{}/fmt_t936.txt", &sdir), "1");
 
 	}
 
@@ -2694,7 +2697,8 @@ impl <F:PrimeField> ClamavDB<F>{
 			"vec_sigs.txt", "vec_crit_pat.txt", "vec_crit_pat_igc.txt",
 			"vec_bag_words.txt", "vec_bag_words_igc.txt", "map_crit_pat.txt",
 			"map_crit_pat_igc.txt", "dfa_crit.txt", "dfa_crit_igc.txt",
-			"sig_to_id.txt", "lkup.txt", "bundle_subsig.txt", "bundle_subsig_igc.txt"
+			"sig_to_id.txt", "lkup.txt", "bundle_subsig.txt", "bundle_subsig_igc.txt",
+			"fmt_t936.txt"
 		];
 		for f in files {
 			if !file_exists(&format!("{}{}", sdir, f)) {
@@ -3192,5 +3196,23 @@ mod tests_clam_db{
 		println!("{}", db.fmt_lkup_dist("full_clamav", &sig));
 		assert!(total <= cap,
 			"lookup total {} exceeds 2^28 budget {}", total, cap);
+	}
+
+	/// T936 S4 red (O3-4): sub-table ids of 7 subsigs pairwise disjoint;
+	/// no unshifted init value in the nonfinal sub-table.
+	#[test]
+	fn test_dfa_id_subtables_disjoint(){
+		let mut owner = std::collections::HashMap::<u32,u32>::new();
+		for sub in 0..7u32{ for off in [0u32,1,2,3,6]{
+			let id = ClamavDB::<Fr>::dfa_id(5, sub) + off;
+			if let Some(o) = owner.insert(id, sub){
+				panic!("DEBUG USE 69364.3: id {:#x} shared by subsig {} and {}", id, o, sub);
+			}
+		}}
+		let base = ClamavDB::<Fr>::dfa_id_of_subsig(0);
+		let rows = ClamavDB::<Fr>::gen_dfa_lkup(&crate::fsa_utils::build_trap_dfa(), base);
+		let nonfinal: Vec<Fr> = rows.iter().filter(|r| r.0==Fr::from(base+1)).map(|r| r.1).collect();
+		println!("DEBUG USE 69364.4: nonfinal vals = {:?}", nonfinal);
+		assert!(!nonfinal.contains(&Fr::zero()), "unshifted init value in nonfinal table");
 	}
 }

@@ -1095,6 +1095,12 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 
 
 
+		//T936 S3: tag = state*2^rb + id binds each join group to ONE state
+		let f_rb = F::from(1u64 << read_global_config().range2_bit);
+		let tags = (0..jlen).map(|i|
+			&data.decoded_final_states_sigs_states[i]*f_rb
+				+ &data.decoded_final_states_sigs_ids[i]
+		).collect::<Vec<FpVar<F>>>();
 		//2. verify the validity of encoded messages
 		verify_encoded_states_sig_count(cs.clone(), 
 			&data.final_states_sigs_count,
@@ -1251,7 +1257,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 				.select(
 					&sum_left, 
 					&(&sum_left*alpha
-						+&data.decoded_final_states_sigs_count_count[i])
+						+&data.final_states_sigs_count[i])
 				)?;
 			if i%ADD_CHAIN_SIZE==0{
 				sum_left = &sum_left * &fp_one; //to break long chain of
@@ -1283,7 +1289,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 			};
 			let b_not_last = b_last.not();
 			sum_right = b_last.select(
-				&(&sum_right*alpha + &data.decoded_final_states_sigs_ids[i]), 
+				&(&sum_right*alpha + &tags[i]), 
 				&sum_right
 			)?;
 			if i%ADD_CHAIN_SIZE==0{
@@ -1293,12 +1299,14 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for GetSigGadget<F>{
 			//3. in non-padding mode, ensure difference between IDs
 			// is one for the same signature
 			let diff = if i<jlen-1 {
-				&data.decoded_final_states_sigs_ids[i+1] 
-					- &data.decoded_final_states_sigs_ids[i]
+				&tags[i+1] - &tags[i]
 			} else { one_var.clone()};
 			check_imply(&b_not_padded.and(&b_not_last)?, 
 				&diff.is_eq(&one_var)?, "diff check")?;
 		}
+		//row 0 opens the first group: non-padded => id 1
+		(&data.decoded_final_states_sigs_ids[0] - &one_var)
+			.mul_equals(&data.final_states_sigs[0], &zero)?;
 		check_eq(&sum_left, &sum_right, "sum_left==sum_right")?;
 
 		if b_perf{
@@ -1397,5 +1405,128 @@ pub mod tests_sigs_gadget{
 		*/
 		test_gadget::<Fr>(rg, &vec![], &inp, &oup, &data,
 			&subtbl_id, lkup_share_size);
+	}
+
+	// ---- T936 S3: forged join/count rows drop a fired sig ----
+	use std::panic::{catch_unwind, AssertUnwindSafe};
+	use utils::consts::read_global_config;
+	use crate::gadgets::commons::{expand_vec, gen_m_table};
+	use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget_adv_ex;
+	const S3_FSM: u32 = 0x10001001;
+
+	/// abc->{s1,s4} (t,n=2), cba->{s1,s3} (s reached,n=2), 1234..->{s4} (u,n=1)
+	fn s3_setup() -> (GetSigAdvice<Fr>, Vec<Fr>, u32, u32, u32) {
+		let patterns = vec!["abc", "cba", "1234567890abcdef"].iter()
+			.map(|s| String::from(*s)).collect();
+		let acdfa = HexACDFA::new(1, &patterns);
+		let mut map = HashMap::<String,Vec<String>>::new();
+		map.insert("abc".into(), vec!["s1".into(), "s4".into()]);
+		map.insert("cba".into(), vec!["s1".into(), "s3".into()]);
+		map.insert("1234567890abcdef".into(), vec!["s4".into()]);
+		let mut sig_to_id = HashMap::<String,usize>::new();
+		for i in 1..6 { sig_to_id.insert(format!("s{}", i), i); }
+		let enc = |p: &str| (0..acdfa.num_acc_states)
+			.find(|&i| acdfa.final_to_patterns(i) == vec![p.to_string()])
+			.expect("final state") as u32 + 1;
+		let (s, t, u) = (enc("cba"), enc("abc"), enc("1234567890abcdef"));
+		let cap = SigGadgetCapacity{ final_states_buf_capacity: 16,
+			join_buf_capacity: 8, sig_buf_capacity: 6, count_sig_no_crit_pat: 3 };
+		let fs = vec![vec![Fr::from(s)], vec![Fr::zero(); 15]].concat();
+		let inp = vec![Fr::zero(); cap.sig_buf_capacity]; //no carry
+		let adv = GetSigAdvice::new(&fs, &inp, cap, &acdfa, &map, &sig_to_id,
+			S3_FSM as usize, &vec![0usize, 2, 5]).unwrap();
+		(adv, inp, s, t, u)
+	}
+
+	/// overwrite join rows (st,id,sig) + count rows (st,n); rebuild the rest
+	fn s3_forge(adv: &mut GetSigAdvice<Fr>, inp: &Vec<Fr>,
+		joins: &[(u32,u32,u32)], counts: &[(u32,u32)]) {
+		let (olen, jlen, slen) = (adv.capacity.final_states_buf_capacity,
+			adv.capacity.join_buf_capacity, adv.capacity.sig_buf_capacity);
+		let f = Fr::from(1u64 << read_global_config().range2_bit);
+		let (mut ce, mut cs_, mut cc) = (vec![], vec![], vec![]);
+		for &(s, c) in counts {
+			ce.push(Fr::from(s)*f + Fr::from(c)); cs_.push(Fr::from(s)); cc.push(Fr::from(c));
+		}
+		let (mut je, mut js, mut ji, mut jg) = (vec![], vec![], vec![], vec![]);
+		let mut mset = HashSet::<Fr>::new();
+		for &(s, id, g) in joins {
+			je.push(Fr::from(s)*f*f + Fr::from(id)*f + Fr::from(g));
+			js.push(Fr::from(s)); ji.push(Fr::from(id)); jg.push(Fr::from(g));
+			mset.insert(Fr::from(g));
+		}
+		for v in [&mut ce, &mut cs_, &mut cc] { expand_vec(v, olen); }
+		for v in [&mut je, &mut js, &mut ji, &mut jg] { expand_vec(v, jlen); }
+		let mut merge: Vec<Fr> = mset.into_iter().collect();
+		merge.sort(); expand_vec(&mut merge, slen);
+		let b_aggr = read_global_config().clamav_cfg.b_aggressive_sde_for_rep;
+		let d = &mut adv.data;
+		let src = if b_aggr { [&merge[..], &d.sigs_no_crit_pat[..]].concat() }
+			else { [&inp[..], &merge[..], &d.sigs_no_crit_pat[..]].concat() };
+		let mut oup: Vec<Fr> = src.iter().filter(|x| !x.is_zero()).cloned()
+			.collect::<HashSet<Fr>>().into_iter().collect();
+		expand_vec(&mut oup, slen); oup.sort();
+		d.m_tbl_joins_to_sigs = gen_m_table(&jg, &merge);
+		d.m_tbl_inp_sigs_oup = gen_m_table(&src, &oup);
+		d.m_tbl_decoded_final_states = gen_m_table(&d.final_states, &js);
+		d.final_states_sigs_count = ce;
+		d.decoded_final_states_sigs_count_states = cs_;
+		d.decoded_final_states_sigs_count_count = cc;
+		d.final_states_sigs = je; d.decoded_final_states_sigs_states = js;
+		d.decoded_final_states_sigs_ids = ji; d.decoded_final_states_sigs_sigs = jg;
+		d.sigs_to_merge = merge;
+		adv.oup = oup;
+	}
+
+	fn s3_sat(adv: &GetSigAdvice<Fr>, inp: &Vec<Fr>) -> bool {
+		let rg = Arc::new(GetSigGadget::<Fr>::new(&adv.capacity, S3_FSM));
+		let (oup, data) = (adv.oup.clone(), adv.data.clone().to_vec());
+		let sid = [adv.gen_subtbl_id_for_data(), adv.gen_subtbl_id_for_oup()].concat();
+		let pad = inp.len() + oup.len() + data.len() - sid.len();
+		let sid = [&sid[..], &vec![Fr::zero(); pad][..]].concat();
+		catch_unwind(AssertUnwindSafe(|| test_gadget_adv_ex::<Fr>(rg, &vec![],
+			inp, &oup, &data, &vec![], &vec![], &sid, 4, true, None, true))).is_ok()
+	}
+	fn s3_dropped(adv: &GetSigAdvice<Fr>, g: u32) -> bool {
+		!adv.oup.contains(&Fr::from(g))
+	}
+
+	#[test]
+	fn test_t936_s3_honest() {
+		let (adv, inp, _, _, _) = s3_setup();
+		assert!(s3_sat(&adv, &inp));
+	}
+	#[test]
+	fn test_t936_s3_decoy_complete_group_sat() { //extra work only
+		let (mut adv, inp, s, t, _) = s3_setup();
+		s3_forge(&mut adv, &inp, &[(s,1,1),(s,2,3),(t,1,1),(t,2,4)], &[(s,2),(t,2)]);
+		assert!(s3_sat(&adv, &inp));
+	}
+	#[test]
+	fn test_t936_s3_attack_a() { //start at id 2: s1 dropped
+		let (mut adv, inp, s, _, _) = s3_setup();
+		s3_forge(&mut adv, &inp, &[(s,2,3)], &[(s,2)]);
+		assert!(s3_dropped(&adv, 1));
+		let sat = s3_sat(&adv, &inp);
+		println!("DEBUG USE 69363.1: attack A sat = {}", sat);
+		assert!(!sat);
+	}
+	#[test]
+	fn test_t936_s3_attack_b() { //group switches state s->t: s3 dropped
+		let (mut adv, inp, s, t, _) = s3_setup();
+		s3_forge(&mut adv, &inp, &[(s,1,1),(t,2,4)], &[(t,2)]);
+		assert!(s3_dropped(&adv, 3));
+		let sat = s3_sat(&adv, &inp);
+		println!("DEBUG USE 69363.2: attack B sat = {}", sat);
+		assert!(!sat);
+	}
+	#[test]
+	fn test_t936_s3_attack_c() { //prefix of s + decoy count (u,1): s3 dropped
+		let (mut adv, inp, s, _, u) = s3_setup();
+		s3_forge(&mut adv, &inp, &[(s,1,1)], &[(u,1)]);
+		assert!(s3_dropped(&adv, 3));
+		let sat = s3_sat(&adv, &inp);
+		println!("DEBUG USE 69363.3: attack C sat = {}", sat);
+		assert!(!sat);
 	}
 }

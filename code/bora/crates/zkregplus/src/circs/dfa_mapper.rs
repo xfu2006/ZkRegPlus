@@ -30,7 +30,7 @@ use std::{
 use folding_schemes::{
 	Error,
 	folding::foldpot::{
-		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo},
+		sigma_ir1cs::{ Capacity,  SigmaGadget, StatementConfig, NdAdvice,WordInfo,LookupTableTwoCol,StatementExtraInfo,DischargeSigInfo,StmtPin},
 		circuits_super::field_to_usize,
 		container_config::{ContainerConfig},
 	}
@@ -43,7 +43,7 @@ use crate::{
 	gadgets::word_extract_adv::{WordExtractAdvCapacity, WordExtractAdvGadget, WordExtractAdvAdvice },
 	gadgets::word_extract::{LEGS},
 	gadgets::dfa_adv::{DfaAdvCapacity,DfaAdvAdvice,DfaAdvGadget},
-	gadgets::traits::{ComponentAdvice},
+	gadgets::traits::{ComponentAdvice, IDX_INP},
 	//gadgets::commons::{print_vec},
 };
 use data_processor::{
@@ -245,7 +245,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 
 		//1. build the word extraction gadget's advice
 		let wd_extract_advice = WordExtractAdvAdvice::<F>
-			::new(word_seg, actual_size, true)?; //use char map mode for sid
+			::new(word_seg, actual_size, false)?; //default: si = CHAR
 		if b_perf{ log_perf(job_id, LOG4, "-- DFA advice step1: word_extract", &mut t1); }
 
 		//2. build dfa_adv advice
@@ -300,7 +300,7 @@ impl <F:PrimeField+ColEle> DfaAdvice<F>{
 			.collect::<Vec<F>>();
 		let v_dfa= v_dfa.into_iter().map(|s| s).flatten()
 			.collect::<Vec<Arc<DFA<char>>>>();
-		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id(0, 0));
+		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id_of_subsig(0));
 		let dummy_dfa = Arc::new(build_trap_dfa());
 		
 		let n = capacity.subsigs;
@@ -351,8 +351,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> DfaComponentMapper<F,LK>{
 		//1. build the gadgets
 		//1.1 the word extract gadget
 		let g_wea = WordExtractAdvGadget::<F>::new(capacity
-			.wea_capacity().max_word_len, true); //use the char_map as
-											//sid for nibbles
+			.wea_capacity().max_word_len, false); //default mode
 		cfgs.push( g_wea.dummy_cfg.clone() );
 
 		//1.2 the dfm_adv gadget
@@ -468,6 +467,28 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		vec![ (rg_g_ext, rg_g_ext_upper) ]
 	}
 
+	/// T936 S6: a word's first segment starts every DFA walk at state 0
+	/// (+1); pad slots use the trap DFA, also 0.
+	fn get_const_pins(&self, i: usize, stmt_cfg: &StatementConfig,
+		comp_cfgs: &Vec<Vec<usize>>)->Vec<(usize, StmtPin<F>)>{
+		let s_inp = stmt_cfg.idx_inp + comp_cfgs[i][0];
+		let res: Vec<(usize, StmtPin<F>)> = self.gadgets.iter()
+			.filter_map(|g| g.lock().unwrap().get_container_config()
+				.search_by_path(&"dfa_adv_stmt mul_fsm_acc states inp_state".to_string()))
+			.flat_map(|c| match c{
+				ContainerConfig::Column(loc, _, _, _) => {
+					assert!(loc.src.0==0 && loc.src.1==IDX_INP,
+						"T936 S6: inp_state is not own inp cells");
+					let (o, n) = (s_inp + loc.src.2, loc.src.3);
+					(0..n).map(move |k| (o+k, StmtPin::FirstSeg(F::one())))
+				},
+				_ => panic!("T936 S6: inp_state is not a column"),
+			}).collect();
+		assert!(res.len()==self.capacity.subsigs,
+			"T936 S6: {} inp_state cells", res.len());
+		res
+	}
+
 
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
 		prev_adv: Option<Arc<dyn NdAdvice + Send + Sync>>, seg_id: usize, _job_id: usize)
@@ -496,8 +517,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			&inp, &v_sigs, &sig_to_id, &discharge_info, F::from(seg_id as u64), _job_id)?;
 		let v_dfa = &dummy_adv.dfa_adv_advice.v_dfa;
 		assert!(v_dfa.len()==n);
-		let init_states = v_dfa.iter().map(|dfa| 
-			F::from((dfa.initial+1) as u32)).collect::<Vec<F>>();
+		//T936 S6: every sig DFA starts at 0 (+1), pinned at the first segment
+		assert!(v_dfa.iter().all(|d| d.initial==0),
+			"T936 S6: DFA start != 0 (stale DB cache?)");
+		let init_states = vec![F::one(); n];
 
 		//4. generate the inputs EITHER from input or initial
 		let inp_states = prev_adv.as_ref().map_or(

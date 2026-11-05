@@ -37,7 +37,7 @@ use ark_r1cs_std::{
 	R1CSVar,
 };
 use data_processor::{
-	clam_db::{ClamavDB,  RANGE2,CHAR_MAP,
+	clam_db::{ClamavDB,  RANGE2,CHAR,
 		//STORE_SUBSIG,
 	},
 	type_def::{TriVal,ClamavSig},
@@ -48,7 +48,7 @@ use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
 	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
 		encode_cols_var_adv_better , packcheck_vec, build_pows_31_val,
-		build_pows_56_val, var_to_lb, gen_vec_inverse, is_eq_adv,better_select},
+		build_pows_56_val, var_to_lb},
 	traits::{Container,
 		Col,
 		IDX_WORD, IDX_INP,IDX_DATA, IDX_DISCHARGED_SIGS,
@@ -184,7 +184,7 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		) ->Result<Self,Error>{
 		let stmt_container = Container::<F>::new("dfa_adv_stmt");
 		//1. padding the input when necessary
-		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id(0, 0));
+		let dummy_fsm_id = F::from(ClamavDB::<F>::dfa_id_of_subsig(0));
 		let dummy_dfa = Arc::new(build_trap_dfa());
 		let dummy_info = DischargeSigInfo{
 				sig_name: "none".to_string(),
@@ -309,8 +309,7 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 				.collect::<Vec<u8>>();
 			let s2 = u8_to_hex(&s_nibbles).as_bytes().to_vec().iter()
 				.map(|s| *s as char).collect::<Vec<char>>();
-			let mut sid_nibbles = vec![zero;nibbles.len()];
-			let f_map = F::from(CHAR_MAP as u32);
+			let sid_nibbles = vec![F::from(CHAR);nibbles.len()];
 			for i in 0..nibbles.len(){
 				let ch = s2[i];
 				let dst = dfa.transitions[src].get(&ch);
@@ -323,13 +322,12 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 					//if u_idx>=748447-100 && u_idx<=748447+10{
 					
 				}
-				let ch_usize = ch as usize;
+				let ch_usize = s_nibbles[i] as usize; //0..15, NOT ascii
 				let trans = ch_usize +
 					 ((src+1)<<4) + ((dst+1)<<(4+read_global_config().range2_bit));
 				v_states[i+1] = F::from((dst+1) as u32);
 				v_trans[i] = F::from(trans as u64);
 				src = *dst;
-				sid_nibbles[i] = F::from(ch as u8) + f_map;
 			}
 			let v_sid_states = vec![f_id_state; nlen+1];
 			let v_sid_trans = vec![f_id_trans; nlen];
@@ -353,32 +351,19 @@ impl <F: PrimeField + ColEle> DfaAdvAdvice<F>{
 		assert!(trans.len()==m*nlen);
 		assert!(sid_trans.len()==m*nlen);
 
-		//1.3 build v_sig_id and v_raw_subsig_id, v_dfa_id
-		//and add them into combo
+		//1.3 add v_subsig (v_dfa_id is recomputed in-circuit). INP + OUP
+		//copy: the I/O hand-off fixes each row's subsig over the word (S9)
 		let n = capacity.subsigs;
 		assert!(inp_subsigs.len()==n);
 		assert!(v_dfa_id.len()==n);
-		let v_sig = inp_subsigs.iter().map(|&ssid| 
-			extract_sigid(ssid).0
-		).collect::<Vec<F>>();
-		let v_raw_subsig = inp_subsigs.iter().map(|&ssid| 
-			extract_sigid(ssid).1
-		).collect::<Vec<F>>();
-		res.lock().unwrap().add_col(Col::<F>::new(v_sig, "v_sig",IDX_DATA)); 
 		res.lock().unwrap().add_col(Col::<F>::new(inp_subsigs.to_vec(),
-			"v_subsig",IDX_DATA)); 
-		res.lock().unwrap().add_col(Col::<F>::new(v_raw_subsig, "v_raw_subsig",
-			IDX_DATA)); 
-		res.lock().unwrap().add_col(Col::<F>::new(v_dfa_id.to_vec(), "v_dfa_id",
-			IDX_DATA)); 
-
-		res.lock().unwrap().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_sig",
-			IDX_SI_DATA)); 
+			"v_subsig",IDX_INP)); 
 		res.lock().unwrap().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_subsig",
-			IDX_SI_DATA)); 
-		res.lock().unwrap().add_col(Col::<F>::new_const(vec![frg;n], "sid_v_raw_subsig", IDX_SI_DATA)); 
-		res.lock().unwrap().add_col(Col::<F>::new_const(vec![zero;n], 
-			"sid_v_dfa_id", IDX_SI_DATA)); 
+			IDX_SI_INP)); 
+		res.lock().unwrap().add_col(Col::<F>::new(inp_subsigs.to_vec(),
+			"v_subsig_oup",IDX_OUP)); 
+		res.lock().unwrap().add_col(Col::<F>::new_const(vec![zero;n],
+			"sid_v_subsig_oup",IDX_SI_OUP)); //bound by check_eq, no lookup
 
 		//1.4 add columns related to inp/mid/oup states
 		let col_inp_state = Col::<F>::new(states[0..m].to_vec(),
@@ -765,9 +750,9 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 	//are usually very small (<10). meanly 3mn.
 	fn validate_mul_fsm_acc_container(&self, fsm_acc: &Container<FpVar<F>>, cs: ConstraintSystemRef<F>)
 	->Result<(), SynthesisError>{
-		//1. check the relations between v_sig, v_subsig,
-		//v_raw_subsig and v_dfa_id
-		//COST: 6n (where n = subsigs, in practice this is small: <10)
+		//1. v_dfa_id = DFA_ID_START + DFA_ID_STRIDE*v_subsig (= dfa_id_of_subsig).
+		//v_subsig is bound by the discharge LogUp. COST: n (+14n in the
+		//sigma I/O Horner loops)
 		let b_perf = false;
 		let log_level = LOG2;
 		let mut gt = GTimer::new();
@@ -775,47 +760,17 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		let n = self.capacity.subsigs;
 		let (zero,one) = (new_const_var(&cs, F::zero()), 
 			new_const_var(&cs, F::one()));
-		//let fr = new_const_var(&cs, F::from(RANGE2));
 		let bits = read_global_config().range2_bit;
-		let (bit_part1, bit_part2) =
-			utils::consts::current_bit_parts();
-		let _f_part1 = new_const_var(&cs, F::from(1u32<<bit_part1));
-		let f_part2 = new_const_var(&cs, F::from(1u32<<bit_part2));
-		let start = new_const_var(&cs, F::from(0x40000000u32));
-		let f_part3 = new_const_var(&cs, F::from(1u32<<8));
-
-		let names = vec!["v_sig", "v_subsig", "v_raw_subsig", "v_dfa_id"];
-		let cols = names.iter().map(|n| fsm_acc.get_container(n)
-			.unwrap().lock().unwrap().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
-		let (v_sig, v_subsig, v_raw_subsig, v_dfa_id) = (&cols[0],
-			&cols[1], &cols[2], &cols[3]);
-		for col in &cols {assert!(col.len()==n);}
-		//let sids = names.iter().map(|n| fsm_acc.get_container(
-		//	&format!("sid_{}",n)).unwrap().lock().unwrap().to_vec())
-		//	.collect::<Vec<Vec<FpVar<F>>>>();
-		for i in 0..n{
-			//1. ensure v_sig, subsig, raw_subsig in range
-			//so that we can reason about dfa_id
-			//NO need to check const SID they are fixed constants in sid
-			//check_eq(&sids[0][i], &fr, "sid v_sig failed")?;	
-			//check_eq(&sids[1][i], &fr, "sid v_subsig_sig failed")?;	
-			//check_eq(&sids[2][i], &fr, "sid v_raw_subsig failed")?;	
-
-			//2. check the relation between subsig <-- sig and raw_subsig 
-			let exp_subsig = &v_raw_subsig[i] + &(&v_sig[i] * &f_part2);
-			check_eq(&exp_subsig, &v_subsig[i], "fail subsig, sig check")?;
-
-			//3. reason about DFA_ID this basically simulates
-			// dfa_id() in data_processor/src/clam_db.rs
-			// ignore dummy (0) entry, in computing dfa_id for it
-			// there is a missing +1 shift. 
-			let exp_dfa_id = &start + &(&f_part3 * &v_sig[i]) + 
-				&v_raw_subsig[i] - &one;
-			let diff = &exp_dfa_id - &v_dfa_id[i];
-			//we could improve it with cs.enforce_constraints on lb
-			//and cut 1 constraint but n is small.
-			check_eq(&(&v_sig[i]*&diff), &zero, "fail dfa_id")?;
-		}
+		let start = new_const_var(&cs, F::from(ClamavDB::<F>::DFA_ID_START));
+		let stride = new_const_var(&cs, F::from(ClamavDB::<F>::DFA_ID_STRIDE));
+		let v_subsig = fsm_acc.get_container("v_subsig").unwrap()
+			.lock().unwrap().to_vec();
+		assert!(v_subsig.len()==n);
+		let v_dfa_id = v_subsig.iter().map(|s| &start + &(&stride * s))
+			.collect::<Vec<FpVar<F>>>();
+		let v_subsig_oup = fsm_acc.get_container("v_subsig_oup").unwrap()
+			.lock().unwrap().to_vec();
+		for i in 0..n{ check_eq(&v_subsig_oup[i], &v_subsig[i], "S9 oup copy")?; }
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_mul_fsm step 1", &mut gt);
 		}
@@ -823,11 +778,7 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		//2. asserts all states and transitions must be in range
 		// NOTE: we do not have to assert in range for nibbles they
 		// are done already in word_extract_adv gadget.
-		// in WordExtractAdv gadget: it has an nibbles_copy column
-		// and it is PROVED that nibbles are already in "CHAR" range.
-		// Here for the nibbles, they are lableled to their corresponding
-		// translation, and this is gauranteed correct translation
-		// given the nibbles_copy proof.
+		// (WordExtractAdv default mode: si_nibbles = const CHAR).
 		// m * n * 3/8
 		let names = vec!["states", "trans"];
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
@@ -910,11 +861,8 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			F::from((1<<(read_global_config().range2_bit+4)) as u32))?;
 		let hex_var = FpVar::<F>::new_constant(cs.clone(),
 			F::from(16 as u32))?;
-			//note here: si_nibble = CHAR_MAP + ch
-		let f_map = new_const_var(&cs, F::from(CHAR_MAP as u32));
-		let chars = fsm_acc.get_container("si_nibbles")?.lock().unwrap().to_vec();
-		let chars = chars.iter().map(|ch| ch-&f_map)
-			.collect::<Vec<FpVar<F>>>(); 
+		//chars = nibbles (0..15, CHAR-range-checked by word_extract)
+		let chars = fsm_acc.get_container("nibbles")?.lock().unwrap().to_vec();
 
 		assert!(chars.len()==nlen && states.len()==(nlen+1)*m 
 			&& trans.len()==nlen*m);
@@ -992,32 +940,19 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			log_perf(self.job_id, log_level, "validate_mul_fsm step 3", &mut gt);
 		}
 
-		//4. check the validity of subsig_res
-		//
-		//COST: 4m
-		let names = vec!["subsig_res", "si_oup_state_copy"]; 
+		//4. subsig_res in {False=1,True=2}; si_oup = v_dfa_id + res
+		//(+1 nonfinal, +2 final); oup copy = walk's last state. COST: 3m
+		let names = vec!["subsig_res", "si_oup_state_copy", "oup_state_copy"]; 
 		let cols = names.iter().map(|n| fsm_acc.get_container(n)
 			.unwrap().lock().unwrap().to_vec()).collect::<Vec<Vec<FpVar<F>>>>();
-		let (subsig_res,si_oup_state_copy) = (&cols[0], &cols[1]);
-		let two = new_const_var(&cs, F::from(2u32));
-		let f_true = new_const_var(&cs, F::from(TriVal::True as u8)); //2
-		let f_false = new_const_var(&cs, F::from(TriVal::False as u8)); //1
-
-		let f_two = F::from(2u32);
-		let vals = si_oup_state_copy.iter().zip(v_dfa_id.iter()).
-			map(|(x,y)| y.value().unwrap() - x.value().unwrap() + f_two)
-			.collect::<Vec<F>>();
-		let vec_inv = gen_vec_inverse(&vals);
+		let (subsig_res,si_oup,oup_copy) = (&cols[0], &cols[1], &cols[2]);
+		let f_true = new_const_var(&cs, F::from(TriVal::True as u8));
+		let f_false = new_const_var(&cs, F::from(TriVal::False as u8));
 		for i in 0..m{
-			let tbl_id = &v_dfa_id[i];
-			let final_tbl_id = tbl_id+&two;
-			//let b_final = final_tbl_id.is_eq(&si_oup_state_copy[i])?;
-			let b_final2 = is_eq_adv(&final_tbl_id, &si_oup_state_copy[i], 
-				&vec_inv[i], &cs);
-			//let exp_res = b_final.select(&f_true, &f_false)?;
-			let exp_res2 = better_select(&b_final2, &f_true, &f_false);
 			let res = &subsig_res[i];
-			check_eq(&exp_res2, &res, "failing res check")?;
+			(res - &f_false).mul_equals(&(res - &f_true), &zero)?;
+			check_eq(&si_oup[i], &(&v_dfa_id[i] + res), "oup sid")?;
+			check_eq(&oup_copy[i], &states[m*nlen + i], "oup copy")?;
 		}
 
 		if b_perf{
@@ -1398,9 +1333,12 @@ pub mod tests_dfa_adv_gadget{
 		circuits_super::field_to_usize,
 	};
 	use rustomaton::dfa::DFA;
+	use std::sync::Mutex;
+	use crate::gadgets::traits::{Container, IDX_INP, IDX_OUP};
+	use crate::gadgets::word_extract_adv::WordExtractAdvGadget;
+	use data_processor::type_def::TriVal;
 
-	#[test]
-	fn test_dfa_adv(){
+	fn dfa_adv_case(tamper: &dyn Fn(&Arc<Mutex<Container<Fr>>>, &DFA<char>, Fr)) -> bool{
 		//1. load the clamdb instance. It has the following sigs
 		//sig1: a....c|c....a
 		//word: 22a9999d111111 (it's expect c with a gap of 4 from a, but
@@ -1441,8 +1379,7 @@ pub mod tests_dfa_adv_gadget{
 			&db.sig_to_id, wlen, wlen
         ).1; //use optimize mode
 
-		//note: set true to use char map for nibbles.
-		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, true)
+		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
 			.expect("word_extract_adv err");
 		let stmt_wea = adv_wea.stmt_container;
 		let cfg_wea = stmt_wea.lock().unwrap().get_cfg(); 
@@ -1537,6 +1474,8 @@ pub mod tests_dfa_adv_gadget{
 		let stmt_faa = adv_faa.stmt_container;
 		let cfg_faa = stmt_faa.lock().unwrap().get_cfg(); 
 
+		{ let fsm = stmt_faa.lock().unwrap().get_container("mul_fsm_acc").unwrap();
+		  tamper(&fsm, &v_dfa[0], v_fsm_id[0]); }
 		//2.3 given cfgs, set up the positions
 		let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa];
 		ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
@@ -1558,6 +1497,7 @@ pub mod tests_dfa_adv_gadget{
 		let rg = Arc::new(fag);
 
 		//5. test it
+		std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
 		test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
 			&cps[6], &cps[7],
 			&vec![//subtbl_id (concats of si_inp, si_oup, si_data)
@@ -1568,8 +1508,283 @@ pub mod tests_dfa_adv_gadget{
 			false, //not legacy mode
 			Some(vec_cfg),
 		);
-
+		})).is_ok()
 		//todo!("manually verify two cases if DFA hits accept state or not for two different test cases");
 	}
-}
 
+	#[test]
+	fn test_dfa_adv(){ assert!(dfa_adv_case(&|_, _, _| {})); }
+
+	fn honest_false(fsm: &Container<Fr>){
+		let r = fsm.get_col("subsig_res").unwrap().lock().unwrap().data[0];
+		assert!(r == Fr::from(TriVal::False as u8), "fixture: honest res False");
+	}
+
+	/// T936 S5: oup_state_copy is not tied to the walk's last state.
+	#[test]
+	fn test_t936_s5_oup_copy_unbound(){
+		let sat = dfa_adv_case(&|fsm, dfa, _id| {
+			let fsm = fsm.lock().unwrap();
+			honest_false(&fsm);
+			let col = fsm.get_col("oup_state_copy").unwrap();
+			let mut col = col.lock().unwrap();
+			let honest = col.data[0];
+			//another member of the +1 (nonfinal) table
+			col.data[0] = (0..dfa.transitions.len())
+				.filter(|s| !dfa.finals.contains(s))
+				.map(|s| Fr::from((s + 1) as u32))
+				.find(|v| *v != honest).expect("need 2 nonfinal states");
+		});
+		println!("DEBUG USE 69365.1: forged sat = {}", sat);
+		assert!(!sat);
+	}
+
+	/// T936 S5: si_oup_state_copy may name +6 (all states), res False.
+	#[test]
+	fn test_t936_s5_oup_sid_all_states(){
+		let sat = dfa_adv_case(&|fsm, _dfa, id| {
+			let fsm = fsm.lock().unwrap();
+			honest_false(&fsm);
+			fsm.get_col("si_oup_state_copy").unwrap().lock().unwrap()
+				.data[0] = id + Fr::from(6u32);
+		});
+		println!("DEBUG USE 69365.2: forged sat = {}", sat);
+		assert!(!sat);
+	}
+
+	/// T936 S2 red test. ASCII hex char in the 4-bit slot of the sig-DFA
+	/// trans pack makes (s,'1'..'6') alias (s-3,'a'..'f'). Forged walk takes
+	/// a transition the DFA lacks; today circuit SAT and every
+	/// (si_trans, trans) is a real table row.
+	#[test]
+	fn test_dfa_char_slot_alias(){
+		use std::collections::HashSet;
+		use std::panic::{catch_unwind, AssertUnwindSafe};
+		use utils::data::u8_to_hex;
+		use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget_adv_ex;
+		let path= "debug/dfa/simple";
+		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
+		let wlen = 2usize;
+		let nibbles_raw = read_nibbles(
+			&format!("{}/data/{}/word2.txt", proj_root(), path));
+		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
+			.collect::<Vec<Fr>>();
+		let word = pad_word_to_multiple::<Fr>(&pack_nibbles(&f_nibbles), wlen);
+		let act_size = word.len();
+		let cfg = default_clamav_cfg();
+		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm("word2.txt",
+			&nibbles_raw, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+			&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+			&db.sig_to_id, wlen, wlen).1;
+		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
+			.expect("wea err");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let sig = db.vec_sigs.iter().find(|s| s.name=="sig1").unwrap().clone();
+		let sig_id = *db.sig_to_id.get(&sig.name).unwrap();
+		let info = wi.vec_dfa_sigs_info[0].clone();
+		assert!(info.sig_name=="sig1");
+		let dnf = sig.eval_dnf.vec_disjunc[0].clone();
+		let v_subsig_ids = dnf.iter().map(|i| Fr::from(
+			HexACDFA::gen_subsig_id_worker(sig_id, *i+1) as u32))
+			.collect::<Vec<Fr>>();
+		let v_fsm_id = dnf.iter().map(|i| Fr::from(
+			ClamavDB::<Fr>::dfa_id(sig_id as u32, *i as u32)))
+			.collect::<Vec<Fr>>();
+		let real_dfa = dnf.iter().map(|i| sig.vec_subsig_automaton[*i].clone())
+			.collect::<Vec<Arc<DFA<char>>>>();
+		let v_inp_state = real_dfa.iter()
+			.map(|d| Fr::from((d.initial+1) as u32)).collect::<Vec<Fr>>();
+		let cap = DfaAdvCapacity{max_nibble_len: wlen*LEGS, subsigs: 2, sigs: 1};
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
+			.lock().unwrap().to_vec();
+		let tbl: HashSet<(Fr,Fr)> = db.lkup.vals.iter().cloned().collect();
+		// T936 S2: every sig-DFA trans row holds the 4-bit nibble of its char
+		let rb = utils::consts::read_global_config().range2_bit;
+		for (d, id) in real_dfa.iter().zip(v_fsm_id.iter()){
+			for (src, hm) in d.transitions.iter().enumerate(){ for (ch, dst) in hm{
+				let v = ch.to_digit(16).unwrap() as u64 + (((src+1) as u64)<<4)
+					+ (((*dst+1) as u64)<<(4+rb));
+				assert!(tbl.contains(&(*id + Fr::from(3u32), Fr::from(v))),
+					"DEBUG USE 69362.2: trans row ({},{}) not nibble-encoded", src, ch);
+			}}
+		}
+
+		// (circuit SAT, all (si_trans,trans) rows in table)
+		let run = |v_dfa: &Vec<Arc<DFA<char>>>| -> (bool, bool) {
+			let adv = DfaAdvAdvice::new(&nibbles, &v_subsig_ids, &v_fsm_id,
+				v_dfa, &v_inp_state, &cap, &vec![Fr::from(sig_id as u64)],
+				&vec![info.clone()], &vec![sig.clone()], &db.sig_to_id,
+				Fr::zero()).expect("adv err");
+			let stmt_faa = adv.stmt_container;
+			let fa = stmt_faa.lock().unwrap().get_container("mul_fsm_acc").unwrap();
+			let tr = fa.lock().unwrap().get_container("trans").unwrap()
+				.lock().unwrap().to_vec();
+			let si = fa.lock().unwrap().get_container("si_trans").unwrap()
+				.lock().unwrap().to_vec();
+			let in_tbl = tr.iter().zip(si.iter())
+				.all(|(t,s)| tbl.contains(&(*s,*t)));
+			let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
+			let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa];
+			ContainerConfig::adjust_locations(&mut vec_cfg);
+			let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+			let cps2 = stmt_faa.lock().unwrap().gen_stmt_components();
+			let cps = cps1.0.into_iter().zip(cps2.0.into_iter())
+				.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+			let mut fag = DfaAdvGadget::<Fr>::new(&cap, &vec![cfg_wea.clone()]);
+			fag.set_container_cfg(vec_cfg.clone().into(), 1);
+			let rg = Arc::new(fag);
+			let sat = catch_unwind(AssertUnwindSafe(|| test_gadget_adv_ex::<Fr>(
+				rg, &word, &cps[0], &cps[1], &cps[2], &cps[6], &cps[7],
+				&vec![cps[3].clone(), cps[4].clone(), cps[5].clone()].concat(),
+				4, false, Some(vec_cfg), true))).is_ok();
+			(sat, in_tbl)
+		};
+
+		// find first alias site that changes the walk but keeps the verdict
+		let s2: Vec<char> = u8_to_hex(&nibbles.iter()
+			.map(|n| field_to_usize(n) as u8).collect()).chars().collect();
+		let walk = |d: &DFA<char>| -> Vec<usize> {
+			let mut v = vec![d.initial];
+			for c in &s2 { let s = *v.last().unwrap(); v.push(d.transitions[s][c]); }
+			v
+		};
+		let mut forged: Option<(usize, DFA<char>)> = None;
+		'outer: for (j, d) in real_dfa.iter().enumerate(){
+			let w = walk(d.as_ref());
+			let n_st = d.transitions.len();
+			for (i, &c) in s2.iter().enumerate(){
+				let src = w[i];
+				let alias = if ('1'..='6').contains(&c) && src >= 3 {
+					Some((src-3, (c as u8 + 48) as char))
+				} else if ('a'..='f').contains(&c) && src+3 < n_st {
+					Some((src+3, (c as u8 - 48) as char))
+				} else { None };
+				let Some((s_al, c_al)) = alias else { continue };
+				let d_al = d.transitions[s_al][&c_al];
+				if d_al == d.transitions[src][&c] { continue; }
+				assert!(c as usize + 16*(src+1) == c_al as usize + 16*(s_al+1));
+				let mut f = d.as_ref().clone();
+				f.transitions[src].insert(c, d_al);
+				let fw = walk(&f);
+				if d.finals.contains(fw.last().unwrap())
+					!= d.finals.contains(w.last().unwrap()) { continue; }
+				forged = Some((j, f));
+				break 'outer;
+			}
+		}
+
+		let (h_sat, h_tbl) = run(&real_dfa);
+		assert!(h_sat && h_tbl, "honest must be SAT with table rows");
+		let (j, f) = forged.expect("no alias site in word2.txt; use another word");
+		assert!(walk(&f) != walk(real_dfa[j].as_ref()));
+		let mut v_forged = real_dfa.clone();
+		v_forged[j] = Arc::new(f);
+		let (sat, in_tbl) = run(&v_forged);
+		let sat = sat && in_tbl;
+		println!("DEBUG USE 69362.1: forged sat = {}", sat);
+		assert!(!sat);
+	}
+
+	/// T936 S4 red (O3-3): real subsig walked on the trap DFA, dfa_id
+	/// (pre-fix: dfa_id check voided by v_sig = 0, v_raw_subsig = v_subsig).
+	#[test]
+	fn test_dfa_id_alias(){
+		use crate::gadgets::word_extract::tests_word_extract_gadget::test_gadget_adv_ex;
+		use data_processor::fsa_utils::build_trap_dfa;
+		let path= "debug/dfa/simple";
+		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
+		let wlen = 2usize;
+		let cfg = default_clamav_cfg();
+		let nib2 = read_nibbles(&format!("{}/data/{}/word2.txt",proj_root(),path));
+		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm("word2.txt",
+			&nib2, &db.vec_sigs, &db.vec_sigs_no_critical_pat,
+			&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
+			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
+			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
+			&db.sig_to_id, wlen, wlen).1;
+		// matching word: bytes 61 99 99 63 = "a..c" hits /a..c/
+		let nib: Vec<u8> = "2261999963111111".chars()
+			.map(|c| c.to_digit(16).unwrap() as u8).collect();
+		let f_nib = nib.iter().map(|x| Fr::from(*x as u32)).collect::<Vec<Fr>>();
+		let word = pad_word_to_multiple::<Fr>(&pack_nibbles(&f_nib), wlen);
+		let adv_wea = WordExtractAdvAdvice::new(&word, word.len(), false).expect("wea");
+		let stmt_wea = adv_wea.stmt_container;
+		let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
+			.lock().unwrap().to_vec();
+		let sig = db.vec_sigs.iter().find(|s| s.name=="sig1").unwrap().clone();
+		let sig_id = *db.sig_to_id.get(&sig.name).unwrap();
+		let info = wi.vec_dfa_sigs_info[0].clone();
+		assert!(info.sig_name=="sig1");
+		let dnf = sig.eval_dnf.vec_disjunc[0].clone();
+		let v_subsig = dnf.iter().map(|i|
+			Fr::from(HexACDFA::gen_subsig_id_worker(sig_id, *i+1) as u32))
+			.collect::<Vec<Fr>>();
+		let hd = &sig.vec_subsig_automaton[dnf[0]];
+		let hex = utils::data::u8_to_hex(&nibbles.iter()
+			.map(|n| field_to_usize(n) as u8).collect::<Vec<u8>>());
+		let mut st = hd.initial;
+		for ch in hex.chars(){ st = *hd.transitions[st].get(&ch).unwrap(); }
+		println!("DEBUG USE 69364.2: honest subsig match = {}", hd.finals.contains(&st));
+		let n1 = v_subsig.len();
+		let trap = Arc::new(build_trap_dfa());
+		let dummy_id = Fr::from(ClamavDB::<Fr>::dfa_id_of_subsig(0));
+		let cap = DfaAdvCapacity{max_nibble_len: wlen*LEGS, subsigs: 2, sigs: 1};
+		let adv = DfaAdvAdvice::new(&nibbles, &v_subsig, &vec![dummy_id; n1],
+			&vec![trap; n1], &vec![Fr::from(1u32); n1], &cap,
+			&vec![Fr::from(sig_id as u64)], &vec![info], &vec![sig.clone()],
+			&db.sig_to_id, Fr::zero()).expect("adv");
+		let stmt = adv.stmt_container;
+		let cfg_faa = stmt.lock().unwrap().get_cfg();
+		let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa];
+		ContainerConfig::adjust_locations(&mut vec_cfg);
+		let cps1 = stmt_wea.lock().unwrap().gen_stmt_components();
+		let cps2 = stmt.lock().unwrap().gen_stmt_components();
+		let cps = cps1.0.into_iter().zip(cps2.0.into_iter())
+			.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+		let mut fag = DfaAdvGadget::<Fr>::new(&cap, &vec![cfg_wea.clone()]);
+		fag.set_container_cfg(vec_cfg.clone().into(), 1);
+		let rg = Arc::new(fag);
+		let sat = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
+			test_gadget_adv_ex::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
+				&cps[6], &cps[7],
+				&vec![cps[3].clone(), cps[4].clone(), cps[5].clone()].concat(),
+				4, false, Some(vec_cfg), true))).is_ok();
+		println!("DEBUG USE 69364.1: forged sat = {}", sat);
+		assert!(!sat);
+	}
+
+	/// T936 S9: v_subsig and its OUP copy sit at the same offset of the
+	/// INP/OUP regions (as inp_state/oup_state), so the Horner hand-off
+	/// pairs them across segments.
+	#[test]
+	fn test_t936_s9_io_offsets(){
+		let wlen = 2usize;
+		let g_wea = WordExtractAdvGadget::<Fr>::new(wlen, false);
+		let cap = DfaAdvCapacity{max_nibble_len: wlen*LEGS, subsigs: 2, sigs: 1};
+		let g = DfaAdvGadget::<Fr>::new(&cap, &vec![g_wea.dummy_cfg.clone()]);
+		let dest = |p: &str| match g.dummy_cfg.search_by_path(
+			&format!("dfa_adv_stmt mul_fsm_acc {}", p)).expect(p){
+			ContainerConfig::Column(l, ..) => l.dest.unwrap(),
+			_ => panic!("{} not a column", p)};
+		let (a, b) = (dest("v_subsig"), dest("v_subsig_oup"));
+		assert!(a.0==IDX_INP && b.0==IDX_OUP && a.1==b.1 && a.2==cap.subsigs
+			&& b.2==a.2, "T936 S9: v_subsig copies misaligned");
+		let (c, d) = (dest("states inp_state"), dest("states oup_state"));
+		assert!(c.1==d.1 && c.2==d.2, "T936 S9: state cells misaligned");
+	}
+
+	/// T936 S9: the OUP copy must equal the row's v_subsig.
+	#[test]
+	fn test_t936_s9_subsig_oup_copy(){
+		let sat = dfa_adv_case(&|fsm, _dfa, _id| {
+			fsm.lock().unwrap().get_col("v_subsig_oup").unwrap()
+				.lock().unwrap().data[0] += Fr::from(1u32);
+		});
+		println!("DEBUG USE 69369.1: relabelled oup copy sat = {}", sat);
+		assert!(!sat);
+	}
+}

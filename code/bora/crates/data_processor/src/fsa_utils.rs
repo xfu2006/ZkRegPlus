@@ -75,6 +75,19 @@ pub fn build_trap_dfa()->DFA<char>{
 	dfa
 }
 
+/// T936 S6: rename states so the start is 0 (swap 0 and initial). The
+/// circuit pins each sig-DFA walk start to 0 at a word's first segment.
+pub fn start_at_zero(mut d: DFA<char>) -> DFA<char>{
+	let s = d.initial;
+	if s == 0 { return d; }
+	let sw = |q: usize| if q == 0 {s} else if q == s {0} else {q};
+	d.transitions.swap(0, s);
+	d.transitions.iter_mut().for_each(|t| t.values_mut().for_each(|q| *q = sw(*q)));
+	d.finals = d.finals.iter().map(|q| sw(*q)).collect();
+	d.initial = 0;
+	d
+}
+
 /// build NFA that accepts  (the original rustomaton is too slow)
 pub fn nfa_at_most(n: usize) -> NFA<char>{
 	let alpha = clamav_alphabet();

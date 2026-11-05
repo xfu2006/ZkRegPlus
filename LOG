@@ -32010,6 +32010,17 @@ Goal 2. GRP2
 	[b] plannon on item 2: fix word_len check
 	[c] item 3: multiple minor edits
 
+Thursday 11/05/26
+Goal 1. aprove item 2
+	[a] prod_unique
+	[b] oup_state
+	[c] char map ascii
+	[d] sigdfa bound to subsig
+	[e] fix si_oup_state_cp
+	[f] init state
+	[g] transition assert
+	[h]
+
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
 *Big server: started 08/15 4am -> 08/24 0am (almost 9 days!)

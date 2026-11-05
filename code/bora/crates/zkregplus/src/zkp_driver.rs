@@ -9510,4 +9510,40 @@ range2_bit={}", ds, b, nu, rb);
 		let _ = std::fs::remove_file(&fw);
 		assert!(r==Ok(false), "CP discharged slot covered a failed sig: {:?}", r);
 	}
+
+	/// T936 S6. Sig DFAs start at 0, and the DFA component pins every
+	/// inp_state cell to 1 (state 0) at a word's first segment.
+	#[test]
+	fn test_t936_s6_dfa_start_pin(){
+		let _cfg = t938_cfg_guard();
+		use ark_std::One;
+		use folding_schemes::folding::foldpot::sigma_ir1cs::{StmtPin, GadgetMapper, SigmaIR1CS};
+		let (db, cp, sed, dfa) = t938_small();
+		let bad = db.vec_sigs.iter().flat_map(|s| s.vec_subsig_automaton.iter())
+			.filter(|d| d.initial != 0).count();
+		let fw = t938_word("t936_s6", b"9ab0000007"); //no DFA_cs match
+		let (mut circ, stmts) = t938_env(db, &fw, 1, &cp, &sed, &dfa);
+		let _ = std::fs::remove_file(&fw);
+		let share = circ.get_lkup_share_size();
+		let gm = circ.get_mapper();
+		let (cfg, all, mut start, mut n_dfa) = {
+			let g = gm.lock().unwrap();
+			(g.gen_statement_structure(share).1, g.gen_stmt_pins(share), 0usize, 0usize)
+		};
+		for c in gm.lock().unwrap().vec_components.iter(){
+			let c = c.lock().unwrap();
+			let sz = c.get_sizes()[0];
+			if c.get_name()=="DfaMapper"{
+				let (lo, hi) = (cfg.idx_inp + start, cfg.idx_inp + start + sz);
+				n_dfa = all.iter().filter(|(j, p)| *j>=lo && *j<hi
+					&& matches!(p, StmtPin::FirstSeg(v) if v.is_one())).count();
+			}
+			start += sz;
+		}
+		println!("DEBUG USE 69366.3: DFA FirstSeg(1) pins = {}", n_dfa);
+		let r = t938_step(&mut circ, &t938_z0(), &stmts[0][0], false);
+		assert!(r==Ok(true), "honest first segment rejected: {:?}", r);
+		assert!(n_dfa==dfa.subsigs, "DFA inp_state pins {} != {}", n_dfa, dfa.subsigs);
+		assert!(bad==0, "{} sig DFAs start != 0", bad);
+	}
 }
