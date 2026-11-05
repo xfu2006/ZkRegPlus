@@ -203,6 +203,18 @@ where CS1E: CommitmentScheme<
 	pub lk_cm2: E::G1,
 }
 
+impl<'a, E:Pairing, CS1E, const H: bool> BatchProcessorVerifierParams<'a, E, CS1E, H>
+where CS1E: CommitmentScheme<
+        E::G1, H,
+        ProverChallenge = E::ScalarField,
+        Challenge = E::ScalarField,
+        Proof = KZGProof<E::G1>,
+    >,
+{
+	/// T933: word count the key was built for (two blind slots follow).
+	pub fn n_words(&self) -> usize { self.vec_dom_size.saturating_sub(2) }
+}
+
 
 /// The claim: kzg_all_words commits to the concatenation of all words.
 /// Since T932-F2W each word in it is followed by its blind (two
@@ -923,12 +935,11 @@ where
 		//checks and then hits a blind slot when n_words + 2 is the
 		//domain size. b_vcom stays the raw opening result, so the
 		//log shows which of the two rejected.
-		//Issue 6 K1. This binds membership, not position. The fold's
-		//word count is not pinned to n_words (S105b note in
-		//decider_eth_circuit_super.rs, the paper's pubstat_7 is not in
-		//the code), so a malicious batch whose fold has m != n_words
-		//words shifts each word by n_words - m.
-		let b_range = i < vkey.vec_dom_size.saturating_sub(2);
+		//T933 K2-min: the main decider pins the fold's word count to
+		//n_words (public input 2), so i < n_words is a position in the
+		//certified batch (lookups on; with b_check_lkup off the
+		//verdict is UNBOUND).
+		let b_range = i < vkey.n_words();
 		let opt_idx = veccom::omega_pow_idx::<E::ScalarField>(
 			vkey.vec_dom_size, i).ok();
 		let b_idx = b_range && opt_idx.is_some();
@@ -959,8 +970,7 @@ where
 			commitments differ from pubstat", ctx, i));}
 		if !b_idx {emit(ERR, format!("ind[{}] i={}: not a word slot \
 			(n_words={}) or omega^i failed, dom_size={}", ctx, i,
-			vkey.vec_dom_size.saturating_sub(2),
-			vkey.vec_dom_size));}
+			vkey.n_words(), vkey.vec_dom_size));}
 		if !b_vcom_eval {emit(ERR, format!("ind[{}] i={}: vcom eval \
 			got={} want={} (r_i={} ch={} v_i={})", ctx, i,
 			ind_proof.vcom_prf.eval, r_i + ch * v_i, r_i, ch, v_i));}
@@ -1280,7 +1290,8 @@ where
 				prf.agg_kzg_prf.eval //normal mode
 			};
 			//4.1 verify the maincirc snark proof
-			let pub_inp = vec![prf.mainres_hash.unwrap()];
+			let pub_inp = vec![prf.mainres_hash.unwrap(),
+				F::from(vkey.n_words() as u64)];
 			let snark_v_main = S::verify(
 				&snark_vk_main.expect("snark vkey_main empty"),
 				&pub_inp,

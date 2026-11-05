@@ -32005,8 +32005,10 @@ Goal 2. GRP2
 	[a] item1: improve RAM of prover.
 		-> various improvements such as
 			no longger store LCs and free up prover keys
-			once done. to cut peak RSS usage.
+			once done. to cut peak RSS usage. 
+		-> DOEN 
 	[b] plannon on item 2: fix word_len check
+	[c] item 3: multiple minor edits
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)

@@ -348,6 +348,8 @@ where C::BaseField: PrimeField,
 	/// T931 P2: (z_n.hc_a_out, z_n.hc_b_out), full mode only. Not in
 	/// Phase1CircuitRetVal or to_vec, so mainres_hash is unchanged.
 	pub cp_hc_out: Option<(FpVar<F>, FpVar<F>)>,
+	/// T933 K2-min: z_n.total_words, the main decider's public input 2.
+	pub total_words: Option<FpVar<F>>,
 }
 
 impl <F:PrimeField, C: CurveGroup<ScalarField=F>> Phase1CircuitRet<F,C>
@@ -381,6 +383,7 @@ where C::BaseField: PrimeField,
 
 			randf,
 			cp_hc_out: None,
+			total_words: None,
 		}
 	}
 
@@ -409,6 +412,7 @@ where C::BaseField: PrimeField,
 				Ok(val.u_i1_0_cmF), AllocationMode::Witness).unwrap(),
 			randf: new_var(cs, val.randf),
 			cp_hc_out: None,
+			total_words: None,
 		};
 		if b_debug{
 			use ark_r1cs_std::R1CSVar;
@@ -997,11 +1001,9 @@ where
 		//can seed away any deficit. Rebuilding the state here also
 		//subsumes S101: alpha = H(rc) and beta = H(rc, alpha) are
 		//recomputed in-circuit instead of read from an unbound witness.
-		//SCOPE: this pins the accumulators to zero and alpha/beta to
-		//rc. It does NOT pin total_words to a verifier-known count --
-		//it only ties z_0's copy to the final state's. Anchoring the
-		//count needs total_words as a real public input (BatchClaim +
-		//Phase1CircuitRet + mainres_hash), which is NOT done here.
+		//SCOPE: pins accumulators to zero and alpha/beta to rc.
+		//total_words is pinned to the verifier's n_words by the main
+		//decider's public input 2 (T933 K2-min).
 		{
 			let zero_v = FpVar::<CF1<C1>>::zero();
 			let mut sp = PoseidonSpongeVar::<CF1<C1>>::new(
@@ -1307,6 +1309,7 @@ where
 
 			randf,
 			cp_hc_out,
+			total_words: Some(zi_part2_inst_var.total_words),
 		};
 
 		if B_DEBUG3{check_cs(&cs, "phase1 step 10");}
@@ -2026,8 +2029,11 @@ where
 			mainres_hash.value()?
 		}else{C1::ScalarField::zero()};
 		let mainres_pub = FpVar::<C1::ScalarField>::new_input(cs.clone(),
-			|| Ok(mainres_hash_val) )?; //it is the ONLY PUBLIC VAR of circ!!! 
+			|| Ok(mainres_hash_val) )?; //public input 1 of 2
 		mainres_hash.enforce_equal(&mainres_pub)?;
+		//T933 K2-min: public input 2 = the fold's word count.
+		let tw = phase1_ret.total_words.as_ref().expect("T933: no total_words");
+		FpVar::new_input(cs.clone(), || tw.value())?.enforce_equal(tw)?;
 		if B_DEBUG2{
 			if phase1_ret.ch.value().is_ok(){
 				let phase1_ret_val = phase1_ret.val();
@@ -3389,7 +3395,8 @@ pub mod tests_decider_eth_circuit_super {
 		let pk = G16::generate_random_parameters_with_reduction(t934_main(circ.clone(), Fr::zero()),
 			&mut rng).unwrap();
 		let pvk = ark_groth16::prepare_verifying_key(&pk.vk);
-		let v = |p: &ark_groth16::Proof<Bn254>, h: Fr| G16::verify_proof(&pvk, p, &[h]).unwrap();
+		let n = circ.zi_part2_inst.as_ref().unwrap().total_words;
+		let v = |p: &ark_groth16::Proof<Bn254>, h: Fr| G16::verify_proof(&pvk, p, &[h, n]).unwrap();
 		let kappa = Fr::rand(&mut rng);
 		let d = G16::cp_commit(&pk, &all_w, kappa);
 		let r2 = kzg_ch(&cfg, KZG_CH_TAG_S1, com, d);
@@ -3407,6 +3414,8 @@ pub mod tests_decider_eth_circuit_super {
 		let h = main.res_hash;
 		let p = <G16 as CpSnark<Bn254>>::prove_cp(&pk, main, kappa, Some(d), &mut rng).unwrap();
 		assert!(v(&p, h), "T934-2: honest proof rejected");
+		assert!(!G16::verify_proof(&pvk, &p, &[h, n + Fr::one()]).unwrap(),
+			"T933 K2-min: honest proof verifies at word count n + 1");
 		//(a) forged W||E, same statement, honest D_1
 		let forged = t934_forge(&circ, Fr::one(), Some((r2, eval_all_w(&all_w, r2))));
 		let fa = forged.all_w();
@@ -3419,6 +3428,32 @@ pub mod tests_decider_eth_circuit_super {
 		let r2f = kzg_ch(&cfg, KZG_CH_TAG_S1, com, G16::cp_commit(&pk, &fa, kappa));
 		assert!(r2f != r2 && eval_all_w(&fa, r2f) != eval_all_w(&all_w, r2f),
 			"T934-2(b): r_2 does not follow D_1");
+	}
+
+	/// T933 K2-min: main decider public input 2 is the fold's word count
+	/// total_words. Honest SAT; the instance at n - 1 or n + 1 is UNSAT.
+	#[test]
+	fn test_t933_k2_count_public(){
+		let circ = t934_forge(&s119_fold(5), Fr::zero(), None);
+		let n = circ.zi_part2_inst.as_ref().unwrap().total_words;
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		t934_main(circ.clone(), Fr::zero()).generate_constraints(cs.clone()).unwrap();
+		assert!(cs.is_satisfied().unwrap(), "T933 K2-min: honest main decider not SAT");
+		assert_eq!(cs.borrow().unwrap().instance_assignment.get(2), Some(&n),
+			"T933 K2-min: public input 2 != total_words");
+		for k in [n - Fr::one(), n + Fr::one()] {
+			cs.borrow_mut().unwrap().instance_assignment[2] = k;
+			assert!(!cs.is_satisfied().unwrap(), "T933 K2-min: count {} != total_words SAT", k);
+		}
+		//T3: the equality row is (inst_2 - w) * 1 = 0, and w must be the digest-bound
+		//total_words. Moving inst_2 and w together to n + 1 must break a pin.
+		let (m, mut z, _) = synth_mats(|cs| t934_main(circ, Fr::zero()).generate_constraints(cs).unwrap());
+		let w = (0..m.num_constraints).find_map(|r| match m.a[r].as_slice() {
+			[(o, 2), (k, w)] if *o == Fr::one() && *k == -Fr::one() => Some(*w), _ => None })
+			.expect("T933 K2-min: no row inst_2 - w");
+		z[2] = n + Fr::one();
+		z[w] = z[2];
+		assert!(!unsat(&m, &z).is_empty(), "T933 K2-min: input 2 is tied to an unbound witness");
 	}
 
 	/// T934-5 F1c: the Horner multiplier `one` (value 1, sole B entry of
@@ -4039,9 +4074,9 @@ pub mod tests_decider_eth_circuit_super {
 		let mut run = |c: S119Circ| {
 			let d = G16::cp_commit(&pk, &c.all_w(), kappa);
 			let m = t934_main(c.clone(), kzg_ch(&cfg, KZG_CH_TAG_S1, c.com_all_w.unwrap(), d));
-			let h = m.res_hash;
+			let (h, n) = (m.res_hash, c.zi_part2_inst.as_ref().unwrap().total_words);
 			let p = <G16 as CpSnark<Bn254>>::prove_cp(&pk, m, kappa, Some(d), &mut rng).unwrap();
-			G16::verify_proof(&pvk, &p, &[h]).unwrap()
+			G16::verify_proof(&pvk, &p, &[h, n]).unwrap()
 		};
 		assert!(run(circ), "T934 K4: X/X control rejected");
 		assert!(!run(circ_y), "T934 K4: key for pp_hash X accepts an X + 1 proof");

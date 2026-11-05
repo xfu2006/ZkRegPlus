@@ -4491,9 +4491,9 @@ where 	C: CurveGroup<ScalarField=F>,
 		// The FIRST and LAST zi_part2 are pinned in the decider: S105b
 		// pins z_0[1] to the canonical initial state, and the S106
 		// terminality pin enforces word_id == total_words, subseg_id ==
-		// total_word_segs and word_id != 0 on the last one. NEITHER
-		// binds total_words to a verifier-known count -- that still
-		// needs it as a real public input (decider:918-921).
+		// total_word_segs and word_id != 0 on the last one.
+		// total_words is bound to the verifier's n_words by the main
+		// decider's public input 2 (T933 K2-min).
 		// Here we constrain both step-to-step cases: the word BOUNDARY
 		// (b_last_full) and, per S106b, the mid-word CONTINUATION.
 		let b_last_full = zi_part2.accumulated_word_len.is_eq(

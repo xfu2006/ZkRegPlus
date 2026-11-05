@@ -3712,8 +3712,9 @@ where
 	  			//DEBUG probe 69801: immediate self-verify against the
 	  			//from_nova public input, before Phase 2 can blur it.
 	  			if std::env::var("ZKR_MAIN_SNARK_PROBE").is_ok(){
-	  				let vres = S::verify(g16_vk,
-	  					&vec![mainres_hash], &snark_proof_main);
+	  				let n = driver1.batch_vk.as_ref().unwrap().n_words();
+	  				let vres = S::verify(g16_vk, &vec![mainres_hash,
+	  					C1::ScalarField::from(n as u64)], &snark_proof_main);
 	  				println!("DEBUG USE 69801.7: main snark immediate \
 verify vs from_nova hash: {:?}", vres);
 	  			}
