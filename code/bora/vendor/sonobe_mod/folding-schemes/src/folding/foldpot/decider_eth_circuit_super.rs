@@ -1931,13 +1931,14 @@ where
 		r_all_w_1: (C1::ScalarField, C1::ScalarField),
 		randf: C1::ScalarField,
     ) -> Result<Self, Error> {
-		use ark_relations::r1cs::ConstraintSystem;
+		use ark_relations::r1cs::{ConstraintSystem, SynthesisMode};
 		use ark_r1cs_std::R1CSVar;
 		let job_id = nova1.job_id;
 		let mut circ1 = Phase1Circuit::<E,P,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,LK,GM,H>::from_nova::<FC>(nova1, com_all_w_1, r_all_w_1)?;
 		circ1.kzg_ch = Some(C1::ScalarField::zero()); //T934: placeholder until finalize
 
         let cs = ConstraintSystem::<CF1<C1>>::new_ref();
+		cs.set_mode(SynthesisMode::Eager); //T940: values only
 		let res = circ1.generate_constraints_adv(0, cs.clone(), randf).unwrap();
 		let res_val = res.val();
 		let res_hash_var = res.hash(&circ1.poseidon_config,
@@ -1957,6 +1958,7 @@ where
 		self.res.kzg_all_com_ch = r_2;
 		self.res.eval_w_e = eval_all_w(all_w, r_2);
 		let cs = ark_relations::r1cs::ConstraintSystem::<CF1<C1>>::new_ref();
+		cs.set_mode(ark_relations::r1cs::SynthesisMode::Eager); //T940: values only
 		self.res_hash = Phase1CircuitRet::from(&self.res, &cs)
 			.hash(&self.circ1.poseidon_config, cs).value().expect("res hash");
 	}

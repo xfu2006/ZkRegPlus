@@ -11,6 +11,7 @@ use ark_std::{
 		VecDeque
 	},
     format,
+    mem,
     rc::Rc,
     string::String,
     vec,
@@ -83,6 +84,11 @@ pub struct ConstraintSystem<F: Field> {
     b_constraints: Vec<LcIndex>,
     c_constraints: Vec<LcIndex>,
 
+    // T940 (`SynthesisMode::Eager`): `<a_i, z>, <b_i, z>, <c_i, z>` per constraint.
+    az: Vec<F>,
+    bz: Vec<F>,
+    cz: Vec<F>,
+
     //lc_assignment_cache: Rc<RefCell<BTreeMap<LcIndex, F>>>,
     lc_assignment_cache: Rc<RefCell<Vec<Option<F>>>>,
 }
@@ -107,6 +113,10 @@ pub enum SynthesisMode {
         /// the matrices as in the `Setup` case.
         construct_matrices: bool,
     },
+    /// T940: prove mode that keeps only values. `new_lc` stores the LC's
+    /// value (in the assignment cache) and each constraint its row values
+    /// `<a_i, z>, <b_i, z>, <c_i, z>`. No LCs, no matrices.
+    Eager,
 }
 
 /// Defines the parameter to optimize for a `ConstraintSystem`.
@@ -150,6 +160,9 @@ impl<F: Field> ConstraintSystem<F> {
             a_constraints: Vec::new(),
             b_constraints: Vec::new(),
             c_constraints: Vec::new(),
+            az: Vec::new(),
+            bz: Vec::new(),
+            cz: Vec::new(),
             instance_assignment: vec![F::one()],
             witness_assignment: Vec::new(),
             //cache_map: Rc::new(RefCell::new(BTreeMap::new())),
@@ -206,6 +219,7 @@ impl<F: Field> ConstraintSystem<F> {
         match self.mode {
             SynthesisMode::Setup => true,
             SynthesisMode::Prove { construct_matrices } => construct_matrices,
+            SynthesisMode::Eager => false,
         }
     }
 
@@ -259,10 +273,16 @@ impl<F: Field> ConstraintSystem<F> {
 		//1. create the lc
         let index = LcIndex(self.num_linear_combinations);
         let var = Variable::SymbolicLc(index);
-		if B_DEBUG {
-			assert!(index.0==self.lc_map.len());
+		if self.mode == SynthesisMode::Eager {
+			debug_assert_eq!(index.0, self.lc_assignment_cache.borrow().len());
+			let v = self.eval(&lc).ok_or(SynthesisError::AssignmentMissing)?;
+			self.lc_assignment_cache.borrow_mut().push(Some(v));
+		} else {
+			if B_DEBUG {
+				assert!(index.0==self.lc_map.len());
+			}
+			self.lc_map.push(Some(lc));
 		}
-		self.lc_map.push(Some(lc));
         self.num_linear_combinations += 1;
         Ok(var)
     }
@@ -282,6 +302,12 @@ impl<F: Field> ConstraintSystem<F> {
             self.a_constraints.push(a_index);
             self.b_constraints.push(b_index);
             self.c_constraints.push(c_index);
+        } else if self.mode == SynthesisMode::Eager {
+            let e = |lc: &LinearCombination<F>| self.eval(lc).ok_or(SynthesisError::AssignmentMissing);
+            let (va, vb, vc) = (e(&a)?, e(&b)?, e(&c)?);
+            self.az.push(va);
+            self.bz.push(vb);
+            self.cz.push(vc);
         }
         self.num_constraints += 1;
 		/* LOOKS LIKE simply set default-features = false
@@ -1015,6 +1041,9 @@ impl<F: Field> ConstraintSystem<F> {
     /// Finalize the constraint system (either by outlining or inlining,
     /// if an optimization goal is set).
     pub fn finalize(&mut self) {
+        // T940: Eager skips outlining, so the circuit would not match a Weight pk.
+        assert!(self.mode != SynthesisMode::Eager || self.optimization_goal != OptimizationGoal::Weight,
+            "T940: Eager mode with OptimizationGoal::Weight");
         match self.optimization_goal {
             OptimizationGoal::None => self.inline_all_lcs(),
             OptimizationGoal::Constraints => self.inline_all_lcs(),
@@ -1026,10 +1055,7 @@ impl<F: Field> ConstraintSystem<F> {
     /// after all symbolic LCs have been inlined into the places that they
     /// are used.
     pub fn to_matrices(&self) -> Option<ConstraintMatrices<F>> {
-        if let SynthesisMode::Prove {
-            construct_matrices: false,
-        } = self.mode
-        {
+        if !self.should_construct_matrices() {
             None
         } else {
             let a: Vec<_> = self
@@ -1071,7 +1097,11 @@ impl<F: Field> ConstraintSystem<F> {
 
 	#[inline(always)]
     fn eval_lc(&self, lc: LcIndex) -> Option<F> {
-        let lc = &self.lc_map[lc.0].as_ref().unwrap();
+        self.eval(self.lc_map[lc.0].as_ref().unwrap())
+    }
+
+    /// The value of `lc` under the current assignment.
+    fn eval(&self, lc: &LinearCombination<F>) -> Option<F> {
         let mut acc = F::zero();
         for (coeff, var) in lc.iter() {
 			let v1 = self.assigned_value(*var);
@@ -1080,6 +1110,13 @@ impl<F: Field> ConstraintSystem<F> {
             acc += *coeff * v1;
         }
         Some(acc)
+    }
+
+    /// T940: hand over the Eager rows `(az, bz, cz)` and free the LC values.
+    /// The rows are gone after this; `is_satisfied` then returns `Err`.
+    pub fn take_rows(&mut self) -> (Vec<F>, Vec<F>, Vec<F>) {
+        self.lc_assignment_cache.take();
+        (mem::take(&mut self.az), mem::take(&mut self.bz), mem::take(&mut self.cz))
     }
 
     /// If `self` is satisfied, outputs `Ok(true)`.
@@ -1094,19 +1131,18 @@ impl<F: Field> ConstraintSystem<F> {
     /// the first unsatisfied constraint. If `self.is_in_setup_mode()`, outputs
     /// `Err(())`.
     pub fn which_is_unsatisfied(&self) -> crate::r1cs::Result<Option<String>> {
-        if self.is_in_setup_mode() {
+        if self.is_in_setup_mode()
+            || (self.mode == SynthesisMode::Eager && self.az.len() != self.num_constraints)
+        {
             Err(SynthesisError::AssignmentMissing)
         } else {
             for i in 0..self.num_constraints {
-                let a = self
-                    .eval_lc(self.a_constraints[i])
-                    .ok_or(SynthesisError::AssignmentMissing)?;
-                let b = self
-                    .eval_lc(self.b_constraints[i])
-                    .ok_or(SynthesisError::AssignmentMissing)?;
-                let c = self
-                    .eval_lc(self.c_constraints[i])
-                    .ok_or(SynthesisError::AssignmentMissing)?;
+                let (a, b, c) = if self.mode == SynthesisMode::Eager {
+                    (self.az[i], self.bz[i], self.cz[i])
+                } else {
+                    let e = |lc| self.eval_lc(lc).ok_or(SynthesisError::AssignmentMissing);
+                    (e(self.a_constraints[i])?, e(self.b_constraints[i])?, e(self.c_constraints[i])?)
+                };
                 if a * b != c {
                     let trace;
                     #[cfg(feature = "std")]
@@ -1397,6 +1433,13 @@ impl<F: Field> ConstraintSystemRef<F> {
     pub fn should_construct_matrices(&self) -> bool {
         self.inner()
             .map_or(false, |cs| cs.borrow().should_construct_matrices())
+    }
+
+    /// T940: check whether `self.mode == SynthesisMode::Eager`.
+    #[inline]
+    pub fn is_eager(&self) -> bool {
+        self.inner()
+            .map_or(false, |cs| cs.borrow().mode == SynthesisMode::Eager)
     }
 
     /// Obtain a variable representing a new public instance input.

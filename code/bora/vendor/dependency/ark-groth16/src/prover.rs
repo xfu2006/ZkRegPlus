@@ -4,7 +4,7 @@ use ark_ff::{Field, PrimeField, UniformRand, Zero};
 use ark_poly::GeneralEvaluationDomain;
 use ark_relations::r1cs::{
     ConstraintMatrices, ConstraintSynthesizer, ConstraintSystem, OptimizationGoal,
-    Result as R1CSResult,
+    Result as R1CSResult, SynthesisMode,
 };
 use ark_std::rand::Rng;
 use ark_std::{
@@ -216,6 +216,11 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
 
         // Set the optimization goal
         cs.set_optimization_goal(OptimizationGoal::Constraints);
+        // T940: keep row values, not LCs and matrices (env ZKR_G16_NO_EAGER: old path).
+        let eager = std::env::var_os("ZKR_G16_NO_EAGER").is_none();
+        if eager {
+            cs.set_mode(SynthesisMode::Eager);
+        }
 
         // Synthesize the circuit.
         let synthesis_time = start_timer!(|| "Constraint synthesis");
@@ -228,7 +233,13 @@ impl<E: Pairing, QAP: R1CSToQAP> Groth16<E, QAP> {
         end_timer!(lc_time);
 
         let witness_map_time = start_timer!(|| "R1CS to QAP witness map");
-        let h = QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.clone())?;
+        let h = if eager {
+            let (az, bz, cz) = cs.borrow_mut().unwrap().take_rows();
+            QAP::witness_map_from_evals::<E::ScalarField, D<E::ScalarField>>(
+                az, bz, cz, &cs.borrow().unwrap().instance_assignment)?
+        } else {
+            QAP::witness_map::<E::ScalarField, D<E::ScalarField>>(cs.clone())?
+        };
         end_timer!(witness_map_time);
 
         let prover = cs.borrow().unwrap();

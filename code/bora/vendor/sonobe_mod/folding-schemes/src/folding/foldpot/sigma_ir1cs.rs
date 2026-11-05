@@ -4371,7 +4371,7 @@ where 	C: CurveGroup<ScalarField=F>,
 		//log(job_id, log_level, &format!("gen_step_cs step 5: BEFORE inv_hab22: {}, cs.lc_size: {}, cons: {}", inv_hab22_left_size, cs.inner().lc_map.len(), cs.num_constraints()));
 		let n_total = n_case1 + n_case2 + n_case3;
 		log_perf(self.job_id, log_level, &format!("gen_step_cs step 5: AFTER inv_hab22: {}, INCREASED cs.lc_size: {}, cons: {}, vars: {} -- Breakdown of logup cases: n_case1: ({}, {:.2}%), n_case2: ({}, {:.2}%), n_case3: ({}, {:.2}%)"
-		, inv_hab22_left_size, cs.inner().unwrap().borrow().lc_map.len() - nl, cs.num_constraints()-nc, cs.num_witness_variables()-nv, n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
+		, inv_hab22_left_size, cs.num_lc() - nl, cs.num_constraints()-nc, cs.num_witness_variables()-nv, n_case1, 100.0*(n_case1 as f64)/(n_total as f64), n_case2, 100.0*(n_case2 as f64)/(n_total as f64), n_case3, 100.0*(n_case3 as f64)/(n_total as f64)
 		), &mut gt);
 		// MEASURED logup query cost (real cs-delta of this inv_hab22 block) +
 		// query length. Routed through the cost sink so it surfaces once, next

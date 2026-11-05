@@ -76,11 +76,12 @@ pub fn gadget_sat_on() -> bool {
 	GADGET_SAT.load(std::sync::atomic::Ordering::Relaxed)
 }
 /// Labeled satisfiability checkpoint. No-op unless GADGET_SAT is armed and cs
-/// is in prove mode with matrices. On UNSAT: prints 62730.2 + panics (naming
-/// the sub-gadget). which_is_unsatisfied returns the bare index (traces off).
+/// is in prove mode with matrices or (T940) Eager rows. On UNSAT: prints
+/// 62730.2 + panics (naming the sub-gadget). which_is_unsatisfied returns the
+/// bare index (traces off).
 pub fn gadget_sat_check<F:PrimeField>(cs: &ConstraintSystemRef<F>, label: &str){
 	if !gadget_sat_on() { return; }
-	if cs.is_in_setup_mode() || !cs.should_construct_matrices() { return; }
+	if cs.is_in_setup_mode() || !(cs.should_construct_matrices() || cs.is_eager()) { return; }
 	let n = cs.num_constraints();
 	match cs.which_is_unsatisfied() {
 		Ok(None) => emit_stdout(format!(
@@ -324,6 +325,15 @@ pub fn print_vec_var<F:PrimeField>(msg: &str, v: &Vec<FpVar<F>>){
 pub fn get_mem_usage()->usize{
 	let usage = memory_stats().expect("call mem usage fails");
 	usage.virtual_mem/(1024*1024*1024)
+}
+
+/// T940: real RAM as "RSS: R GiB, peak: P GiB" (VmRSS, VmHWM)
+pub fn get_rss_usage()->String{
+	let st = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+	let gib = |k: &str| st.lines().find(|l| l.starts_with(k))
+		.and_then(|l| l.split_whitespace().nth(1)?.parse::<usize>().ok())
+		.unwrap_or(0) >> 20;
+	format!("RSS: {} GiB, peak: {} GiB", gib("VmRSS:"), gib("VmHWM:"))
 }
 
 /// get the RAM in MB

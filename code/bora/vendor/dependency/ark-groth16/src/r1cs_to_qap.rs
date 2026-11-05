@@ -87,6 +87,15 @@ pub trait R1CSToQAP {
         full_assignment: &[F],
     ) -> R1CSResult<Vec<F>>;
 
+    /// T940: computes a QAP witness from the rows `<a_i, z>, <b_i, z>, <c_i, z>`
+    /// of a `SynthesisMode::Eager` synthesis and the instance assignment `inputs`.
+    fn witness_map_from_evals<F: PrimeField, D: EvaluationDomain<F>>(
+        az: Vec<F>,
+        bz: Vec<F>,
+        cz: Vec<F>,
+        inputs: &[F],
+    ) -> R1CSResult<Vec<F>>;
+
     /// Computes the exponents that the generator uses to calculate base
     /// elements which the prover later uses to compute `h(x)t(x)/delta`.
     fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(
@@ -95,6 +104,45 @@ pub trait R1CSToQAP {
         zt: F,
         delta_inverse: F,
     ) -> Result<Vec<F>, SynthesisError>;
+}
+
+/// T940: the IFFT/coset-FFT tail shared by both witness maps. `a`, `b` hold
+/// `A z`, `B z` over `domain` (input rows included); `c` yields `C z` and is
+/// called once `a`, `b` are freed.
+fn qap_tail<F: PrimeField, D: EvaluationDomain<F>>(
+    domain: D,
+    mut a: Vec<F>,
+    mut b: Vec<F>,
+    c: impl FnOnce() -> Vec<F>,
+) -> Vec<F> {
+    domain.ifft_in_place(&mut a);
+    domain.ifft_in_place(&mut b);
+
+    let coset_domain = domain.get_coset(F::GENERATOR).unwrap();
+
+    coset_domain.fft_in_place(&mut a);
+    coset_domain.fft_in_place(&mut b);
+
+    cfg_iter_mut!(a).zip(&b).for_each(|(a_i, b_i)| *a_i *= b_i);
+    drop(b);
+    let mut ab = a;
+
+    let mut c = c();
+    domain.ifft_in_place(&mut c);
+    coset_domain.fft_in_place(&mut c);
+
+    let vanishing_polynomial_over_coset = domain
+        .evaluate_vanishing_polynomial(F::GENERATOR)
+        .inverse()
+        .unwrap();
+    cfg_iter_mut!(ab).zip(c).for_each(|(ab_i, c_i)| {
+        *ab_i -= &c_i;
+        *ab_i *= &vanishing_polynomial_over_coset;
+    });
+
+    coset_domain.ifft_in_place(&mut ab);
+
+    ab
 }
 
 /// Computes the R1CS-to-QAP reduction defined in [`libsnark`](https://github.com/scipr-lab/libsnark/blob/2af440246fa2c3d0b1b0a425fb6abd8cc8b9c54d/libsnark/reductions/r1cs_to_qap/r1cs_to_qap.tcc).
@@ -176,40 +224,30 @@ impl R1CSToQAP for LibsnarkReduction {
             a[start..end].clone_from_slice(&full_assignment[..num_inputs]);
         }
 
-        domain.ifft_in_place(&mut a);
-        domain.ifft_in_place(&mut b);
+        Ok(qap_tail(domain, a, b, || {
+            let mut c = vec![zero; domain_size];
+            cfg_iter_mut!(c[..num_constraints])
+                .enumerate()
+                .for_each(|(i, c)| {
+                    *c = evaluate_constraint(&matrices.c[i], &full_assignment);
+                });
+            c
+        }))
+    }
 
-        let coset_domain = domain.get_coset(F::GENERATOR).unwrap();
+    fn witness_map_from_evals<F: PrimeField, D: EvaluationDomain<F>>(
+        mut a: Vec<F>,
+        mut b: Vec<F>,
+        mut c: Vec<F>,
+        inputs: &[F],
+    ) -> R1CSResult<Vec<F>> {
+        a.extend_from_slice(inputs);
+        let domain = D::new(a.len()).ok_or(SynthesisError::PolynomialDegreeTooLarge)?;
+        for v in [&mut a, &mut b, &mut c] {
+            v.resize(domain.size(), F::zero());
+        }
 
-        coset_domain.fft_in_place(&mut a);
-        coset_domain.fft_in_place(&mut b);
-
-        let mut ab = domain.mul_polynomials_in_evaluation_domain(&a, &b);
-        drop(a);
-        drop(b);
-
-        let mut c = vec![zero; domain_size];
-        cfg_iter_mut!(c[..num_constraints])
-            .enumerate()
-            .for_each(|(i, c)| {
-                *c = evaluate_constraint(&matrices.c[i], &full_assignment);
-            });
-
-        domain.ifft_in_place(&mut c);
-        coset_domain.fft_in_place(&mut c);
-
-        let vanishing_polynomial_over_coset = domain
-            .evaluate_vanishing_polynomial(F::GENERATOR)
-            .inverse()
-            .unwrap();
-        cfg_iter_mut!(ab).zip(c).for_each(|(ab_i, c_i)| {
-            *ab_i -= &c_i;
-            *ab_i *= &vanishing_polynomial_over_coset;
-        });
-
-        coset_domain.ifft_in_place(&mut ab);
-
-        Ok(ab)
+        Ok(qap_tail(domain, a, b, || c))
     }
 
     fn h_query_scalars<F: PrimeField, D: EvaluationDomain<F>>(

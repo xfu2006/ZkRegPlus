@@ -47,7 +47,7 @@ use crate::{
 		foldpot::{
 			container_config::{ColEle},
 			qa_nizk::{QaNizkProof,QaNizkProverParams},
-			utils::{Timer,get_mem_usage,get_mem_usage_mb,format_bytes,B_DEBUG},
+			utils::{Timer,get_mem_usage,get_mem_usage_mb,get_rss_usage,format_bytes,B_DEBUG},
 			circuits_super::{field_to_usize},
 			mod_super::{PreprocessorParamFoldPotSuper,FoldPotSuper,
 				compute_step_hc_cmF_adv},
@@ -3446,7 +3446,6 @@ where
 		// allocations to node (job_id % n_nodes). No-op unless multi-node + flag.
 		super::numa::bind_thread_to_node(job_id);
 		let res = (|| -> Result<(), Error> {
-                        let (pk_main_owned, vk_main_owned);
                         let (pk_cp_owned, vk_cp_owned);
 		//0. retrieve the words and word_info
 	  	log(job_id, log_level, &format!("--- Job {} starts ---", job_id));
@@ -3657,6 +3656,9 @@ where
 	  			set_gadget_sat(true);
 	  		}
 	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main, prf_kzg, kzg_all_com_ch) = {
+				// T940: a main pk set up in this run drops at the end of
+				// this block, before the CyclePair phase.
+				let (pk_main_owned, vk_main_owned);
 				let mut main_circ = MainDeciderCircuit::from_nova::<FC>(nova1,
 	  				com_all_w.clone(), r_all_w.clone(), randf).unwrap();
 	  			log_perf(job_id, log_level, &format!("FoldPot Step 4: build MAIN decider circuit. MEM: {} GB", get_mem_usage()), &mut gt1);
@@ -3686,6 +3688,7 @@ where
 						(&pk_main_owned, &vk_main_owned)
 					};
 	  			log_perf(job_id, log_level, &format!("PERF 1006: Job Step 2: setup Groth16. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+	  			log(job_id, log_level, &format!("PERF 1006: Job Step 2 {}", get_rss_usage()));
 
 				//T934 D5 (ruling B): all_w rebuilt after the wait. D_1
 				//first, then r_2 = H(tag, C_WE, D_1), its opening, finalize.
@@ -3746,6 +3749,7 @@ set; exit(0) before Phase 2.");
 	  		let b_check_lkup = driver1.layered_circs[0][0].is_check_lkup(); 
 	  		let driver1_poseidon_config = driver1.poseidon_config.clone();
 			log_perf(job_id, log_level, &format!("PERF 1006: Job Step 3: Gen Groth16 Proof for MainCirc. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+			log(job_id, log_level, &format!("PERF 1006: Job Step 3 {}", get_rss_usage()));
 	  		(snark_proof_main, mainres, mainres_hash, g16_vk_main, 
 	  			cyclepair_inputs,
 	  			kzg_sum1, ch1, rc1, randf,
@@ -3883,6 +3887,7 @@ set; exit(0) before Phase 2.");
 				(&pk_cp_owned, &vk_cp_owned)
 			};
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 6: setup Groth16 for CpCircuit. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+		log(job_id, log_level, &format!("PERF 1006: Job Step 6 {}", get_rss_usage()));
 
 		//T934 D5 Stage 2: D_2, r' = H(tag, C_W'E', D_2), its opening.
 		let all_w = cp_circuit.circ2.main_circ.all_w();
@@ -3902,6 +3907,7 @@ set; exit(0) before Phase 2.");
 			kappa, Some(d_2), &mut rng)
 			.map_err(|e| Error::Other(e.to_string())).unwrap();
 		log_perf(job_id, log_level, &format!("PERF 1006: Job Step 7: Generate Groth16 proof. MEM: {} GB.",  get_mem_usage()), &mut gt1);
+		log(job_id, log_level, &format!("PERF 1006: Job Step 7 {}", get_rss_usage()));
 
 		let g16_vk_cp_owned: S::VerifyingKey = g16_vk.clone();
 		drop(cp_read_guard);

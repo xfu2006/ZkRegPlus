@@ -2448,4 +2448,83 @@ mod tests_batch_proc {
 	#[test]
 	#[should_panic(expected = "missing or stale")]
 	fn t934_meta_v2(){ t934_meta("v2", Fr::from(5u64), Some(2)) }
+
+	/// T940 circuit: inputs x, y and `n` rounds of FpVar arithmetic (nested
+	/// symbolic LCs with constants), a bit decomposition every 256 rounds.
+	/// `bad` breaks the last row.
+	struct T940Circ { n: usize, bad: bool }
+	impl ark_relations::r1cs::ConstraintSynthesizer<Fr> for T940Circ {
+		fn generate_constraints(self, cs: ark_relations::r1cs::ConstraintSystemRef<Fr>)
+			-> ark_relations::r1cs::Result<()> {
+			use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::fp::FpVar, R1CSVar, ToBitsGadget};
+			let x = FpVar::new_input(cs.clone(), || Ok(Fr::from(3u64)))?;
+			let y = FpVar::new_input(cs.clone(), || Ok(Fr::from(5u64)))?;
+			let mut acc = FpVar::new_witness(cs.clone(), || Ok(Fr::from(7u64)))?;
+			for i in 0..self.n {
+				acc = (&acc + &x) * (&acc - &y + Fr::from(i as u64)) * Fr::from(2u64) + &y;
+				if i % 256 == 0 { let _ = acc.to_bits_le()?; }
+			}
+			let out = FpVar::new_witness(cs, || Ok(acc.value()? + Fr::from(self.bad as u64)))?;
+			out.enforce_equal(&acc)
+		}
+	}
+
+	/// T940: Eager rows equal the matrices times z, the UNSAT verdicts agree,
+	/// and `witness_map_from_evals` (input rows included) equals `witness_map`.
+	#[test]
+	fn t940_eager_rows(){
+		use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem, SynthesisMode};
+		use ark_groth16::r1cs_to_qap::{evaluate_constraint, LibsnarkReduction, R1CSToQAP};
+		type D = ark_poly::GeneralEvaluationDomain<Fr>;
+		for (n, bad) in [(3, false), (3, true), (600, false)] {
+			let cs_m = ConstraintSystem::<Fr>::new_ref();
+			T940Circ{ n, bad }.generate_constraints(cs_m.clone()).unwrap();
+			cs_m.finalize();
+			let cs_e = ConstraintSystem::<Fr>::new_ref();
+			cs_e.set_mode(SynthesisMode::Eager);
+			T940Circ{ n, bad }.generate_constraints(cs_e.clone()).unwrap();
+			let unsat = cs_e.which_is_unsatisfied().unwrap();
+			assert!(unsat == cs_m.which_is_unsatisfied().unwrap() && unsat.is_some() == bad,
+				"T940: Eager UNSAT verdict, n = {}, bad = {}", n, bad);
+			let (az, bz, cz) = cs_e.borrow_mut().unwrap().take_rows();
+			let mats = cs_m.to_matrices().unwrap();
+			let m = cs_m.borrow().unwrap();
+			let z = [m.instance_assignment.as_slice(), m.witness_assignment.as_slice()].concat();
+			let mz = |rows: &Vec<Vec<(Fr, usize)>>| rows.iter()
+				.map(|r| evaluate_constraint(r, &z)).collect::<Vec<Fr>>();
+			assert!(az == mz(&mats.a) && bz == mz(&mats.b) && cz == mz(&mats.c),
+				"T940: Eager rows != matrices * z, n = {}", n);
+			drop(m);
+			let h_e = LibsnarkReduction::witness_map_from_evals::<Fr, D>(az, bz, cz,
+				&cs_e.borrow().unwrap().instance_assignment).unwrap();
+			assert!(h_e == LibsnarkReduction::witness_map::<Fr, D>(cs_m).unwrap(),
+				"T940: h from Eager rows != h from matrices, n = {}", n);
+		}
+	}
+
+	/// T940: the Eager prover gives the matrices-path proof for the same r, s,
+	/// on a toy and a 2^16+ row circuit, and the proof verifies.
+	#[test]
+	fn t940_eager_proof_eq(){
+		use ark_relations::r1cs::{ConstraintSynthesizer, ConstraintSystem};
+		use ark_snark::SNARK;
+		assert!(std::env::var_os("ZKR_G16_NO_EAGER").is_none(), "T940: unset ZKR_G16_NO_EAGER");
+		let mut rng = test_rng();
+		for n in [3, 20000] {
+			let circ = || T940Circ{ n, bad: false };
+			let pk = G16::generate_random_parameters_with_reduction(circ(), &mut rng).unwrap();
+			let (r, s) = (Fr::rand(&mut rng), Fr::rand(&mut rng));
+			let p = G16::create_proof_with_reduction(circ(), &pk, r, s, Fr::zero(), None).unwrap();
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			circ().generate_constraints(cs.clone()).unwrap();
+			cs.finalize();
+			let c = cs.borrow().unwrap();
+			let z = [c.instance_assignment.as_slice(), c.witness_assignment.as_slice()].concat();
+			let q = G16::create_proof_with_reduction_and_matrices(&pk, r, s, &cs.to_matrices().unwrap(),
+				c.num_instance_variables, c.num_constraints, &z).unwrap();
+			assert!(n < 1000 || c.num_constraints >= 1 << 16, "T940: big circuit too small");
+			assert!(p == q && G16::verify(&pk.vk, &[Fr::from(3u64), Fr::from(5u64)], &p).unwrap(),
+				"T940: Eager proof != matrices proof, n = {}", n);
+		}
+	}
 }
