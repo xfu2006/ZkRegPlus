@@ -32019,7 +32019,10 @@ Goal 1. aprove item 2
 	[e] fix si_oup_state_cp
 	[f] init state
 	[g] transition assert
-	[h]
+	[h] v_subsig not across segments
+Goal 2. plan for server run GRP2
+	[a] mal dataset -> part1 vs both parts
+	[b] allow full mal data set run if folding cost not exceeding 512GB.
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
