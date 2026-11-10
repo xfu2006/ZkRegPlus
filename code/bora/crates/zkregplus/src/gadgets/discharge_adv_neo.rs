@@ -73,7 +73,7 @@ use folding_schemes::folding::foldpot::{
 	container_config::{ColEle, ContainerConfig},
 	circuits_super::field_to_usize,
 };
-use crate::gadgets::commons::{encode_cols, encode_cols_var,
+use crate::gadgets::commons::{encode_cols, encode_cols_var_adv,
 	verify_inverse,
 	is_zero_better_adv, check_eq, check_prod_zero, better_select,
 	new_const_var, new_var, gen_m_table_cond, gen_m_table,
@@ -463,6 +463,10 @@ pub const CAT_SP: u32 = 4;   // singleton-pruned
 /// [encoded, loc, cat, prev_id1, prev_loc1, prev_loc2,
 ///  min_next, fz, queue_len]
 pub const N_NEO_COLS: usize = 9;
+
+/// T958 X: limb width of the join's (pat, id, loc) packing. id is
+/// unranged but grows <= 2^rb per row, so id < n*2^rb < 2^60.
+pub(crate) const JOIN_PACK_BITS: u32 = 60;
 
 /// One (subsig, step) neo item: a standard StepQueueItem plus G.1 witness
 /// columns. cat/prev_* are parallel to base.locs; min_next/fz/queue_len are
@@ -3856,9 +3860,10 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 	pub(crate) fn gen_mtbl_tm_aggr(t: &QmTable<F>, l_pat: &[F],
 		l_id: &[F], l_loc: &[F], ns_pat: &[F]) -> Vec<F> {
 		let rb = read_global_config().range2_bit;
-		let (f_b, f_sh) = (F::from(1u64 << rb),
-			F::from(1u128 << (2 * rb)));
-		let f_t2 = F::from((1u64 << rb) + ((1u64 << rb) - 1));
+		let (f_b, f_sh) = (F::from(1u64 << JOIN_PACK_BITS),
+			F::from(1u128 << (2 * JOIN_PACK_BITS)));
+		let f_t2 = F::from((1u64 << JOIN_PACK_BITS)
+			+ ((1u64 << rb) - 1));
 		let one = F::one();
 		let qry_tm: Vec<F> = (0..t.enc.len()).map(|i|
 			t.pat[i] * f_sh + t.id[i] * f_b + t.loc[i])
@@ -4331,9 +4336,10 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		// = JR nonzero rows; targets = L ++ no-show sentinel
 		// pairs
 		let rb = read_global_config().range2_bit;
-		let (f_b, f_sh) = (F::from(1u64 << rb),
-			F::from(1u128 << (2 * rb)));
-		let f_t2 = F::from((1u64 << rb) + ((1u64 << rb) - 1));
+		let (f_b, f_sh) = (F::from(1u64 << JOIN_PACK_BITS),
+			F::from(1u128 << (2 * JOIN_PACK_BITS)));
+		let f_t2 = F::from((1u64 << JOIN_PACK_BITS)
+			+ ((1u64 << rb) - 1));
 		let one = F::one();
 		let qry_tm: Vec<F> = (0..jr.enc.len()).map(|i|
 			jr.pat[i] * f_sh + jr.id[i] * f_b + jr.loc[i])
@@ -5333,8 +5339,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	///       pat's matches.
 	///   (J-M) value side bound to tbl2 (= L = pat_loc): THIS
 	///       fn's one batch logup -- every selected row's
-	///       (pat, id, loc) triple is in pat_loc (fixed-base
-	///       encode_cols_var; legal: all three range-bound).
+	///       (pat, id, loc) triple is in pat_loc (fixed base
+	///       2^JOIN_PACK_BITS: loc is range-bound, id is not
+	///       but stays < n*2^rb < 2^60, so no limb carries).
 	/// Per block of pat p: no fabrication (each triple exists
 	/// in L) and no omission (the border forces the last loc
 	/// = max, whose only L row for p has id cnt+1; the +1
@@ -5387,7 +5394,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 	/// NO-SHOW EXTENSION: a store pat with zero matches has a
 	/// sentinel-only block; its two queries (p,0,0)/(p,1,max)
 	/// hit targets derived FREE from the committed ns_pat col
-	/// (p*2^2rb and p*2^2rb + 2^rb + max), eligible only where
+	/// (p*2^120 and p*2^120 + 2^60 + max), eligible only where
 	/// sel_ns = 1 -- and assert_ns_gap proves exactly those
 	/// pats absent from L, so a matched pat cannot fake an
 	/// empty block through them.
@@ -5438,17 +5445,22 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			}
 			return Ok(());
 		}
-		let qry = encode_cols_var(&vec![pat.to_vec(),
-			id.to_vec(), loc.to_vec()], &vec![0, 1, 2]);
-		let mut lk = encode_cols_var(&vec![l_pat.to_vec(),
-			l_id.to_vec(), l_loc.to_vec()], &vec![0, 1, 2]);
+		let rb = read_global_config().range2_bit;
+		assert!(((enc.len() as u128) << rb)
+			< (1u128 << JOIN_PACK_BITS),
+			"T958 X: join id may exceed 2^{}", JOIN_PACK_BITS);
+		let c_b = new_const_var(&cs,
+			F::from(1u64 << JOIN_PACK_BITS));
+		let qry = encode_cols_var_adv(&vec![pat.to_vec(),
+			id.to_vec(), loc.to_vec()], &vec![0, 1, 2], &c_b);
+		let mut lk = encode_cols_var_adv(&vec![l_pat.to_vec(),
+			l_id.to_vec(), l_loc.to_vec()], &vec![0, 1, 2], &c_b);
 		let c_one = new_const_var(&cs, F::one());
 		let mut tsel = vec![c_one.clone(); l_pat.len()];
-		let rb = read_global_config().range2_bit;
 		let c_sh = new_const_var(&cs,
-			F::from(1u128 << (2 * rb)));
+			F::from(1u128 << (2 * JOIN_PACK_BITS)));
 		let c_t2 = new_const_var(&cs,
-			F::from((1u64 << rb) + ((1u64 << rb) - 1)));
+			F::from((1u64 << JOIN_PACK_BITS) + ((1u64 << rb) - 1)));
 		for k in 0..ns_pat.len() {
 			lk.push(&ns_pat[k] * &c_sh);
 			tsel.push(sel_ns[k].clone());
@@ -10618,7 +10630,7 @@ mod tests_neo_m6_neg {
 	// ---- T965 B0: red tests pinning GRP3 holes (ALL_T958 X + D,
 	// AGGR_T968 NEW-1). Each is SAT at HEAD; the fix commit flips
 	// its FIXED_ const.
-	const FIXED_X: bool = false;
+	const FIXED_X: bool = true;
 	// same hole as tests_neo_nonaggr_neg::FIXED_D: flip both together
 	const FIXED_D: bool = false;
 	const FIXED_NEW1: bool = false;
@@ -12880,8 +12892,9 @@ mod tests_neo_nonaggr_neg {
 	/// M6: the JR -> L join m-table (mirror of gen_nonaggr's).
 	fn regen_jr_mtbl_tm(nat: &mut NeoCore<Fr>) {
 		let rb = read_global_config().range2_bit;
-		let (b, sh) = (Fr::from(1u64 << rb), Fr::from(1u128 << (2 * rb)));
-		let t2 = Fr::from((1u64 << rb) + ((1u64 << rb) - 1));
+		let (b, sh) = (Fr::from(1u64 << JOIN_PACK_BITS),
+			Fr::from(1u128 << (2 * JOIN_PACK_BITS)));
+		let t2 = Fr::from((1u64 << JOIN_PACK_BITS) + ((1u64 << rb) - 1));
 		let nz = |x: &Fr| if x.is_zero() { f(0) } else { f(1) };
 		let jr = &nat.jr;
 		let qry: Vec<Fr> = (0..jr.enc.len()).map(|i|
