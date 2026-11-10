@@ -3177,6 +3177,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let rb = read_global_config().range2_bit;
 		let c_max = new_const_var(&cs,
 			F::from(((1u64 << rb) - 1) as u64));
+		let c_b = new_const_var(&cs, F::from(1u64 << rb));
 		let c_one = new_const_var(&cs, F::one());
 		// --- Section 1: group adjacency bit (2cs/row) ---
 		// ONE forced indicator feeds the skeleton, the group starts
@@ -3472,9 +3473,15 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			// "same run, next group" is grp_start * same_sub, which
 			// is grp_start - bnd: free, same argument as Section 4.
 			let u = &grp_start[i] - &bnd[i];
+			// T958 D: same subsig AND step+1 in ONE product.
+			// subsig, step < 2^rb (enc limbs) and u = 1 only at
+			// step >= 1, so ds*2^rb + dt - 1 = 0 forces ds = 0,
+			// dt = 1. Without ds a run could end on ANOTHER
+			// subsig's LAST group, hiding its own terminal C.
 			check_prod_zero(&u,
-				&(&(&v.step[i] - &v.step[i - 1]) - &c_one), lc!(),
-				"neo run step chain")?;
+				&(&(&(&v.subsig[i] - &v.subsig[i - 1]) * &c_b)
+					+ &(&(&v.step[i] - &v.step[i - 1]) - &c_one)),
+				lc!(), "neo run step chain")?;
 		}
 		check_prod_zero(&(&c_one - &sel.is_pad[n - 1]),
 			&(&c_one - &sel.is_last[n - 1]), lc!(),
@@ -10632,7 +10639,7 @@ mod tests_neo_m6_neg {
 	// its FIXED_ const.
 	const FIXED_X: bool = true;
 	// same hole as tests_neo_nonaggr_neg::FIXED_D: flip both together
-	const FIXED_D: bool = false;
+	const FIXED_D: bool = true;
 	const FIXED_NEW1: bool = false;
 
 	/// M0: a red test's verdict. `sat` = the forgery is accepted.
@@ -12818,7 +12825,7 @@ mod tests_neo_nonaggr_neg {
 	// Verdicts use accepted_na (cs SAT + no outer RANGE2 violation).
 
 	// FIXED_D: also in tests_neo_m6_neg (aggr D); flip both together
-	const FIXED_D: bool = false;    // ALL_T958 D (N7 run splice)
+	const FIXED_D: bool = true;     // ALL_T958 D (N7 run splice)
 	const FIXED_N8: bool = false;   // NONAGGR_T959 (JR rank after pad)
 	const FIXED_G: bool = false;    // NONAGGR_T963 (BREAK2, q_i < max)
 	const FIXED_N11: bool = false;  // NONAGGR_T967 fix B (late seed)
