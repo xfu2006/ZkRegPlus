@@ -762,7 +762,7 @@ where
 	/// In addition to generate constraints, for stage 1 circuit
 	/// return the <<com_E, com_W, com_F>>; for stage 2 circuit
 	/// also z_n's (hc_a_out, hc_b_out) via cp_hc_out (T931 P2)
-    pub fn generate_constraints_adv(&self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>, _randf: CF1<C1>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
+    pub fn generate_constraints_adv(&self, _dump_level: usize, cs: ConstraintSystemRef<CF1<C1>>, randf_in: CF1<C1>) -> Result<Phase1CircuitRet<CF1<C1>,C1>, Error> {
     	//1. generate Vector the R1CS var (one for each circuit)
     	let log_level = LOG3;
     	let mut t1 = GTimer::new();
@@ -1279,9 +1279,9 @@ where
 		).flatten().collect::<Vec<NonNativeAffineVar<C1>>>();
 		let mut vec_coms = vec![com_all_w_clone];
 		vec_coms.append(&mut vec_coms_part2);
-        let mut rng = ark_std::test_rng();
-		let randf_val = C1::ScalarField::rand(&mut rng);
-		//let randf_val = C1::ScalarField::from(100u32);
+		//T941: salt mainres_hash with the caller's randf (driver
+		//draws it from OsRng), not a fixed-seed rng.
+		let randf_val = randf_in;
 		let randf = FpVar::<CF1<C1>>::new_witness(cs.clone(), ||{
 			Ok(randf_val)
 		})?;
@@ -1545,6 +1545,8 @@ where
 		assert!(self.main_circ.cp_U_i.is_some());  //2nd phase require it
 		let my_phase1_ret={
 			let main_circ2 = self.main_circ.clone();
+			//T941: 0 is fine. This main_ret is never hashed (CyclePair
+			//hashes the Stage-1 mainres), so its salt is unused.
 			let randf = CF1::<C1>::zero();
 			main_circ2.generate_constraints_adv(3,cs.clone(),randf).unwrap()
 		};
@@ -2824,6 +2826,34 @@ pub mod tests_decider_eth_circuit_super {
 		let idx = cs.which_is_unsatisfied().expect("unsat query err")
 			.map(|s| s.parse::<usize>().expect("want a bare index"));
 		(cs.num_constraints(), idx)
+	}
+
+	/// T941: the decider salt is the passed randf, not a fixed seed.
+	/// Two randf values give two mainres_hash values. The salt moves no
+	/// constraint: the toy's own known UNSAT row (see S119 ARM 0) is the
+	/// same for every randf.
+	#[test]
+	fn test_t941_randf_salt(){
+		use ark_r1cs_std::R1CSVar;
+		let circ = s119_fold(5);
+		let run = |r: Fr| {
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let ret = circ.generate_constraints_adv(0, cs.clone(), r)
+				.expect("gen_cs err");
+			let salt = ret.val().randf;
+			let h = ret.hash(&circ.poseidon_config, cs.clone()).value()
+				.expect("hash val");
+			let bad = cs.which_is_unsatisfied().expect("unsat query");
+			(salt, h, bad)
+		};
+		let (_, _, bad0) = run(Fr::zero());
+		let (f1, h1, bad1) = run(Fr::from(7u32));
+		let (f2, h2, bad2) = run(Fr::from(11u32));
+		assert!(bad1 == bad0 && bad2 == bad0,
+			"T941: randf moves satisfiability: {:?} {:?} {:?}", bad0, bad1, bad2);
+		assert_eq!(f1, Fr::from(7u32), "T941: salt is not the passed randf");
+		assert_eq!(f2, Fr::from(11u32), "T941: salt is not the passed randf");
+		assert_ne!(h1, h2, "T941: mainres_hash ignores randf");
 	}
 
 	/// T932W-G G1-prov. True when every witness column of constraint

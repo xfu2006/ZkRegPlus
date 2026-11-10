@@ -32077,6 +32077,8 @@ Goal 2. continue B0 -> DONE
 	[b] check speed issue mostly fixed
 Goal 3. B1
 	[a] item X 
+	[b] item D: check last step of a subsig
+
 Goal 4. B5
 	[b] skip T954
 	[b] refine T53: random blinder for cmF
