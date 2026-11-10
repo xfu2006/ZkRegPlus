@@ -904,3 +904,86 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> Add for NFA<V> {
         self.unite(other)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rand::{rngs::StdRng, Rng, SeedableRng};
+
+    /// T973: random layered NFA over {a,b,c}: `layers` layers of 8
+    /// states, 0-2 edges per letter into the next layer. The layers
+    /// bound the subset construction (<= 2^8 sets per layer).
+    fn rand_nfa(rng: &mut StdRng, layers: usize) -> NFA<char> {
+        let (w, n) = (8, 8 * layers);
+        let mut transitions = vec![HashMap::new(); n];
+        for (i, tr) in transitions.iter_mut().enumerate().take(n - w) {
+            let next = (i / w + 1) * w;
+            for v in "abc".chars() {
+                let mut t: Vec<usize> = (0..rng.gen_range(0, 3))
+                    .map(|_| next + rng.gen_range(0, w))
+                    .collect();
+                t.sort();
+                t.dedup();
+                if !t.is_empty() {
+                    tr.insert(v, t);
+                }
+            }
+        }
+        NFA {
+            alphabet: "abc".chars().collect(),
+            initials: (0..rng.gen_range(1, 4)).map(|_| rng.gen_range(0, w)).collect(),
+            finals: (0..n).filter(|_| rng.gen_range(0, 8) == 0).collect(),
+            transitions,
+        }
+    }
+
+    /// DFAs equal up to state renaming: BFS from both initials. All
+    /// states of both are reachable, so equal sizes make it a bijection.
+    fn iso(a: &DFA<char>, b: &DFA<char>) -> bool {
+        let n = a.transitions.len();
+        if n != b.transitions.len() || a.finals.len() != b.finals.len() {
+            return false;
+        }
+        let mut m = vec![usize::MAX; n];
+        m[a.initial] = b.initial;
+        let mut q = VecDeque::from(vec![(a.initial, b.initial)]);
+        while let Some((x, y)) = q.pop_front() {
+            if a.finals.contains(&x) != b.finals.contains(&y)
+                || a.transitions[x].len() != b.transitions[y].len()
+            {
+                return false;
+            }
+            for (v, &x2) in &a.transitions[x] {
+                match b.transitions[y].get(v) {
+                    Some(&y2) if m[x2] == usize::MAX => {
+                        m[x2] = y2;
+                        q.push_back((x2, y2));
+                    }
+                    Some(&y2) if m[x2] == y2 => {}
+                    _ => return false,
+                }
+            }
+        }
+        m.iter().all(|x| *x != usize::MAX)
+    }
+
+    /// T973 green: big_to_dfa (64-bit hash of the state set) builds the
+    /// same DFA as big_to_dfa_old (BTreeSet keys) on seeded random NFAs
+    /// with >= 128 states, the size where to_dfa dispatches to it.
+    #[test]
+    fn test_t973_big_to_dfa_diff() {
+        let mut rng = StdRng::seed_from_u64(973);
+        let mut n_states = 0;
+        for k in 0..40 {
+            let layers = rng.gen_range(16, 32);
+            let nfa = rand_nfa(&mut rng, layers);
+            let n = nfa.transitions.len();
+            // n = 8 * layers >= 128: to_dfa dispatches to big_to_dfa
+            let (new, old) = (nfa.big_to_dfa(), nfa.big_to_dfa_old());
+            assert!(iso(&new, &old), "T973 case {} (n={}): {} vs {} states",
+                k, n, new.transitions.len(), old.transitions.len());
+            n_states += new.transitions.len();
+        }
+        assert!(n_states > 40 * 64, "fixture: DFAs too small ({})", n_states);
+    }
+}

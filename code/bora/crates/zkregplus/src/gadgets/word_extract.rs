@@ -338,6 +338,65 @@ pub mod tests_word_extract_gadget{
 		vec_cfgs: Option<Vec<ContainerConfig>>, //set when b_legacy false
 		b_expect_sat: bool, //false = adversarial: expect UNSAT / error
 	){
+		let (r, cs) = gadget_adv_cs(g, word, inp, oup, data, failed_sigs,
+			discharged_sigs, subtbl_id, lkup_share_size, b_legacy, vec_cfgs);
+		if b_expect_sat {
+			r.expect("assert m3 fail");
+			assert!(cs.is_satisfied().unwrap());
+		} else {
+			//adversarial: rejection = assert_msg3 errored OR cs unsatisfied
+			let sat = r.is_ok() && cs.is_satisfied().unwrap();
+			assert!(!sat, "expected UNSAT (adversarial) but circuit satisfied");
+		}
+	}
+
+	/// T965 M2: as test_gadget_adv_ex but returns (sat, #constraints,
+	/// panicked) instead of asserting. A panic (native assert in advice
+	/// or gadget) gives (false, 0, true). sat = assert_msg3 Ok AND cs
+	/// satisfied.
+	pub(crate) fn test_gadget_adv_nc<F:PrimeField + Absorb + ColEle> (
+		g: Arc<dyn SigmaGadget<F> + Send + Sync>,
+		word: &Vec<F>, inp: &Vec<F>, oup: &Vec<F>, data: &Vec<F>,
+		failed_sigs: &Vec<F>, discharged_sigs: &Vec<F>,
+		subtbl_id: &Vec<F>, lkup_share_size: usize,
+		b_legacy: bool, vec_cfgs: Option<Vec<ContainerConfig>>,
+	) -> (bool, usize, bool) {
+		use std::panic::{catch_unwind, AssertUnwindSafe};
+		catch_unwind(AssertUnwindSafe(|| {
+			let (r, cs) = gadget_adv_cs(g, word, inp, oup, data, failed_sigs,
+				discharged_sigs, subtbl_id, lkup_share_size, b_legacy,
+				vec_cfgs);
+			(r.is_ok() && cs.is_satisfied().unwrap_or(false),
+				cs.num_constraints(), false)
+		})).unwrap_or((false, 0, true))
+	}
+
+	/// T965 M1: native mirror of the outer (si, val) lookup that the
+	/// harness skips (lookup shares are zero-filled). cps = the 9 stmt
+	/// segments (inp, oup, data, si_inp, si_oup, si_data, ..). Every cell
+	/// with si != 0 must be a row of `lk` (sigma_ir1cs: si 0 = no query,
+	/// nonzero = lookup of (si, val)).
+	pub(crate) fn outer_lkup_ok<F:PrimeField>(cps: &[Vec<F>],
+		lk: &LookupTableTwoCol_Inst<F>) -> bool {
+		let set: std::collections::HashSet<(F,F)> =
+			lk.vals.iter().cloned().collect();
+		for k in 0..3 {
+			assert_eq!(cps[k].len(), cps[k+3].len(), "M1: segment {} vs its si", k);
+		}
+		(0..3).all(|k| cps[k].iter().zip(cps[k+3].iter())
+			.all(|(v, si)| si.is_zero() || set.contains(&(*si, *v))))
+	}
+
+	/// builds the circuit of test_gadget_adv_ex; returns the assert_msg3
+	/// result and the constraint system (not yet checked).
+	fn gadget_adv_cs<F:PrimeField + Absorb + ColEle> (
+		g: Arc<dyn SigmaGadget<F> + Send + Sync>,
+		word: &Vec<F>, inp: &Vec<F>, oup: &Vec<F>, data: &Vec<F>,
+		failed_sigs: &Vec<F>, discharged_sigs: &Vec<F>,
+		subtbl_id: &Vec<F>, lkup_share_size: usize,
+		b_legacy: bool, vec_cfgs: Option<Vec<ContainerConfig>>,
+	) -> (Result<(), ark_relations::r1cs::SynthesisError>,
+		ark_relations::r1cs::ConstraintSystemRef<F>) {
 		//1. generate the statement
 		//1.1 generate StatementConfig
 		let inp_size = inp.len();
@@ -561,14 +620,7 @@ pub mod tests_word_extract_gadget{
 		let s_id = FpVar::new_constant(cs.clone(), F::zero()).unwrap();
 		let r = g.assert_msg3(last_idx, cs.clone(), &witvar, &cfg,
 			w_id, s_id, &mut vec![]);
-		if b_expect_sat {
-			r.expect("assert m3 fail");
-			assert!(cs.is_satisfied().unwrap());
-		} else {
-			//adversarial: rejection = assert_msg3 errored OR cs unsatisfied
-			let sat = r.is_ok() && cs.is_satisfied().unwrap();
-			assert!(!sat, "expected UNSAT (adversarial) but circuit satisfied");
-		}
+		(r, cs)
 	}
 
 	#[test]

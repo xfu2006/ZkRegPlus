@@ -32024,6 +32024,55 @@ Goal 2. plan for server run GRP2
 	[a] mal dataset -> part1 vs both parts
 	[b] allow full mal data set run if folding cost not exceeding 512GB.
 
+Friday 11/06/2026
+Goal 1. Rebuttal design
+	[a] smaller data set
+	[b] other issues
+	[c] rest of 1st run
+
+Sat 11/07/2026
+Goal 1. Rebuttal again
+	[a] intro
+	[b] hiding
+	[c] soundness
+	[d] project values.
+Goal 2. start GRP2 server test
+	[a] started
+	[b] trouble shooting server power off.
+
+Sunday 11/08/2026
+Goal 1. rebut again
+	[a] blinder 
+	[b] thm
+	[c] separating projected and measured
+
+Monday 11/09/2026
+Goal 1. another round of rebut
+	[a] constant depth issue
+	[b] review
+	[c] check the constant depth constraint again.
+Goal 2. GRP2 performance comparison with jet1tb
+	[a] set up key
+	[b] run small performance.
+	[c] still globally slow -> so try to 
+		figure out on cloudlab server scheduled
+	[d] look like THP setting -> add an experiment for that.
+Goal 3. GRP3 list definition
+	[a] open items
+		-> counter sign logic
+		-> change log
+		-> additional test code
+		-> confirm fix A for N4/N5.
+		-> estimate recount
+		-> regrouping
+		-> local tests
+	[b] found another translation bug, check if it affects paper data.
+
+Tuesday 11/10/2026
+Goal 1. continue B0
+	[a]
+
+
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
 *Big server: started 08/15 4am -> 08/24 0am (almost 9 days!)

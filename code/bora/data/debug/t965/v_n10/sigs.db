@@ -1,0 +1,4 @@
+# sigs.db
+sigN;Engine:51-255,Target:1;0;/56...fgh/
+sigT;Engine:51-255,Target:1;0;/abc..123/
+sig_alpha01;Engine:51-255,Target:0;0|1;123456789abcdef0123;432345678901abcdef::i

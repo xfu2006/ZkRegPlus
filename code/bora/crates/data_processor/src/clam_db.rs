@@ -3215,4 +3215,157 @@ mod tests_clam_db{
 		println!("DEBUG USE 69364.4: nonfinal vals = {:?}", nonfinal);
 		assert!(!nonfinal.contains(&Fr::zero()), "unshifted init value in nonfinal table");
 	}
+
+	// ---------------------------------------------------------------
+	// T965 (B3 DB): NH4 / NH5 red, G5 green. Red tests end with
+	// assert_hole; the T966 fix commit flips its FIXED const.
+	// ---------------------------------------------------------------
+	use std::collections::HashSet;
+	use crate::clam_db::{SubsigInfoStore, ID_ENCODED_NORMAL_STEP,
+		ID_ENCODED_LAST_STEP, ID_SUBSIG_TYPE};
+	use crate::type_def::SubSigType;
+
+	const FIXED_NH4: bool = false;
+	const FIXED_NH5: bool = false;
+
+	/// M0: a red test is SAT (hole open) iff its fix has not landed.
+	fn assert_hole(tag: &str, sat: bool, fixed: bool){
+		assert_eq!(sat, !fixed, "T965 {}: sat={} with FIXED_{}={}",
+			tag, sat, tag, fixed);
+	}
+
+	/// M8: the rows add_store_to_lkup emits for `store` (bits = the
+	/// bundle's vec_acdfa[0].state_part_bits, as add_bundle_subsig_to_lkup).
+	fn lkup_rows(store: &SubsigStepStore, dfa_id: u32, bits: usize)
+		-> HashSet<(Fr,Fr)>{
+		let mut lk = LookupTableTwoCol_Inst::<Fr>::dummy();
+		let n0 = lk.vals.len();
+		store.add_store_to_lkup(&mut lk, dfa_id, bits);
+		lk.vals[n0..].iter().cloned().collect()
+	}
+
+	/// M8: the DB lookup as a set.
+	fn db_lkup_set(db: &ClamavDB<Fr>) -> HashSet<(Fr,Fr)>{
+		db.lkup.vals.iter().cloned().collect()
+	}
+
+	/// Restores b_use_discharge_neo on drop (T966 gates its fix on neo).
+	struct T965Neo(bool);
+	impl Drop for T965Neo{
+		fn drop(&mut self){
+			utils::consts::get_global_config().clamav_cfg
+				.b_use_discharge_neo = self.0;
+		}
+	}
+
+	/// Mal-style 2-arm DB under neo, own dir data/debug/t965/<d>.
+	/// sig a: subsig 0 igc, 1 cs, 2 SubsigCountConstraint (own empty
+	/// cs chain). sig b: ISED (cs), as debug.ldb Case00-2.
+	fn t965_nh_db(d: &str) -> (ClamavDB<Fr>, T965Neo){
+		let neo = {
+			let mut c = utils::consts::get_global_config();
+			let old = c.clamav_cfg.b_use_discharge_neo;
+			c.clamav_cfg.b_use_discharge_neo = true;
+			T965Neo(old)
+		};
+		let dir = format!("debug/t965/{}", d);
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), dir))
+			.unwrap();
+		let sigs = vec![
+			"T965.Nh.Mix-1;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/i;/56...fgh/",
+			"T965.Nh.Ised-1;Engine:51-255,Target:0;0&1;abc??123;123??abc",
+		].iter().map(|x| x.to_string()).collect::<Vec<String>>();
+		let db = ClamavDB::<Fr>::build_test_db(&default_clamav_cfg(), &dir,
+			&sigs, &vec![], &vec!["T965.Nh.Ised-1".to_string()], &vec![])
+			.expect("t965 nh db");
+		(db, neo)
+	}
+
+	/// enc(s, 0) = s*B^4 and its step-tag row (tag, step 0).
+	fn step0_row(s: usize, piece: u32) -> (Fr,Fr){
+		let b = Fr::from(1u64 << read_global_config().range2_bit);
+		let e0 = Fr::from(s as u64) * b * b * b * b;
+		(SubsigStepStore::gen_step_tbl_id(e0, piece), Fr::zero())
+	}
+
+	/// Own-arm projection of a bundle step store (the T966 NH4 filter).
+	fn own_arm(store: &SubsigStepStore, b_igc: bool) -> SubsigStepStore{
+		let ids = store.subsig_ids.iter().filter(|i|
+			store.subsig_to_steps[i].igc == b_igc).cloned().collect();
+		store.project_by(&ids)
+	}
+
+	/// NH4 red. A cs subsig s with an own non-empty chain also has an
+	/// empty chain in the igc "all" store, so the DB holds BOTH
+	/// (tag_N(enc(s,0)),0) and (tag_L(enc(s,0)),0). Fix: own-arm rows.
+	#[test]
+	fn test_t965_nh4_step0_dual_tag(){
+		let (db, _neo) = t965_nh_db("nh4");
+		let set = db_lkup_set(&db);
+		let cs = &db.bundle_subsig.vec_subsig_step_stores[0];
+		let igc = &db.bundle_subsig_igc.vec_subsig_step_stores[0];
+		let s = *cs.subsig_ids.iter().find(|i|{
+			let it = &cs.subsig_to_steps[i];
+			!it.igc && !it.vec_pm_bounds.is_empty()
+				&& igc.subsig_to_steps[i].vec_pm_bounds.is_empty()
+		}).expect("fixture: no cs subsig with own chain");
+		assert!(set.contains(&step0_row(s, ID_ENCODED_NORMAL_STEP)),
+			"precondition: own NORMAL step-0 row missing");
+		let sat = set.contains(&step0_row(s, ID_ENCODED_LAST_STEP));
+		assert_hole("NH4", sat, FIXED_NH4);
+	}
+
+	/// NH5 red. The ISED bundle entry 1 adds its own PREV-linked chain
+	/// from the shared seed. Fix: under neo emit bundle entry 0 only.
+	#[test]
+	fn test_t965_nh5_ised_dual_chain(){
+		let (db, _neo) = t965_nh_db("nh5");
+		let set = db_lkup_set(&db);
+		let bd = &db.bundle_subsig;
+		assert!(bd.vec_sig_names.len()==2, "fixture: one ISED entry");
+		let bits = bd.vec_acdfa[0].state_part_bits;
+		let sid = db.sig_to_id["T965.Nh.Ised-1"];
+		let r0 = lkup_rows(&bd.vec_subsig_step_stores[0],
+			ClamavDB::<Fr>::pm_acdfa_id(0, false), bits);
+		let r1 = lkup_rows(&bd.vec_subsig_step_stores[1],
+			ClamavDB::<Fr>::pm_acdfa_id(sid, false), bits);
+		let extra: Vec<&(Fr,Fr)> = r1.difference(&r0).collect();
+		assert!(!extra.is_empty(), "precondition: ISED chain = all chain");
+		assert!(r0.is_subset(&set), "precondition: entry 0 rows missing");
+		let sat = extra.iter().any(|r| set.contains(*r));
+		assert_hole("NH5", sat, FIXED_NH5);
+	}
+
+	/// G5 green. Rows honest readers need stay in the DB under the NH3
+	/// / NH4 / NH5 filters: own-arm step-0 NORMAL, own LAST (own empty
+	/// chain), subsig-0 rows, ISED entry 0 (own-arm), subsig-0 TYPE.
+	#[test]
+	fn test_t965_green_db_own_arm(){
+		let (db, _neo) = t965_nh_db("g5");
+		let set = db_lkup_set(&db);
+		let mut n_norm = 0;
+		let mut n_last = 0;
+		for bd in [&db.bundle_subsig, &db.bundle_subsig_igc]{
+			let st = own_arm(&bd.vec_subsig_step_stores[0], bd.b_igc);
+			for s in st.subsig_ids.iter().filter(|i| **i != 0){
+				let b_empty = st.subsig_to_steps[s].vec_pm_bounds.is_empty();
+				let piece = if b_empty {ID_ENCODED_LAST_STEP}
+					else {ID_ENCODED_NORMAL_STEP};
+				assert!(set.contains(&step0_row(*s, piece)),
+					"own step-0 row of subsig {} (empty {}) missing", s, b_empty);
+				if b_empty {n_last += 1} else {n_norm += 1}
+			}
+			let rows = lkup_rows(&st,
+				ClamavDB::<Fr>::pm_acdfa_id(0, bd.b_igc),
+				bd.vec_acdfa[0].state_part_bits);
+			assert!(rows.is_subset(&set), "own-arm entry-0 rows missing");
+		}
+		assert!(n_norm >= 2 && n_last >= 1,
+			"fixture: {} own chains, {} own empty chains", n_norm, n_last);
+		assert!(set.contains(&step0_row(0, ID_ENCODED_LAST_STEP)),
+			"subsig-0 LAST row missing");
+		let ty = (SubsigInfoStore::gen_info_tbl_id::<Fr>(0, 0, ID_SUBSIG_TYPE),
+			Fr::from(SubSigType::GeneralRegex as u8));
+		assert!(set.contains(&ty), "subsig-0 TYPE row missing");
+	}
 }

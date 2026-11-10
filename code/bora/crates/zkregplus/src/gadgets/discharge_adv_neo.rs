@@ -10403,7 +10403,7 @@ mod tests_neo_m6_neg {
 	/// one match per store pat, both chains live under (1, 9):
 	/// s1: 1 ->10 gap 9 ->15 gap 5;
 	/// s2: 1 ->5 gap 4 ->12 gap 7 ->15 gap 3 ->20 gap 5.
-	fn t3_hm() -> HashMap<u32, Vec<u32>> {
+	pub(crate) fn t3_hm() -> HashMap<u32, Vec<u32>> {
 		let mut m = HashMap::new();
 		m.insert(1, vec![10]); m.insert(2, vec![15]);
 		m.insert(3, vec![5]);  m.insert(4, vec![12]);
@@ -10424,7 +10424,7 @@ mod tests_neo_m6_neg {
 	}
 
 	/// run_core_aggr over the asymmetric T215 fixture.
-	fn run_core_aggr3(info: &SubsigStepStore,
+	pub(crate) fn run_core_aggr3(info: &SubsigStepStore,
 		hm: &HashMap<u32, Vec<u32>>, default_min: u32,
 		tamper: Option<&dyn Fn(&mut NeoCore<Fr>)>)
 	-> (ConstraintSystemRef<Fr>, NeoCore<Fr>) {
@@ -10615,6 +10615,186 @@ mod tests_neo_m6_neg {
 		assert!(!cs.is_satisfied().unwrap());
 	}
 
+	// ---- T965 B0: red tests pinning GRP3 holes (ALL_T958 X + D,
+	// AGGR_T968 NEW-1). Each is SAT at HEAD; the fix commit flips
+	// its FIXED_ const.
+	const FIXED_X: bool = false;
+	// same hole as tests_neo_nonaggr_neg::FIXED_D: flip both together
+	const FIXED_D: bool = false;
+	const FIXED_NEW1: bool = false;
+
+	/// M0: a red test's verdict. `sat` = the forgery is accepted.
+	fn assert_hole(tag: &str, sat: bool, fixed: bool) {
+		assert_eq!(sat, !fixed, "T965 {}: forgery sat={} with \
+FIXED={}", tag, sat, fixed);
+	}
+
+	/// N6 (X): the join packs (pat, id, loc) with base 2^rb and id
+	/// is unranged, so (2, 2^rb, 0) = (3, 0, 0) and (2, 2^rb+1, max)
+	/// = (3, 1, max): pat 3's L block (no matches). The step-2 group
+	/// keeps only its open-below FP row 8 (pid 0, pl1 0, pl2 10),
+	/// moved to id 2^rb / loc 0, and its max-wrap at id 2^rb+1. The
+	/// rank-1 pin takes g_fp = 2^rb - 1 = max (in RANGE2); d_ext is
+	/// off (z_lo = 1). C rows 14/55 vanish: acc empty. Fix: base
+	/// 2^60 -> no alias -> join logup unbalanced.
+	#[test]
+	fn test_t965_x_join_alias() {
+		use super::tests_neo_t301::{gen_nat_for, t301_store, t301_hm,
+			drop_rows, fix_after_drop, row_at};
+		let info = t301_store();
+		let mut hm = t301_hm();
+		hm.insert(3, vec![]);
+		let honest = gen_nat_for(&info, &hm);
+		assert!(run_nat_aggr(&honest).is_satisfied().unwrap());
+		assert_eq!(honest.acc_out.len(), 2);
+		let mut nat = gen_nat_for(&info, &hm);
+		let rb = read_global_config().range2_bit;
+		let max = f((1u32 << rb) - 1);
+		let r = row_at(&nat, 8);
+		let kill = (0..nat.t.enc.len()).filter(|i| *i != r
+			&& nat.t.step[*i] == f(2) && nat.t.loc[*i] != max)
+			.collect::<Vec<usize>>();
+		assert_eq!(kill.len(), 5);
+		drop_rows(&mut nat.t, &kill);
+		let t = &mut nat.t;
+		assert!(t.cat[r] == f(CAT_FP) && t.prev_loc1[r].is_zero()
+			&& t.loc[r + 1] == max && r + 2 == t.enc.len());
+		t.id[r] = f(1u32 << rb);
+		t.loc[r] = f(0);
+		t.id[r + 1] = f((1u32 << rb) + 1);
+		fix_after_drop(t, r + 1);
+		regen_aggr_advice(&mut nat, &info,
+			&NeoCore::<Fr>::gen_store_rows(&vec![f(1)], &info).1);
+		assert_eq!(nat.acc_out.len(), 1); // the match is hidden
+		let sat = run_nat_aggr(&nat).is_satisfied().unwrap();
+		assert_hole("X", sat, FIXED_X);
+	}
+
+	/// N7 (D) store: s1 = {pat 2 (1,mx), pat 5 (1,9) LAST}, s2 =
+	/// {pat 7 (1,mx), pat 6 (1,9) LAST}. The statement is {1} only.
+	fn d_store() -> SubsigStepStore {
+		let mx = (1usize << read_global_config().range2_bit) - 1;
+		let mk = |id: usize, pm: Vec<(usize, (usize, usize))>|
+			SubsigStepStoreItem { subsig_id: id, igc: false,
+				vec_pm_bounds: pm, is_backward: false };
+		let mut m = std::collections::HashMap::new();
+		m.insert(1usize, mk(1, vec![(2, (1, mx)), (5, (1, 9))]));
+		m.insert(2usize, mk(2, vec![(7, (1, mx)), (6, (1, 9))]));
+		SubsigStepStore { subsig_ids: vec![1, 2], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	/// N7 (D): s1 fully matches (2@17, 5@20). Drop its LAST group
+	/// (1,2) and close the run with s2's LAST group (2,2) as a bare
+	/// no-show wrap (pat 6 has no match). The step chain at the
+	/// group start checks step only (2 - 1 - 1 = 0), so the s1 run
+	/// ends at a DB-LAST group with no terminal C: acc empty. Fix:
+	/// u*((ds)*2^rb + dt - 1) = 0 -> 2^rb != 0 -> UNSAT.
+	/// (v2 design said run_core_aggr3; its {1,2} seed puts s2's own
+	/// run after the splice, where the subsig ascent 2-2-1 < 0
+	/// fails. The {1} seed of n4n5_r3_state T-N7 is used instead.)
+	#[test]
+	fn test_t965_d_splice_aggr() {
+		let info = d_store();
+		let mut hm = HashMap::new();
+		hm.insert(2, vec![17]); hm.insert(5, vec![20]);
+		hm.insert(6, vec![]);
+		let (cs0, nat0) = run_core_aggr(&info, &hm, 100, None);
+		assert!(cs0.is_satisfied().unwrap());
+		assert_eq!(nat0.acc_out.len(), 2);
+		let s_pat = NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+			&info).1;
+		let (cs, nat) = run_core_aggr(&info, &hm, 100,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let rb = read_global_config().range2_bit;
+				let b = Fr::from(1u64 << rb);
+				let t = &mut nat.t;
+				for i in (t.n_pad..t.enc.len()).rev() {
+					if t.step[i] == f(2) { remove_row(t, i); }
+				}
+				// enc limbs [subsig][step][pat][rg1][rg2]
+				let enc = (((f(2) * b + f(2)) * b + f(6)) * b
+					+ f(1)) * b + f(9);
+				t.push_wrap(enc, f(1), f((1u32 << rb) - 1), f(2),
+					f(2), f(6), true, true, f(0), f(1), f(9));
+				regen_aggr_advice(nat, &info, &s_pat);
+			}));
+		assert_eq!(nat.acc_out.len(), 1); // the match is hidden
+		assert_hole("D", cs.is_satisfied().unwrap(), FIXED_D);
+	}
+
+	/// NEW-1 fixture: a18 full match (a8:108) + the empty-chain
+	/// composite subsig 2 (store_with_composite), seeds {1, 2}.
+	pub(crate) fn new1_hm() -> HashMap<u32, Vec<u32>> {
+		let mut hm = fig14_hm();
+		hm.insert(8, vec![108]);
+		hm
+	}
+
+	/// enc of subsig s's step-0 seed row.
+	fn seed_enc(nat: &NeoCore<Fr>, s: u32) -> Fr {
+		let t = &nat.t;
+		(t.n_pad..t.enc.len()).find(|&i| t.subsig[i] == f(s)
+			&& t.step[i].is_zero() && t.cat[i] == f(CAT_C))
+			.map(|i| t.enc[i]).expect("seed row")
+	}
+
+	/// NEW-1 (C1): the empty-chain subsig 2 is complete at its seed,
+	/// yet acc_out may omit enc(2,0): the verdict query is masked by
+	/// (is_c - is_seed). The witness keeps HEAD's acc shape (after
+	/// C2+C3 the honest native adds enc(2,0), so it is stripped
+	/// here). Fix C1 (qry = enc*is_last*is_c) -> no slot -> UNSAT.
+	#[test]
+	fn test_t965_new1_empty_chain() {
+		use super::tests_neo_seg0_seed::store_with_composite;
+		let info = store_with_composite();
+		let (cs, nat) = run_core_aggr3(&info, &new1_hm(), 161,
+			Some(&|nat: &mut NeoCore<Fr>| {
+				let e = seed_enc(nat, 2);
+				let (mut a, mut m) = NeoCore::gen_acc_padded(&nat.t,
+					&info);
+				if let Some(k) = a.iter().position(|x| *x == e) {
+					a.remove(k); m.remove(k);
+				}
+				nat.acc_out = a; nat.mtbl_acc = m;
+			}));
+		assert!(!nat.acc_out.contains(&seed_enc(&nat, 2)));
+		assert_eq!(nat.acc_out.len(), 2); // s1's terminal stays
+		assert_hole("NEW1-C1", cs.is_satisfied().unwrap(),
+			FIXED_NEW1);
+	}
+
+	/// NEW-1 (C2+C3), natives only: the honest generators leave
+	/// enc(2,0) out of acc (gen_acc_and_mtbl `num > 0`) and out of
+	/// gen_core_stmt's mtbl_complete (`step != 0`). hole := either
+	/// path omits it. Fix C2+C3 -> both list it with count 1.
+	#[test]
+	fn test_t965_new1_native_seed_acc() {
+		use super::tests_neo_seg0_seed::store_with_composite;
+		use super::tests_neo_m5::mk_pat_loc;
+		let info = store_with_composite();
+		let hm = new1_hm();
+		let (_, nat) = run_core_aggr3(&info, &hm, 161, None);
+		let e = seed_enc(&nat, 2);
+		let hole_a = !nat.acc_out.contains(&e);
+		let ct = mk_pat_loc(&hm);
+		let mut m = HashMap::new();
+		for sid in [1u32, 2] {
+			m.insert(f(sid), vec![StepQueueItem::new(f(sid), f(0),
+				f(0), f(0), f(0), vec![f(1)])]);
+		}
+		let gen = StepQueueNeo::from_stepqueue(StepQueue::new(
+			vec![f(1), f(2)], m, &t3_capacity(),
+			StepQueueType::ResLarge, false))
+			.gen_shared_core_advice(0, &ct, &info, f(161))
+			.expect("core");
+		let (_c, _combo, nat2) = gen.gen_core_stmt(&ct, &info)
+			.expect("stmt");
+		let k = nat2.acc_out.iter().position(|x| *x == e);
+		let hole_b = k.map_or(true, |k| nat2.mtbl_acc[k].is_zero());
+		assert_hole("NEW1-C2C3", hole_a || hole_b, FIXED_NEW1);
+	}
+
 }
 
 // ============================================================
@@ -10623,7 +10803,7 @@ mod tests_neo_m6_neg {
 // NOTE_NEW8_ADAPTED (P3 R5: aggressive tier-2 end-to-end through
 // the real harness).
 #[cfg(test)]
-mod tests_neo_m6_h {
+pub(crate) mod tests_neo_m6_h {
 	use super::*;
 	use super::tests_neo_m6::vq_out_of_range;
 	use ark_bn254::Fr;
@@ -10791,11 +10971,8 @@ mod tests_neo_m6_h {
 
 	/// per-test dir: the H tests run in parallel and a shared build
 	/// dir races (DB build files + word.txt).
-	fn build_fwd_db(dir: &str) -> ClamavDB<Fr> {
-		let mut cfg = default_clamav_cfg();
-		cfg.b_aggressive_sde_for_rep = true;
-		cfg.sde_rep_fanout_cap = 4; //[ab][ab] -> 4 variant subsigs
-		cfg.min_bag_len = 2;
+	pub(crate) fn build_fwd_db(dir: &str) -> ClamavDB<Fr> {
+		let cfg = fwd_cfg();
 		//aggressive shape: keyword at one END (fwd = first) + a
 		//bounded fanned class part -- the DLP proximity shape.
 		let sigs = vec![
@@ -10805,6 +10982,15 @@ mod tests_neo_m6_h {
 		std::fs::create_dir_all(&p).unwrap();
 		ClamavDB::<Fr>::build_test_db(&cfg, dir,
 			&sigs, &vec![], &vec![], &vec![]).expect("neo fwd db")
+	}
+
+	/// the build cfg of build_fwd_db (T965 M5 reuses it).
+	pub(crate) fn fwd_cfg() -> data_processor::type_def::ClamavApproxConfig {
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4; //[ab][ab] -> 4 variant subsigs
+		cfg.min_bag_len = 2;
+		cfg
 	}
 
 	/// H1 (user-required): FORWARD aggressive subsigs end-to-end.
@@ -11733,6 +11919,9 @@ mod tests_neo_nonaggr_neg {
 		root_carried};
 	use super::tests_neo_nonaggr::{run_core_nonaggr, seed_only_sq,
 		fig14_hm};
+	use super::tests_neo_m4::fixture_capacity;
+	use super::tests_neo_m6::{hm_to_l_cols, hm_gen};
+	use data_processor::type_def::SubsigStepStoreItem;
 	use ark_bn254::Fr;
 
 	fn f(x: u32) -> Fr { Fr::from(x) }
@@ -11801,12 +11990,7 @@ mod tests_neo_nonaggr_neg {
 		//recompute d_sort (a removed row changes an adjacency) and
 		//fix ids within the group (ids stay contiguous).
 		let n = t.enc.len();
-		for j in 1..n {
-			t.d_sort[j] = if t.enc[j] == t.enc[j - 1]
-				&& !t.enc[j].is_zero()
-				{ t.loc[j] - t.loc[j - 1] }
-				else { Fr::from(0u32) };
-		}
+		rebind_d_sort_na(t); //T965 M13 (S0 rewrites its body)
 		for j in i..n {
 			if t.enc[j] == e_rm && !t.id[j].is_zero() {
 				t.id[j] = t.id[j] - Fr::from(1u32);
@@ -12145,14 +12329,7 @@ mod tests_neo_nonaggr_neg {
 		expect_unsat("clone a Q_m loc", &|nat| {
 			let i = row(nat, 96); // a6 group also holds 141
 			nat.t.loc[i] = f(141);
-			let t = &mut nat.t;
-			let n = t.enc.len();
-			for j in 1..n { //honest non-strict d_sort rebind
-				t.d_sort[j] = if t.enc[j] == t.enc[j - 1]
-					&& !t.enc[j].is_zero()
-					{ t.loc[j] - t.loc[j - 1] }
-					else { f(0) };
-			}
+			rebind_d_sort_na(&mut nat.t); //honest d_sort rebind (M13)
 			regen_mtbls(nat);
 		});
 	}
@@ -12620,6 +12797,658 @@ mod tests_neo_nonaggr_neg {
 				regen_mtbls(nat);
 			});
 	}
+
+	// ================= T965 (B0): GRP3 hole pins, nonaggr =================
+	// Design: align_implementation/grp3_rounds_1108/t965_design_v2.md
+	// (+ v3 delta). Every red test below is SAT at HEAD: it pins an
+	// OPEN hole. Its fix commit flips the FIXED_<id> const, and the
+	// test then demands UNSAT. Green tests are plain asserts.
+	// Verdicts use accepted_na (cs SAT + no outer RANGE2 violation).
+
+	// FIXED_D: also in tests_neo_m6_neg (aggr D); flip both together
+	const FIXED_D: bool = false;    // ALL_T958 D (N7 run splice)
+	const FIXED_N8: bool = false;   // NONAGGR_T959 (JR rank after pad)
+	const FIXED_G: bool = false;    // NONAGGR_T963 (BREAK2, q_i < max)
+	const FIXED_N11: bool = false;  // NONAGGR_T967 fix B (late seed)
+	const FIXED_NEW3: bool = false; // NONAGGR_T967 S0 (dup seed row)
+	// FIXED_NEW4: also in zkp_driver.rs tests; flip both together
+	const FIXED_NEW4: bool = false; // NONAGGR_T970 (seg-0 n_cin pin)
+
+	/// M0: red-test verdict switch (SAT while the hole is open).
+	fn assert_hole(tag: &str, sat: bool, fixed: bool) {
+		assert_eq!(sat, !fixed, "T965 {}: sat = {}, FIXED = {}", tag,
+			sat, fixed);
+	}
+
+	/// M11: native mirror of the OUTER RANGE2 lookups on the
+	/// committed nonaggr cells (the harness has none, W5): range2_bad's
+	/// diff cells plus d_sort / d_below_lo / d_above_lo and the
+	/// const-RANGE2 cells (subsig, pat, rg1, rg2, jr loc, no-show
+	/// pats and gaps, subsig list, q_i loc).
+	fn range2_bad_na(nat: &NeoCore<Fr>) -> Vec<String> {
+		let lim = Fr::from(1u64 << read_global_config().range2_bit);
+		let t = &nat.t;
+		let mut v = super::tests_d2_need::range2_bad(nat);
+		for (name, col) in [("d_sort", &t.d_sort),
+			("d_below_lo", &t.d_below_lo),
+			("d_above_lo", &t.d_above_lo), ("subsig", &t.subsig),
+			("pat", &t.pat), ("rg1", &t.rg1), ("rg2", &t.rg2),
+			("jr_loc", &nat.jr.loc), ("ns_pat", &nat.ns_pat),
+			("d_ns_lo", &nat.d_ns_lo), ("d_ns_hi", &nat.d_ns_hi),
+			("subsigs", &nat.subsig_nat), ("qi_loc", &nat.qi_loc)] {
+			for (i, x) in col.iter().enumerate() {
+				if *x >= lim { v.push(format!("{}[{}]", name, i)); }
+			}
+		}
+		v
+	}
+
+	/// M11: the production verdict: R1CS SAT and RANGE2 clean.
+	fn accepted_na(cs: &ConstraintSystemRef<Fr>, nat: &NeoCore<Fr>)
+	-> bool {
+		cs.is_satisfied().unwrap() && range2_bad_na(nat).is_empty()
+	}
+
+	/// M13: rebind d_sort after a tamper. B0 = the native rule; the
+	/// S0 commit (T967) rewrites this one body to the nonaggr S0 rule.
+	pub(crate) fn rebind_d_sort_na(t: &mut QmTable<Fr>) {
+		t.fill_d_sort();
+	}
+
+	/// M14: regenerate the committed seed-table multiplicities. T967
+	/// (fix B deletes m_seed) turns this into a no-op.
+	fn regen_seed_m(nat: &mut NeoCore<Fr>) {
+		nat.m_seed = NeoCore::<Fr>::gen_seed_m(&nat.qi_enc,
+			&nat.qi_loc, &nat.subsig_nat);
+	}
+
+	/// M15: the seg-0 FirstSeg pin on n_cin. No n_cin cell exists at
+	/// HEAD, so a no-op; T970's body is `nat.n_cin_in = 0`.
+	fn seg0_pin(_nat: &mut NeoCore<Fr>) {}
+
+	/// M6: drop JR row i and re-prepend one zero pad (keeps the cap).
+	fn remove_jr_row(nat: &mut NeoCore<Fr>, i: usize) {
+		let jr = &mut nat.jr;
+		for c in [&mut jr.enc, &mut jr.pat, &mut jr.id, &mut jr.loc] {
+			c.remove(i);
+			c.insert(0, f(0));
+		}
+		jr.si_pat.remove(i);
+		jr.si_pat.insert(0, f(RANGE2));
+	}
+
+	/// M6: the JR -> L join m-table (mirror of gen_nonaggr's).
+	fn regen_jr_mtbl_tm(nat: &mut NeoCore<Fr>) {
+		let rb = read_global_config().range2_bit;
+		let (b, sh) = (Fr::from(1u64 << rb), Fr::from(1u128 << (2 * rb)));
+		let t2 = Fr::from((1u64 << rb) + ((1u64 << rb) - 1));
+		let nz = |x: &Fr| if x.is_zero() { f(0) } else { f(1) };
+		let jr = &nat.jr;
+		let qry: Vec<Fr> = (0..jr.enc.len()).map(|i|
+			jr.pat[i] * sh + jr.id[i] * b + jr.loc[i]).collect();
+		let sel_q: Vec<Fr> = jr.enc.iter().map(nz).collect();
+		let mut lk: Vec<Fr> = (0..nat.l_pat.len()).map(|i|
+			nat.l_pat[i] * sh + nat.l_id[i] * b + nat.l_loc[i])
+			.collect();
+		let mut sel_l = vec![f(1); lk.len()];
+		let sel_d: Vec<Fr> = nat.ns_pat.iter().map(nz).collect();
+		lk.extend(nat.ns_pat.iter().map(|p| *p * sh));
+		sel_l.extend(sel_d.clone());
+		lk.extend(nat.ns_pat.iter().map(|p| *p * sh + t2));
+		sel_l.extend(sel_d);
+		nat.mtbl_tm = gen_m_table_cond(&qry, &sel_q, &lk, &sel_l);
+	}
+
+	/// swap in the chunk's TRUE L = `hm`: pat_loc cols, the store's
+	/// no-show pats (+ `ns_extra`) with their gap advice, and the JR
+	/// join m-table. Used where the natives came from a pretend L.
+	fn set_l(nat: &mut NeoCore<Fr>, info: &SubsigStepStore,
+		hm: &HashMap<u32, Vec<u32>>, ns_extra: &[u32]) {
+		let (l_pat, l_id, l_loc) = hm_to_l_cols(hm);
+		let subs: Vec<Fr> = nat.subsig_nat.iter()
+			.filter(|s| !s.is_zero()).cloned().collect();
+		let (_, mut s_pat) = NeoCore::<Fr>::gen_store_rows(&subs, info);
+		s_pat.extend(ns_extra.iter().map(|p| f(*p)));
+		nat.ns_pat = NeoCore::<Fr>::gen_ns_pat(&s_pat, &l_pat,
+			nat.ns_pat.len());
+		let (lo, hi, m) = NeoCore::<Fr>::gen_ns_advice(&nat.ns_pat,
+			&l_pat);
+		(nat.d_ns_lo, nat.d_ns_hi, nat.mtbl_ns) = (lo, hi, m);
+		(nat.l_pat, nat.l_id, nat.l_loc) = (l_pat, l_id, l_loc);
+		regen_jr_mtbl_tm(nat);
+	}
+
+	/// M12: clone row i to i+1 (remove_row's column list), shift the
+	/// later ids of its group by 1, rebind d_sort (M13), refill the
+	/// D2 families and rank m-tables, put a C dup into the first free
+	/// q_c slot, re-derive the union scalars.
+	fn dup_row(nat: &mut NeoCore<Fr>, i: usize, info: &SubsigStepStore,
+		dmin: u32) {
+		let t = &mut nat.t;
+		macro_rules! dup { ($s:expr; $($c:ident),*) => {
+			$( let x = $s.$c[i]; $s.$c.insert(i + 1, x); )* } }
+		dup!(t; enc, id, loc, cat, step, subsig, prev_id1, prev_loc1,
+			prev_loc2, b_cin, pat, rg1, rg2, enc_prev, b_bwd, d_c1,
+			d_c2, d_below_lo, d_above_lo, d_sort, si_step, si_subsig,
+			si_pat, si_rg1, si_rg2, si_enc_prev, si_b_bwd);
+		let na = &mut t.nonaggr;
+		dup!(na; enc_next, bp_prev_val, rg2_next, w_next, d_bp, fz,
+			enc_fz, fz_step_val, fz_sub_val, w_fz, d_fz, w_kept, d_kept,
+			si_bp_prev, si_rg2_next, si_fz, si_fz_step, si_fz_sub);
+		let (e, l) = (t.enc[i], t.loc[i]);
+		for j in i + 1..t.enc.len() {
+			if t.enc[j] == e { t.id[j] += f(1); }
+		}
+		rebind_d_sort_na(t);
+		t.fill_nonaggr(info, f(dmin));
+		regen_mtbls(nat);
+		if nat.t.cat[i] == f(CAT_C) {
+			match nat.qc_enc.iter().position(|x| x.is_zero()) {
+				Some(k) => { nat.qc_enc[k] = e; nat.qc_loc[k] = l; }
+				None => { nat.qc_enc.push(e); nat.qc_loc.push(l); }
+			}
+		}
+		nat.union_prf = t929_zero_scalars(nat);
+	}
+
+	/// capacity for the two-subsig fixtures (K = 2 slots).
+	fn cap2() -> DischargeAdvCapacity {
+		let mut c = fixture_capacity();
+		c.subsigs = 2;
+		c.universe_subsigs = 2;
+		c
+	}
+
+	/// M9: two Mal-style chains whose every range is unbounded (`*`
+	/// gaps, so fz = 0: a C row owes no successor witness):
+	/// s1 = pat2 -> pat5 LAST, s2 = pat7 -> pat6 LAST.
+	fn two_chain_store() -> SubsigStepStore {
+		let mx = (1usize << read_global_config().range2_bit) - 1;
+		let mk = |id: usize, a: usize, b: usize| SubsigStepStoreItem {
+			subsig_id: id, igc: false,
+			vec_pm_bounds: vec![(a, (1, mx)), (b, (1, mx))],
+			is_backward: false };
+		let mut m = HashMap::new();
+		m.insert(1usize, mk(1, 2, 5));
+		m.insert(2usize, mk(2, 7, 6));
+		SubsigStepStore { subsig_ids: vec![1, 2], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	/// M9: r3's N8 store, s1 = pat2 (anywhere) -> pat5 LAST, gap [1,10].
+	fn n8_store() -> SubsigStepStore {
+		let mx = (1usize << read_global_config().range2_bit) - 1;
+		let item = SubsigStepStoreItem { subsig_id: 1, igc: false,
+			vec_pm_bounds: vec![(2, (1, mx)), (5, (1, 10))],
+			is_backward: false };
+		let mut m = HashMap::new();
+		m.insert(1usize, item);
+		SubsigStepStore { subsig_ids: vec![1], subsig_to_steps: m,
+			b_aggressive: false }
+	}
+
+	/// seed-only carry (loc 1) for `subsigs`, capacity cap2.
+	fn seeds_sq(subsigs: &[u32]) -> StepQueue<Fr> {
+		let mut m = HashMap::new();
+		for &s in subsigs {
+			m.insert(f(s), vec![StepQueueItem::new(f(s), f(0), f(0),
+				f(0), f(0), vec![f(1)])]);
+		}
+		StepQueue::new(subsigs.iter().map(|s| f(*s)).collect(), m,
+			&cap2(), StepQueueType::ResSmall, false)
+	}
+
+	/// a chunk's committed q_c as the next chunk's carried queue
+	/// (the mapper's parse of a carried result queue).
+	fn qc_to_sq(nat: &NeoCore<Fr>, cap: &DischargeAdvCapacity)
+	-> StepQueue<Fr> {
+		StepQueue::parse_from(&[nat.qc_enc.clone(),
+			nat.qc_loc.clone()].concat(), StepQueueType::ResSmall, cap,
+			false)
+	}
+
+	type Tamper<'a> = Option<&'a dyn Fn(&mut NeoCore<Fr>)>;
+
+	/// M7 (+ M7+: carried0, per-chunk dmin, natives returned): two
+	/// chained nonaggr chunks. Chunk 1's carried queue is chunk 0's
+	/// committed q_c (edited by `mid`, if given). Returns (accepted,
+	/// natives) per chunk.
+	fn run_two_chunk_nonaggr(info: &SubsigStepStore,
+		carried0: &StepQueue<Fr>, hm: [&HashMap<u32, Vec<u32>>; 2],
+		dmin: [u32; 2], t0: Tamper,
+		mid: Option<&dyn Fn(&mut StepQueue<Fr>)>, t1: Tamper)
+	-> [(bool, NeoCore<Fr>); 2] {
+		let (cs0, n0) = run_core_nonaggr(info, carried0, hm[0], dmin[0],
+			t0);
+		let mut c1 = qc_to_sq(&n0, &carried0.capacity);
+		if let Some(m) = mid { m(&mut c1); }
+		let (cs1, n1) = run_core_nonaggr(info, &c1, hm[1], dmin[1], t1);
+		[(accepted_na(&cs0, &n0), n0), (accepted_na(&cs1, &n1), n1)]
+	}
+
+	/// pack of the step-0 seed enc of subsig s (s * 2^4rb).
+	fn seed_enc(s: u32) -> Fr {
+		let b = Fr::from(1u64 << read_global_config().range2_bit);
+		f(s) * b * b * b * b
+	}
+
+	/// store enc of (subsig s, step st).
+	fn store_enc(info: &SubsigStepStore, s: u32, st: usize) -> Fr {
+		NeoCore::<Fr>::gen_store_rows(&vec![f(s)], info).0[st - 1]
+	}
+
+	/// (step, loc) of the C rows of subsig s in q_c.
+	fn qc_c_rows(nat: &NeoCore<Fr>, s: u32) -> Vec<(u32, u32)> {
+		let mut v = vec![];
+		for k in 0..nat.qc_enc.len() {
+			if nat.qc_enc[k].is_zero() { continue; }
+			let it = StepQueueItem::parse_from(nat.qc_enc[k], &vec![]);
+			if it.subsig == f(s) {
+				v.push((field_to_usize(&it.step) as u32,
+					field_to_usize(&nat.qc_loc[k]) as u32));
+			}
+		}
+		v.sort();
+		v
+	}
+
+	/// mx = 2^rb - 1, the loc sentinel.
+	fn mx() -> Fr { f((1u32 << read_global_config().range2_bit) - 1) }
+
+	/// first real (non-pad) JR row.
+	fn jr_first(nat: &NeoCore<Fr>) -> usize {
+		nat.jr.enc.iter().position(|x| !x.is_zero()).unwrap()
+	}
+
+	/// # q_c rows holding subsig s's seed (enc(s, 0), loc 1).
+	fn qc_seeds(nat: &NeoCore<Fr>, s: u32) -> usize {
+		(0..nat.qc_enc.len()).filter(|&k| nat.qc_enc[k] == seed_enc(s)
+			&& nat.qc_loc[k] == f(1)).count()
+	}
+
+	/// T965 D (N7, ALL_T958), nonaggr arm. The run step chain reads
+	/// step only, not subsig (dan:3470-3473), so s1's run can be
+	/// closed by s2's LAST group. Honest: 17 -> 20 matches s1.
+	/// Tamper: drop s1's step-2 group (C 20 + wrap) and its JR block,
+	/// put s2's LAST no-show sentinel (enc(2,2), 1, max) in its place
+	/// with its JR row (pat 6 joins as a no-show). s2 is not in the
+	/// statement. q_c loses 20: s1 reads False. Rejecter after D:
+	/// "neo run step chain" u*((ds)*2^rb + dt - 1) = 0.
+	#[test]
+	fn test_t965_d_splice_nonaggr() {
+		let info = two_chain_store();
+		let mut hm = HashMap::new();
+		hm.insert(2, vec![17]); hm.insert(5, vec![20]);
+		let carried = seeds_sq(&[1]);
+		let (e12, e22) = (store_enc(&info, 1, 2), store_enc(&info, 2, 2));
+		let (cs, nat) = run_core_nonaggr(&info, &carried, &hm,
+			A18_DEFAULT_MIN, None);
+		assert!(accepted_na(&cs, &nat), "honest twin");
+		assert!(qc_c_rows(&nat, 1).contains(&(2, 20)));
+		let splice = |nat: &mut NeoCore<Fr>| {
+			let k = (nat.t.n_pad..nat.t.enc.len())
+				.find(|&i| nat.t.enc[i] == e12).unwrap();
+			let bwd = nat.t.b_bwd[k];
+			while nat.t.enc.get(k) == Some(&e12) { remove_row(nat, k); }
+			let it = StepQueueItem::<Fr>::parse_from(e22, &vec![]);
+			nat.t.push_wrap(e22, f(1), mx(), it.step, it.subsig, it.pat,
+				true, true, bwd, it.rg_start, it.rg_end);
+			rebind_d_sort_na(&mut nat.t);
+			nat.t.fill_nonaggr(&info, f(A18_DEFAULT_MIN));
+			regen_mtbls(nat);
+			while let Some(j) = nat.jr.enc.iter().position(|x| *x == e12)
+				{ remove_jr_row(nat, j); }
+			let p = jr_first(nat) - 1; //last pad slot
+			let jr = &mut nat.jr;
+			(jr.enc[p], jr.pat[p], jr.id[p], jr.loc[p]) =
+				(e22, it.pat, f(1), mx());
+			jr.si_pat[p] = SubsigStepStore::gen_step_tbl_id(e22,
+				ID_ENCODED_PAT);
+			set_l(nat, &info, &hm, &[6]);
+			let q = nat.qc_enc.iter().position(|x| *x == e12).unwrap();
+			(nat.qc_enc[q], nat.qc_loc[q]) = (f(0), f(0));
+			nat.union_prf = t929_zero_scalars(nat);
+		};
+		let (cs, nat) = run_core_nonaggr(&info, &carried, &hm,
+			A18_DEFAULT_MIN, Some(&splice));
+		assert_eq!(qc_c_rows(&nat, 1), vec![(0, 1), (1, 17)], "s1 False");
+		assert_hole("d_splice_nonaggr", accepted_na(&cs, &nat), FIXED_D);
+	}
+
+	/// T965 N8 (NONAGGR_T959). assert_jr_wf pins rank 1 on JR row 0
+	/// only and gates the skeleton on key[i-1] != 0, so the FIRST
+	/// real block after the pad prefix may open at any rank
+	/// (dan:5510-5530). r3: s1 = pat2 -> pat5 LAST (gap [1,10]),
+	/// L = {pat2: 17, pat5: 20, 150}; honest 17 -> 20 matches.
+	/// Tamper: natives of a pretend L without 20 (17 BP, 150 FP),
+	/// then the TRUE L and a JR whose pat5 block goes first, opening
+	/// at rank 2 (150): 20 is never joined, s1 reads False. Rejecter
+	/// after N8: check_prod_zero(sel_jr[i]-sel_jr[i-1], id[i]-1).
+	#[test]
+	fn test_t965_n8_jr_rank_after_pad() {
+		let info = n8_store();
+		let carried = seeds_sq(&[1]);
+		let mut hm = HashMap::new();
+		hm.insert(2, vec![17]); hm.insert(5, vec![20, 150]);
+		let mut hm_p = hm.clone();
+		hm_p.insert(5, vec![150]);
+		let (cs, nat) = run_core_nonaggr(&info, &carried, &hm,
+			A18_DEFAULT_MIN, None);
+		assert!(accepted_na(&cs, &nat), "honest twin");
+		assert!(qc_c_rows(&nat, 1).contains(&(2, 20)));
+		let tamper = |nat: &mut NeoCore<Fr>| {
+			let (mut s_enc, mut s_pat) =
+				NeoCore::<Fr>::gen_store_rows(&vec![f(1)], &info);
+			s_enc.reverse(); s_pat.reverse(); //pat5 block first
+			nat.jr = NeoCore::<Fr>::gen_jr_table(&s_enc, &s_pat,
+				&hm_gen(&hm), nat.jr.enc.len()).unwrap();
+			let i = jr_first(nat);
+			assert_eq!((nat.jr.pat[i], nat.jr.id[i], nat.jr.loc[i]),
+				(f(5), f(1), f(20)));
+			remove_jr_row(nat, i);
+			set_l(nat, &info, &hm, &[]);
+		};
+		let (cs, nat) = run_core_nonaggr(&info, &carried, &hm_p,
+			A18_DEFAULT_MIN, Some(&tamper));
+		assert_eq!(nat.jr.id[jr_first(&nat)], f(2), "opens at rank 2");
+		assert!(!qc_c_rows(&nat, 1).iter().any(|r| r.0 == 2), "s1 False");
+		assert_hole("n8_jr_rank_after_pad", accepted_na(&cs, &nat),
+			FIXED_N8);
+	}
+
+	/// T965 G (BREAK2, NONAGGR_T963): no rule keeps a carried row
+	/// below max. Chunk 0 (pat2 absent): s1's step-1 sentinel
+	/// (E, 1, max) is relabelled C with a seed cert (gap max-1 fits
+	/// (1, mx); built as a pretend C row at 30 moved to max, its wrap
+	/// dropped, the true no-show JR block) and carried. Chunk 1
+	/// (honest match pat2 100 -> pat5 120): group E = the carried
+	/// (E, max) alone, no JR block for E, so 100 is never joined and
+	/// 120 goes FP against (E, 1, max). s1 reads False. Rejecter
+	/// after G: (c_max - qi_loc_j) * inv_j = 1 in assert_qm_union.
+	#[test]
+	fn test_t965_g_carried_c_at_max() {
+		let info = two_chain_store();
+		let e = store_enc(&info, 1, 1);
+		let (mut hm0, mut hm1) = (HashMap::new(), HashMap::new());
+		hm0.insert(7, vec![50]); //L filler: pat2, pat5 absent
+		hm1.insert(2, vec![100]); hm1.insert(5, vec![120]);
+		let ok = run_two_chunk_nonaggr(&info, &seeds_sq(&[1]),
+			[&hm0, &hm1], [161, 321], None, None, None);
+		assert!(ok[0].0 && ok[1].0, "honest twin");
+		assert!(qc_c_rows(&ok[1].1, 1).contains(&(2, 120)));
+		let mut hm0p = hm0.clone();
+		hm0p.insert(2, vec![30]);
+		let mut hm1p = hm1.clone();
+		hm1p.remove(&2);
+		let t0 = |nat: &mut NeoCore<Fr>| {
+			let i = row(nat, 30);
+			assert_eq!((nat.t.enc[i + 1], nat.t.loc[i + 1],
+				nat.t.cat[i + 1]), (e, mx(), f(0)), "E's wrap");
+			remove_row(nat, i + 1);
+			nat.t.loc[i] = mx();
+			nat.t.d_c1[i] = mx() - f(2);
+			nat.t.d_c2[i] = f(1);
+			rebind_d_sort_na(&mut nat.t);
+			nat.t.fill_nonaggr(&info, f(161));
+			regen_mtbls(nat);
+			let (s_enc, s_pat) = NeoCore::<Fr>::gen_store_rows(
+				&vec![f(1)], &info);
+			nat.jr = NeoCore::<Fr>::gen_jr_table(&s_enc, &s_pat,
+				&hm_gen(&hm0), nat.jr.enc.len()).unwrap();
+			set_l(nat, &info, &hm0, &[]);
+			let q = (0..nat.qc_enc.len()).find(|&k| nat.qc_enc[k] == e
+				&& nat.qc_loc[k] == f(30)).unwrap();
+			nat.qc_loc[q] = mx();
+			nat.union_prf = t929_zero_scalars(nat);
+		};
+		let t1 = |nat: &mut NeoCore<Fr>| {
+			let t = &nat.t;
+			let w = (t.n_pad..t.enc.len()).find(|&i| t.enc[i] == e
+				&& t.cat[i].is_zero()).expect("E's wrap");
+			remove_row(nat, w);
+			rebind_d_sort_na(&mut nat.t);
+			nat.t.fill_nonaggr(&info, f(321));
+			while let Some(j) = nat.jr.enc.iter().position(|x| *x == e)
+				{ remove_jr_row(nat, j); }
+			set_l(nat, &info, &hm1, &[]);
+			regen_mtbls(nat);
+			nat.union_prf = t929_zero_scalars(nat);
+		};
+		let r = run_two_chunk_nonaggr(&info, &seeds_sq(&[1]),
+			[&hm0p, &hm1p], [161, 321], Some(&t0), None, Some(&t1));
+		assert!((0..r[1].1.qi_enc.len()).any(|j| r[1].1.qi_enc[j] == e
+			&& r[1].1.qi_loc[j] == mx()), "q_i carries (E, max)");
+		assert!(!qc_c_rows(&r[1].1, 1).iter().any(|x| x.0 == 2),
+			"s1 False");
+		//the fix may reject in either chunk (chunk 0 = the relabel)
+		assert_hole("g_carried_c_at_max", r[0].0 && r[1].0, FIXED_G);
+	}
+
+	/// T965 N11 (late seed add, NONAGGR_T967 fix B). Chunk 0 lists
+	/// S = {1}; chunk 1 lists S = {1, 2} (2 in a former pad slot) but
+	/// its q_i (= q_c(0)) has no seed of 2. At HEAD m_seed is free
+	/// advice: M14 gives m = 0 for slot 2, so t = 0 and nothing is
+	/// unpaid. 2 opens a fresh run in chunk 1: its step-1 match in
+	/// chunk 0 (pat7 30) is lost, 220 goes FP. Rejecter after fix B:
+	/// m := 1 - z_sub[k] forces t != 0 on slot 2, unpaid by q_i.
+	#[test]
+	fn test_t965_n11_late_seed() {
+		let info = two_chain_store();
+		let (mut hm0, mut hm1) = (HashMap::new(), HashMap::new());
+		hm0.insert(7, vec![30]);
+		hm1.insert(6, vec![220]);
+		let ok = run_two_chunk_nonaggr(&info, &seeds_sq(&[1, 2]),
+			[&hm0, &hm1], [161, 321], None, None, None);
+		assert!(ok[0].0 && ok[1].0, "honest twin");
+		assert!(qc_c_rows(&ok[1].1, 2).contains(&(2, 220)));
+		let add2 = |sq: &mut StepQueue<Fr>| {
+			sq.subsigs.push(f(2));
+			sq.store_items.insert(f(2), vec![StepQueueItem::new(f(2),
+				f(0), f(0), f(0), f(0), vec![f(1)])]);
+		};
+		let drop2 = |nat: &mut NeoCore<Fr>| {
+			let j = nat.qi_enc.iter().position(|x| *x == seed_enc(2))
+				.unwrap();
+			(nat.qi_enc[j], nat.qi_loc[j]) = (f(0), f(0));
+			regen_seed_m(nat);
+			nat.union_prf = t929_zero_scalars(nat);
+		};
+		let r = run_two_chunk_nonaggr(&info, &seeds_sq(&[1]),
+			[&hm0, &hm1], [161, 321], None, Some(&add2), Some(&drop2));
+		let n1 = &r[1].1;
+		assert!(r[0].0, "chunk 0 accepted");
+		assert!(n1.subsig_nat.contains(&f(2)), "2 listed in chunk 1");
+		assert!(!n1.qi_enc.contains(&seed_enc(2)), "no carried seed");
+		assert!(!qc_c_rows(n1, 2).iter().any(|x| x.0 == 2), "2 False");
+		assert_hole("n11_late_seed", r[1].0, FIXED_N11);
+	}
+
+	/// T965 G2 (green): honest two chunks over two_chain_store, S =
+	/// {1, 2}, both chains cross the chunk border. Guards the honest
+	/// side of N8 (pads are a prefix: each first real JR row has
+	/// rank 1), G (every carried loc < max), N11 (both seeds carried)
+	/// and D-na (each run ends at its own LAST group: both match).
+	#[test]
+	fn test_t965_green_nonaggr_two_chunk() {
+		let info = two_chain_store();
+		let (mut hm0, mut hm1) = (HashMap::new(), HashMap::new());
+		hm0.insert(2, vec![17]); hm0.insert(7, vec![30]);
+		hm1.insert(5, vec![200]); hm1.insert(6, vec![220]);
+		let r = run_two_chunk_nonaggr(&info, &seeds_sq(&[1, 2]),
+			[&hm0, &hm1], [161, 321], None, None, None);
+		assert!(r[0].0 && r[1].0);
+		let n1 = &r[1].1;
+		assert!(n1.qi_loc.iter().all(|l| *l < mx()));
+		for s in [1, 2] {
+			assert!((0..n1.qi_enc.len()).any(|j| n1.qi_enc[j]
+				== seed_enc(s) && n1.qi_loc[j] == f(1)), "seed {}", s);
+		}
+		for (_, n) in &r { assert_eq!(n.jr.id[jr_first(n)], f(1)); }
+		assert!(qc_c_rows(n1, 1).contains(&(2, 200)));
+		assert!(qc_c_rows(n1, 2).contains(&(2, 220)));
+	}
+
+	/// T965 NEW-3 R1 (dup seed row, NONAGGR_T967 S0). The in-group
+	/// loc sort is non-strict and the step-0 group is outside the
+	/// union, so a 2nd seed row (enc(1,0), loc 1, C) is free in Q_m
+	/// and q_c then carries two seed packs of subsig 1 (r14 chain).
+	/// Plays: Rebind (M13 d_sort) and Stale (d_sort[dup] := 0).
+	/// Rejecter after S0: Rebind -> d_sort = p-1 fails RANGE2 (M11);
+	/// Stale -> "neo sort/ascent bind".
+	#[test]
+	fn test_t965_new3_dup_seed_row() {
+		let info = a18_store();
+		for stale in [false, true] {
+			let tamper = |nat: &mut NeoCore<Fr>| {
+				let t = &nat.t;
+				let i = (t.n_pad..t.enc.len()).find(|&i|
+					t.step[i].is_zero() && t.cat[i] == f(CAT_C)).unwrap();
+				assert_eq!((t.loc[i], t.b_cin[i]), (f(1), f(1)));
+				dup_row(nat, i, &info, A18_DEFAULT_MIN);
+				if stale { nat.t.d_sort[i + 1] = f(0); }
+			};
+			let (cs, nat) = run_core_nonaggr(&info,
+				&a18_carried().to_stepqueue(), &fig14c2_hm(),
+				A18_DEFAULT_MIN, Some(&tamper));
+			assert_eq!(qc_seeds(&nat, 1), 2, "q_c carries the dup");
+			assert_hole(if stale { "new3 stale" } else { "new3 rebind" },
+				accepted_na(&cs, &nat), FIXED_NEW3);
+		}
+	}
+
+	/// the generator reads carried items BY POSITION (step i =
+	/// items[i], dan:776-779), while a carry with a step gap (the
+	/// decoy's) parses sparse: re-index every subsig's items to steps
+	/// 0..=max, missing steps empty.
+	fn step_index(sq: &mut StepQueue<Fr>, info: &SubsigStepStore) {
+		for (s, its) in sq.store_items.iter_mut() {
+			let pm = &info.subsig_to_steps[&field_to_usize(s)]
+				.vec_pm_bounds;
+			let last = its.iter().map(|it| field_to_usize(&it.step))
+				.max().unwrap();
+			*its = (0..=last).map(|st| its.iter()
+				.find(|it| it.step == f(st as u32)).cloned()
+				.unwrap_or_else(|| { let (p, (a, b)) = pm[st - 1];
+					StepQueueItem::new(*s, f(st as u32), f(p as u32),
+						f(a as u32), f(b as u32), vec![]) })).collect();
+		}
+	}
+
+	/// T965 NEW-4 R2 (z_0 decoy, NONAGGR_T970). Seg 0's q_i is the
+	/// prover's init queue and a carried (b_cin) row skips the pred
+	/// cert, so a decoy (s1, step 5, loc mx-1) beside the seed is a C
+	/// row with no history. Chunk 1 (6, 140, 146, 152 = steps 1-4):
+	/// the step-5 successor min is the decoy and 152 + 9 < mx-1, so
+	/// 152 goes BP (D2a) and is not carried; chunk 2 (161..180 =
+	/// steps 5-8) has no step-8 C row: a false clean. The control
+	/// without the decoy matches. Rejecter after T970: the seg-0 pin
+	/// n_cin_in = 0 (M15) vs sum(b_cin) = 1.
+	#[test]
+	fn test_t965_new4_z0_bp_decoy() {
+		let info = a18_store();
+		let mk = |v: &[(u32, u32)]| v.iter().map(|(p, l)| (*p, vec![*l]))
+			.collect::<HashMap<u32, Vec<u32>>>();
+		let hm1 = mk(&[(1, 6), (2, 140), (3, 146), (4, 152)]);
+		let hm2 = mk(&[(5, 161), (6, 170), (7, 175), (8, 180)]);
+		let ok = run_two_chunk_nonaggr(&info, &seed_only_sq(),
+			[&hm1, &hm2], [161, 321], None, None, None);
+		assert!(ok[0].0 && ok[1].0, "control");
+		assert!(qc_c_rows(&ok[0].1, 1).contains(&(4, 152)));
+		assert!(qc_c_rows(&ok[1].1, 1).iter().any(|x| x.0 == 8));
+		let mut z0 = seed_only_sq();
+		z0.store_items.get_mut(&f(1)).unwrap().push(StepQueueItem::new(
+			f(1), f(5), f(5), f(1), f(9), vec![mx() - f(1)]));
+		step_index(&mut z0, &info);
+		let pin = |nat: &mut NeoCore<Fr>| seg0_pin(nat);
+		let mid = |sq: &mut StepQueue<Fr>| step_index(sq, &info);
+		let r = run_two_chunk_nonaggr(&info, &z0, [&hm1, &hm2],
+			[161, 321], Some(&pin), Some(&mid), None);
+		assert!(!qc_c_rows(&r[0].1, 1).contains(&(4, 152)), "152 BP");
+		assert!(!qc_c_rows(&r[1].1, 1).iter().any(|x| x.0 == 8),
+			"false clean");
+		assert_hole("new4_z0_bp_decoy", r[0].0 && r[1].0, FIXED_NEW4);
+		//sanity: the decoy without its b_cin stamp dies at U1
+		let unstamp = |nat: &mut NeoCore<Fr>| {
+			let i = row(nat, (1u32 << read_global_config().range2_bit) - 2);
+			nat.t.b_cin[i] = f(0);
+		};
+		let (cs, nat) = run_core_nonaggr(&info, &z0, &hm1, 161,
+			Some(&unstamp));
+		assert!(!accepted_na(&cs, &nat), "unstamped decoy");
+	}
+
+	/// T965 G7 (green, NEW-3 end (c)): a z_0 dup is harmless. Chunk
+	/// 0, S = [1, 2], empty L. Tamper: slot 2 := 1 and q_i's seed of
+	/// 2 := a 2nd seed of 1 (M14: m = [2, 0] at HEAD, [1, 1] under
+	/// fix B). Runs 2 = listed 2; the extra run (subsig 2) starts at
+	/// doc start, i.e. honest semantics: q_c holds ONE seed per
+	/// subsig and subsig 2's Q_m rows equal the honest gen's.
+	#[test]
+	fn test_t965_green_new3_z0_dup() {
+		let info = two_chain_store();
+		let hm = HashMap::new();
+		let carried = seeds_sq(&[1, 2]);
+		let (cs, honest) = run_core_nonaggr(&info, &carried, &hm, 161,
+			None);
+		assert!(accepted_na(&cs, &honest));
+		let dup = |nat: &mut NeoCore<Fr>| {
+			let k = nat.subsig_nat.iter().position(|s| *s == f(2))
+				.unwrap();
+			nat.subsig_nat[k] = f(1);
+			let j = nat.qi_enc.iter().position(|x| *x == seed_enc(2))
+				.unwrap();
+			nat.qi_enc[j] = seed_enc(1);
+			regen_seed_m(nat);
+			regen_mtbls(nat);
+			nat.union_prf = t929_zero_scalars(nat);
+		};
+		let (cs, nat) = run_core_nonaggr(&info, &carried, &hm, 161,
+			Some(&dup));
+		assert!(accepted_na(&cs, &nat), "z_0 dup must stay accepted");
+		assert_eq!((qc_seeds(&nat, 1), qc_seeds(&nat, 2)), (1, 1));
+		let rows2 = |n: &NeoCore<Fr>| (0..n.t.enc.len())
+			.filter(|&i| n.t.subsig[i] == f(2))
+			.map(|i| (n.t.enc[i], n.t.id[i], n.t.loc[i], n.t.cat[i]))
+			.collect::<Vec<_>>();
+		assert_eq!(rows2(&nat), rows2(&honest));
+	}
+
+	/// T965 G8 (green, NEW-4 guard): honest seg 0 carries the seed
+	/// only (sum b_cin over step >= 1 rows = 0), so the T970 pin (M15)
+	/// holds; a later segment (a18 carry) has carried rows and is
+	/// not pinned.
+	#[test]
+	fn test_t965_green_new4_seg0_seeds_only() {
+		let info = a18_store();
+		let n_cin = |n: &NeoCore<Fr>| (0..n.t.enc.len()).filter(|&i|
+			!n.t.step[i].is_zero() && !n.t.b_cin[i].is_zero()).count();
+		let pin = |nat: &mut NeoCore<Fr>| seg0_pin(nat);
+		let (cs, nat) = run_core_nonaggr(&info, &seed_only_sq(),
+			&fig14_hm(), A18_DEFAULT_MIN, Some(&pin));
+		assert!(accepted_na(&cs, &nat) && n_cin(&nat) == 0);
+		let (cs, nat) = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &fig14c2_hm(),
+			A18_DEFAULT_MIN, None);
+		assert!(accepted_na(&cs, &nat) && n_cin(&nat) > 0);
+	}
+
+	/// T965 G9 (green, vacuity tripwire for M13): the honest chunk-2
+	/// natives with d_sort rebound by M13 stay accepted. If T967
+	/// changes the circuit's step-0 rule but not M13, this fails
+	/// (every remove_row negative would then pass for the wrong
+	/// reason, r16 PITFALL 2).
+	#[test]
+	fn test_t965_green_rebind_d_sort_honest() {
+		let info = a18_store();
+		let rebind = |nat: &mut NeoCore<Fr>| {
+			rebind_d_sort_na(&mut nat.t);
+			regen_mtbls(nat);
+		};
+		let (cs, nat) = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &fig14c2_hm(),
+			A18_DEFAULT_MIN, Some(&rebind));
+		assert!(accepted_na(&cs, &nat), "{:?}", range2_bad_na(&nat));
+	}
 }
 
 // ============================================================
@@ -12971,7 +13800,7 @@ mod tests_neo_seg0_seed {
 
 	//a18 store + subsig 2 as an empty-chain composite (the clam
 	//production shape: chain subsig + count subsig in one demand).
-	fn store_with_composite() -> SubsigStepStore {
+	pub(crate) fn store_with_composite() -> SubsigStepStore {
 		let mut info = a18_store();
 		info.subsig_ids.push(2);
 		info.subsig_to_steps.insert(2, SubsigStepStoreItem {
@@ -13796,7 +14625,7 @@ mod tests_neo_t301 {
 
 	/// subsig 1: step 1 = pat 1 under rg{5,60}, step 2 = pat 2 under
 	/// rg{2,9}. Step 1's two matches become the two carries.
-	fn t301_store() -> SubsigStepStore {
+	pub(crate) fn t301_store() -> SubsigStepStore {
 		let it = SubsigStepStoreItem {
 			subsig_id: 1, igc: false,
 			vec_pm_bounds: vec![(1usize, (5usize, 60usize)),
@@ -13810,7 +14639,7 @@ mod tests_neo_t301 {
 
 	/// pat 1 at 10 and 50 (both in the seed window [6,61] => carries);
 	/// pat 2 spread over the three dead zones and the two windows.
-	fn t301_hm() -> HashMap<u32, Vec<u32>> {
+	pub(crate) fn t301_hm() -> HashMap<u32, Vec<u32>> {
 		let mut m = HashMap::new();
 		m.insert(1, vec![10, 50]);
 		m.insert(2, vec![5, 8, 14, 23, 37, 44, 55, 61, 70, 83]);
@@ -13859,7 +14688,7 @@ mod tests_neo_t301 {
 	}
 
 	/// build the native bundle under the CURRENT flag setting.
-	fn gen_nat_for(info: &SubsigStepStore,
+	pub(crate) fn gen_nat_for(info: &SubsigStepStore,
 		hm: &HashMap<u32, Vec<u32>>) -> NeoCore<Fr> {
 		let seed = StepQueueItem::new(f(1), f(0), f(0), f(0), f(0),
 			vec![f(1)]);
@@ -13900,7 +14729,7 @@ mod tests_neo_t301 {
 	}
 
 	/// drop the given row indices from every QmTable column.
-	fn drop_rows(t: &mut QmTable<Fr>, kill: &[usize]) {
+	pub(crate) fn drop_rows(t: &mut QmTable<Fr>, kill: &[usize]) {
 		let keep = |v: &Vec<Fr>| (0..v.len())
 			.filter(|i| !kill.contains(i)).map(|i| v[i])
 			.collect::<Vec<Fr>>();
@@ -13925,13 +14754,13 @@ mod tests_neo_t301 {
 	/// Keep the native mirror coherent after a drop: g (= d_c2)
 	/// widens over the id hole, d_sort re-reads the new lower
 	/// neighbour. T703a: the circuit derives both -- natives only.
-	fn fix_after_drop(t: &mut QmTable<Fr>, i: usize) {
+	pub(crate) fn fix_after_drop(t: &mut QmTable<Fr>, i: usize) {
 		t.d_c2[i] = t.id[i] - t.id[i - 1] - f(1);
 		t.d_sort[i] = t.loc[i] - t.loc[i - 1];
 	}
 
 	/// index of the step-2 row at loc `l`.
-	fn row_at(nat: &NeoCore<Fr>, l: u32) -> usize {
+	pub(crate) fn row_at(nat: &NeoCore<Fr>, l: u32) -> usize {
 		let s2 = f(2);
 		(0..nat.t.enc.len()).find(|i| nat.t.step[*i] == s2
 			&& nat.t.loc[*i] == f(l)).expect("row not found")
@@ -14091,6 +14920,120 @@ mod tests_neo_t301 {
 				&t301_store()).1);
 		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap());
 	}
+
+	// ---- T965 B0: red tests pinning GRP3 holes (AGGR_T926). Each
+	// is SAT at HEAD; the fix commit flips its FIXED_ const.
+	const FIXED_N1: bool = false;
+	const FIXED_A: bool = false;
+
+	/// M0: a red test's verdict. `sat` = the forgery is accepted.
+	pub(crate) fn assert_hole(tag: &str, sat: bool, fixed: bool) {
+		assert_eq!(sat, !fixed, "T965 {}: forgery sat={} with \
+FIXED={}", tag, sat, fixed);
+	}
+
+	/// strip the step-2 group to its max row only (kill every row
+	/// below max); returns the index of the surviving max row.
+	fn strip_step2(nat: &mut NeoCore<Fr>) -> usize {
+		let max = f((1u32 << read_global_config().range2_bit) - 1);
+		let s2 = f(2);
+		let kill = (0..nat.t.enc.len()).filter(|i|
+			nat.t.step[*i] == s2 && nat.t.loc[*i] != max)
+			.collect::<Vec<usize>>();
+		assert_eq!(kill.len(), 6);
+		drop_rows(&mut nat.t, &kill);
+		nat.t.enc.len() - 1
+	}
+
+	fn regen_t301(nat: &mut NeoCore<Fr>) {
+		regen_aggr_advice(nat, &t301_store(),
+			&NeoCore::<Fr>::gen_store_rows(&vec![f(1)],
+				&t301_store()).1);
+	}
+
+	/// N1 (GS3): a lone FP sentinel opens the step-2 group. Its real
+	/// rows are dropped and the max-wrap (id 11) is relabelled FP
+	/// with the real bracket (step-1 C row 50, rid 2; the step-1
+	/// wrap, rid 3). g_fp = 10 pays the rank-1 pin, and d_ext reads
+	/// loc[i-1] = the step-1 wrap at max, so e_x = e_lo =
+	/// max-50-9-1 fits RANGE2. The C rows 14/55 vanish: acc empty.
+	/// Fix: e_x' = e_x - max*gs < 0 -> virt range mirror.
+	#[test]
+	fn test_t965_n1_lone_fp_sentinel() {
+		let honest = gen_nat();
+		assert!(run_nat_aggr(&honest).is_satisfied().unwrap());
+		assert_eq!(honest.acc_out.len(), 2);
+		let mut nat = gen_nat();
+		let max = f((1u32 << read_global_config().range2_bit) - 1);
+		// real step-2 row 55: its bracket (pid 2, pl1 50) and tags
+		let r = row_at(&nat, 55);
+		let (pid, ep, sep) = (nat.t.prev_id1[r], nat.t.enc_prev[r],
+			nat.t.si_enc_prev[r]);
+		let i = strip_step2(&mut nat);
+		let t = &mut nat.t;
+		assert!(t.id[i] == f(11) && t.loc[i - 1] == max);
+		t.cat[i] = f(CAT_FP);
+		t.prev_id1[i] = pid;
+		t.prev_loc1[i] = f(50);
+		t.prev_loc2[i] = max; // rid 3 = the step-1 max-wrap
+		t.enc_prev[i] = ep;
+		t.si_enc_prev[i] = sep;
+		fix_after_drop(t, i);
+		regen_t301(&mut nat);
+		assert_eq!(nat.acc_out.len(), 1); // the match is hidden
+		let sat = run_nat_aggr(&nat).is_satisfied().unwrap();
+		// after the fix: e_x' = (max-50-9-1) + (max - max) - max < 0
+		assert_hole("N1", sat, FIXED_N1);
+	}
+
+	/// A (N4+N5, GS1): the step-1 max-wrap (id 3) is relabelled FP
+	/// (bracket seed@1 rid 1 / step-0 wrap rid 2, pl2 = max), and
+	/// the step-2 group is stripped to its bare max-wrap, id 11. The
+	/// rank-1 pin accepts id 11 via g_wr = 10, and "gap into wrap
+	/// needs FP" reads the FP sentinel below it. Fix: pin
+	/// gs*(id-1-g_fp) forces id 1 -> no-show target (2,1,max) needs
+	/// pat 2 absent -> UNSAT.
+	#[test]
+	fn test_t965_a_cross_group_fp() {
+		assert!(run_nat_aggr(&gen_nat()).is_satisfied().unwrap());
+		let mut nat = gen_nat();
+		let max = f((1u32 << read_global_config().range2_bit) - 1);
+		let j = row_at(&nat, 8) - 1; // step-1 max-wrap
+		let i = strip_step2(&mut nat);
+		let t = &mut nat.t;
+		assert!(t.loc[j] == max && t.id[j] == f(3) && i == j + 1);
+		let k = j - 1; // step-1 C row 50: its si_enc_prev / enc_prev
+		assert!(t.loc[k] == f(50));
+		t.cat[j] = f(CAT_FP);
+		t.prev_id1[j] = f(1);
+		t.prev_loc1[j] = f(1);
+		t.prev_loc2[j] = max;
+		t.enc_prev[j] = t.enc_prev[k];
+		t.si_enc_prev[j] = t.si_enc_prev[k];
+		fix_after_drop(t, i);
+		regen_t301(&mut nat);
+		assert_eq!(nat.acc_out.len(), 1); // the match is hidden
+		let sat = run_nat_aggr(&nat).is_satisfied().unwrap();
+		assert_hole("A", sat, FIXED_A);
+	}
+
+	/// GREEN (T965 G1): honest aggr fixtures the B1 fixes (N1, A, X,
+	/// D, NEW-1 C1-C3) must keep SAT: the T301 windowed table, two
+	/// subsig runs (t3), and the a18 full match beside an
+	/// empty-chain composite subsig.
+	#[test]
+	fn test_t965_green_aggr_t301() {
+		use super::tests_neo_m6_neg::{run_core_aggr3, t3_store, t3_hm,
+			new1_hm};
+		use super::tests_neo_seg0_seed::store_with_composite;
+		assert!(run_nat_aggr(&gen_nat()).is_satisfied().unwrap());
+		let (cs, _) = run_core_aggr3(&t3_store(), &t3_hm(), 100, None);
+		assert!(cs.is_satisfied().unwrap());
+		let (cs, nat) = run_core_aggr3(&store_with_composite(),
+			&new1_hm(), 161, None);
+		assert!(cs.is_satisfied().unwrap());
+		assert!(nat.acc_out.len() >= 2);
+	}
 }
 
 // ===================================================================
@@ -14150,8 +15093,9 @@ mod tests_d2_need {
 	}
 
 	/// native mirror of the OUTER RANGE2 lookup (absent from the
-	/// gadget harness, W5) on the per-row diff cells.
-	fn range2_bad(nat: &NeoCore<Fr>) -> Vec<String> {
+	/// gadget harness, W5) on the per-row diff cells (T965 M11
+	/// range2_bad_na extends it).
+	pub(super) fn range2_bad(nat: &NeoCore<Fr>) -> Vec<String> {
 		let lim = Fr::from(1u64 << read_global_config().range2_bit);
 		let t = &nat.t;
 		let na = &t.nonaggr;

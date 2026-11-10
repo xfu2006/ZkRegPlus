@@ -10,6 +10,10 @@ could be edited. Same reason `LOG` and `git_check.sh` never ship.
 
 ## 1. `big_to_dfa` uses a 64-bit hash as set identity — LATENT CORRECTNESS BUG
 
+**Status 2026-11-09:** scheduled as ALL_T973 (GRP3 batch B3, 11/17). Fix =
+key the map on the sorted `Vec<usize>` itself; DFA byte-diff vs HEAD on all
+3 datasets. Design: PaperDiscussion align_implementation r21/r22.
+
 **Where:** `code/bora/vendor/rustomaton/src/nfa.rs:96-160`
 (`big_to_dfa` -> `big_to_dfa_new`; stock impl kept at `:161` as
 `big_to_dfa_old`, `#[allow(dead_code)]`).
@@ -48,6 +52,10 @@ on the paper's automata" as evidence.
 ---
 
 ## 2. BP walk stops early — LATENT PROVER CRASH on matching inputs
+
+**Status 2026-11-09: CLOSED (stale).** At HEAD neither walk has the early
+`break` (neo :897, legacy :933 run to completion; r19/r20). Only a stale
+comment remains at `discharge_adv.rs:930` (removed in GRP3 B3).
 
 **Where:** `code/bora/crates/zkregplus/src/gadgets/discharge_adv_neo.rs:883`
 `if del == 0 { break; }` (the "BP DESC" block), mirrored by

@@ -301,6 +301,10 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			Self::gen_eval_subsig_by_sq_combo(false, off_cs, //case sensitive
 			&inp_subsigs_cs, sq_res_cs, sq_inp_cs, &capacity,
 			subsig_store_info_cs)?;
+		#[cfg(test)] // T965 seam M4 (test only)
+		let raw_res_cs = { let mut v = raw_res_cs; tests_compute_sig_adv::t965_seam(
+			tests_compute_sig_adv::T965Stage::EvalCs,
+			&eval_res_combo_cs, &mut v); v };
 		stmt_container.lock().unwrap().add_container(eval_res_combo_cs);
 
 		//1.2 ignore case (skipped when the igc universe is empty)
@@ -317,6 +321,10 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 				Self::gen_eval_subsig_by_sq_combo(true, -1, //ignore case
 				&inp_subsigs_igc, sq_res_igc, sq_inp_igc, &capacity,
 				subsig_store_info_igc)?;
+			#[cfg(test)] // T965 seam M4 (test only)
+			let raw_res_igc = { let mut v = raw_res_igc; tests_compute_sig_adv::t965_seam(
+				tests_compute_sig_adv::T965Stage::EvalIgc,
+				&eval_res_combo_igc, &mut v); v };
 			stmt_container.lock().unwrap()
 				.add_container(eval_res_combo_igc);
 			(inp_subsigs_igc, raw_res_igc)
@@ -332,6 +340,10 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			&capacity, 
 			subsig_store_info_cs, 
 			subsig_extra_info_cs, subsig_extra_info_igc)?;
+		#[cfg(test)] // T965 seam M4 (test only)
+		let subsig_res = { let mut v = subsig_res; tests_compute_sig_adv::t965_seam(
+			tests_compute_sig_adv::T965Stage::Synth,
+			&synthesis_res_combo, &mut v); v };
 		stmt_container.lock().unwrap().add_container(synthesis_res_combo);
 
 		//3. based on the sysntehsis resout of subsigs
@@ -347,6 +359,9 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			&discharge_info, 
 			sig_to_id,
 		)?;
+		#[cfg(test)] // T965 seam M4 (test only)
+		tests_compute_sig_adv::t965_seam(tests_compute_sig_adv::T965Stage::Sig,
+			&sig_res_combo, &mut Vec::new());
 		stmt_container.lock().unwrap().add_container(sig_res_combo);
 
 		//3. allocates the discharged_sigs buffer
@@ -2209,7 +2224,11 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let vec_cnt = col2d[1].iter().zip(col2d[2].iter()).map(|(c1,c2)|{
 			c1 - &(c2 * &fa_var)
 		}).collect::<Vec<FpVar<F>>>();
-		assert!(col2d[0][0].value()?.is_zero(), "scc_prf too small, need 1st entry to be null entry. adjust perc_comp_subsigs in Config!");
+		let row0_null = col2d[0][0].value()?.is_zero();
+		#[cfg(test)] // T965 seam S2 (test only): NH2 disarms this native check
+		let row0_null = row0_null
+			|| !tests_compute_sig_adv::t965_native_guard("scc_prf_row0");
+		assert!(row0_null, "scc_prf too small, need 1st entry to be null entry. adjust perc_comp_subsigs in Config!");
 		let tri_true:FpVar<F> = 
 			new_const_var(&cs, F::from(TriVal::True as u8)).into();
 		let tri_maybe:FpVar<F> = 
@@ -2780,7 +2799,7 @@ impl ComputeSigAdvCapacity{
 #[cfg(test)]
 pub mod tests_compute_sig_adv{
 use utils::consts::{read_global_config, get_global_config};
-	use ark_ff::{Zero};
+	use ark_ff::{Zero, One};
 	use std::{sync::Arc};
 	use ark_bn254::{Fr};
 	use folding_schemes::folding::foldpot::circuits_super::field_to_usize;
@@ -2789,7 +2808,7 @@ use utils::consts::{read_global_config, get_global_config};
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
-			tests_word_extract_gadget::{test_gadget_adv, test_gadget_adv_ex},
+			tests_word_extract_gadget::{test_gadget_adv_nc, outer_lkup_ok},
 		},
 		fsm_adv::{FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
@@ -2806,6 +2825,70 @@ use utils::consts::{read_global_config, get_global_config};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::{SigmaGadget,
 		WordInfo, DischargeSigInfo};
 	use folding_schemes::folding::foldpot::container_config::ContainerConfig;
+
+	// ---- T965 seams M4 + S2 (TEST ONLY) ----
+	// M4: ComputeSigAdvAdvice::new passes each combo container and its
+	// result vector (raw eval / subsig res / empty for Sig) through
+	// t965_seam before the container is added. S2: t965_native_guard
+	// gates the native scc_prf row-0 assert (default armed). Both are
+	// PER THREAD, set by a guard, cleared when the guard drops (as
+	// TSeedGuard in discharge_adv_neo::tests_t929_fs_adaptive).
+	#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+	pub(crate) enum T965Stage { EvalCs, EvalIgc, Synth, Sig }
+	type T965SeamFn = Box<dyn Fn(T965Stage, &mut Container<Fr>,
+		&mut Vec<Fr>)>;
+	thread_local! {
+		static T965_SEAM: std::cell::RefCell<Option<T965SeamFn>> =
+			const { std::cell::RefCell::new(None) };
+		static T965_DISARMED: std::cell::RefCell<Vec<&'static str>> =
+			const { std::cell::RefCell::new(Vec::new()) };
+	}
+
+	pub(super) fn t965_seam<F: ark_ff::PrimeField
+		+ folding_schemes::folding::foldpot::container_config::ColEle>(
+		st: T965Stage,
+		c: &Arc<std::sync::Mutex<Container<F>>>, v: &mut Vec<F>) {
+		use std::any::Any;
+		T965_SEAM.with(|s| if let Some(f) = s.borrow().as_ref() {
+			let mut g = c.lock().unwrap();
+			let c_fr = (&mut *g as &mut dyn Any)
+				.downcast_mut::<Container<Fr>>().expect("t965 seam: F != Fr");
+			let v_fr = (v as &mut dyn Any)
+				.downcast_mut::<Vec<Fr>>().expect("t965 seam: F != Fr");
+			f(st, c_fr, v_fr);
+		});
+	}
+
+	/// true = the native check `tag` is armed (default).
+	pub(super) fn t965_native_guard(tag: &str) -> bool {
+		T965_DISARMED.with(|d| !d.borrow().contains(&tag))
+	}
+
+	/// installs a seam closure on this thread until the guard drops.
+	pub(crate) struct T965SeamGuard;
+	impl T965SeamGuard {
+		pub(crate) fn on(f: T965SeamFn) -> Self {
+			T965_SEAM.with(|s| *s.borrow_mut() = Some(f));
+			T965SeamGuard
+		}
+	}
+	impl Drop for T965SeamGuard {
+		fn drop(&mut self) { T965_SEAM.with(|s| *s.borrow_mut() = None); }
+	}
+
+	/// disarms native check `tag` on this thread until the guard drops.
+	pub(crate) struct T965DisarmGuard(&'static str);
+	impl T965DisarmGuard {
+		pub(crate) fn on(tag: &'static str) -> Self {
+			T965_DISARMED.with(|d| d.borrow_mut().push(tag));
+			T965DisarmGuard(tag)
+		}
+	}
+	impl Drop for T965DisarmGuard {
+		fn drop(&mut self) {
+			T965_DISARMED.with(|d| d.borrow_mut().retain(|t| *t != self.0));
+		}
+	}
 
 	/// M7 adversarial: the seed tie `encode(inp_subsig) subset-of seed`
 	/// rejects a verdict-universe subsig that was NOT seeded into the
@@ -2857,8 +2940,12 @@ use utils::consts::{read_global_config, get_global_config};
 	use std::{collections::{HashMap}};
 
 	/// a test case for discharge_test_case	
-	struct Tcase{//test case
+	pub(crate) struct Tcase{//test case
 		pub file_content: String,
+		/// T965: list EVERY subsig of the sig (not only the discharging
+		/// clause's) in the fsm / discharge / csa lists, as a chunk with
+		/// more sigs would. Default false.
+		pub b_all_subsigs: bool,
 		pub sig_to_discharge: String, //the signatures to be discharged
 			//NOTE: the sig should be INCLUDED in the discharge list
 			//of the quick_discharge result's WordInfo. The motivation
@@ -2870,9 +2957,11 @@ use utils::consts::{read_global_config, get_global_config};
 	impl Tcase{
 		pub fn new(file_content: &str, sig_to_disc: &str)->Self{
 			Self{file_content: file_content.to_string(),
-				sig_to_discharge: sig_to_disc.to_string()
+				sig_to_discharge: sig_to_disc.to_string(),
+				b_all_subsigs: false,
 			}
 		}
+		pub fn all_subsigs(mut self)->Self{ self.b_all_subsigs = true; self }
 	}
 
 
@@ -2888,51 +2977,36 @@ use utils::consts::{read_global_config, get_global_config};
 		tcase: &Tcase,
 		cfg: &ClamavApproxConfig,
 	){
-		//1 data preparation
-		//1.1. write the tcase file contents to the file
-		//then do a quick discharge to retrieve the discharge info.
-		let path = format!("{}/data/{}/word.txt", proj_root(), word_dir);
-		write_to_file(&path, &tcase.file_content);
-		let nibbles_raw = read_nibbles(&path);
-		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
-			.collect::<Vec<Fr>>();
+		let (sat, _nc, _p) = csa_case(word_dir, db, tcase, cfg, None, None);
+		assert!(sat, "discharge_test_case: circuit UNSAT");
+	}
+
+	/// T965 M3: discharge_test_case returning (sat, #constraints).
+	/// - pre(b_igc, sq_res2): tamper of the discharge output the csa
+	///   reads (legacy sq_res2, same layout as neo q_c), before the csa
+	///   advice is generated (its native walk sees it). Only the csa
+	///   gadget is checked here, not the discharge gadget.
+	/// - seam: M4 tamper, installed only around ComputeSigAdvAdvice::new
+	///   (not the gadget's dummy advice); M4b regenerates the logup
+	///   m-tables of the tampered stage after it (see t965_wrap). An Eval
+	///   seam may also edit the csa copy "sq_res" of the queue: it is
+	///   written back to sq_res2 after the advice (identity if untouched).
+	/// sat = csa circuit SAT AND the outer DB lookup holds (M1);
+	/// panicked = a native assert fired in the csa gadget (M2).
+	pub(crate) fn csa_case(
+		word_dir: &str,
+		db: &ClamavDB<Fr>,
+		tcase: &Tcase,
+		cfg: &ClamavApproxConfig,
+		pre: Option<&dyn Fn(bool, &mut Container<Fr>)>,
+		seam: Option<T965SeamFn>,
+	) -> (bool, usize, bool) {
+		let mut seam = seam.map(t965_wrap);
+		let mut res = (false, 0, false);
+		//1 data preparation: the tcase file + its quick discharge info
+		let (f_nibbles, info, sig) = t965_info(word_dir, db, tcase, cfg);
 		let sig_to_discharge = tcase.sig_to_discharge.clone();
-		let sig = &db.vec_sigs.iter().filter(|s| s.name==sig_to_discharge)
-			.map(|s| s.clone())
-			.collect::<Vec<Arc<ClamavSig>>>()[0];
 		let v_sig_obj = vec![sig.clone()];
-		// wlen pulled in so the discharge call can pad to match the
-		// gadget's view (Step 4 of pad-invariant rework). Test
-		// fixture below uses wlen=2.
-		let test_wlen = 2usize;
-		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm(
-			"word.txt",
-			&nibbles_raw,
-			&db.vec_sigs,
-			&db.vec_sigs_no_critical_pat,
-			&db.map_crit_pat,
-			&db.map_crit_pat_igc,
-			&db.dfa_crit,
-			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns,
-			&db.dfa_crit_igc,
-			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
-			true, cfg,
-			&db.sig_to_id, test_wlen, test_wlen
-        ).1; //use optimize mode
-
-		//1.2 verify the sig_to_discharge is in the word info.
-		// NOTE that here we essentially require that sig_to_discharge
-		// be IN the required discharge_list (sed/ised). This helps
-		// to handle the case more signatures are added which complicates
-		// the original test case. (so that we do not pay extra cost)
-		let sigs_info = &wi.vec_sed_sigs_info;
-		let infos = sigs_info.iter().filter(|i| i.sig_name==sig_to_discharge)
-			.map(|i| i.clone()).collect::<Vec<DischargeSigInfo>>();
-		assert!(infos.len()==1, "ERR in idnetifying: {}, infos.len: {}",
-			sig_to_discharge, infos.len());
-
-		//1.3 set data of acdfa, input_sigs, and bundle info related to the sig.
-		let info = infos[0].clone();
 		let discharge_infos = vec![info.clone()]; //only one sig to discharge
 		let bundle_cs = &db.bundle_subsig;
 		let bundle_igc = &db.bundle_subsig_igc;
@@ -2960,7 +3034,8 @@ use utils::consts::{read_global_config, get_global_config};
 
 		//1.4 capacilities of fsm and discharge components
 		let wlen = 2usize;
-		let perc_pats_expansion_rate = 150;
+		//T965: listing every subsig needs more pattern rows (sigF: 193)
+		let perc_pats_expansion_rate = if tcase.b_all_subsigs {300} else {150};
 		let (nibble_len, state_bits) = (wlen*LEGS, acdfa_cs.state_part_bits);
 		let cap = FsmAdvCapacity{
 			max_nibble_len: nibble_len, 
@@ -2980,9 +3055,10 @@ use utils::consts::{read_global_config, get_global_config};
 			universe_subsigs: cap.subsigs,
 			avg_active_pats_per_subsig: 2,
 			basis_pats_in_trace: cap.basis_pats_in_trace,
-			perc_pats_expansion_rate: 150,
+			perc_pats_expansion_rate: perc_pats_expansion_rate,
 			b_aggressive: false,
-			prod_pats_expansion: cap.basis_pats_in_trace * 150,
+			prod_pats_expansion: cap.basis_pats_in_trace
+				* perc_pats_expansion_rate,
 			wrap_keys: 0,
 			qm_real_rows: 0,
 		};
@@ -3092,6 +3168,11 @@ use utils::consts::{read_global_config, get_global_config};
 				let inp_sigs: Vec<Fr> = vec![Fr::from(sig_id as u64)];
 				let sq_res_cs = stmt_disc_cs.lock().unwrap().search_container("discharge_adv_stmt_cs bwd_steps_queue sq_res2").expect("sq_res err");
 				let sq_res_igc = stmt_disc_igc.lock().unwrap().search_container("discharge_adv_stmt_igc bwd_steps_queue sq_res2").expect("sq_res err");
+				if let Some(f) = pre {
+					f(false, &mut sq_res_cs.lock().unwrap());
+					f(true, &mut sq_res_igc.lock().unwrap());
+				}
+				let guard = seam.take().map(T965SeamGuard::on);
 				let adv_sig= ComputeSigAdvAdvice::new(
 					fsm_id_cs, 
 					fsm_id_igc, 
@@ -3112,7 +3193,14 @@ use utils::consts::{read_global_config, get_global_config};
 					&db.sig_to_id,
 					0
 				).expect("comp advice err");
+				drop(guard);
 				let stmt_sig = adv_sig.stmt_container;
+				for (arm, sq) in [("cs", &sq_res_cs), ("igc", &sq_res_igc)] {
+					let copy = stmt_sig.lock().unwrap().search_container(&format!(
+						"compute_sig_adv_stmt eval_res_combo_{} sq_res", arm)).unwrap();
+					let (names, rows) = t965_q_get(&copy.lock().unwrap());
+					t965_q_put(&sq.lock().unwrap(), &names, &rows);
+				}
 				let cfg_sig = stmt_sig.lock().unwrap().get_cfg();
 
 				//2.4 given cfgs, set up the positions
@@ -3163,7 +3251,8 @@ use utils::consts::{read_global_config, get_global_config};
 				let rg = Arc::new(dcg);
 
 				//3. test it
-				test_gadget_adv::<Fr>(rg, &word, &cps[0], &cps[1], &cps[2],
+				let (sat, nc, panicked) = test_gadget_adv_nc::<Fr>(rg, &word, &cps[0],
+					&cps[1], &cps[2],
 					&cps[6],
 					&cps[7],
 					&vec![//subtbl_id (concats of si_inp, si_oup, si_data)
@@ -3175,6 +3264,7 @@ use utils::consts::{read_global_config, get_global_config};
 					false, //not legacy mode
 					Some(vec_cfg),
 				);
+				res = (sat && outer_lkup_ok(&cps, &db.lkup), nc, panicked);
 			}
 
 			//4. reset the inputs for the next cycle
@@ -3208,6 +3298,1236 @@ use utils::consts::{read_global_config, get_global_config};
 
 		//4. verify the sigs_to_discharge have been discharged
 		//manually checked.
+		res
+	}
+
+	/// T965: writes the tcase file to data/<word_dir>/word.txt and returns
+	/// (nibbles, its quick-discharge info of tcase's sig, the sig).
+	pub(crate) fn t965_info(word_dir: &str, db: &ClamavDB<Fr>, tcase: &Tcase,
+		cfg: &ClamavApproxConfig) -> (Vec<Fr>, DischargeSigInfo, Arc<ClamavSig>) {
+		//1.1. write the tcase file contents to the file
+		//then do a quick discharge to retrieve the discharge info.
+		let path = format!("{}/data/{}/word.txt", proj_root(), word_dir);
+		write_to_file(&path, &tcase.file_content);
+		let nibbles_raw = read_nibbles(&path);
+		let f_nibbles = nibbles_raw.iter().map(|x| Fr::from(*x as u32))
+			.collect::<Vec<Fr>>();
+		let sig_to_discharge = tcase.sig_to_discharge.clone();
+		let sig = &db.vec_sigs.iter().filter(|s| s.name==sig_to_discharge)
+			.map(|s| s.clone())
+			.collect::<Vec<Arc<ClamavSig>>>()[0];
+		// wlen pulled in so the discharge call can pad to match the
+		// gadget's view (Step 4 of pad-invariant rework). Test
+		// fixture below uses wlen=2.
+		let test_wlen = 2usize;
+		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm(
+			"word.txt",
+			&nibbles_raw,
+			&db.vec_sigs,
+			&db.vec_sigs_no_critical_pat,
+			&db.map_crit_pat,
+			&db.map_crit_pat_igc,
+			&db.dfa_crit,
+			&db.bundle_subsig.vec_acdfa[0], //dfa_patterns,
+			&db.dfa_crit_igc,
+			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
+			true, cfg,
+			&db.sig_to_id, test_wlen, test_wlen
+        ).1; //use optimize mode
+
+		//1.2 verify the sig_to_discharge is in the word info.
+		// NOTE that here we essentially require that sig_to_discharge
+		// be IN the required discharge_list (sed/ised). This helps
+		// to handle the case more signatures are added which complicates
+		// the original test case. (so that we do not pay extra cost)
+		let sigs_info = &wi.vec_sed_sigs_info;
+		let infos = sigs_info.iter().filter(|i| i.sig_name==sig_to_discharge)
+			.map(|i| i.clone()).collect::<Vec<DischargeSigInfo>>();
+		//T965: with all_subsigs, a sig outside the SED list (the doc fully
+		//matches it, as the M5 fixtures) gets a stub info: dnf 0.
+		assert!(infos.len()==1 || (infos.is_empty() && tcase.b_all_subsigs),
+			"ERR in idnetifying: {}, infos.len: {}",
+			sig_to_discharge, infos.len());
+
+		//1.3 set data of acdfa, input_sigs, and bundle info related to the sig.
+		let mut info = infos.get(0).cloned().unwrap_or(DischargeSigInfo{
+			sig_name: sig_to_discharge.clone(), b_success: false, min_cost: 0,
+			min_dnf_id: 0, subsig_ids: vec![], subsig_igc: vec![] });
+		if tcase.b_all_subsigs {
+			info.subsig_ids = (0..sig.vec_subsig_obj.len()).collect();
+			info.subsig_igc = sig.vec_subsig_obj.iter()
+				.map(|o| o.b_ignore_case).collect();
+		}
+		(f_nibbles, info, sig.clone())
+	}
+
+	// ---- T965 helpers M4b + context (TEST ONLY) ----
+	/// column values of `c` (one level).
+	pub(crate) fn t965_col(c: &Container<Fr>, n: &str) -> Vec<Fr> {
+		c.get_col(n).unwrap().lock().unwrap().data.clone()
+	}
+	/// overwrite column `n` of `c` (same length).
+	pub(crate) fn t965_set(c: &Container<Fr>, n: &str, v: Vec<Fr>) {
+		let col = c.get_col(n).unwrap();
+		let mut col = col.lock().unwrap();
+		assert!(col.data.len() == v.len(), "t965_set {}: len", n);
+		col.data = v;
+	}
+
+	/// what the later stages need from the earlier ones (M4b).
+	#[derive(Default)]
+	struct T965Ctx { inp: Vec<Fr>, raw: Vec<Fr>, fin: Vec<Fr> }
+
+	/// runs tamper `f`, then M4b on the same stage.
+	fn t965_wrap(f: T965SeamFn) -> T965SeamFn {
+		let ctx = std::cell::RefCell::new(T965Ctx::default());
+		Box::new(move |st, c, v| {
+			f(st, c, v);
+			csa_regen_mtbls(st, c, &mut ctx.borrow_mut());
+		})
+	}
+
+	/// T965 M4b (non-aggr; aggr Eval = mtbl_membership + mtbl_seed):
+	/// recompute the logup m-tables of stage `st`
+	/// from its possibly tampered columns (the union proof needs none: the
+	/// circuit's union is the concat, so its zero counts always agree),
+	/// as the advice does, so a tamper is judged by the constraints, not
+	/// by a stale m-table. Identity on honest input. Records the cs ++ igc
+	/// inp / raw lists and the final results in `ctx` for later stages.
+	fn csa_regen_mtbls(st: T965Stage, c: &mut Container<Fr>, ctx: &mut T965Ctx) {
+		use crate::gadgets::commons::{encode_cols_better, gen_m_table};
+		use data_processor::type_def::TriVal;
+		let (zero, one) = (Fr::zero(), Fr::one());
+		let enc2 = |a: &[Fr], b: &[Fr], sel: &[Fr]| -> Vec<Fr> {
+			encode_cols_better(vec![a, b], vec![0,1]).iter().zip(sel)
+				.map(|(x, s)| *x * s).collect()
+		};
+		match st {
+		T965Stage::EvalCs | T965Stage::EvalIgc if matches!(c,
+			Container::Complex(_, m, _, _) if m.contains_key("acc_ref")) => {
+			//aggr (by_acc layout)
+			use crate::gadgets::commons::encode_cols;
+			let g = |n: &str| t965_col(c, n);
+			let sub = |k: &str, n: &str| t965_col(&c.get_container(k).unwrap()
+				.lock().unwrap(), n);
+			let (inp, raw) = (g("inp_subsig"), g("subsig_raw_eval"));
+			let maybe: Vec<Fr> = g("inp_subsig_encoded").iter().zip(&raw)
+				.map(|(e, r)| if *r == Fr::from(T965_MAYBE) {*e} else {zero})
+				.collect();
+			t965_set(c, "mtbl_membership", gen_m_table(
+				&sub("acc_ref", "acc_encoded"), &maybe));
+			let z = vec![zero; inp.len()];
+			let enc_inp = encode_cols(&vec![inp.clone(), z.clone(), z.clone(),
+				z.clone(), z], &vec![0,1,2,3,4]);
+			t965_set(c, "mtbl_seed", gen_m_table(&enc_inp,
+				&sub("seed_ref", "encoded")));
+			ctx.inp.extend(inp);
+			ctx.raw.extend(raw);
+		},
+		T965Stage::EvalCs | T965Stage::EvalIgc => {
+			let g = |n: &str| t965_col(c, n);
+			let sq = c.get_container("sq_res").unwrap();
+			let sq = sq.lock().unwrap();
+			let q = |n: &str| sq.get_container(n).unwrap().lock().unwrap()
+				.to_vec();
+			let (sub, n2) = (q("subsig"), q("subsig").len());
+			let sel: Vec<Fr> = (0..n2).map(|i| if i == n2-1
+				|| sub[i] != sub[i+1] {one} else {zero}).collect();
+			let src = encode_cols_better(vec![&g("inp_subsig_encoded")[..],
+				&g("inp_subsig")[..], &g("last_step")[..],
+				&g("sid_last_step")[..]], vec![0,1,2,3]);
+			let dst: Vec<Fr> = encode_cols_better(vec![&q("encoded")[..],
+				&sub[..], &q("step")[..], &q("si_step")[..]], vec![0,1,2,3])
+				.iter().zip(&sel).map(|(x, s)| *x * s).collect();
+			drop(sq);
+			t965_set(c, "mtbl_last_step", gen_m_table(&src, &dst));
+			ctx.inp.extend(g("inp_subsig"));
+			ctx.raw.extend(g("subsig_raw_eval"));
+		},
+		T965Stage::Synth => {
+			let g = |n: &str| t965_col(c, n);
+			let max = t965_max();
+			let (inp, raw) = (&ctx.inp[..], &ctx.raw[..]);
+			let comp = g("scc_prf_comp_subsig");
+			let not_max: Vec<Fr> = comp.iter().map(|x|
+				if *x == max {zero} else {one}).collect();
+			let is_max: Vec<Fr> = not_max.iter().map(|x| one - x).collect();
+			let is_scc: Vec<Fr> = g("vec_type").iter().map(|t|
+				if *t == Fr::from(2u8) {one} else {zero}).collect();
+			t965_set(c, "mtbl_comp_score", gen_m_table(
+				&enc2(&comp, &g("scc_prf_raw"), &not_max),
+				&encode_cols_better(vec![inp, raw], vec![0,1])));
+			t965_set(c, "mtbl_find_scc_res", gen_m_table(
+				&enc2(inp, &g("vec_scc_res"), &is_scc),
+				&enc2(&g("scc_prf_subsig"), &g("scc_prf_row_res"), &is_max)));
+			ctx.fin = g("vec_subsig_final_res");
+		},
+		T965Stage::Sig => {
+			let g = |n: &str| t965_col(c, n);
+			let f_false = Fr::from(TriVal::False as u8);
+			let fac2 = Fr::from(1u64 << utils::consts::current_bit_parts().1);
+			let comp: Vec<Fr> = g("v_sigs").iter().zip(g("v_real_subsigs"))
+				.map(|(s, r)| *s * fac2 + r).collect();
+			let n = comp.len();
+			let pad_inp = [&ctx.inp[..], &[zero]].concat();
+			let pad_res = [&ctx.fin[..], &[f_false]].concat();
+			t965_set(c, "mtbl_lk_res", gen_m_table(
+				&encode_cols_better(vec![&comp[..], &vec![f_false; n][..]],
+					vec![0,1]),
+				&encode_cols_better(vec![&pad_inp[..], &pad_res[..]],
+					vec![0,1])));
+			t965_set(c, "mtbl_sigs", gen_m_table(&g("discharged_sigs"),
+				&g("v_sigs")));
+		},
+		}
+	}
+
+	// ---- T965 B0 red/green tests, non-aggr csa (sig5 SCC fixture and a
+	// 2x2-clause fixture). A red test is SAT at HEAD and ends with
+	// assert_hole(tag, sat, FIXED_<id>); the fix commit flips its const. ----
+	const FIXED_V: bool = false;
+	const FIXED_F1: bool = false;
+	const FIXED_NH3: bool = false;
+	const FIXED_F2: bool = false;
+	const FIXED_F3: bool = false;
+	const FIXED_H1U: bool = false;
+	const FIXED_NH1: bool = false;
+	const FIXED_H2P: bool = false;
+	const FIXED_NH2: bool = false;
+
+	/// T965 M0: red-test verdict switch (SAT while the hole is open).
+	pub(crate) fn assert_hole(tag: &str, sat: bool, fixed: bool) {
+		assert_eq!(sat, !fixed, "T965 {}: sat = {}, FIXED = {}", tag, sat, fixed);
+	}
+
+	/// sig5: subsig 0 (igc, absent: False), 1 (cs, 2 steps, matched: Maybe),
+	/// SCC "(0|1)>1,2" over both (False: 1 Maybe < 2).
+	const T965_SIG5: &str =
+		"sig5;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/i;/56...fgh/";
+	const T965_DOC5: &str = "aBcdd122xabx56xxxfghxxabcdd122";
+	/// sigF: clauses <0|1> and <2|3> (2 subsigs each); the doc matches
+	/// only subsig 2, so <0|1> discharges and subsig 3 is False too.
+	/// Its tests pass all = true to t965_run (Tcase::all_subsigs) so
+	/// clause <2|3> is evaluated as well.
+	const T965_SIGF: &str = "sigF;Engine:51-255,Target:0;(0|1)&(2|3);\
+		/aaa..bbb/;/ccc..ddd/;/eee..fff/;/ggg..hhh/";
+	const T965_DOCF: &str = "xxeeexxfffxx";
+	const T965_FALSE: u32 = 1; // TriVal::False
+	const T965_MAYBE: u32 = 3; // TriVal::Maybe
+
+	/// T965: builds the test DB of `sig` in its own data dir
+	/// data/debug/t965/<name>, runs csa_case on `doc` (all = list every
+	/// subsig of the sig). Returns csa_case's (sat, nc, panicked).
+	fn t965_run(name: &str, sig: &str, doc: &str, all: bool,
+		pre: Option<&dyn Fn(bool, &mut Container<Fr>)>,
+		seam: Option<T965SeamFn>) -> (bool, usize, bool) {
+		let dir = format!("debug/t965/{}", name);
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), dir))
+			.unwrap();
+		let cfg = default_clamav_cfg();
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, &dir,
+			&vec![sig.to_string()], &vec![], &vec![], &vec![]).expect("db");
+		let name = sig.split(';').next().unwrap();
+		let tc = Tcase::new(doc, name);
+		let tc = if all {tc.all_subsigs()} else {tc};
+		csa_case(&dir, &db, &tc, &cfg, pre, seam)
+	}
+
+	/// subsig id of sig `sig_id`'s k-th subsig (0-based); the SCC
+	/// composite of sig5 is k = 2.
+	fn t965_ss(sig_id: usize, k: usize) -> Fr {
+		Fr::from(data_processor::hex_acdfa::HexACDFA
+			::gen_subsig_id_worker(sig_id, k + 1) as u64)
+	}
+	fn t965_unit() -> Fr { Fr::from(1u64 << read_global_config().range2_bit) }
+	fn t965_max() -> Fr { t965_unit() - Fr::one() }
+	fn t965_pos(v: &[Fr], x: Fr) -> usize {
+		v.iter().position(|y| *y == x).expect("t965: value not found")
+	}
+	/// c[name][i] := x.
+	fn t965_set1(c: &Container<Fr>, name: &str, i: usize, x: Fr) {
+		c.get_col(name).unwrap().lock().unwrap().data[i] = x;
+	}
+
+	/// per-slot columns of the eval / synthesis combos (non-aggr).
+	const T965_EVAL_COLS: [&str; 5] = ["inp_subsig", "inp_subsig_encoded",
+		"last_step", "sid_last_step", "subsig_raw_eval"];
+	const T965_SYN_COLS: [&str; 12] = ["vec_op", "sid_op", "vec_num",
+		"sid_num", "vec_counter_res", "sid_counter_res", "vec_type",
+		"vec_sid_type", "vec_scc_res", "vec_sid_scc_res",
+		"vec_subsig_final_res", "vec_sid_subsig_final_res"];
+	/// slot dst := slot src in `cols` of c and in the result vector v.
+	fn t965_copy_slot(c: &Container<Fr>, v: &mut Vec<Fr>, cols: &[&str],
+		dst: usize, src: usize) {
+		for n in cols {
+			let x = t965_col(c, n)[src];
+			t965_set1(c, n, dst, x);
+		}
+		v[dst] = v[src];
+	}
+	/// sets a slot's raw (eval) or final/counter result (synthesis) to x.
+	fn t965_set_res(c: &Container<Fr>, v: &mut Vec<Fr>, cols: &[&str],
+		i: usize, x: Fr) {
+		for n in cols { t965_set1(c, n, i, x); }
+		v[i] = x;
+	}
+
+	/// rows of step queue q (sq_res2 / its csa copy): (col names, rows).
+	pub(crate) fn t965_q_get(q: &Container<Fr>) -> (Vec<String>, Vec<Vec<Fr>>) {
+		let names: Vec<String> = match q {
+			Container::Complex(_, map, _, _) => {
+				let mut v: Vec<(usize, String)> = map.iter()
+					.map(|(k, i)| (*i, k.clone())).collect();
+				v.sort();
+				v.into_iter().map(|x| x.1).collect()
+			},
+			_ => panic!("t965_q_get: not a queue"),
+		};
+		let cols: Vec<Vec<Fr>> = names.iter().map(|n| t965_col(q, n)).collect();
+		let rows = (0..cols[0].len()).map(|i| cols.iter().map(|c| c[i])
+			.collect()).collect();
+		(names, rows)
+	}
+	pub(crate) fn t965_q_put(q: &Container<Fr>, names: &[String],
+		rows: &[Vec<Fr>]) {
+		for (k, n) in names.iter().enumerate() {
+			t965_set(q, n, rows.iter().map(|r| r[k]).collect());
+		}
+	}
+	fn t965_k(names: &[String], n: &str) -> usize {
+		names.iter().position(|x| x == n).unwrap()
+	}
+
+	/// recompute cnt_true/cnt_maybe/abs_diff1/abs_diff2/row_res of the
+	/// scc_prf rows `rows` (one block, in order, counts from 0) from their
+	/// raw values, as gen_synthesis_subsig_combo does.
+	fn t965_scc_recount(c: &Container<Fr>, rows: &[usize]) {
+		let m = field_to_usize(&t965_col(c, "scc_prf_min_req")[rows[0]]) as i64;
+		let raw = t965_col(c, "scc_prf_raw");
+		let (mut ct, mut cm) = (0i64, 0i64);
+		for &i in rows {
+			if raw[i] == Fr::from(2u32) { ct += 1; }
+			if raw[i] == Fr::from(T965_MAYBE) { cm += 1; }
+			let res = if ct >= m {2u32} else if ct + cm < m {1} else {3};
+			for (n, x) in [("scc_prf_cnt_true", ct), ("scc_prf_cnt_maybe", cm),
+				("scc_prf_abs_diff1", (ct - m).abs()),
+				("scc_prf_abs_diff2", (m - (ct + cm + 1)).abs()),
+				("scc_prf_row_res", res as i64)] {
+				t965_set1(c, n, i, Fr::from(x as u64));
+			}
+		}
+	}
+	/// scc_prf row r := the null pad row 0 (values and non-const sids).
+	fn t965_scc_pad(c: &Container<Fr>, r: usize) {
+		for n in ["scc_prf_subsig", "scc_prf_comp_subsig_encode",
+			"scc_prf_comp_subsig", "scc_prf_min_req", "scc_prf_raw",
+			"scc_prf_cnt_true", "scc_prf_cnt_maybe", "scc_prf_row_res",
+			"scc_prf_abs_diff1", "scc_prf_abs_diff2",
+			"sid_scc_prf_comp_subsig_encode", "sid_scc_prf_min_req"] {
+			let x = t965_col(c, n)[0];
+			t965_set1(c, n, r, x);
+		}
+	}
+	/// pad scc_prf row r takes comp = max with the DB dummy encode
+	/// (tag(0,COMP), 1 + max*unit): vec_cnt 1, exported by dst_3.5.
+	fn t965_scc_pad_max(c: &Container<Fr>, r: usize) {
+		t965_set1(c, "scc_prf_comp_subsig", r, t965_max());
+		t965_set1(c, "scc_prf_comp_subsig_encode", r,
+			Fr::one() + t965_max() * t965_unit());
+	}
+	/// scc_prf rows of subsig s.
+	fn t965_scc_rows(c: &Container<Fr>, s: Fr) -> Vec<usize> {
+		let v = t965_col(c, "scc_prf_subsig");
+		(0..v.len()).filter(|&i| v[i] == s).collect()
+	}
+
+	/// seam "ran" flag: set by a seam's tamper branch, checked after.
+	type T965Ran = std::rc::Rc<std::cell::Cell<bool>>;
+	/// a red csa verdict is valid only if its seam ran and no native
+	/// assert fired.
+	fn t965_ok(tag: &str, ran: &T965Ran, panicked: bool) {
+		assert!(ran.get() && !panicked, "T965 {}: seam ran = {}, panicked = {}",
+			tag, ran.get(), panicked);
+	}
+
+	/// T965 G3: honest sig5 is SAT with M1, also through an idle seam
+	/// (M4b regen + q_c sync are the identity), with the same cost.
+	#[test]
+	fn test_t965_green_csa_sig5(){
+		let (sat, nc, p) = t965_run("green_sig5", T965_SIG5, T965_DOC5, false,
+			None, None);
+		assert!(sat && !p, "G3: honest sig5 must be SAT (with M1)");
+		let s = t965_ss(1, 1);
+		let seam: T965SeamFn = Box::new(move |st, c, _v| {
+			if st == T965Stage::EvalCs { //precondition of V/F1/N9
+				let i = t965_pos(&t965_col(c, "inp_subsig"), s);
+				assert_eq!(t965_col(c, "subsig_raw_eval")[i],
+					Fr::from(T965_MAYBE), "G3: subsig 1 must be Maybe");
+			}
+		});
+		let (sat2, nc2, p2) = t965_run("green_sig5", T965_SIG5, T965_DOC5, false,
+			None, Some(seam));
+		assert!(sat2 && !p2 && nc2 == nc, "G3: idle seam changed the verdict/cost");
+	}
+
+	/// T965 M10 (non-aggr): csa cost pin of sig5 at HEAD (B3 gate). A
+	/// csa fix that moves it re-pins with its exact delta.
+	#[test]
+	fn test_t965_csa_pin_nonaggr(){
+		let (sat, nc, _) = t965_run("pin_nonaggr", T965_SIG5, T965_DOC5, false,
+			None, None);
+		assert!(sat);
+		assert_eq!(nc, 2939, "csa sig5 constraint count moved");
+	}
+
+	/// BREAK1: rotate the (fully matched, steps 0..2) block of s in step
+	/// queue q left by one, so the block ends at its step-0 row.
+	fn t965_rotate_blk(q: &Container<Fr>, s: Fr) {
+		let (nm, mut rows) = t965_q_get(q);
+		let (ks, kt) = (t965_k(&nm, "subsig"), t965_k(&nm, "step"));
+		let blk: Vec<usize> = (0..rows.len())
+			.filter(|&i| rows[i][ks] == s).collect();
+		assert!(blk.len() == 3 && rows[blk[2]][kt] == Fr::from(2u32),
+			"precondition: s fully matched (steps 0..2)");
+		rows[blk[0]..=blk[2]].rotate_left(1);
+		t965_q_put(q, &nm, &rows);
+	}
+
+	/// T965 BREAK1 / V: q_c is multiset-bound only, so rotating the
+	/// matched subsig's block to end at its step-0 row makes the walk
+	/// read step 0 (NORMAL tag): raw False on a matching document.
+	#[test]
+	fn test_t965_v_break1_reorder(){
+		let s = t965_ss(1, 1);
+		let pre = move |b_igc: bool, q: &mut Container<Fr>| if !b_igc {
+			t965_rotate_blk(q, s);
+		};
+		let ran = T965Ran::default();
+		let rn = ran.clone();
+		let seam: T965SeamFn = Box::new(move |st, c, _v| {
+			if st == T965Stage::EvalCs {
+				let i = t965_pos(&t965_col(c, "inp_subsig"), s);
+				assert_eq!(t965_col(c, "subsig_raw_eval")[i],
+					Fr::from(T965_FALSE), "reorder must flip s to False");
+				rn.set(true);
+			}
+		});
+		let (sat, _, p) = t965_run("v_break1", T965_SIG5, T965_DOC5, false,
+			Some(&pre), Some(seam));
+		t965_ok("V/BREAK1", &ran, p);
+		assert_hole("V/BREAK1", sat, FIXED_V);
+	}
+
+	/// T965 N9 / V: raw_eval is only tested for != 1 (False), so a
+	/// reached slot can carry raw 2 (True) instead of Maybe.
+	#[test]
+	fn test_t965_v_n9_raw2(){
+		let s = t965_ss(1, 1);
+		let ran = T965Ran::default();
+		let rn = ran.clone();
+		let seam: T965SeamFn = Box::new(move |st, c, v| {
+			if st == T965Stage::EvalCs {
+				let i = t965_pos(&t965_col(c, "inp_subsig"), s);
+				assert_eq!(v[i], Fr::from(T965_MAYBE), "precondition: Maybe");
+				t965_set_res(c, v, &["subsig_raw_eval"], i, Fr::from(2u32));
+				rn.set(true);
+			}
+		});
+		let (sat, _, p) = t965_run("v_n9", T965_SIG5, T965_DOC5, false, None,
+			Some(seam));
+		t965_ok("V/N9", &ran, p);
+		assert_hole("V/N9", sat, FIXED_V);
+	}
+
+	/// F1: move s's step-0 row of step queue q to its end.
+	fn t965_step0_to_end(q: &Container<Fr>, s: Fr) {
+		let (nm, mut rows) = t965_q_get(q);
+		let (ks, kt) = (t965_k(&nm, "subsig"), t965_k(&nm, "step"));
+		let i0 = (0..rows.len()).find(|&i| rows[i][ks] == s
+			&& rows[i][kt].is_zero()).expect("precondition: s's step-0 row");
+		let r0 = rows.remove(i0);
+		rows.push(r0);
+		t965_q_put(q, &nm, &rows);
+	}
+	/// F1 non-aggr seam: s is listed twice, in the pad cs slot a-1 and
+	/// s's slot a. The forged slot f gets s's step-0 q_c key, raw False
+	/// and final False; the other one s's honest eval and synthesis.
+	/// f = a-1, or with `late` f = a (the native sig check reads the
+	/// last (s, res) pair: needed when the sig reads s directly).
+	/// `reorder` first applies t965_step0_to_end to the csa copy of
+	/// q_c. Records a in `slot`.
+	fn t965_f1_na_seam(s: Fr, slot: std::rc::Rc<std::cell::Cell<usize>>,
+		reorder: bool, late: bool) -> T965SeamFn {
+		Box::new(move |st, c, v| match st {
+			T965Stage::EvalCs => {
+				let q = c.get_container("sq_res").unwrap();
+				let q = q.lock().unwrap();
+				if reorder { t965_step0_to_end(&q, s); }
+				let (nm, rows) = t965_q_get(&q);
+				let (ks, kt) = (t965_k(&nm, "subsig"), t965_k(&nm, "step"));
+				let r0 = rows.iter().find(|r| r[ks] == s && r[kt].is_zero())
+					.unwrap();
+				let a = t965_pos(&t965_col(c, "inp_subsig"), s);
+				assert!(t965_col(c, "inp_subsig")[a - 1].is_zero(), "need a pad slot");
+				t965_copy_slot(c, v, &T965_EVAL_COLS, a - 1, a);
+				let f = if late {a} else {a - 1};
+				for (n, x) in [("inp_subsig_encoded", r0[t965_k(&nm, "encoded")]),
+					("last_step", Fr::zero()),
+					("sid_last_step", r0[t965_k(&nm, "si_step")])] {
+					t965_set1(c, n, f, x);
+				}
+				t965_set_res(c, v, &["subsig_raw_eval"], f, Fr::from(T965_FALSE));
+				slot.set(a);
+			},
+			T965Stage::Synth => {
+				let a = slot.get();
+				t965_copy_slot(c, v, &T965_SYN_COLS, a - 1, a);
+				t965_set_res(c, v, &["vec_counter_res", "vec_subsig_final_res"],
+					if late {a} else {a - 1}, Fr::from(T965_FALSE));
+			},
+			_ => {},
+		})
+	}
+
+	/// T965 F1 (W1) non-aggr: a pad cs slot b re-lists the matched subsig
+	/// s with raw False. At HEAD this needs the BREAK1 reorder: s's
+	/// step-0 row moves to the end of q_c, a run boundary with the
+	/// NORMAL tag, while s's real slot keeps its LAST boundary row.
+	#[test]
+	fn test_t965_f1_dup_slot_nonaggr(){
+		let s = t965_ss(1, 1);
+		let slot = std::rc::Rc::new(std::cell::Cell::new(0usize));
+		//control: without the reorder s's step-0 row is no run boundary
+		let (sat0, _, p0) = t965_run("f1_dup_na", T965_SIG5, T965_DOC5, false,
+			None, Some(t965_f1_na_seam(s, slot.clone(), false, false)));
+		assert!(slot.get() > 0 && !p0 && !sat0,
+			"control: dup slot alone must be UNSAT");
+		slot.set(0);
+		let (sat, _, p) = t965_run("f1_dup_na", T965_SIG5, T965_DOC5, false,
+			None, Some(t965_f1_na_seam(s, slot.clone(), true, false)));
+		assert!(slot.get() > 0 && !p, "seam did not run / panicked");
+		assert_hole("F1/nonaggr", sat, FIXED_F1);
+	}
+
+	/// T965 NH3: the cs subsig s (Maybe) is listed again in the igc list
+	/// with raw False; the igc q_c gets s's step-0 row (NORMAL tag). The
+	/// TYPE sid is armless, so the igc slot passes the type check.
+	#[test]
+	fn test_t965_nh3_cross_list(){
+		let s = t965_ss(1, 1);
+		let st0: std::rc::Rc<std::cell::RefCell<(Vec<Fr>, usize, usize, usize)>>
+			= Default::default(); // (s step-0 row, n_cs, cs slot, igc slot)
+		let sh = st0.clone();
+		let seam: T965SeamFn = Box::new(move |st, c, v| match st {
+			T965Stage::EvalCs => {
+				let q = c.get_container("sq_res").unwrap();
+				let (nm, rows) = t965_q_get(&q.lock().unwrap());
+				let (ks, kt) = (t965_k(&nm, "subsig"), t965_k(&nm, "step"));
+				let mut g = sh.borrow_mut();
+				g.0 = rows.into_iter().find(|r| r[ks] == s && r[kt].is_zero())
+					.unwrap();
+				let inp = t965_col(c, "inp_subsig");
+				g.1 = inp.len();
+				g.2 = t965_pos(&inp, s);
+			},
+			T965Stage::EvalIgc => {
+				let mut g = sh.borrow_mut();
+				let q = c.get_container("sq_res").unwrap();
+				let q = q.lock().unwrap();
+				let (nm, mut rows) = t965_q_get(&q);
+				assert!(rows[0][t965_k(&nm, "subsig")].is_zero());
+				rows.remove(0);
+				rows.push(g.0.clone()); //s's block at the end (boundary)
+				t965_q_put(&q, &nm, &rows);
+				let j = t965_col(c, "inp_subsig").len() - 1; //last igc slot
+				assert!(t965_col(c, "inp_subsig")[j - 1].is_zero());
+				t965_copy_slot(c, v, &T965_EVAL_COLS, j - 1, j);
+				for (n, x) in [("inp_subsig", s),
+					("inp_subsig_encoded", g.0[t965_k(&nm, "encoded")]),
+					("last_step", Fr::zero()),
+					("sid_last_step", g.0[t965_k(&nm, "si_step")])] {
+					t965_set1(c, n, j, x);
+				}
+				t965_set_res(c, v, &["subsig_raw_eval"], j, Fr::from(T965_FALSE));
+				g.3 = j;
+			},
+			T965Stage::Synth => {
+				let g = sh.borrow();
+				let j = g.1 + g.3;
+				t965_copy_slot(c, v, &T965_SYN_COLS, j - 1, j);
+				t965_copy_slot(c, v, &T965_SYN_COLS, j, g.2);
+				t965_set_res(c, v, &["vec_counter_res", "vec_subsig_final_res"],
+					j, Fr::from(T965_FALSE));
+			},
+			_ => {},
+		});
+		let (sat, _, p) = t965_run("nh3_cross", T965_SIG5, T965_DOC5, false,
+			None, Some(seam));
+		assert!(st0.borrow().3 > 0 && !p, "seam did not run / panicked");
+		assert_hole("NH3", sat, FIXED_NH3);
+	}
+
+	/// sig-table sids (gen_discharge_sig_combo): (sid_dnf_count, sid_real).
+	fn t965_sig_sids(sig: Fr, dnf: Fr, step: Fr) -> (Fr, Fr) {
+		let fac = Fr::from(1u64 << 32);
+		let base = sig * fac * fac + dnf * fac;
+		(Fr::from(0x98882405u32) * fac * fac * fac + base,
+			Fr::from(0x99992405u32) * fac * fac * fac + base + step)
+	}
+	/// sigF's matched subsig 2 (1-based 3): its (comp, False) is no
+	/// lk_res entry, so a Sig row naming it is UNSAT (twins of F2, F3).
+	const T965_SIGF_MATCHED: u32 = 3;
+
+	/// T965 F2 (W3): inside sigF's block, row 0 is clause <0|1> step 0 and
+	/// row 1 is clause <2|3> step 1 (subsig 3, also False). Each row is
+	/// DB-valid; the boundary looks at v_sigs only, so the mixed "clause"
+	/// {0, 3} is accepted. Twin: the same row naming the matched subsig
+	/// 2 is UNSAT.
+	#[test]
+	fn test_t965_f2_clause_mix(){
+		let ran = T965Ran::default();
+		let mk = |bad: bool| -> T965SeamFn { let rn = ran.clone();
+			Box::new(move |st, c, _v| if st == T965Stage::Sig {
+			let n = t965_col(c, "v_sigs").len();
+			let (sig, dnf) = (t965_col(c, "v_sigs")[n-1], t965_col(c, "v_dnf_id")[n-1]);
+			assert!(t965_col(c, "v_dnf_count")[n-1] == Fr::from(2u32)
+				&& t965_col(c, "v_sigs")[n-2] == sig, "precondition: 2-row block");
+			let other = Fr::one() - dnf; //clauses 0 and 1
+			let step = Fr::one();
+			let (sid_cnt, sid_real) = t965_sig_sids(sig, other, step);
+			//clause <2|3>: its step-1 member is subsig 3 (1-based 4)
+			let real = if bad {Fr::from(T965_SIGF_MATCHED)}
+				else if other.is_zero() {Fr::from(2u32)} else {Fr::from(4u32)};
+			for (nm, x) in [("v_dnf_id", other), ("v_real_subsigs", real),
+				("sid_v_dnf_count", sid_cnt), ("sid_v_real_subsigs", sid_real)] {
+				t965_set1(c, nm, n-1, x);
+			}
+			rn.set(true);
+		})};
+		let (sat0, _, p0) = t965_run("f2_mix", T965_SIGF, T965_DOCF, true, None,
+			Some(mk(true)));
+		t965_ok("F2 twin", &ran, p0);
+		assert!(!sat0, "twin: a matched real subsig must be UNSAT");
+		ran.set(false);
+		let (sat, _, p) = t965_run("f2_mix", T965_SIGF, T965_DOCF, true, None,
+			Some(mk(false)));
+		t965_ok("F2", &ran, p);
+		assert_hole("F2", sat, FIXED_F2);
+	}
+
+	/// T965 F3 (W2): drop the last row of sigF's final block (count 2) and
+	/// prepend one pad row; the last row is never closed. Twin: the
+	/// shifted last row naming the matched subsig 2 is UNSAT.
+	#[test]
+	fn test_t965_f3_last_block_trunc(){
+		let ran = T965Ran::default();
+		let mk = |bad: bool| -> T965SeamFn { let rn = ran.clone();
+			Box::new(move |st, c, _v| if st == T965Stage::Sig {
+			let n = t965_col(c, "v_sigs").len();
+			assert!(t965_col(c, "v_dnf_count")[n-1] == Fr::from(2u32)
+				&& t965_col(c, "v_sigs")[0].is_zero(), "precondition");
+			for nm in ["v_sigs", "v_dnf_id", "v_dnf_step", "v_dnf_count",
+				"v_real_subsigs", "sid_v_sigs", "sid_v_dnf_id",
+				"sid_v_dnf_step", "sid_v_dnf_count", "sid_v_real_subsigs"] {
+				let v = t965_col(c, nm);
+				t965_set(c, nm, [&v[..1], &v[..n-1]].concat());
+			}
+			if bad {
+				t965_set1(c, "v_real_subsigs", n-1, Fr::from(T965_SIGF_MATCHED));
+			}
+			rn.set(true);
+		})};
+		let (sat0, _, p0) = t965_run("f3_trunc", T965_SIGF, T965_DOCF, true,
+			None, Some(mk(true)));
+		t965_ok("F3 twin", &ran, p0);
+		assert!(!sat0, "twin: a matched real subsig must be UNSAT");
+		ran.set(false);
+		let (sat, _, p) = t965_run("f3_trunc", T965_SIGF, T965_DOCF, true,
+			None, Some(mk(false)));
+		t965_ok("F3", &ran, p);
+		assert_hole("F3", sat, FIXED_F3);
+	}
+
+	/// T965 H1u (B2). Route A: pad slot 0 carries final_res = s*unit + 1,
+	/// i.e. dst_2.2 = encode(s, False) (its pin is gated by subsig 0).
+	/// Route B: a pad scc_prf row takes comp = max and row_res =
+	/// t*unit + 1, exported by dst_3.5 (3.4 is gated); the real SCC slot
+	/// s' reads it with vec_scc_res = (t-s')*unit + 1. The harness sig
+	/// needs (s', False), so t = s'; the lookup lands on the pad row.
+	#[test]
+	fn test_t965_h1u_pad_final_res(){
+		let s = t965_ss(1, 2); //sig5's SCC subsig
+		let (ran_a, ran_b) = (T965Ran::default(), T965Ran::default());
+		let rn = ran_a.clone();
+		let seam_a: T965SeamFn = Box::new(move |st, c, v| if st == T965Stage::Synth {
+			assert!(t965_col(c, "vec_subsig_final_res")[0].is_zero());
+			t965_set_res(c, v, &["vec_subsig_final_res"], 0,
+				s * t965_unit() + Fr::from(T965_FALSE));
+			rn.set(true);
+		});
+		let (sat_a, _, pa) = t965_run("h1u", T965_SIG5, T965_DOC5, false, None,
+			Some(seam_a));
+		t965_ok("H1u/A", &ran_a, pa);
+		assert_hole("H1u/A", sat_a, FIXED_H1U);
+		let rn = ran_b.clone();
+		let seam_b: T965SeamFn = Box::new(move |st, c, _v| if st == T965Stage::Synth {
+			let r = 1; //a pad row (row 0 stays the null entry)
+			assert!(t965_col(c, "scc_prf_subsig")[r].is_zero());
+			t965_scc_pad_max(c, r);
+			t965_set1(c, "scc_prf_row_res", r, s * t965_unit() + Fr::from(T965_FALSE));
+			rn.set(true);
+		});
+		let (sat_b, _, pb) = t965_run("h1u", T965_SIG5, T965_DOC5, false, None,
+			Some(seam_b));
+		t965_ok("H1u/B", &ran_b, pb);
+		assert_hole("H1u/B", sat_b, FIXED_H1U);
+	}
+
+	/// T965 NH1: scc_prf_raw has si 0 (no range), so the matched
+	/// component c's raw := (t-c)*unit + r_t makes the 3.2 lookup hit
+	/// (t, r_t) = (subsig 0, False): c is counted neither True nor Maybe.
+	#[test]
+	fn test_t965_nh1_scc_raw_alias(){
+		let (scc, c1, t) = (t965_ss(1, 2), t965_ss(1, 1), t965_ss(1, 0));
+		let ran = T965Ran::default();
+		let mk = |r_t: u32| -> T965SeamFn { let rn = ran.clone();
+			Box::new(move |st, c, _v| if st == T965Stage::Synth {
+			let rows = t965_scc_rows(c, scc);
+			let j = t965_pos(&t965_col(c, "scc_prf_comp_subsig"), c1);
+			assert_eq!(t965_col(c, "scc_prf_raw")[j], Fr::from(T965_MAYBE));
+			assert_eq!(t965_col(c, "scc_prf_cnt_maybe")[j], Fr::one());
+			t965_set1(c, "scc_prf_raw", j,
+				(t - c1) * t965_unit() + Fr::from(r_t));
+			t965_scc_recount(c, &rows);
+			assert!(t965_col(c, "scc_prf_cnt_maybe")[j].is_zero());
+			rn.set(true);
+		})};
+		//control: (t, True) is no 3.2 dst entry (t is False)
+		let (sat0, _, p0) = t965_run("nh1", T965_SIG5, T965_DOC5, false, None,
+			Some(mk(2)));
+		t965_ok("NH1 control", &ran, p0);
+		assert!(!sat0, "control: alias must hit a real (subsig, raw) pair");
+		ran.set(false);
+		let (sat, _, p) = t965_run("nh1", T965_SIG5, T965_DOC5, false, None,
+			Some(mk(T965_FALSE)));
+		t965_ok("NH1", &ran, p);
+		assert_hole("NH1", sat, FIXED_NH1);
+	}
+
+	/// T965 H2' (B1): the SCC block's start terms are gated by
+	/// prev_subsig, so the block right after the pads can be the single
+	/// max row (encode (k+1) + max*unit, cnt 0/0): (s, False) without
+	/// any component row.
+	#[test]
+	fn test_t965_h2p_scc_block_start(){
+		let scc = t965_ss(1, 2);
+		let ran = T965Ran::default();
+		let rn = ran.clone();
+		let seam: T965SeamFn = Box::new(move |st, c, _v| if st == T965Stage::Synth {
+			let rows = t965_scc_rows(c, scc);
+			let last = *rows.last().unwrap();
+			assert!(rows.len() == 3 && t965_col(c, "scc_prf_comp_subsig")[last]
+				== t965_max(), "precondition: 2 components + max row");
+			for &r in &rows[..rows.len()-1] { t965_scc_pad(c, r); }
+			t965_scc_recount(c, &[last]);
+			rn.set(true);
+		});
+		let (sat, _, p) = t965_run("h2p", T965_SIG5, T965_DOC5, false, None,
+			Some(seam));
+		t965_ok("H2'", &ran, p);
+		assert_hole("H2'", sat, FIXED_H2P);
+	}
+
+	/// T965 NH2: row 0 of scc_prf is pinned null only by a native assert
+	/// (disarmed by seam S2): the SCC block moves to row 0 as its single
+	/// max row (cnt 0/0, False); row 1 (pad, comp = max, vec_cnt 1)
+	/// meets the start terms the chain applies after a real row.
+	#[test]
+	fn test_t965_nh2_scc_row0(){
+		let scc = t965_ss(1, 2);
+		let mk = || -> T965SeamFn { Box::new(move |st, c, _v| if st == T965Stage::Synth {
+			let rows = t965_scc_rows(c, scc);
+			let last = *rows.last().unwrap();
+			assert!(rows[0] > 1, "precondition: rows 0, 1 are pads");
+			let names = ["scc_prf_subsig", "scc_prf_comp_subsig_encode",
+				"scc_prf_comp_subsig", "scc_prf_min_req", "scc_prf_raw",
+				"sid_scc_prf_comp_subsig_encode", "sid_scc_prf_min_req"];
+			let max_row: Vec<Fr> = names.iter().map(|n| t965_col(c, n)[last])
+				.collect();
+			for &r in &rows { t965_scc_pad(c, r); }
+			for (n, x) in names.iter().zip(max_row) { t965_set1(c, n, 0, x); }
+			t965_scc_recount(c, &[0]);
+			t965_scc_pad_max(c, 1);
+		})};
+		//control: armed, the native row-0 assert panics in the gadget
+		let (sat0, _, p0) = t965_run("nh2", T965_SIG5, T965_DOC5, false, None,
+			Some(mk()));
+		assert!(!sat0 && p0, "control: native row-0 assert must fire");
+		let _g = T965DisarmGuard::on("scc_prf_row0");
+		let (sat, _, p) = t965_run("nh2", T965_SIG5, T965_DOC5, false, None,
+			Some(mk()));
+		assert!(!p, "NH2: panicked with the row-0 assert disarmed");
+		assert_hole("NH2", sat, FIXED_NH2);
+	}
+
+	// ---- T965 M5: neo discharge + csa harness (aggr and non-aggr) ----
+	const FIXED_ST: bool = false;
+	const FIXED_E2: bool = false;
+
+	/// M5 knobs (all default off = honest).
+	#[derive(Default)]
+	pub(crate) struct T965NeoOpt<'a> {
+		/// dan demand := f(the demand) (a subsig left out is never seeded).
+		pub dan_inp: Option<&'a dyn Fn(&[Fr]) -> Vec<Fr>>,
+		/// tamper of the dan statement before the csa advice reads it.
+		pub pre: Option<&'a dyn Fn(&Container<Fr>)>,
+		/// M4 seam on the csa advice (M4b regen through t965_wrap).
+		pub seam: Option<T965SeamFn>,
+		/// csa capacity edit, given the csa cs list length.
+		pub cap_t: Option<&'a dyn Fn(&mut ComputeSigAdvCapacity, usize)>,
+	}
+	/// M5 verdict: sat = dan AND csa gadget SAT AND M1 (outer lookup);
+	/// nc = csa constraints; panicked = a native assert fired (advice or
+	/// either gadget); err = the
+	/// csa advice error; inp = the csa cs list.
+	pub(crate) struct T965Neo { pub sat: bool, pub nc: usize,
+		pub panicked: bool, pub err: Option<String>, pub inp: Vec<Fr> }
+
+	/// T965 M5: one single-cycle word_extract -> fsm_adv -> neo discharge
+	/// (cs arm) -> compute_sig run, routed as sed_mapper (b_skip_igc;
+	/// aggr: failed_acc + fwd_seed and the needs() list, non-aggr: q_c +
+	/// q_i and the full demand), both gadgets checked.
+	pub(crate) fn run_neo_csa_case(db: &ClamavDB<Fr>, cfg: &ClamavApproxConfig,
+		dir: &str, tc: &Tcase, b_aggr: bool, o: T965NeoOpt) -> T965Neo {
+		use std::panic::{catch_unwind, AssertUnwindSafe};
+		let (neo0, bf0) = (read_global_config().clamav_cfg.b_use_discharge_neo,
+			read_global_config().basis_failed_subsigs);
+		get_global_config().clamav_cfg.b_use_discharge_neo = true;
+		if b_aggr { get_global_config().basis_failed_subsigs = 10000; }
+		let r = catch_unwind(AssertUnwindSafe(||
+			neo_csa_inner(db, cfg, dir, tc, b_aggr, o)));
+		get_global_config().clamav_cfg.b_use_discharge_neo = neo0;
+		get_global_config().basis_failed_subsigs = bf0;
+		r.unwrap_or(T965Neo{ sat: false, nc: 0, panicked: true, err: None,
+			inp: vec![] })
+	}
+
+	fn neo_csa_inner(db: &ClamavDB<Fr>, cfg: &ClamavApproxConfig, dir: &str,
+		tc: &Tcase, b_aggr: bool, o: T965NeoOpt) -> T965Neo {
+		use crate::gadgets::discharge_adv_neo::{DischargeAdvNeoAdvice,
+			DischargeAdvNeoGadget};
+		use crate::circs::sed_mapper::SedAdvice;
+		let (f_nibbles, info, sig) = t965_info(dir, db, tc, cfg);
+		let (v_sig, infos) = (vec![sig.clone()], vec![info]);
+		let (bundle, bundle_igc) = (&db.bundle_subsig, &db.bundle_subsig_igc);
+		let acdfa = &bundle.vec_acdfa[0];
+		let store = &bundle.vec_subsig_step_stores[0];
+		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(0, false);
+		let fsm_id_igc = ClamavDB::<Fr>::pm_acdfa_id(0, true);
+		let inp = SedAdvice::<Fr>::collect_subsig_ids(&v_sig, &infos,
+			&db.sig_to_id, false, acdfa);
+		assert!(SedAdvice::<Fr>::collect_subsig_ids(&v_sig, &infos,
+			&db.sig_to_id, true, &bundle_igc.vec_acdfa[0]).is_empty(),
+			"M5 runs the cs arm only (b_skip_igc)");
+		//aggr csa evaluates needs() = the non-empty-chain members
+		let cs_list: Vec<Fr> = inp.iter().filter(|s| !b_aggr || store
+			.subsig_to_steps.get(&field_to_usize(*s))
+			.map_or(false, |it| !it.vec_pm_bounds.is_empty())).cloned().collect();
+		let dan_inp = o.dan_inp.map_or(inp.clone(), |f| f(&inp));
+		//capacities of run_neo_h_case (aggr) / neo_nonaggr_e2e (non-aggr)
+		let wlen = 2usize;
+		let nibble_len = wlen * LEGS;
+		let cap = FsmAdvCapacity{ max_nibble_len: nibble_len,
+			acdfa_state_part_bits: acdfa.state_part_bits, subsigs: 25,
+			avg_pats_per_subsig: 4, basis_pats_in_trace: 25 * 100,
+			basis_unique_states: 20 * 100, basis_acc_states: 15 * 100,
+			halo_nibbles: 0 };
+		let rate = if b_aggr {600} else {200};
+		let cap_disc = DischargeAdvCapacity{
+			res_small_cost: DischargeAdvCapacity::default_res_small(),
+			max_nibble_len: nibble_len, subsigs: cap.subsigs,
+			universe_subsigs: cap.subsigs,
+			avg_active_pats_per_subsig: if b_aggr {2} else {1},
+			basis_pats_in_trace: cap.basis_pats_in_trace,
+			perc_pats_expansion_rate: rate, b_aggressive: b_aggr,
+			prod_pats_expansion: if b_aggr {2500 * 600} else {0},
+			wrap_keys: 0, qm_real_rows: 0 };
+		let mut cap_sig = ComputeSigAdvCapacity{ max_nibble_len: nibble_len,
+			sigs: 1, subsigs_cs: cap.subsigs, subsigs_igc: cap.subsigs,
+			basis_pats_in_trace_cs: cap.basis_pats_in_trace,
+			basis_pats_in_trace_igc: cap.basis_pats_in_trace,
+			perc_comp_subsigs: 20, perc_pats_expansion_rate_cs: rate,
+			perc_pats_expansion_rate_igc: rate, b_aggressive: b_aggr,
+			b_skip_igc: true };
+		if let Some(f) = o.cap_t { f(&mut cap_sig, cs_list.len()); }
+		//1. word_extract + fsm_adv (cs, full demand)
+		let word = pad_word_to_multiple::<Fr>(&pack_nibbles(&f_nibbles), wlen);
+		assert!(word.len() == wlen, "M5: single-cycle case");
+		let stmt_wea = WordExtractAdvAdvice::new(&word, wlen, false)
+			.expect("wea").stmt_container;
+		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+			.unwrap().lock().unwrap().to_vec();
+		let m_aggr = db.aggressive_max_span_nibbles;
+		let init_loc = Fr::from(if b_aggr && m_aggr > 0 {m_aggr as u32 + 1}
+			else {1});
+		let stmt_faa = FsmAdvAdvice::new(false, 1, &nibbles, &[], acdfa,
+			Fr::from((acdfa.init_state + 1) as u32), init_loc, &inp, &cap,
+			fsm_id, &bundle.vec_subsig_stores[0], 0).expect("faa").stmt_container;
+		let pat_loc = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs packed_trace pat_loc sorted_tbl").unwrap();
+		let locs = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs fsm_acc locs").unwrap().lock().unwrap().to_vec();
+		let last_loc = locs[locs.len() - 1];
+		//2. neo discharge (cs, dist 1 = igc skipped)
+		let stmt_disc = (if b_aggr {
+			DischargeAdvNeoAdvice::new_aggr(false, 1, &pat_loc, &dan_inp,
+				fsm_id, store, &cap_disc, last_loc, 0, 0)
+		} else {
+			let sq = DischargeAdvAdvice::<Fr>::gen_empty_steps_queue_serialized(false,
+				&dan_inp, store, fsm_id, &cap_disc);
+			DischargeAdvNeoAdvice::new_nonaggr(false, 1, &pat_loc, &dan_inp,
+				fsm_id, store, &cap_disc, &sq, last_loc, 0)
+		}).expect("neo adv").stmt_container;
+		if let Some(f) = o.pre { f(&stmt_disc.lock().unwrap()); }
+		//3. csa, routed as sed_mapper
+		let (p_res, p_inp) = if b_aggr {("failed_acc_combo failed_acc",
+			"fwd_seed")} else {("q_c", "q_i")};
+		let find = |p: &str| stmt_disc.lock().unwrap().search_container(
+			&format!("discharge_adv_stmt_cs {}", p)).unwrap();
+		let guard = o.seam.map(t965_wrap).map(T965SeamGuard::on);
+		let adv_sig = ComputeSigAdvAdvice::new(fsm_id, fsm_id_igc,
+			&vec![Fr::from(db.sig_to_id[&sig.name] as u64)], &cs_list, &vec![],
+			&infos, &find(p_res), &Container::<Fr>::new("sq_res2_igc"),
+			&find(p_inp), &Container::<Fr>::new("sq_inp"), &cap_sig, store,
+			&bundle_igc.vec_subsig_step_stores[0], &bundle.vec_subsig_info_stores[0],
+			&bundle_igc.vec_subsig_info_stores[0], &v_sig, &db.sig_to_id, 0);
+		drop(guard);
+		let stmt_sig = match adv_sig {
+			Ok(a) => a.stmt_container,
+			Err(e) => return T965Neo{ sat: false, nc: 0, panicked: false,
+				err: Some(format!("{:?}", e)), inp: cs_list },
+		};
+		//4. each gadget over the statement up to itself (as its own
+		//harness: run_neo_h_case / csa_case), + M1 on all 4 components
+		let stmts = [&stmt_wea, &stmt_faa, &stmt_disc, &stmt_sig];
+		let prev: Vec<ContainerConfig> = stmts.iter()
+			.map(|s| s.lock().unwrap().get_cfg()).collect();
+		let comps = |k: usize| -> (Vec<ContainerConfig>, Vec<Vec<Fr>>) {
+			let mut vc = prev[..k].to_vec();
+			ContainerConfig::adjust_locations(&mut vc);
+			let mut cps: Vec<Vec<Fr>> = vec![vec![]; 9];
+			for s in &stmts[..k] {
+				for (j, x) in s.lock().unwrap().gen_stmt_components().0
+					.into_iter().enumerate() { cps[j].extend(x); }
+			}
+			(vc, cps)
+		};
+		fn check<G: SigmaGadget<Fr> + Send + Sync + 'static>(mut g: G,
+			word: &Vec<Fr>, vc: Vec<ContainerConfig>, cps: &[Vec<Fr>])
+			-> (bool, usize, bool) {
+			g.set_container_cfg(vc.clone().into(), vc.len() - 1);
+			test_gadget_adv_nc(Arc::new(g), word, &cps[0], &cps[1], &cps[2],
+				&cps[6], &cps[7], &[cps[3].clone(), cps[4].clone(),
+				cps[5].clone()].concat(), 4, false, Some(vc))
+		}
+		let (vc, cps) = comps(3);
+		let (sat_da, _, p_da) = check(DischargeAdvNeoGadget::<Fr>::new(false, 1,
+			&cap_disc, fsm_id, &prev[..2].to_vec(), store), &word, vc, &cps);
+		let (vc, cps) = comps(4);
+		let (sat_csa, nc, p_csa) = check(ComputeSigAdvGadget::<Fr>::new(fsm_id,
+			fsm_id_igc, &cap_sig, &prev[..3].to_vec(), store,
+			&bundle_igc.vec_subsig_step_stores[0], &bundle.vec_subsig_info_stores[0],
+			&bundle_igc.vec_subsig_info_stores[0]), &word, vc, &cps);
+		T965Neo{ sat: sat_da && sat_csa && outer_lkup_ok(&cps, &db.lkup), nc,
+			panicked: p_da || p_csa, err: None, inp: cs_list }
+	}
+
+	/// aggr fixture (DLP shape): build_fwd_db. DOC0 never completes the
+	/// subsig (False: the sig discharges, as the csa requires of an
+	/// honest run); DOC matches "ab" twice (Maybe: not dischargeable).
+	const T965_FWD_SIG: &str = "Agg.NeoDisc.fwd";
+	const T965_FWD_DOC0: &str = "xxHELLOxxxxxxxx";
+	const T965_FWD_DOC: &str = "xxHELLOabxxab";
+	fn t965_neo_aggr(name: &str, doc: &str, o: T965NeoOpt) -> T965Neo {
+		use crate::gadgets::discharge_adv_neo::tests_neo_m6_h::{build_fwd_db,
+			fwd_cfg};
+		let dir = format!("debug/t965/{}", name);
+		let db = t965_neo_db(|| build_fwd_db(&dir));
+		run_neo_csa_case(&db, &fwd_cfg(), &dir,
+			&Tcase::new(doc, T965_FWD_SIG).all_subsigs(), true, o)
+	}
+	/// non-aggr fixture: builds the test DB of `sigs` in its own dir; the
+	/// csa evaluates sigs[0].
+	fn t965_neo_na(name: &str, sigs: &[&str], doc: &str, o: T965NeoOpt)
+		-> T965Neo {
+		let dir = format!("debug/t965/{}", name);
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), dir))
+			.unwrap();
+		let cfg = default_clamav_cfg();
+		let db = t965_neo_db(|| ClamavDB::<Fr>::build_test_db(&cfg, &dir,
+			&sigs.iter().map(|s| s.to_string()).collect(), &vec![], &vec![],
+			&vec![]).expect("db"));
+		let tc = Tcase::new(doc, sigs[0].split(';').next().unwrap())
+			.all_subsigs();
+		run_neo_csa_case(&db, &cfg, &dir, &tc, false, o)
+	}
+	/// restores b_use_discharge_neo on drop (as clam_db's T965Neo).
+	struct T965NeoGuard(bool);
+	impl Drop for T965NeoGuard {
+		fn drop(&mut self) {
+			get_global_config().clamav_cfg.b_use_discharge_neo = self.0;
+		}
+	}
+	/// builds a DB with b_use_discharge_neo on (the neo-only FZ tuples
+	/// of the outer lookup, clam_db add_store_to_lkup).
+	fn t965_neo_db(f: impl FnOnce() -> ClamavDB<Fr>) -> ClamavDB<Fr> {
+		let _g = T965NeoGuard(read_global_config().clamav_cfg
+			.b_use_discharge_neo);
+		get_global_config().clamav_cfg.b_use_discharge_neo = true;
+		f()
+	}
+	/// the Maybe slot of the eval (the matched subsig).
+	fn t965_maybe_slot(c: &Container<Fr>) -> usize {
+		let raw = t965_col(c, "subsig_raw_eval");
+		(0..raw.len()).find(|&i| raw[i] == Fr::from(T965_MAYBE))
+			.expect("precondition: a matched (Maybe) subsig")
+	}
+	/// enc(s, 0, 0, 0, 0) = s * B^4 (the step-0 / seed encoding).
+	fn t965_enc0(s: Fr) -> Fr { s * t965_unit() * t965_unit() * t965_unit()
+		* t965_unit() }
+	/// precondition run: a seam records the subsig of the Maybe slot.
+	/// That honest run is not dischargeable (the csa advice asserts it),
+	/// so it must come back !sat.
+	fn t965_matched(run: &dyn Fn(T965SeamFn) -> T965Neo) -> Fr {
+		let s = std::rc::Rc::new(std::cell::Cell::new(Fr::zero()));
+		let s1 = s.clone();
+		let r = run(Box::new(move |st, c, _v| if st == T965Stage::EvalCs {
+			s1.set(t965_col(c, "inp_subsig")[t965_maybe_slot(c)]);
+		}));
+		assert!(!s.get().is_zero() && !r.sat, "precondition: s matched (Maybe)");
+		s.get()
+	}
+
+	/// T965 G4: honest neo + csa aggr is SAT (with M1), also through an
+	/// idle seam (aggr M4b is the identity), with the same cost.
+	#[test]
+	fn test_t965_green_neo_csa_aggr(){
+		let r = t965_neo_aggr("green_aggr", T965_FWD_DOC0, T965NeoOpt::default());
+		assert!(r.sat && !r.panicked, "G4: honest aggr must be SAT ({:?})", r.err);
+		let r2 = t965_neo_aggr("green_aggr", T965_FWD_DOC0, T965NeoOpt{
+			seam: Some(Box::new(|_, _, _| {})), ..Default::default() });
+		assert!(r2.sat && r2.nc == r.nc, "G4: idle seam changed the verdict/cost");
+	}
+
+	/// T965 M10 (aggr): csa cost pin of the fwd fixture at HEAD (B3 gate).
+	#[test]
+	fn test_t965_csa_pin_aggr(){
+		let r = t965_neo_aggr("pin_aggr", T965_FWD_DOC0, T965NeoOpt::default());
+		assert!(r.sat);
+		assert_eq!(r.nc, 1616, "csa aggr constraint count moved");
+	}
+
+	/// T965 N2 / ST: the matched s is never seeded (dan demand without s,
+	/// an honest smaller run), yet the csa lists s: by_acc reads False.
+	/// The seed tie only needs enc(s,0) in fwd_seed, a free dan cell:
+	/// write it to a dummy-0 slot. The seam writes s's raw False itself,
+	/// so after the fix only a circuit rejecter makes it UNSAT.
+	#[test]
+	fn test_t965_n2_seed_unbound(){
+		let s = t965_matched(&|seam| t965_neo_aggr("n2", T965_FWD_DOC,
+			T965NeoOpt{ seam: Some(seam), ..Default::default() }));
+		let pre = move |d: &Container<Fr>| {
+			let fs = d.search_container("discharge_adv_stmt_cs fwd_seed").unwrap();
+			let fs = fs.lock().unwrap();
+			let mut e = t965_col(&fs, "encoded");
+			assert!(!e.contains(&t965_enc0(s)), "precondition: s not seeded");
+			let k = e.iter().rposition(|x| x.is_zero()).unwrap();
+			assert!(k > 0, "need a dummy-0 seed slot");
+			e[k] = t965_enc0(s);
+			t965_set(&fs, "encoded", e);
+		};
+		let mk = || -> T965SeamFn { Box::new(move |st, c, v| if st == T965Stage::EvalCs {
+			let i = t965_pos(&t965_col(c, "inp_subsig"), s);
+			t965_set_res(c, v, &["subsig_raw_eval"], i, Fr::from(T965_FALSE));
+		})};
+		//control: without the fwd_seed cell the seed tie rejects
+		let drop = move |v: &[Fr]| -> Vec<Fr> { v.iter().filter(|x| **x != s)
+			.cloned().collect() };
+		let r0 = t965_neo_aggr("n2", T965_FWD_DOC, T965NeoOpt{ dan_inp: Some(&drop),
+			seam: Some(mk()), ..Default::default() });
+		assert!(!r0.sat && !r0.panicked && r0.err.is_none(),
+			"control: seed tie must reject ({:?})", r0.err);
+		let r = t965_neo_aggr("n2", T965_FWD_DOC, T965NeoOpt{ dan_inp: Some(&drop),
+			pre: Some(&pre), seam: Some(mk()), ..Default::default() });
+		assert!(!r.panicked && r.err.is_none(), "N2: panicked / {:?}", r.err);
+		assert_hole("N2/ST", r.sat, FIXED_ST);
+	}
+
+	/// T965 F1 (W1 = N3) aggr: the matched s is listed twice. The last pad
+	/// slot b takes s's honest Maybe eval (absorbs acc); s's own slot a
+	/// gets the seed key enc(s,0) and raw False, and a's (s, False) feeds
+	/// the sig lookup: the matched sig discharges.
+	#[test]
+	fn test_t965_f1_dup_slot_aggr(){
+		const EV: [&str; 7] = ["inp_subsig", "inp_subsig_encoded", "enc_step",
+			"enc_pat", "enc_rgs", "enc_rge", "subsig_raw_eval"];
+		let slot = std::rc::Rc::new(std::cell::Cell::new((0usize, 0usize)));
+		let sl = slot.clone();
+		let seam: T965SeamFn = Box::new(move |st, c, v| match st {
+			T965Stage::EvalCs => {
+				let a = t965_maybe_slot(c);
+				let inp = t965_col(c, "inp_subsig");
+				let b = inp.iter().rposition(|x| x.is_zero()).unwrap();
+				assert!(b > 0, "need a pad slot besides the dummy");
+				t965_copy_slot(c, v, &EV, b, a);
+				for n in &EV[2..6] { t965_set1(c, n, a, Fr::zero()); }
+				t965_set1(c, "inp_subsig_encoded", a, t965_enc0(inp[a]));
+				t965_set_res(c, v, &["subsig_raw_eval"], a, Fr::from(T965_FALSE));
+				sl.set((a, b));
+			},
+			T965Stage::Synth => { //b's synthesis = s's, with b's Maybe
+				let (a, b) = sl.get();
+				t965_copy_slot(c, v, &T965_SYN_COLS, b, a);
+				t965_set_res(c, v, &["vec_counter_res", "vec_subsig_final_res"],
+					b, Fr::from(T965_MAYBE));
+			},
+			_ => {},
+		});
+		let r = t965_neo_aggr("f1_dup_ag", T965_FWD_DOC, T965NeoOpt{
+			seam: Some(seam), ..Default::default() });
+		assert!(slot.get().1 > 0 && !r.panicked, "seam did not run / panicked");
+		assert_hole("F1/aggr", r.sat, FIXED_F1);
+	}
+
+	/// T965 E2: a full cs list (subsigs_cs = its length, no dummy slot)
+	/// passes the `>` cap check and panics in the synthesis advice
+	/// instead of returning CapErr. Twin: one slot of slack is SAT.
+	#[test]
+	fn test_t965_e2_full_list_caperr(){
+		let r1 = t965_neo_aggr("e2", T965_FWD_DOC0, T965NeoOpt{
+			cap_t: Some(&|c: &mut ComputeSigAdvCapacity, n: usize|
+				c.subsigs_cs = n + 1), ..Default::default() });
+		assert!(r1.sat && !r1.panicked, "twin: one slack slot must be SAT");
+		let r = t965_neo_aggr("e2", T965_FWD_DOC0, T965NeoOpt{
+			cap_t: Some(&|c: &mut ComputeSigAdvCapacity, n: usize|
+				c.subsigs_cs = n), ..Default::default() });
+		assert_hole("E2", r.panicked, FIXED_E2);
+		if FIXED_E2 {
+			assert!(r.err.as_deref().map_or(false, |e|
+				e.contains("comp_sig::subsigs_cs")), "E2: want CapErr, got {:?}", r.err);
+		}
+	}
+
+	/// non-aggr fixtures: sigN = the single subsig /56...fgh/ (matched by
+	/// DOC5), sigT = another sig's subsig t; sigG = sig5 made case
+	/// sensitive: SCC (0|1)>1,2 with an empty-chain composite.
+	const T965_SIGN: &str = "sigN;Engine:51-255,Target:1;0;/56...fgh/";
+	const T965_SIGT: &str = "sigT;Engine:51-255,Target:1;0;/abc..123/";
+	const T965_SIGG: &str =
+		"sigG;Engine:51-255,Target:1;(0|1)>1,2;/abc..123/;/56...fgh/";
+
+	/// T965 N10 / V (+ST) non-aggr: sigN's matched subsig s is never
+	/// seeded: the dan demand is {t} (sigT's), the csa list {s}. The dan
+	/// binds only q_c (encoded, locs), so t's q_c row is relabelled
+	/// subsig := s: s's slot reads t's step-0 key (NORMAL tag, a DB
+	/// pair), i.e. False, and the matched sigN discharges. The seam
+	/// writes s's raw False itself (only a circuit rejecter may flip it).
+	#[test]
+	fn test_t965_v_n10_omission(){
+		let (s, t) = (t965_ss(1, 0), t965_ss(2, 0));
+		let sigs = [T965_SIGN, T965_SIGT];
+		assert_eq!(s, t965_matched(&|sm| t965_neo_na("v_n10", &sigs, T965_DOC5,
+			T965NeoOpt{ seam: Some(sm), ..Default::default() })),
+			"precondition: s is the matched subsig");
+		let pre = move |d: &Container<Fr>| {
+			let q = d.search_container("discharge_adv_stmt_cs q_c").unwrap();
+			let q = q.lock().unwrap();
+			let (nm, mut rows) = t965_q_get(&q);
+			let ks = t965_k(&nm, "subsig");
+			let real: Vec<usize> = (0..rows.len()).filter(|&i|
+				!rows[i][ks].is_zero()).collect();
+			assert!(!real.is_empty() && real.iter().all(|&i| rows[i][ks] == t),
+				"precondition: q_c holds t only (s unseeded)");
+			for i in real { rows[i][ks] = s; }
+			t965_q_put(&q, &nm, &rows);
+		};
+		let seam: T965SeamFn = Box::new(move |st, c, v| if st == T965Stage::EvalCs {
+			let i = t965_pos(&t965_col(c, "inp_subsig"), s);
+			t965_set_res(c, v, &["subsig_raw_eval"], i, Fr::from(T965_FALSE));
+		});
+		let r = t965_neo_na("v_n10", &sigs, T965_DOC5, T965NeoOpt{
+			dan_inp: Some(&|_| vec![t]), pre: Some(&pre), seam: Some(seam),
+			..Default::default() });
+		assert!(!r.panicked && r.err.is_none(), "V/N10: panicked / {:?}", r.err);
+		assert_hole("V/N10", r.sat, FIXED_V);
+	}
+
+	/// the neo dan's committed q_c (M5 `pre` target).
+	fn t965_neo_qc(d: &Container<Fr>) -> Arc<std::sync::Mutex<Container<Fr>>> {
+		d.search_container("discharge_adv_stmt_cs q_c").unwrap()
+	}
+
+	/// T965 BREAK1 / V, M5 twin of v_break1_reorder: the rotation is
+	/// made on the neo dan's q_c, so the dan gadget judges it too. sigN
+	/// alone: s reads False and the matched sigN discharges. The seam
+	/// writes s's raw False; control: without the rotation it is UNSAT.
+	#[test]
+	fn test_t965_v_break1_reorder_neo(){
+		let s = t965_ss(1, 0);
+		let pre = move |d: &Container<Fr>| t965_rotate_blk(&t965_neo_qc(d)
+			.lock().unwrap(), s);
+		let ran = T965Ran::default();
+		let mk = || -> T965SeamFn { let rn = ran.clone();
+			Box::new(move |st, c, v| if st == T965Stage::EvalCs {
+			let i = t965_pos(&t965_col(c, "inp_subsig"), s);
+			t965_set_res(c, v, &["subsig_raw_eval"], i, Fr::from(T965_FALSE));
+			rn.set(true);
+		})};
+		let r0 = t965_neo_na("v_break1_neo", &[T965_SIGN], T965_DOC5,
+			T965NeoOpt{ seam: Some(mk()), ..Default::default() });
+		assert!(ran.get() && !r0.sat && !r0.panicked && r0.err.is_none(),
+			"control: s False without the reorder must be UNSAT ({:?})", r0.err);
+		ran.set(false);
+		let r = t965_neo_na("v_break1_neo", &[T965_SIGN], T965_DOC5,
+			T965NeoOpt{ pre: Some(&pre), seam: Some(mk()), ..Default::default() });
+		assert!(ran.get() && !r.panicked && r.err.is_none(),
+			"V/BREAK1/neo: seam ran = {}, panicked / {:?}", ran.get(), r.err);
+		assert_hole("V/BREAK1/neo", r.sat, FIXED_V);
+	}
+
+	/// T965 F1 (W1) non-aggr, M5 twin of f1_dup_slot_nonaggr: s's step-0
+	/// row moves to the end of the neo dan's q_c (dan gadget checked),
+	/// then the same dup-slot seam, forged slot late (sigN reads s
+	/// directly; sig5 reads it through its SCC composite).
+	#[test]
+	fn test_t965_f1_dup_slot_nonaggr_neo(){
+		let s = t965_ss(1, 0);
+		let slot = std::rc::Rc::new(std::cell::Cell::new(0usize));
+		let pre = move |d: &Container<Fr>| t965_step0_to_end(&t965_neo_qc(d)
+			.lock().unwrap(), s);
+		let r0 = t965_neo_na("f1_dup_na_neo", &[T965_SIGN], T965_DOC5,
+			T965NeoOpt{ seam: Some(t965_f1_na_seam(s, slot.clone(), false, true)),
+			..Default::default() });
+		assert!(slot.get() > 0 && !r0.sat && !r0.panicked && r0.err.is_none(),
+			"control: dup slot alone must be UNSAT ({:?})", r0.err);
+		slot.set(0);
+		let r = t965_neo_na("f1_dup_na_neo", &[T965_SIGN], T965_DOC5,
+			T965NeoOpt{ pre: Some(&pre), seam: Some(t965_f1_na_seam(s,
+			slot.clone(), false, true)), ..Default::default() });
+		assert!(slot.get() > 0 && !r.panicked && r.err.is_none(),
+			"F1/nonaggr/neo: panicked / {:?}", r.err);
+		assert_hole("F1/nonaggr/neo", r.sat, FIXED_F1);
+	}
+
+	/// T965 G6 (V-EC guard): honest neo + csa non-aggr with an
+	/// empty-chain (SCC composite) subsig in the demand is SAT.
+	#[test]
+	fn test_t965_green_neo_csa_nonaggr_empty_chain(){
+		let r = t965_neo_na("green_na_ec", &[T965_SIGG], T965_DOC5,
+			T965NeoOpt::default());
+		assert!(r.sat && !r.panicked, "G6: honest non-aggr must be SAT ({:?})",
+			r.err);
+		assert!(r.inp.contains(&t965_ss(1, 2)), "G6: SCC subsig in the demand");
 	}
 
 	#[test]
