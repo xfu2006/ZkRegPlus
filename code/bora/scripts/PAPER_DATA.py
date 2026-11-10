@@ -444,17 +444,47 @@ KILL_GRACE_S = 60          # SIGTERM -> SIGKILL, and the pump-join bound
 # they gate neo-side code and must survive the ZKR_* scrub below.
 NEO_ENV_PASS = ("ZKR_NEO_LOAD_LADDER", "ZKR_PROBE_DECLINE")
 
+# mimalloc transparent huge pages, set by --thp (default on).  "on" =
+# mimalloc's own default (allow_thp=1), as in the paper's runs.  Same
+# command, same node, THP off vs on: fold 47.1 vs 30.3 s/step at equal
+# memory (full_dna, 512 GB box).  "off" only for small boxes where
+# systemd-oomd kills compaction stalls.  Always set explicitly, so a
+# stray MIMALLOC_ALLOW_THP=0 export cannot slow a run.
+THP_MODE = "on"
+THP_SYSFS = "/sys/kernel/mm/transparent_hugepage/enabled"
+
+
+def thp_env_value():
+    return "1" if THP_MODE == "on" else "0"
+
+
+def check_thp():
+    """Warn (never abort) when --thp on cannot take effect: the kernel
+    THP mode is [never], so mimalloc's MADV_HUGEPAGE is ignored."""
+    if THP_MODE != "on":
+        return
+    try:
+        mode = open(THP_SYSFS).read().strip()
+    except OSError as e:
+        log("THP: cannot read %s (%s); not checked" % (THP_SYSFS, e))
+        return
+    if "[never]" in mode:
+        log("WARN: --thp on but kernel THP is [never] (%s): fast path "
+            "is off on this box, expect ~1.5x slower proving.  Fix: "
+            "echo madvise | sudo tee %s" % (mode, THP_SYSFS))
+
 
 def neo_env(b_show_dropped=False):
     """The one env builder for bora_cli and small's cargo-test spawns:
     os.environ minus every ZKR_* (neo is argv-only; ~90 legacy env
     knobs must not leak in) except NEO_ENV_PASS, RUSTFLAGS forced for
-    deterministic builds."""
+    deterministic builds, MIMALLOC_ALLOW_THP forced from --thp."""
     dropped = sorted(k for k in os.environ
                      if k.startswith("ZKR_") and k not in NEO_ENV_PASS)
     e = {k: v for k, v in os.environ.items()
          if not k.startswith("ZKR_") or k in NEO_ENV_PASS}
     e["RUSTFLAGS"] = RUSTFLAGS_NEO
+    e["MIMALLOC_ALLOW_THP"] = thp_env_value()
     if b_show_dropped and dropped:
         log("neo_env: dropped %s" % " ".join(dropped))
     return e
@@ -3492,6 +3522,12 @@ def build_argparser():
                           "raw_data dump, append to SUMMARY.log.  "
                           "Spawns nothing.  Scope with --items "
                           "(default: dlp,dna,clam)" % JOB_LOG_DIR)
+    ap.add_argument("--thp", choices=["on", "off"], default="on",
+                     help="mimalloc transparent huge pages "
+                          "(MIMALLOC_ALLOW_THP).  on (default) = fast, "
+                          "~1.5x quicker proving at equal memory.  off "
+                          "only on small boxes where systemd-oomd kills "
+                          "stalled jobs")
     return ap
 
 
@@ -5681,6 +5717,11 @@ def main():
     # it at 52,544 est vs >1M actual.  Earliest point with a tty for sudo.
     ensure_cargo_path()
     ensure_vma(VMA_TARGET)
+    global THP_MODE
+    THP_MODE = args.thp
+    log("thp: MIMALLOC_ALLOW_THP=%s (--thp %s)" % (thp_env_value(),
+                                                   THP_MODE))
+    check_thp()
 
     plan = resolve_plan(args.run, args.items) if args.run \
         else interactive_select()
@@ -6302,6 +6343,37 @@ class NeoEnvTest(unittest.TestCase):
         self.assertEqual(e.get("ZKR_NEO_LOAD_LADDER"), "/tmp/l.json")
         self.assertEqual(e.get("ZKR_PROBE_DECLINE"), "1")
         self.assertNotIn("ZKR_FOO", e)
+
+    def test_thp_on_by_default_overrides_stray_export(self):
+        with mock.patch.dict(os.environ, {"MIMALLOC_ALLOW_THP": "0"}), \
+             mock.patch.object(_MOD, "THP_MODE", "on"):
+            e = neo_env()
+        self.assertEqual(e["MIMALLOC_ALLOW_THP"], "1")
+        self.assertEqual(build_argparser().parse_args([]).thp, "on")
+
+    def test_thp_off_sets_zero(self):
+        with mock.patch.object(_MOD, "THP_MODE", "off"):
+            self.assertEqual(neo_env()["MIMALLOC_ALLOW_THP"], "0")
+
+
+class CheckThpTest(unittest.TestCase):
+    def _run(self, mode, sysfs):
+        with mock.patch.object(_MOD, "THP_MODE", mode), \
+             mock.patch("builtins.open",
+                         _fake_open({THP_SYSFS: sysfs})), \
+             mock.patch.object(_MOD, "log") as lg:
+            check_thp()
+        return lg
+
+    def test_warns_when_kernel_never(self):
+        lg = self._run("on", "always madvise [never]\n")
+        self.assertTrue(any("WARN" in str(c) for c in lg.call_args_list))
+
+    def test_silent_when_madvise(self):
+        self._run("on", "always [madvise] never\n").assert_not_called()
+
+    def test_off_skips_check(self):
+        self._run("off", "always madvise [never]\n").assert_not_called()
 
 
 class RunExampleTwoHalfTest(unittest.TestCase):

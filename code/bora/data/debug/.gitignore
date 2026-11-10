@@ -43,3 +43,7 @@ watson_seg5/
 !test1.bin
 !sed/simple/*.txt
 !dfa/simple/*.txt
+
+# t965/<name>/ are WRITE targets of the T965 tests (create_dir_all +
+# build_test_db), like t602_probe_scratch_*.
+t965/
