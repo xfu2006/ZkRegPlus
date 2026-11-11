@@ -32093,9 +32093,17 @@ Goal 4. B5
 Wed 11/11/2026
 Goal 1. B1
 	[a] T962: N and A fixes. approval and test
-	[b] C1+C2+C3:
-Goal 2. B5
+	[b] T968 C1: check the DONE lable of an empty-chain subsip
+	[c] T
+Goal 2. B5 -> DONE
 	[b[ T942: comE2. approve code change
+		test passed
+	[c] total circuit incrase: up to 0.009% for step and 0.027% for decider
+		both on stage 2
+Goal 3. B5b 
+	[a] problem: define a system constant RECURSION DEPTH LIMIT
+	[b] 
+	
 
 
 ####################################

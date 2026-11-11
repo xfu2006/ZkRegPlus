@@ -2446,11 +2446,12 @@ C={} FP={} BP={} SP={} unset={} wrap={} real={} fp_share_of_real={}%",
 			let u = field_to_usize(&t.subsig[i]);
 			let num = info.subsig_to_steps.get(&u).unwrap()
 				.vec_pm_bounds.len();
-			// 8_A: empty-chain (seed-only) subsigs never "complete" --
-			// their step-0 seed is not a terminal. The circuit side
-			// excludes them with the same predicate ((1 - is_step0),
-			// see assert_verdict_aggr), so the acc membership logup
-			// stays balanced. This acc feed is aggressive-only.
+			// 8_A: empty-chain (seed-only) subsigs are never seeded
+			// on this arm (new_aggr is_uni filter), so num > 0 holds
+			// on every honest row. AGGR_T968: the circuit has no seed
+			// mask (assert_verdict_aggr), so a seeded empty chain
+			// queries enc(s,0), absent here -> UNSAT, as intended
+			// (compute_sig's needs() drops it too). Aggressive-only.
 			num > 0 && field_to_usize(&t.step[i]) == num
 		};
 		let mut acc: Vec<F> = vec![];
@@ -6658,7 +6659,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	///   mtbl_acc  hit-count advice per acc_out slot.
 	///
 	/// Check:
-	///  (1) per row, qry = enc * is_last * (is_c - is_seed);
+	///  (1) per row, qry = enc * is_last * is_c;
 	///      one batch lookup (logup) of all queries into
 	///      acc_out. Masked rows query 0, landing in the 0 slot.
 	///
@@ -6670,10 +6671,11 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	///    free of a.
 	///  - CHEAT hide-the-match: drop enc(a, 8) from acc_out ->
 	///    the terminal row's query matches no slot -> UNSAT.
-	///  - CHEAT seed-only pollution: an unmatched subsig's
-	///    step-0 row is vacuously is_last, but is_c - is_seed
-	///    masks it -> it queries 0 -> an unmatched subsig can
-	///    never be smuggled into the failed set.
+	///  - seeds are NOT masked (AGGR_T968): a non-empty chain's
+	///    seed has the NORMAL tag (is_last = 0) and queries 0;
+	///    an empty chain's seed is its terminal and queries
+	///    enc(s, 0), so its match cannot be hidden (aggr never
+	///    seeds empty chains, so honest runs never hit this).
 	///
 	/// COST: 2n muls + logup(n + 2|acc_out|). PERF 61082.10.
 	fn assert_verdict_aggr(
@@ -6688,15 +6690,13 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
 		let n = qm.enc.len();
-		// sel_c = is_c - is_seed: free combo equal to
-		// is_c*(1 - is_step0) on any satisfying assignment (the
-		// seed pin kills FP seeds) -- saves the legacy formula's
-		// third mul. is_last itself is FORCED in selectors
-		// (si_step LAST tag), so the true terminal cannot shed
-		// it; relabeling it FP is killed by the fwd bracket cert.
+		// AGGR_T968: the gate is is_c, not is_c - is_seed (the old
+		// seed mask hid an empty chain's step-0 terminal). is_last
+		// itself is FORCED in selectors (si_step LAST tag), so the
+		// true terminal cannot shed it; relabeling it FP is killed
+		// by the fwd bracket cert.
 		let qry: Vec<FpVar<F>> = (0..n).map(|i|
-			&(&qm.enc[i] * &sel.is_last[i])
-				* &(&sel.is_c[i] - &sel.is_seed[i])).collect();
+			&(&qm.enc[i] * &sel.is_last[i]) * &sel.is_c[i]).collect();
 		assert_logup(cs.clone(), &qry, acc_out, mtbl_acc, r2)?;
 		log(job_id, LOG4, &format!(
 			"PERF 61082.10: block=verdict cs={} pred={}",
@@ -7325,11 +7325,10 @@ distinct_pats={} max_loc={}", arm, b_igc, n, nz, pats.len(), mx);
 			.get_container("acc_encoded").unwrap()
 			.lock().unwrap().to_vec();
 		let f_c = F::from(CAT_C);
-		// !step0 mirrors the circuit acc-feed gate: seed-only
-		// (empty-chain) rows are vacuously is_last but never complete
-		// (excluded from acc_vec by gen_acc_and_mtbl's num>0 filter),
-		// so they must not be counted as nonzero terminal queries here
-		// either -- else mtbl_acc's zero slot undercounts by that many.
+		// !step0 pairs with gen_acc_and_mtbl's num>0 filter. Honest
+		// aggr tables hold no empty-chain seed (new_aggr is_uni), so
+		// it never fires; the circuit has no step-0 mask (AGGR_T968),
+		// so a seeded empty chain stays UNSAT, as intended.
 		let qry_final: Vec<F> = (0..nat.t.enc.len()).map(|i| {
 			let last_tag = SubsigStepStore::gen_step_tbl_id(
 				nat.t.enc[i], ID_ENCODED_LAST_STEP);
@@ -10658,7 +10657,7 @@ mod tests_neo_m6_neg {
 	const FIXED_X: bool = true;
 	// same hole as tests_neo_nonaggr_neg::FIXED_D: flip both together
 	const FIXED_D: bool = true;
-	const FIXED_NEW1: bool = false;
+	const FIXED_NEW1: bool = true;
 
 	/// M0: a red test's verdict. `sat` = the forgery is accepted.
 	fn assert_hole(tag: &str, sat: bool, fixed: bool) {
@@ -10776,60 +10775,21 @@ FIXED={}", tag, sat, fixed);
 			.map(|i| t.enc[i]).expect("seed row")
 	}
 
-	/// NEW-1 (C1): the empty-chain subsig 2 is complete at its seed,
-	/// yet acc_out may omit enc(2,0): the verdict query is masked by
-	/// (is_c - is_seed). The witness keeps HEAD's acc shape (after
-	/// C2+C3 the honest native adds enc(2,0), so it is stripped
-	/// here). Fix C1 (qry = enc*is_last*is_c) -> no slot -> UNSAT.
+	/// NEW-1 (C1): the empty-chain subsig 2 is complete at its seed.
+	/// Witness = the native, whose acc_out omits enc(2,0)
+	/// (gen_acc_and_mtbl drops empty chains): a prover that seeds s2
+	/// and hides its match. HEAD masks the seed query by
+	/// (is_c - is_seed) -> SAT. Fix C1 (qry = enc*is_last*is_c)
+	/// queries enc(2,0) -> no slot -> UNSAT.
 	#[test]
 	fn test_t965_new1_empty_chain() {
 		use super::tests_neo_seg0_seed::store_with_composite;
-		let info = store_with_composite();
-		let (cs, nat) = run_core_aggr3(&info, &new1_hm(), 161,
-			Some(&|nat: &mut NeoCore<Fr>| {
-				let e = seed_enc(nat, 2);
-				let (mut a, mut m) = NeoCore::gen_acc_padded(&nat.t,
-					&info);
-				if let Some(k) = a.iter().position(|x| *x == e) {
-					a.remove(k); m.remove(k);
-				}
-				nat.acc_out = a; nat.mtbl_acc = m;
-			}));
+		let (cs, nat) = run_core_aggr3(&store_with_composite(),
+			&new1_hm(), 161, None);
 		assert!(!nat.acc_out.contains(&seed_enc(&nat, 2)));
 		assert_eq!(nat.acc_out.len(), 2); // s1's terminal stays
 		assert_hole("NEW1-C1", cs.is_satisfied().unwrap(),
 			FIXED_NEW1);
-	}
-
-	/// NEW-1 (C2+C3), natives only: the honest generators leave
-	/// enc(2,0) out of acc (gen_acc_and_mtbl `num > 0`) and out of
-	/// gen_core_stmt's mtbl_complete (`step != 0`). hole := either
-	/// path omits it. Fix C2+C3 -> both list it with count 1.
-	#[test]
-	fn test_t965_new1_native_seed_acc() {
-		use super::tests_neo_seg0_seed::store_with_composite;
-		use super::tests_neo_m5::mk_pat_loc;
-		let info = store_with_composite();
-		let hm = new1_hm();
-		let (_, nat) = run_core_aggr3(&info, &hm, 161, None);
-		let e = seed_enc(&nat, 2);
-		let hole_a = !nat.acc_out.contains(&e);
-		let ct = mk_pat_loc(&hm);
-		let mut m = HashMap::new();
-		for sid in [1u32, 2] {
-			m.insert(f(sid), vec![StepQueueItem::new(f(sid), f(0),
-				f(0), f(0), f(0), vec![f(1)])]);
-		}
-		let gen = StepQueueNeo::from_stepqueue(StepQueue::new(
-			vec![f(1), f(2)], m, &t3_capacity(),
-			StepQueueType::ResLarge, false))
-			.gen_shared_core_advice(0, &ct, &info, f(161))
-			.expect("core");
-		let (_c, _combo, nat2) = gen.gen_core_stmt(&ct, &info)
-			.expect("stmt");
-		let k = nat2.acc_out.iter().position(|x| *x == e);
-		let hole_b = k.map_or(true, |k| nat2.mtbl_acc[k].is_zero());
-		assert_hole("NEW1-C2C3", hole_a || hole_b, FIXED_NEW1);
 	}
 
 }
@@ -15116,21 +15076,16 @@ FIXED={}", tag, sat, fixed);
 	}
 
 	/// GREEN (T965 G1): honest aggr fixtures the B1 fixes (N1, A, X,
-	/// D, NEW-1 C1-C3) must keep SAT: the T301 windowed table, two
-	/// subsig runs (t3), and the a18 full match beside an
-	/// empty-chain composite subsig.
+	/// D, NEW-1 C1) must keep SAT: the T301 windowed table and two
+	/// subsig runs (t3). An empty chain seeded on aggr is no honest
+	/// shape (new_aggr is_uni): it is the NEW-1 red witness
+	/// (test_t965_new1_empty_chain).
 	#[test]
 	fn test_t965_green_aggr_t301() {
-		use super::tests_neo_m6_neg::{run_core_aggr3, t3_store, t3_hm,
-			new1_hm};
-		use super::tests_neo_seg0_seed::store_with_composite;
+		use super::tests_neo_m6_neg::{run_core_aggr3, t3_store, t3_hm};
 		assert!(run_nat_aggr(&gen_nat()).is_satisfied().unwrap());
 		let (cs, _) = run_core_aggr3(&t3_store(), &t3_hm(), 100, None);
 		assert!(cs.is_satisfied().unwrap());
-		let (cs, nat) = run_core_aggr3(&store_with_composite(),
-			&new1_hm(), 161, None);
-		assert!(cs.is_satisfied().unwrap());
-		assert!(nat.acc_out.len() >= 2);
 	}
 }
 
