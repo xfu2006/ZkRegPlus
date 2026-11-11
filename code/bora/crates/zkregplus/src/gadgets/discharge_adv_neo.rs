@@ -6413,9 +6413,13 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	///  (B) booleanity b * (b - 1) = 0 -- LOAD-BEARING: a non-
 	///      boolean b admits a one-parameter family satisfying
 	///      U1, the containment and the anchor ban together;
-	///  (K) containment b * (1 - S) = 0, S = is_c + is_bp + is_sp
-	///      - is_seed in {0,1}: Q_i subseteq Q_r, a carried row is
-	///      never FP, wrap, pad or seed. On the seed row S = 0
+	///  (K) containment b * ((1 - S) + gs[i+1]) = 0, S = is_c +
+	///      is_bp + is_sp - is_seed in {0,1}, gs[i+1] = 1 iff row i
+	///      ends its group (1 on the last row): Q_i subseteq Q_r, a
+	///      carried row is never FP, wrap, pad or seed, and (T963)
+	///      never ends its group, so the group's closing max row is
+	///      fresh, i.e. a JR row: a carried (E, max) cannot stand in
+	///      for E's JR block. On the seed row S = 0
 	///      forces b = 0, i.e. b_cin = 1 exactly as emitted; it
 	///      also keeps every zero-pack row off U1's right side;
 	///  (U1) the SPLIT identity q_i = {b = 1 rows of Q_m}, sharing
@@ -6432,6 +6436,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		qm: &QmVars<F>,  // enc, loc (vec3 side), b_cin
 		sel: &NeoSel<F>, // is_step0 (masks the seed group);
 		                 //   is_c/is_bp/is_sp/is_seed (containment)
+		gs: &[FpVar<F>], // T963: group starts (assert_neo_wf)
 		q_i: (&[FpVar<F>], &[FpVar<F>]),
 		                 // carried-in enc, loc (pad rows = 0)
 		l_join: (&[FpVar<F>], &[FpVar<F>]),
@@ -6453,6 +6458,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let c_sh5 = new_const_var(&cs, f1 * f1 * f1 * f1 * f1);
 		let z = F::zero();
 		assert_eq!(m_seed.len(), subsigs.len());
+		assert_eq!(gs.len(), n);
 		// pack(enc, loc) = enc * 2^rb + loc: a free linear combo,
 		// injective (loc < 2^rb), all-zero rows pack to 0.
 		let pk1: Vec<FpVar<F>> = q_i.0.iter().zip(q_i.1.iter())
@@ -6475,8 +6481,12 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 				"neo b_cin boolean")?;
 			let s = &(&(&sel.is_c[i] + &sel.is_bp[i])
 				+ &sel.is_sp[i]) - &sel.is_seed[i];
-			check_prod_zero(&b_cin[i], &(&c_one - &s), lc!(),
-				"neo b_cin containment")?;
+			// T963 (G): gs_next = 1 iff row i ends its group. Both
+			// summands are bits, so the sum is 0 only if both are.
+			let gs_next = if i + 1 < n { gs[i + 1].clone() }
+				else { c_one.clone() };
+			check_prod_zero(&b_cin[i], &(&(&c_one - &s) + &gs_next),
+				lc!(), "neo b_cin containment, never a group end")?;
 		}
 		// ---- the two identities, INLINED from db.rs's
 		// verify_union_prf_vars so U1 can share the vec3 inverses
@@ -6942,7 +6952,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			b_left_more_zero_cin: vars.union_prf[2].clone(),
 			diff_zero_cin: vars.union_prf[3].clone() };
 		let b_cin = Self::assert_qm_union(cs.clone(), &vars.qm,
-			&sel, (&vars.qi_enc, &vars.qi_loc),
+			&sel, &gs, (&vars.qi_enc, &vars.qi_loc),
 			(&vars.jr.enc, &vars.jr.loc), &vars.subsigs,
 			&vars.m_seed, &prf, r1,
 			job_id)?;
@@ -12822,7 +12832,7 @@ mod tests_neo_nonaggr_neg {
 	// FIXED_D: also in tests_neo_m6_neg (aggr D); flip both together
 	const FIXED_D: bool = true;     // ALL_T958 D (N7 run splice)
 	const FIXED_N8: bool = true;    // NONAGGR_T959 (JR rank after pad)
-	const FIXED_G: bool = false;    // NONAGGR_T963 (BREAK2, q_i < max)
+	const FIXED_G: bool = true;     // NONAGGR_T963 (BREAK2, q_i < max)
 	const FIXED_N11: bool = false;  // NONAGGR_T967 fix B (late seed)
 	const FIXED_NEW3: bool = false; // NONAGGR_T967 S0 (dup seed row)
 	// FIXED_NEW4: also in zkp_driver.rs tests; flip both together
@@ -13180,7 +13190,8 @@ mod tests_neo_nonaggr_neg {
 	/// (honest match pat2 100 -> pat5 120): group E = the carried
 	/// (E, max) alone, no JR block for E, so 100 is never joined and
 	/// 120 goes FP against (E, 1, max). s1 reads False. Rejecter
-	/// after G: (c_max - qi_loc_j) * inv_j = 1 in assert_qm_union.
+	/// after G: (K) in assert_qm_union, a carried row never ends
+	/// its group (chunk 1: the carried (E, max) closes E).
 	#[test]
 	fn test_t965_g_carried_c_at_max() {
 		let info = two_chain_store();
