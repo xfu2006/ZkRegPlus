@@ -379,10 +379,14 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 				// span [loc[k-1], loc[k]]. Guards = z_g, z_lo.
 				if k > 0 && !jump.is_zero()
 					&& !pl1[k].is_zero() {
+					// T926 N1: a group start measures from 0 (the
+					// previous group ends at max).
+					let lo = if same { loc[k - 1] }
+						else { loc[k - 1] - f_max };
 					c1[k] = if bw {
-						loc[k - 1] + rg1[k] - pl1[k] - one
+						lo + rg1[k] - pl1[k] - one
 					} else {
-						loc[k - 1] - pl1[k] - rg2[k] - one };
+						lo - pl1[k] - rg2[k] - one };
 				}
 			} else if !enc[k].is_zero() && cat[k].is_zero() {
 				// wrap row (circuit: is_wrap residual): the
@@ -1725,7 +1729,8 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 		// 0-wrap, self.enc.last() may belong to the PREVIOUS group
 		// when k == 0, so a group-opening row's gap must measure
 		// from 0 -- exactly what wf Section 3's new rank-1 pin
-		// expects (id - 1 - g_fp - g_wr == 0 at a group start).
+		// expects (id - 1 - g_fp == 0 at a group start; T926 A
+		// dropped g_wr from it).
 		let (p_id, p_loc) = if self.enc.last() == Some(&enc) {
 			(self.id.last().copied().unwrap_or(z),
 			self.loc.last().copied().unwrap_or(z))
@@ -3225,8 +3230,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		//  jump[i] = id[i] - b_same[i]*id[i-1] - 1
 		//    same group (b_same = 1): the id step minus 1 = how
 		//      many rows the windowed join skipped here;
-		//    group start (b_same = 0): id - 1, exactly what the
-		//      rank-1 pin below demands of a start row.
+		//    group start (b_same = 0): id - 1; the rank-1 pin
+		//      below accepts it on an FP start row only (T926 A:
+		//      a start wrap must be id 1).
 		//EXAMPLE (T301 fixture): kept rows loc 23 (id 4) and
 		//loc 44 (id 6), loc 37 skipped -> jump = 6-4-1 = 1.
 		//Consequence: the skeleton and the pin become identities
@@ -3260,8 +3266,11 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// T306 (both arms): a non-pad key change opens a group, and
 		// that first row is now a REAL row: its id is 1 plus
 		// whatever the windowed join (aggr only; both 0 on non-aggr)
-		// skipped ahead of it, g_fp/g_wr already paid for by Section
-		// 2. Its loc needs no pin of its own: the join query
+		// skipped ahead of it, g_fp already paid for by Section 2.
+		// T926 A: g_wr is NOT in this pin, so a start wrap has id 1.
+		// A start wrap may not skip: the gap-into-wrap checks would
+		// read row i-1, which is the PREVIOUS group's. Its loc needs
+		// no pin of its own: the join query
 		// (pat, id, loc) -- or, for a no-show group, the derived
 		// (pat, 1, max) sentinel -- binds it to the id-th occurrence
 		// of this group's pat.
@@ -3284,7 +3293,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			// the product and its witness are dropped.
 			let gs = &c_one - &b_same[i];
 			check_prod_zero(&gs,
-				&(&(&(&v.id[i] - &c_one) - &g_fp[i]) - &g_wr[i]),
+				&(&(&v.id[i] - &c_one) - &g_fp[i]),
 				lc!(), "neo group starts at rank 1")?;
 			grp_start.push(gs);
 		}
@@ -5854,6 +5863,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		g_fp: &Vec<FpVar<F>>,
 		g_wr: &Vec<FpVar<F>>,
 		                 // WINDOWED JOIN id jumps, from assert_neo_wf
+		gs: &Vec<FpVar<F>>,
 		zb: Option<(&Vec<FpVar<F>>, &Vec<FpVar<F>>,
 			&Vec<FpVar<F>>)>,
 		                 // T703a Some = aggr virtual-cert mode:
@@ -5921,6 +5931,10 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			// see the block above assert_neo_wf for the worked
 			// refusal. e_x derives from e_lo as a free LC offset
 			// (T402: the orientation term is identical).
+			// T926 N1: at a group start row i-1 is the previous
+			// group's max-wrap (or a pad at 0), so the span starts
+			// at loc[i-1] - max*gs = 0 (or -max), never at the old
+			// group's max. Free: c_max*gs is a const times an LC.
 			match zb {
 				Some((z_lo, z_hi, z_g)) => {
 					// active iff FP row with a real lower nbr
@@ -5936,7 +5950,8 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 					// implies is_fp, so two bits gate it.
 					if b_win && i > 0 {
 						let e_x = &e_lo
-							+ &(&qm.loc[i - 1] - &qm.loc[i]);
+							+ &(&(&qm.loc[i - 1] - &(&c_max * &gs[i]))
+								- &qm.loc[i]);
 						let act = &(&c_one - &z_g[i])
 							* &(&c_one - &z_lo[i]);
 						q_ext.push(&act * &e_x);
@@ -5956,7 +5971,8 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 						lc!(), "neo FP above")?;
 					if b_win && i > 0 {
 						let e_x = &e_lo
-							+ &(&qm.loc[i - 1] - &qm.loc[i]);
+							+ &(&(&qm.loc[i - 1] - &(&c_max * &gs[i]))
+								- &qm.loc[i]);
 						check_prod_zero(
 							&(&g_fp[i] * &m_lo),
 							&(&e_x - &qm.d_c1[i]), lc!(),
@@ -5966,7 +5982,9 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			}
 			// A gap INTO the max-wrap needs no witness: legal
 			// exactly when the row below has no window above
-			// (m_hi_prev == 0). BOTH halves are needed: m_hi == 0
+			// (m_hi_prev == 0). Never at a group start: T926 A
+			// forces g_wr = 0 there, so row i-1 is this group's.
+			// BOTH halves are needed: m_hi == 0
 			// alone is also true for a NON-FP row, which would
 			// let a prover empty a whole group down to its two
 			// wraps and discharge the subsig for free.
@@ -6721,7 +6739,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		// -- 2. well-formedness: row shape vs the S store,
 		//    group sort order, wrap/pad structure; returns
 		//    group starts + per-row reachable ranks --
-		let (_gs, rid, n_runs, g_fp, g_wr) =
+		let (gs, rid, n_runs, g_fp, g_wr) =
 			Self::assert_neo_wf(cs.clone(),
 			&nat.t, &vars.qm, &sel, true, Some(vq), job_id)?;
 		// T703a: the three forced zero-bits gating the virtual
@@ -6789,7 +6807,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    querying its parent rows (closure vs Q_r) --
 		let (q_bl, q_al, q_ext) = Self::assert_fwd_pruning(
 			cs.clone(), &vars.qm, &sel, true, &pv, &mut buf,
-			&g_fp, &g_wr, Some((&z_lo, &z_hi, &z_g)), job_id)?;
+			&g_fp, &g_wr, &gs, Some((&z_lo, &z_hi, &z_g)), job_id)?;
 		// T703a slot blocks 2-5 (block 1 = d_sort, pushed inside
 		// wf Section 4). The two multiplexed columns SUM their
 		// role terms; the cat classes are exclusive (selectors
@@ -6924,7 +6942,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		// -- 9. fwd pruning: every FP label justified by
 		//    querying its parent rows (closure vs Q_r) --
 		Self::assert_fwd_pruning(cs.clone(), &vars.qm, &sel,
-			false, &pv, &mut buf_qr, &g_fp, &g_wr, None,
+			false, &pv, &mut buf_qr, &g_fp, &g_wr, &gs, None,
 			job_id)?;
 		// -- 10. bwd pruning: every BP label is a fwd dead
 		//    end -- farthest reach short of the successor
@@ -14943,8 +14961,8 @@ mod tests_neo_t301 {
 
 	// ---- T965 B0: red tests pinning GRP3 holes (AGGR_T926). Each
 	// is SAT at HEAD; the fix commit flips its FIXED_ const.
-	const FIXED_N1: bool = false;
-	const FIXED_A: bool = false;
+	const FIXED_N1: bool = true;
+	const FIXED_A: bool = true;
 
 	/// M0: a red test's verdict. `sat` = the forgery is accepted.
 	pub(crate) fn assert_hole(tag: &str, sat: bool, fixed: bool) {
@@ -15035,6 +15053,66 @@ FIXED={}", tag, sat, fixed);
 		assert_eq!(nat.acc_out.len(), 1); // the match is hidden
 		let sat = run_nat_aggr(&nat).is_satisfied().unwrap();
 		assert_hole("A", sat, FIXED_A);
+	}
+
+	/// T926 lemma (a): the N1 forgery retried with an OPEN lower
+	/// bracket (pl1 = 0, pid 0), which switches the d_ext span check
+	/// off. The bracket's upper side must then be rank 1 of the
+	/// lower key; try both pl2 = max (rid 3) and pl2 = the rank-1
+	/// row's loc. Each must be refused by the bracket lookups.
+	#[test]
+	fn test_t926_n1_open_lower_bracket() {
+		let max = f((1u32 << read_global_config().range2_bit) - 1);
+		let base = gen_nat();
+		let ep = base.t.enc_prev[row_at(&base, 55)];
+		let r1 = (0..base.t.enc.len()).find(|r| base.t.enc[*r] == ep
+			&& base.t.id[*r] == f(1)).expect("rank-1 lower row");
+		for pl2 in [max, base.t.loc[r1]] {
+			let mut nat = gen_nat();
+			let r = row_at(&nat, 55);
+			let (ep, sep) = (nat.t.enc_prev[r], nat.t.si_enc_prev[r]);
+			let i = strip_step2(&mut nat);
+			let t = &mut nat.t;
+			t.cat[i] = f(CAT_FP);
+			t.prev_id1[i] = f(0);
+			t.prev_loc1[i] = f(0);
+			t.prev_loc2[i] = pl2;
+			t.enc_prev[i] = ep;
+			t.si_enc_prev[i] = sep;
+			fix_after_drop(t, i);
+			regen_t301(&mut nat);
+			assert_eq!(nat.acc_out.len(), 1);
+			assert!(!run_nat_aggr(&nat).is_satisfied().unwrap(),
+				"T926 (a): open-bracket N1 forgery accepted");
+		}
+	}
+
+	/// T926 lemma (b): the A forgery retried as id 1, so the pin
+	/// holds without g_wr. The step-2 wrap then claims the no-show
+	/// target (pat 2, 1, max), which the join must refuse because
+	/// pat 2 occurs.
+	#[test]
+	fn test_t926_a_wrap_as_rank1() {
+		let mut nat = gen_nat();
+		let max = f((1u32 << read_global_config().range2_bit) - 1);
+		let j = row_at(&nat, 8) - 1;
+		let i = strip_step2(&mut nat);
+		let t = &mut nat.t;
+		assert!(t.loc[j] == max && i == j + 1);
+		let k = j - 1;
+		t.cat[j] = f(CAT_FP);
+		t.prev_id1[j] = f(1);
+		t.prev_loc1[j] = f(1);
+		t.prev_loc2[j] = max;
+		t.enc_prev[j] = t.enc_prev[k];
+		t.si_enc_prev[j] = t.si_enc_prev[k];
+		t.id[i] = f(1);
+		fix_after_drop(t, i);
+		t.d_c2[i] = f(0);
+		regen_t301(&mut nat);
+		assert_eq!(nat.acc_out.len(), 1);
+		assert!(!run_nat_aggr(&nat).is_satisfied().unwrap(),
+			"T926 (b): rank-1 wrap forgery accepted");
 	}
 
 	/// GREEN (T965 G1): honest aggr fixtures the B1 fixes (N1, A, X,

@@ -32088,6 +32088,7 @@ Goal 4. B5
 	[b] refine T53: random blinder for cmF
 	[c] T941: implemented
 	[d] T954: only doc needed,no code change needed
+	[e] T942: comE2 blinding factor
 
 
 ####################################
