@@ -3798,6 +3798,8 @@ set; exit(0) before Phase 2.");
 	let qa_nizk_vkey_hash = qa_nizk_vkey.hash(&driver2.poseidon_config);
 	let (nova2_U_i1, nova2_W_i1, _nova2_r_Fr, _nova2__cmT)= 
 		nova2.gen_next_folded().unwrap();
+	assert_eq!(nova2_U_i1.vec_inst.len(), 1,
+		"T942: only vec_inst[0] (comE2/W2/F2) is published");
 	let (nova2_com_all_w, nova2_prf_qa_nizk, nova2_r_all_w) = nova2_W_i1.gen_com_all_w_and_qa_nizk_prf::<E, CS1E, H>( &qa_nizk_pkey, &driver2.nova_param.0.cs1e_pp, &qa_nizk_vkey, &nova2_U_i1);
 	drop(nova2_W_i1);
 	drop(qa_pp_d2_guard);

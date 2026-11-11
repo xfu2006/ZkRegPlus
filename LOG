@@ -32090,6 +32090,13 @@ Goal 4. B5
 	[d] T954: only doc needed,no code change needed
 	[e] T942: comE2 blinding factor
 
+Wed 11/11/2026
+Goal 1. B1
+	[a] T962: N and A fixes. approval and test
+	[b] C1+C2+C3:
+Goal 2. B5
+	[b[ T942: comE2. approve code change
+
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)

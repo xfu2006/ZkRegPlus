@@ -25,6 +25,7 @@ use ark_crypto_primitives::sponge::{
 use ark_r1cs_std::{
 	fields::{fp::FpVar},
 	eq::EqGadget,
+	alloc::AllocVar, //T942
 };
 
 
@@ -193,6 +194,18 @@ impl <F:PrimeField + Absorb> SigmaGadget<F> for FoldPairGadget<F>{
 		}
 		computed_ha_out.enforce_equal(&hc_a_out)?;
 		computed_hb_out.enforce_equal(&hc_b_out)?;
+
+		//T942: Stage-2 blinds, fixed per step by r_F (full statement
+		//slot 13, not stmt_idx). kappa_W is free and masks cmW. The row
+		//rho*tau = sigma masks cmE. Its cross term is uniform via tau.
+		use ark_r1cs_std::R1CSVar;
+		let rho = wtns.statement[13].clone();
+		let cfg_p = &self.poseidon_config;
+		let _kappa_w = FpVar::<F>::new_witness(cs.clone(), ||
+			Ok(hash(cfg_p, &vec![rho.value()?, F::from(9421u64)])))?;
+		let tau = FpVar::<F>::new_witness(cs.clone(), ||
+			Ok(hash(cfg_p, &vec![rho.value()?, F::from(9422u64)])))?;
+		let _sigma = &rho * &tau; //1 cs, 1 wtns (Var*Var)
 
 		Ok(())
 	}
@@ -466,7 +479,7 @@ pub mod tests_sigma_cyclepair{
 			foldpot::{
 				sigma_ir1cs::{LookupTableTwoCol_Inst,StatementExtraInfo,LookupTableTwoCol,ZiPartTwoInst,SigmaIR1CS,GadgetMapper,DummyNdAdvice}, 
 				utils::{f1_to_f2_limbs},
-				sigma_cyclepair::{create_sigma_fold_pair, compute_hc, compute_hc_var, FoldPairMapper},
+				sigma_cyclepair::{create_sigma_fold_pair, compute_hc, compute_hc_var, FoldPairMapper, hash},
 			},
 		}
 	};
@@ -710,9 +723,16 @@ pub mod tests_sigma_cyclepair{
 	/// (matrices, z, native output state, in-circuit z_{i+1}[1]).
 	pub fn t931_step(row: &Vec<Fr>, zi: &ZiPartTwoInst<Fr>, z1: Fr)
 		-> (ConstraintMatrices<Fr>, Vec<Fr>, ZiPartTwoInst<Fr>, Fr){
+		t942_step(row, zi, z1, Fr::zero())
+	}
+
+	/// T942: t931_step with the per-step blind r_F (statement slot 13).
+	pub fn t942_step(row: &Vec<Fr>, zi: &ZiPartTwoInst<Fr>, z1: Fr, r_f: Fr)
+		-> (ConstraintMatrices<Fr>, Vec<Fr>, ZiPartTwoInst<Fr>, Fr){
 		let sigma = create_sigma_fold_pair::<Fr,C,CS,LK,false>(1,
 			poseidon_canonical_config::<Fr>());
-		let (wtns, wcfg, out) = sigma.gen_witness(&t931_stmt(row, 1, 1), zi, None);
+		let (wtns, wcfg, out) = sigma.gen_witness(
+			&t953_stmt(row, 1, 1, r_f).to_vec(), zi, None);
 		let cs = ConstraintSystem::<Fr>::new_ref();
 		let ext = wtns.to_vec_fp_var(cs.clone(), &wcfg);
 		let z_i = [vec![Fr::zero(), z1], vec![Fr::zero(); 4]].concat().into_iter()
@@ -774,5 +794,58 @@ pub mod tests_sigma_cyclepair{
 		assert!(n_g > 0 && n_row > 0, "T931 P1: gt1 != z_i.g accepted");
 		//P1 alone rejects the moved g[0] (n_g rows), so the digest must add rows
 		assert!(n_stale > n_g, "T931 N3: input state column unbound by the digest");
+	}
+
+	/// T942: Stage-2 blinds. kappa_W, tau = H(r_F, tag) are fixed per r_F
+	/// (multi-pass). The row r_F*tau = sigma masks cmE: for two fresh steps
+	/// its cross term is -(r1-r2)(tau1-tau2).
+	#[test]
+	fn test_t942_stage2_blind(){
+		let (cfg, fq_bits) = (poseidon_canonical_config::<Fr>(), Fq::MODULUS_BIT_SIZE as usize);
+		let (zero, one, mut rng) = (Fr::zero(), Fr::one(), test_rng());
+		let (a, b) = (Bn254G1::rand(&mut rng), Bn254G2::rand(&mut rng));
+		let row = t931_row(Fq12::one(), a, b, (zero, zero));
+		let z0 = ZiPartTwoInst::<Fr>::new(zero, zero, &cfg, true, fq_bits, 1);
+		let r = [Fr::rand(&mut rng), Fr::rand(&mut rng), Fr::rand(&mut rng)];
+		let st = r.map(|ri| t942_step(&row, &z0, z0.hash(&cfg), ri));
+		let tau = |ri: Fr| hash(&cfg, &vec![ri, Fr::from(9422u64)]);
+		let kap = |ri: Fr| hash(&cfg, &vec![ri, Fr::from(9421u64)]);
+		let (m, z) = (&st[0].0, &st[0].1);
+		//(1) honest steps SAT, matrices independent of r_F
+		for s in st.iter(){
+			assert!(t931_unsat(&s.0, &s.1).is_empty(), "T942: honest step not SAT");
+			assert!(s.0.a == m.a && s.0.b == m.b && s.0.c == m.c,
+				"T942: matrices depend on r_F");
+		}
+		//(2) row d = rho*tau = sigma (unit single entries). rho is the
+		//only column holding r_F (no unbound copy). kappa_W present.
+		let unit = |v: &Vec<(Fr, usize)>| (v.len() == 1 && v[0].0 == one).then(|| v[0].1);
+		let d = (0..m.num_constraints).find(|&i| matches!(
+			(unit(&m.a[i]), unit(&m.b[i]), unit(&m.c[i])),
+			(Some(x), Some(y), Some(w)) if z[x] == r[0] && z[y] == tau(r[0])
+				&& z[w] == r[0] * tau(r[0])))
+			.expect("T942: no row r_F * tau = sigma");
+		let (c_rho, c_tau, c_sig) = (m.a[d][0].1, m.b[d][0].1, m.c[d][0].1);
+		assert_eq!((0..z.len()).filter(|&i| z[i] == r[0]).collect::<Vec<_>>(),
+			vec![c_rho], "T942: rho is not the one r_F column");
+		let c_kap = (0..z.len()).filter(|&i| z[i] == kap(r[0])).collect::<Vec<_>>();
+		assert_eq!(c_kap.len(), 1, "T942: kappa_W missing");
+		//(3) same r_F gives the same z (multi-pass)
+		assert!(t942_step(&row, &z0, z0.hash(&cfg), r[0]).1 == *z,
+			"T942: same r_F, different z");
+		//(4) tamper sigma or tau: only row d fails. kappa_W is free.
+		for (c, want) in [(c_sig, vec![d]), (c_tau, vec![d]), (c_kap[0], vec![])]{
+			let mut zt = z.clone();
+			zt[c] += one;
+			assert_eq!(t931_unsat(m, &zt), want, "T942: tamper col {}", c);
+		}
+		//(5) cross term on row d, two fresh steps (u = z[0] = 1)
+		let dot = |v: &Vec<(Fr, usize)>, z: &[Fr]| v.iter().map(|(c, i)| *c * z[*i]).sum::<Fr>();
+		let td = |z1: &[Fr], z2: &[Fr]| dot(&m.a[d], z1) * dot(&m.b[d], z2)
+			+ dot(&m.a[d], z2) * dot(&m.b[d], z1)
+			- z1[0] * dot(&m.c[d], z2) - z2[0] * dot(&m.c[d], z1);
+		let (t01, t02) = (td(z, &st[1].1), td(z, &st[2].1));
+		assert_eq!(t01, -(r[0] - r[1]) * (tau(r[0]) - tau(r[1])), "T942: T_d formula");
+		assert!(t01 != zero && t01 != t02, "T942: T_d does not mask cmE");
 	}
 }
