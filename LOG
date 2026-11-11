@@ -32101,12 +32101,15 @@ Goal 2. B5 -> DONE
 		test passed
 	[c] total circuit incrase: up to 0.009% for step and 0.027% for decider
 		both on stage 2
-Goal 3. B5b 
+Goal 3. B5b -> DONE 
 	[a] problem: define a system constant RECURSION DEPTH LIMIT
-	[b] implement and test
+	[b] implement and test -> DONE
+	[c] impact of circ size: main +0.0016%, cpair: 0.0021%
 Goal 4. B2
 	[a] N8 (T959): force begin JR table first row starts from 1
 		option B: no change of CS.
+Goal 5. B3p
+	[a]
 	
 
 

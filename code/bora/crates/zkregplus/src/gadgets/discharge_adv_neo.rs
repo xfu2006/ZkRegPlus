@@ -5447,7 +5447,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let n_wf0 = cs.num_constraints();
 		if !b_ext_wf {
 			Self::assert_jr_wf(cs.clone(), enc, id, loc, nat_enc,
-				r1)?;
+				sel_q, r1)?;
 		}
 		let wf_cs = cs.num_constraints() - n_wf0;
 		// -- 2. (J-M) membership logup into pat_loc ++ no-show
@@ -5509,29 +5509,46 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		Ok(())
 	}
 
-	/// JR-ONLY skeleton (T306b): db::assert_well_formed_sorted's
-	/// fingerprint rule with the block-start pin moved off the
-	/// dropped 0-sentinel -- same key -> id steps by exactly +1;
-	/// key change -> the previous row was the max sentinel AND this
-	/// row opens its block at rank 1 (uniform: an in-L block starts
-	/// at rank 1, a no-show singleton IS (pat, 1, max)). Kept LOCAL,
-	/// not folded into the shared db fn, so fsm_adv / legacy
-	/// discharge_adv / db.rs's other four callers stay untouched --
-	/// this mirrors assert_neo_wf's own precedent of inlining the
-	/// shared rule rather than generalising it. Like the shared fn,
-	/// the rule is gated on key[i-1] != 0 (a pad predecessor is
-	/// exempt); the first real block after the pad prefix is
-	/// covered by assert_qm_union instead.
-	/// COST: ~6*n (measured; the shared fn's own doc estimates
-	/// 5-7n for the same fingerprint shape). PERF 62073.1.
+	/// JR-ONLY skeleton (T306b). JR holds one block per store row
+	/// (same enc key). Each block is a full copy of that pat's L
+	/// block minus its 0-sentinel: ranks 1, 2, .., k+1, the last
+	/// row at loc = max. Pads (enc = 0) come first. Membership
+	/// (assert_join_locations) only proves each real row is IN L.
+	/// This skeleton proves no row of a block was dropped.
+	/// Row 0 has no predecessor. If real, it opens at rank 1.
+	/// Row i >= 1 vs row i-1, one of two checks (b_same picks):
+	///  - same block (same key): rank steps by one.
+	///    same_blk_chk = id[i] - id[i-1] - 1 = 0.
+	///  - new block (key change): the previous block closed at max
+	///    AND this block opens at rank 1. Both are fused into one
+	///    equation with challenge r (values fixed before r, so both
+	///    terms are 0 w.h.p.):
+	///    new_blk_chk = (loc[i-1] - max*sel[i-1]) + r*(id[i]-1) = 0.
+	///    A pad predecessor (sel[i-1] = 0) has no block to close, so
+	///    its max term drops out. An honest pad has loc 0 and the
+	///    rule reduces to id[i] = 1. This pins the first real block
+	///    after the pads (N8, NONAGGR_T959). Before it, a pad
+	///    predecessor skipped the check, so that block could open at
+	///    rank 2 and drop its rank-1 loc.
+	/// Gate sel[i] + sel[i-1] is 0 only on pad -> pad (no check).
+	/// It is 1 or 2 otherwise (check on). Honest pads are a prefix,
+	/// so real -> pad never occurs (it would need loc[i-1] = max).
+	/// Kept LOCAL, not folded into db::assert_well_formed_sorted, so
+	/// fsm_adv, legacy discharge_adv and db.rs's other callers stay
+	/// untouched (assert_neo_wf inlines its own rule the same way).
+	/// COST: ~6*n (measured). N8 adds 0 cs. max*sel[i-1] and the
+	/// gate are linear, and the two products per row are unchanged.
+	/// PERF 62073.1.
 	fn assert_jr_wf(
 		cs: ConstraintSystemRef<F>,
 		key: &[FpVar<F>], id: &[FpVar<F>], loc: &[FpVar<F>],
 		nat_key: &[F],
+		sel: &[FpVar<F>], // key != 0 bits (caller's sel_jr)
 		r: &FpVar<F>,
 	) -> Result<(), SynthesisError> {
 		let n = key.len();
 		if n == 0 { return Ok(()); }
+		debug_assert!(sel.len() == n, "jr_wf sel len");
 		let rb = read_global_config().range2_bit;
 		let c_max = new_const_var(&cs,
 			F::from(((1u64 << rb) - 1) as u64));
@@ -5547,14 +5564,14 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			else { &key[i] - &key[i - 1] }).collect::<Vec<_>>();
 		let b_same = gen_zero_bits(&cs, &d_nat, &d_var)?;
 		for i in 1..n {
-			let id_diff = &(&id[i] - &id[i - 1]) - &c_one;
-			// same block -> id_diff == 0; new block -> loc[i-1] ==
-			// max AND id[i] == 1, fused via challenge r exactly as
-			// the shared fn's own fingerprint does.
-			let part2 = &(&loc[i - 1] - &c_max)
+			// see the doc above: same_blk_chk if b_same, else
+			// new_blk_chk; checked unless pad -> pad.
+			let same_blk_chk = &(&id[i] - &id[i - 1]) - &c_one;
+			let new_blk_chk = &(&loc[i - 1] - &(&c_max * &sel[i - 1]))
 				+ &(r * &(&id[i] - &c_one));
-			let res = &(&b_same[i] * &(&id_diff - &part2)) + &part2;
-			check_prod_zero(&key[i - 1], &res, lc!(),
+			let res = &(&b_same[i] * &(&same_blk_chk - &new_blk_chk))
+				+ &new_blk_chk;
+			check_prod_zero(&(&sel[i] + &sel[i - 1]), &res, lc!(),
 				"jr skeleton")?;
 		}
 		Ok(())
@@ -12804,7 +12821,7 @@ mod tests_neo_nonaggr_neg {
 
 	// FIXED_D: also in tests_neo_m6_neg (aggr D); flip both together
 	const FIXED_D: bool = true;     // ALL_T958 D (N7 run splice)
-	const FIXED_N8: bool = false;   // NONAGGR_T959 (JR rank after pad)
+	const FIXED_N8: bool = true;    // NONAGGR_T959 (JR rank after pad)
 	const FIXED_G: bool = false;    // NONAGGR_T963 (BREAK2, q_i < max)
 	const FIXED_N11: bool = false;  // NONAGGR_T967 fix B (late seed)
 	const FIXED_NEW3: bool = false; // NONAGGR_T967 S0 (dup seed row)
@@ -13116,12 +13133,13 @@ mod tests_neo_nonaggr_neg {
 	/// T965 N8 (NONAGGR_T959). assert_jr_wf pins rank 1 on JR row 0
 	/// only and gates the skeleton on key[i-1] != 0, so the FIRST
 	/// real block after the pad prefix may open at any rank
-	/// (dan:5510-5530). r3: s1 = pat2 -> pat5 LAST (gap [1,10]),
+	/// (pre-T959 assert_jr_wf). r3: s1 = pat2 -> pat5 LAST (gap [1,10]),
 	/// L = {pat2: 17, pat5: 20, 150}; honest 17 -> 20 matches.
 	/// Tamper: natives of a pretend L without 20 (17 BP, 150 FP),
 	/// then the TRUE L and a JR whose pat5 block goes first, opening
 	/// at rank 2 (150): 20 is never joined, s1 reads False. Rejecter
-	/// after N8: check_prod_zero(sel_jr[i]-sel_jr[i-1], id[i]-1).
+	/// after N8: assert_jr_wf's pad-predecessor new_blk_chk
+	/// (sel[i-1] = 0 drops the max term, forces id = 1).
 	#[test]
 	fn test_t965_n8_jr_rank_after_pad() {
 		let info = n8_store();
