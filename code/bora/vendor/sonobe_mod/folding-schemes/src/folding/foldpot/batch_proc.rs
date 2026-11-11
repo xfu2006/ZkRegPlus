@@ -1141,6 +1141,11 @@ where
 	/// table nor the words, and a green part 2 is reported as
 	/// verdict=UNBOUND, never PASS (T933 Hole A). Part 2 still runs, so
 	/// c1-c4 keep their decider smoke test.
+	///
+	/// T954: `nova1_qa_nizk_vkey_hash` must be computed by the verifier
+	/// from the setup QA-NIZK vkey (`qa_vp.hash(poseidon_config)`), never
+	/// taken from the prover or the proof. It fills CyclePair public slot 9,
+	/// which the circuit binds to the vkey columns (hashchain_b).
 	pub fn verify_batch(
 		vkey: &BatchProcessorVerifierParams<'a,E,CS1E,H>, 
 		nova1_qa_nizk_vkey_hash: Option<E::ScalarField>, //only use in part2 

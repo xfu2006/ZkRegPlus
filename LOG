@@ -32078,11 +32078,16 @@ Goal 2. continue B0 -> DONE
 Goal 3. B1
 	[a] item X 
 	[b] item D: check last step of a subsig
+	[c] T926
+		issue N: fix bug that counts end of previous pattern
+			as the start of this pattern
+		issue A: extra g_wr causes false at beginning, remove it
 
 Goal 4. B5
 	[b] skip T954
 	[b] refine T53: random blinder for cmF
-	[c]
+	[c] T941: implemented
+	[d] T954: only doc needed,no code change needed
 
 
 ####################################
