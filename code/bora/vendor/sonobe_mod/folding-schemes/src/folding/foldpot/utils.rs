@@ -131,6 +131,14 @@ pub fn gen_vec_inverse<F:PrimeField>(vec: &Vec<F>)->Vec<F>{
 /// equality fails (and the proof is rejected).
 pub const POW_LE_BITS: usize = 32;
 
+/// T971: SYSTEM-WIDE recursion depth limit. Every IVC chain (Main and
+/// CyclePair, per job) folds at most MAX_STEPS steps. The main theorem
+/// (Thm 4, knowledge soundness) needs this bound as a setup parameter.
+/// The decider enforces it in-circuit on the step counter i (a witness,
+/// kept private for zk), and pass_all asserts it natively.
+pub const LOG_MAX_STEPS: usize = 17;
+pub const MAX_STEPS: usize = 1 << LOG_MAX_STEPS;
+
 /// Allocate `POW_LE_BITS` little-endian Boolean witnesses for `v`
 /// and enforce  Σ b_i · 2^i  ==  v.  Implicitly bounds  v < 2^32.
 ///
@@ -880,7 +888,7 @@ pub fn deserialize_affines_raw<P: SWCurveConfig>(path_prefix: &str) -> Vec<Affin
 /// main decider public input 2.
 /// pp_hash binds the IVC params, not the decider circuit: bump this
 /// on any decider circuit change.
-pub const G16_KEY_VERSION: u32 = 6;
+pub const G16_KEY_VERSION: u32 = 7;
 
 /// T934 D2: the stale-key message for the g16 key at path.
 fn g16_stale(path: &Path) -> String {

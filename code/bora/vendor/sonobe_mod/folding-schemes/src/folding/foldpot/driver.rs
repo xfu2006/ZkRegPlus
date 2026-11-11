@@ -2406,6 +2406,12 @@ where
 		//------------------------------------------
 		let m5 = get_mem_usage_mb();
 		let n_steps = vea.len();
+		// T971: SYSTEM-WIDE recursion depth limit (main theorem). Mirrors
+		// the decider's in-circuit check 1 <= i <= MAX_STEPS. Checked
+		// before folding (num_steps == vea.len() is asserted after it).
+		let max_steps = crate::folding::foldpot::utils::MAX_STEPS;
+		assert!(1 <= n_steps && n_steps <= max_steps,
+			"T971: n_steps {} outside [1, MAX_STEPS = {}]", n_steps, max_steps);
 		let batch_prfs = if !self.b_full_mode{
 			assert!(self.batch_pk.is_some());
 			let pk = &self.batch_pk.as_ref().unwrap();

@@ -32094,7 +32094,8 @@ Wed 11/11/2026
 Goal 1. B1
 	[a] T962: N and A fixes. approval and test
 	[b] T968 C1: check the DONE lable of an empty-chain subsip
-	[c] T
+	[d] DONE:
+		0 cs (because optimized gate design)
 Goal 2. B5 -> DONE
 	[b[ T942: comE2. approve code change
 		test passed
@@ -32102,7 +32103,10 @@ Goal 2. B5 -> DONE
 		both on stage 2
 Goal 3. B5b 
 	[a] problem: define a system constant RECURSION DEPTH LIMIT
-	[b] 
+	[b] implement and test
+Goal 4. B2
+	[a] N8 (T959): force begin JR table first row starts from 1
+		option B: no change of CS.
 	
 
 

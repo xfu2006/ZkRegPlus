@@ -19,7 +19,7 @@ use ark_crypto_primitives::sponge::{
     Absorb, CryptographicSponge,
 };
 use ark_ec::{CurveGroup, Group, pairing::Pairing, short_weierstrass::SWCurveConfig};
-use ark_ff::{PrimeField, Field, ToConstraintField};
+use ark_ff::{PrimeField, Field, ToConstraintField, BigInteger};
 use ark_crypto_primitives::sponge::constraints::AbsorbGadget;
 use ark_r1cs_std::{
     alloc::{AllocVar, AllocationMode},
@@ -46,6 +46,7 @@ use crate::folding::{
 		circuits_super::{field_to_usize,CommittedInstanceVarFoldPotSuper},
 		sigma_cyclepair::{compute_hc_var},
 		utils::{get_mem_usage,f1_limbs_to_f2, B_DEBUG, B_DEBUG2, B_DEBUG3, new_var, check_cs,
+			LOG_MAX_STEPS,
 			gadget_sat_check, gadget_sat_on}, //DEBUG USE 69801: +gadget_sat_check +.11 gate
 		container_config::ColEle,
 	},
@@ -924,6 +925,14 @@ where
         let one_var = FpVar::<CF1<C1>>::new_constant(cs.clone(),
             C1::ScalarField::from(1u32))?;
         let i_minus_one = &i - &one_var;
+		// T971: SYSTEM-WIDE depth cap 1 <= i <= MAX_STEPS, i.e. i - 1 in
+		// LOG_MAX_STEPS bits (18 cs). i stays a private witness.
+		let im1 = (self.i.unwrap_or_else(CF1::<C1>::zero)
+			- CF1::<C1>::from(1u32)).into_bigint();
+		let im1_bits = (0..LOG_MAX_STEPS).map(|k| Boolean::new_witness(
+			cs.clone(), || Ok(im1.get_bit(k))))
+			.collect::<Result<Vec<_>, _>>()?;
+		Boolean::le_bits_to_fp_var(&im1_bits)?.enforce_equal(&i_minus_one)?;
 		// REASON: when i (from nova) is 1, we are talking about verifying
 		// u_1.x = hash(U_1, ...) where U_1 is really from the dummy case.
         let is_basecase = i_minus_one.is_zero()?;
@@ -4164,5 +4173,37 @@ pub mod tests_decider_eth_circuit_super {
 		let p2 = vp2.pp_hash().unwrap();
 		assert!(p2 != fr(old(vp2)) && p2 == fr(h) && nova.pp_hash == p2,
 			"T934 F71: Stage-2 pp_hash misses the CyclePair R1CS / key");
+	}
+
+	const FIXED_T971: bool = true;
+
+	/// T971 red test: the decider caps the step counter i at MAX_STEPS.
+	/// Arms differ only in i (no rehash), so only rows reading i move.
+	/// H: honest i = 5. A: i = MAX_STEPS adds only the u_i.x[0] row.
+	/// B: i = MAX_STEPS + 1 adds exactly one more row (the T971 row).
+	/// Z: i = 0 also hits that row (lower bound).
+	#[test]
+	fn test_t971_step_cap(){
+		use crate::folding::foldpot::utils::MAX_STEPS;
+		let h = s119_fold(5);
+		let arm = |i: usize| { let mut c = h.clone();
+			c.i = Some(Fr::from(i as u64)); s103_unsat_rows(&c) };
+		let new = |x: &Vec<usize>, y: &Vec<usize>| x.iter()
+			.filter(|r| !y.contains(r)).cloned().collect::<Vec<usize>>();
+		let ((nh, bh), (na, ba), (nb, bb), (nz, bz)) = (s103_unsat_rows(&h),
+			arm(MAX_STEPS), arm(MAX_STEPS + 1), arm(0));
+		assert!(nh == na && na == nb && nb == nz, "T971: arms not shape-identical");
+		assert!(new(&bh, &ba).is_empty() && new(&ba, &bh).len() == 1,
+			"T971: i = MAX_STEPS: new unsat {:?}, want only the u_i.x[0] row",
+			new(&ba, &bh));
+		assert!(new(&ba, &bb).is_empty(), "T971: B lost rows of A");
+		let nb_rows = new(&bb, &ba);
+		assert_eq!(nb_rows.is_empty(), !FIXED_T971,
+			"T971: i = MAX_STEPS + 1 sat={} with FIXED_T971={}",
+			nb_rows.is_empty(), FIXED_T971);
+		if FIXED_T971 {
+			assert!(nb_rows.len() == 1 && bz.contains(&nb_rows[0]),
+				"T971: B new rows {:?}, i = 0 unsat {:?}", nb_rows, bz);
+		}
 	}
 }
