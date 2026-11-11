@@ -1557,6 +1557,7 @@ where
 					r_vec_r2: snark_inp.r_vec_r2,
 					r_vec_v2: snark_inp.r_vec_v2,
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
+					r_F: C1::ScalarField::rand(&mut rand::rngs::OsRng), //T953
 				};//end constructor StatementExtraInfo
 
 				//need to build the statement to fill the m_map
@@ -2074,6 +2075,7 @@ where
 					r_vec_r2: snark_inp.r_vec_r2,
 					r_vec_v2: snark_inp.r_vec_v2,
 					accumulated_word_len: C1::ScalarField::from(acc_wd_len as u32),
+					r_F: C1::ScalarField::rand(&mut rand::rngs::OsRng), //T953
 				};//end constructor StatementExtraInfo
 				log_perf(job_id, log_level+2, &format!("PERF 1009: -- Pass 1. For wd: {}, subseg_id: {} gen_statment_extra_info.", word_fname, subseg_id), &mut gt3);
 
@@ -3244,6 +3246,7 @@ where
 				r_vec_r2: zero,
 				r_vec_v2: zero,
 				accumulated_word_len: C1::ScalarField::from(wlen as u32),
+				r_F: zero, //dummy mode
 			};//end constructor StatementExtraInfo
 			circ.set_container_config(&advice);
 			let stmt_res = lock_unwrap!(circ.get_mapper())

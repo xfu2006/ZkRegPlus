@@ -6865,7 +6865,7 @@ pub mod tests_bora_data_driver {
 			r_vec_v: r(5), r_word_i: r(10 * wid as u64 + 6),
 			r_word_i2: r(10 * wid as u64 + 7), r_all_words2: r(8),
 			r_kzg_len2: r(9), r_vec_r2: r(10), r_vec_v2: r(11),
-			accumulated_word_len: f(acc) }
+			accumulated_word_len: f(acc), r_F: r(12) }
 	}
 	/// batch_proc's v_i: Horner over [len, w.., r_word_i, r_word_i2]
 	/// at batch_r.

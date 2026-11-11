@@ -1132,7 +1132,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 			total_word_len: ea.total_word_len,
 			total_word_segs: ea.total_word_segs,
 			total_words: ea.total_words,
-			r_F: F::from(2u32), //temp for debug
+			r_F: ea.r_F, //T953: per-step blind from the driver
 
 			batch_r: ea.batch_r,
 			batch_v: ea.batch_v,

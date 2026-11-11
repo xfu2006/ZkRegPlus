@@ -1026,6 +1026,10 @@ pub struct StatementExtraInfo<F:PrimeField>{
 	pub r_vec_v2: F,
 	/// accumuated word length (for the current word)
 	pub accumulated_word_len: F,
+	/// T953: per-step blind of cmF (stmt slot 13). Drawn from OsRng
+	/// once per step in the driver, so every pass rebuilds the same
+	/// statement. Zero only for dummy/padding steps.
+	pub r_F: F,
 }
 
 impl <F:PrimeField> StatementExtraInfo<F>{
@@ -1067,7 +1071,8 @@ impl <F:PrimeField> StatementExtraInfo<F>{
 			r_kzg_len2: zero,
 			r_vec_r2: zero,
 			r_vec_v2: zero,
-			accumulated_word_len: zero
+			accumulated_word_len: zero,
+			r_F: zero,
 		}
 	}
 }
@@ -1542,6 +1547,7 @@ impl <F:PrimeField, LK: LookupTableTwoCol<F>> StatementInst<F, LK>{
 			r_vec_r2: self.r_vec_r2,
 			r_vec_v2: self.r_vec_v2,
 			accumulated_word_len: self.accumulated_word_len,
+			r_F: self.r_F,
 		}
 	}
 
@@ -5536,6 +5542,7 @@ pub mod tests_sigma_ir1cs{
 				r_vec_r2: F::zero(),
 				r_vec_v2: F::zero(),
 				accumulated_word_len: F::one(),
+				r_F: F::zero(),
 			};
 			let dummy_adv = Arc::new(DummyNdAdvice{});
 			let stmt = lock_unwrap!(mapper)

@@ -9246,7 +9246,7 @@ range2_bit={}", ds, b, nu, rb);
 			r_vec_r: Fr::zero(), r_vec_v: Fr::zero(), r_word_i: Fr::zero(),
 			r_word_i2: Fr::zero(), r_all_words2: Fr::zero(),
 			r_kzg_len2: Fr::zero(), r_vec_r2: Fr::zero(), r_vec_v2: Fr::zero(),
-			accumulated_word_len: f(k*chunk)};
+			accumulated_word_len: f(k*chunk), r_F: f(953_000 + k)};
 		let frag = utils::data::pack_nibbles(
 			&utils::data::gen_pad_nibbles_fe::<Fr>(0, chunk * 62));
 		let mapper = circ.get_mapper();
@@ -9396,6 +9396,27 @@ range2_bit={}", ds, b, nu, rb);
 		s.mtbl_sigs = crate::gadgets::commons::gen_m_table(&s.failed_sigs,
 			&s.discharged_sigs);
 		s
+	}
+
+	/// T953: the Stage-1 mapper takes r_F from the driver's per-step
+	/// StatementExtraInfo (t938_env sets 953_000 + k for segment k), and
+	/// r_F lands in stmt slot 13 (cmF commits it). Rebuild determinism
+	/// across driver passes is covered end to end (test_neo_hard).
+	#[test]
+	fn test_t953_stage1_r_f(){
+		let _cfg = t938_cfg_guard();
+		let (db, cp, sed, dfa) = t938_small();
+		let fw = t938_word("t953", b"AaaaaXYbbbbc");
+		let (_, stmts) = t938_env(db, &fw, 1, &cp, &sed, &dfa);
+		let _ = std::fs::remove_file(&fw);
+		assert!(!stmts[0].is_empty(), "fixture: no segment");
+		for (i, st) in stmts[0].iter().enumerate(){
+			let r = Fr::from(953_001u64 + i as u64);
+			assert_eq!(st.r_F, r, "T953: Stage-1 r_F is not ea.r_F");
+			assert_eq!(st.to_vec()[13], r, "T953: r_F not in stmt slot 13");
+			assert_eq!(st.to_extra_info().r_F, r,
+				"T953: to_extra_info drops r_F");
+		}
 	}
 
 	/// T938-F (H3, non-aggressive). A word that truly matches sed_cs

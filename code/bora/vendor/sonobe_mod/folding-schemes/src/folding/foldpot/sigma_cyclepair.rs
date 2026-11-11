@@ -301,7 +301,7 @@ GadgetMapper<F,LK> for FoldPairMapper<F, LK>{
 			total_word_len: ea.total_word_len,
 			total_word_segs: ea.total_word_segs,
 			total_words: ea.total_words,
-			r_F: zero, //for debug
+			r_F: ea.r_F, //T953
 			batch_r: ea.batch_r,
 			batch_v: ea.batch_v,
 			r_all_words: ea.r_all_words,
@@ -441,6 +441,7 @@ where 	C: CurveGroup<ScalarField=F>,
 			r_vec_r2: F::zero(),
 			r_vec_v2: F::zero(),
 			accumulated_word_len: F::from(164u32),
+			r_F: F::zero(), //dummy stmt
 		};
 	let lk = LK::new(vec![
 		(F::from(0u32), F::from(0u32)), //0, null entry
@@ -544,6 +545,7 @@ pub mod tests_sigma_cyclepair{
 				r_vec_r2: F::from(3u32),
 				r_vec_v2: F::from(3u32),
 				accumulated_word_len: F::from(164u32),
+				r_F: F::zero(),
 			};
 		let mut rng = test_rng();
 		let a =  Bn254G1::rand(&mut rng);
@@ -657,6 +659,12 @@ pub mod tests_sigma_cyclepair{
 
 	/// T931: statement of row w (1-based) of n, fields as driver.rs pass_all.
 	pub fn t931_stmt(row: &Vec<Fr>, w: usize, n: usize) -> Vec<Fr>{
+		t953_stmt(row, w, n, Fr::zero()).to_vec()
+	}
+
+	/// T953: t931_stmt with the per-step blind r_F set in ea.
+	pub fn t953_stmt(row: &Vec<Fr>, w: usize, n: usize, r_f: Fr)
+		-> crate::folding::foldpot::sigma_ir1cs::StatementInst<Fr, LK>{
 		let (zero, one, len) = (Fr::zero(), Fr::one(), Fr::from(164u32));
 		let ea = StatementExtraInfo::<Fr>{ total_words: Fr::from(n as u32),
 			word_id: Fr::from(w as u32), subseg_id: one, total_word_len: len,
@@ -664,11 +672,31 @@ pub mod tests_sigma_cyclepair{
 			act_word_subseg_size: len, batch_r: zero, batch_v: zero,
 			r_all_words: zero, r_kzg_len: zero, r_vec_r: zero, r_vec_v: zero,
 			r_word_i: zero, r_word_i2: zero, r_all_words2: zero, r_kzg_len2: zero,
-			r_vec_r2: zero, r_vec_v2: zero, accumulated_word_len: len };
+			r_vec_r2: zero, r_vec_v2: zero, accumulated_word_len: len,
+			r_F: r_f };
 		let m = FoldPairMapper::<Fr, LK>{_f: PhantomData, _lk: PhantomData,
 			poseidon_config: poseidon_canonical_config::<Fr>(), job_id: 0};
 		m.build_statement(row, &None, Arc::new(LK::new(vec![])), &ea,
-			Arc::new(DummyNdAdvice{}), 0, false, 0).unwrap().to_vec()
+			Arc::new(DummyNdAdvice{}), 0, false, 0).unwrap()
+	}
+
+	/// T953: the Stage-2 mapper takes r_F from the driver's ea (stmt
+	/// slot 13, committed by cmF), not a constant. Same ea gives the
+	/// same statement, a new r_F a new one.
+	#[test]
+	fn test_t953_stage2_r_f(){
+		let mut rng = test_rng();
+		let (a, b) = (Bn254G1::rand(&mut rng), Bn254G2::rand(&mut rng));
+		let row = t931_row(Fq12::one(), a, b, (Fr::zero(), Fr::zero()));
+		let r = Fr::from(7u32);
+		let s = t953_stmt(&row, 1, 1, r);
+		assert_eq!(s.r_F, r, "T953: Stage-2 r_F is not ea.r_F");
+		assert_eq!(s.to_vec()[13], r, "T953: r_F not in stmt slot 13");
+		assert_eq!(s.to_extra_info().r_F, r, "T953: to_extra_info drops r_F");
+		assert!(s.to_vec() == t953_stmt(&row, 1, 1, r).to_vec(),
+			"T953: rebuild from the same ea differs");
+		assert!(s.to_vec() != t953_stmt(&row, 1, 1, Fr::from(11u32)).to_vec(),
+			"T953: r_F does not reach the statement");
 	}
 
 	/// T931: rows of m that z leaves unsatisfied.
