@@ -9574,37 +9574,19 @@ range2_bit={}", ds, b, nu, rb);
 		assert!(bad==0, "{} sig DFAs start != 0", bad);
 	}
 
-	// also in discharge_adv_neo.rs tests_neo_nonaggr_neg: flip both together
-	const FIXED_NEW4: bool = false;
-
-	/// T965 M0: a red test is SAT (hole open) iff its fix has not landed.
-	fn assert_hole(tag: &str, sat: bool, fixed: bool){
-		assert_eq!(sat, !fixed, "T965 {}: sat={} with FIXED_{}={}",
-			tag, sat, tag, fixed);
-	}
-
-	/// T965 R3 (NEW-4, T970 fix (a)). Neo non-aggressive small_data: a
-	/// word's first segment must pin each dan n_cin cell (cs, igc) to 0.
-	/// HEAD has no such cell, so no FirstSeg(0) pin sits on one (hole).
-	/// After T970: one pin per arm, each on an own SedMapper inp cell
-	/// (src.1 == IDX_INP, as sm get_const_pins); honest seg 1 stays SAT.
+	/// T965 R3 (NEW-4, T970). Neo non-aggressive small_data: dan's
+	/// word-start check reads its fsm's `fsm_acc locs` col 0
+	/// (load_neo_stmt_nonaggr), so that col must be the fsm's own
+	/// inp_loc inp cell and carry a FirstSeg(1) pin, for each dan arm
+	/// (a green wiring guard: true since T938 S1, and T970 relies on
+	/// it). Honest seg 1 stays SAT.
 	#[test]
 	fn test_t965_new4_pin_census(){
 		let _cfg = t938_cfg_guard();
-		use ark_std::Zero;
 		use crate::gadgets::traits::IDX_INP;
 		use folding_schemes::folding::foldpot::sigma_ir1cs::{StmtPin,
 			GadgetMapper, SigmaIR1CS};
 		use folding_schemes::folding::foldpot::container_config::ContainerConfig;
-		fn n_cin_cols(c: &ContainerConfig, out: &mut Vec<(usize, usize)>){
-			match c{
-				ContainerConfig::Column(loc, _, _, _) =>
-					if c.get_name().starts_with("n_cin") {
-						out.push((loc.src.2, loc.src.1)) },
-				ContainerConfig::Complex(v, _, _) =>
-					v.iter().for_each(|x| n_cin_cols(x, out)),
-			}
-		}
 		let (db, cp, sed, dfa) = t938_small_arm(true);
 		let fw = t938_word("t965_new4", b"9ab0000007");
 		let (mut circ, stmts) = t938_env(db, &fw, 1, &cp, &sed, &dfa);
@@ -9616,32 +9598,43 @@ range2_bit={}", ds, b, nu, rb);
 			(g.gen_statement_structure(share).1, g.gen_stmt_pins(share),
 				g.get_gadgets(), g.component_spans())
 		};
-		//(stmt index, src.1) of every n_cin column of a dan gadget
+		//per dan arm: (stmt index, src.1) of its fsm's locs col 0
 		let (mut s_inp, mut gi, mut cells, mut n_dan) =
 			(cfg.idx_inp, 0usize, vec![], 0usize);
 		for (c, (name, ng)) in gm.lock().unwrap().vec_components.iter()
 			.zip(spans.iter()){
-			for g in gadgets[gi..gi+ng].iter().filter(|_| name=="SedMapper"){
-				let cc = g.lock().unwrap().get_container_config();
-				if !cc.get_name().starts_with("discharge_adv_stmt_") {continue;}
+			let ccs: Vec<ContainerConfig> = if name=="SedMapper" {
+				gadgets[gi..gi+ng].iter().map(|g| g.lock().unwrap()
+					.get_container_config()).collect() } else { vec![] };
+			for cc in ccs.iter(){
+				let nm = cc.get_name();
+				let Some(arm) = nm.strip_prefix("discharge_adv_stmt_")
+					else {continue};
 				n_dan += 1;
-				let mut v = vec![];
-				n_cin_cols(&cc, &mut v);
-				cells.extend(v.into_iter().map(|(j, src)| (s_inp + j, src)));
+				let locs = ccs.iter().find_map(|x| x.search_by_path(
+					&format!("fsm_adv_stmt_{} fsm_acc locs", arm)))
+					.expect("fixture: dan arm without its fsm locs");
+				match locs{
+					ContainerConfig::Complex(v, _, _) => match &v[0]{
+						ContainerConfig::Column(loc, _, _, _) => {
+							assert!(v[0].get_name()=="inp_loc",
+								"locs col 0 is {}", v[0].get_name());
+							cells.push((s_inp + loc.src.2, loc.src.1));
+						},
+						_ => panic!("locs col 0 not a column"),
+					},
+					_ => panic!("fsm_acc locs not complex"),
+				}
 			}
 			s_inp += c.lock().unwrap().get_sizes()[0];
 			gi += ng;
 		}
-		assert!(n_dan >= 1, "fixture: no discharge_adv_stmt_* gadget in SedMapper");
-		let n_inp = cells.iter().filter(|c| c.1==IDX_INP).count();
+		assert!(n_dan==2, "fixture: {} discharge_adv_stmt_* gadgets, want 2 (cs, igc)", n_dan);
 		let pins = cells.iter().filter(|(j, src)| *src==IDX_INP
 			&& all.iter().any(|(k, p)| k==j
-			&& matches!(p, StmtPin::FirstSeg(v) if v.is_zero()))).count();
-		assert_hole("NEW4", pins==0, FIXED_NEW4);
-		if FIXED_NEW4 {
-			assert!(pins==2 && n_inp==2, "n_cin FirstSeg(0) pins {} on {} \
-				own inp cells, want 2", pins, n_inp);
-		}
+			&& matches!(p, StmtPin::FirstSeg(v) if *v==Fr::from(1u64)))).count();
+		assert!(pins==n_dan, "T970: {} of {} dan arms read a FirstSeg(1) \
+			pinned fsm inp_loc", pins, n_dan);
 		let r = t938_step(&mut circ, &t938_z0(), &stmts[0][0], false);
 		assert!(r==Ok(true), "honest first segment rejected: {:?}", r);
 	}

@@ -32115,8 +32115,14 @@ Goal 4. B2
 		N11: seed can be 0
 		NEW3: duplicate seed row
 		-> implement and test
+	[c] NEWAGGR_T970: NEW-4
 Goal 5. B3p
 	[a] B1-B2: full byte and nibble translation, repeat limit translation bug 
+
+Thursday 11/12/2026
+Goal 1. B2
+	[a] T970: initial chunk no check of carrie-in q_i
+Goal 2. B3p
 	
 
 

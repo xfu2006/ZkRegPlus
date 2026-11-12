@@ -429,11 +429,11 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 			self.log_component(cs.clone(), n0, rows, "aggr", job_id);
 			r
 		} else {
-			let (nat, vars, default_min) = self
+			let (nat, vars, default_min, inp_loc) = self
 				.load_neo_stmt_nonaggr(i, &cs, wtns, cfg)?;
 			let rows = vars.qm.enc.len();
 			let r = Self::assert_neo_nonaggr(cs.clone(), &nat, &vars,
-				&default_min, &r1, &r2, job_id);
+				&default_min, &inp_loc, &r1, &r2, job_id);
 			self.log_component(cs.clone(), n0, rows, "nonaggr",
 				job_id);
 			r
@@ -4202,7 +4202,7 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 	/// T929: the seed packs pack(subsig*2^4rb, 1) = subsig*2^5rb
 	/// + 1 of the NONZERO statement subsig slots. A carried seed
 	/// row sits at loc 1 ("neo seed at loc 1" in the chunk that
-	/// emitted it; chunk 0's public q_i is built at loc 1), so this
+	/// emitted it; chunk 0's q_i is built at loc 1), so this
 	/// is exactly the pack a q_i seed row has.
 	fn seed_packs(subsig_nat: &[F]) -> HashSet<F> {
 		let base = F::from(1u64
@@ -6898,13 +6898,16 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		Ok(())
 	}
 
-	/// NONAGGR entry: thin composer, no constraints of its own.
-	/// Interface = the test seam (cs, nat, vars, default_min,
-	/// r1, r2, job_id).
+	/// NONAGGR entry: composes the blocks; its own constraint is
+	/// T970's word-start carry-in row (step 7b). Interface = the
+	/// test seam (cs, nat, vars, default_min, inp_loc, r1, r2,
+	/// job_id).
 	pub(crate) fn assert_neo_nonaggr(
 		cs: ConstraintSystemRef<F>,
 		nat: &NeoCore<F>, vars: &NeoCoreVars<F>,
-		default_min: &FpVar<F>, r1: &FpVar<F>, r2: &FpVar<F>,
+		default_min: &FpVar<F>,
+		inp_loc: &FpVar<F>, // T970: the fsm's inp_loc cell
+		r1: &FpVar<F>, r2: &FpVar<F>,
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -6985,6 +6988,21 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			(&vars.jr.enc, &vars.jr.loc), &vars.subsigs,
 			&z_sub, &prf, r1,
 			job_id)?;
+		// -- 7b. T970 (NEW-4): no carried row at a word start.
+		//    The first segment's q_i is the prover's (no fold
+		//    link), and a carried row (b = 1) skips the pred
+		//    cert. inp_loc is pinned to 1 there (T938 S1; the
+		//    nonaggr init loc), so (inp_loc - 1) * w = sum b
+		//    forces b = 0 and U1 leaves q_i = the seed table.
+		//    Later: sum b > 0 needs a nibble scanned before, so
+		//    inp_loc >= 2 and w = sum b / (inp_loc - 1). 1cs --
+		let sum_b: FpVar<F> = b_cin.iter().sum();
+		let d_loc = inp_loc - &c_one;
+		let w_cin = new_var(&cs, match (d_loc.value(), sum_b.value()) {
+			(Ok(d), Ok(s)) => d.inverse().map_or(F::zero(), |i| s * i),
+			_ => F::zero() });
+		check_prod_eq(&d_loc, &w_cin, &sum_b,
+			"T970 word-start carry-in")?;
 		// -- 8. predecessor certs of every citing row (non-seed
 		//    C/BP/SP with b_cin = 0) into the REACHABLE buffer,
 		//    fused with fwd's lower-neighbor key; + the carry-out
@@ -7541,9 +7559,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let stmt_container = Container::<F>::new(sname);
 		// NewP3: seed this fold's SDE obligation set (inp_subsigs =
 		// the failed-CP subsigs from DischargeInfo), NOT the DB
-		// universe: cost is O(capacity), not O(DB). Chunk-0's public
-		// q_i anchors the set in-circuit (assert_qm_union's seed
-		// table).
+		// universe: cost is O(capacity), not O(DB). Chunk-0's q_i
+		// is the prover's; T970 makes it seeds only and
+		// assert_qm_union's seed table anchors the set.
 		// UNFILTERED, the legacy shape: empty-chain ids (count
 		// constraints) ride as inert step-0 passengers. to_container
 		// tags them LAST_STEP (num_steps == step == 0) so eval reads
@@ -7828,19 +7846,22 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 
 	/// Deserialize chunk i's committed neo statement (core + nonaggr
 	/// cols + q_i/q_c transport) into the plain-F-value bundle +
-	/// circuit vars, plus default_min = last fsm loc + 1.
+	/// circuit vars, plus default_min = last fsm loc + 1 and (T970)
+	/// the fsm's inp_loc cell.
 	fn load_neo_stmt_nonaggr(&self, i: usize,
 		cs: &ConstraintSystemRef<F>,
 		wtns: &WitnessSigmaIR1CSVar<F>,
 		wtns_cfg: &WitnessSigmaIR1CSConfig)
-	-> Result<(NeoCore<F>, NeoCoreVars<F>, FpVar<F>),
+	-> Result<(NeoCore<F>, NeoCoreVars<F>, FpVar<F>, FpVar<F>),
 		SynthesisError> {
 		let cfg = self.inner.get_container_config();
 		let stmt = Container::<FpVar<F>>::load_from(i, wtns_cfg,
 			wtns, &cfg)?;
 		// -- 1. default_min = last fsm-acc loc + 1, read from
 		//    the fsm gadget's statement (offset_fsm slots
-		//    earlier; legacy assert_msg3 retrieval) --
+		//    earlier; legacy assert_msg3 retrieval); T970: also
+		//    its inp_loc cell (locs[0], FirstSeg-pinned by T938 S1)
+		//    for the word-start carry-in check --
 		let my_name = if self.inner.b_igc
 			{ "discharge_adv_stmt_igc" }
 			else { "discharge_adv_stmt_cs" };
@@ -7859,6 +7880,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			.lock().unwrap().to_vec();
 		let default_min = &locs[locs.len() - 1]
 			+ &new_const_var(cs, F::one());
+		let inp_loc = locs[0].clone();
 		let core = stmt.get_container("neo_core")?;
 		// c2: load one neo_core column by name as
 		// (circuit vars, plain F values via value()).
@@ -8013,7 +8035,7 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			qi_enc, qi_loc, qc_enc, qc_loc, mtbl_qc, union_prf,
 			jr: JrVars { enc: jr_enc, pat: jr_pat, id: jr_id,
 				loc: jr_loc, si_pat: jr_si_pat } };
-		Ok((nat, vars, default_min))
+		Ok((nat, vars, default_min, inp_loc))
 	}
 }
 
@@ -11211,6 +11233,7 @@ mod tests_neo_nonaggr {
 		default_min: u32,
 		tamper: Option<&dyn Fn(&mut NeoCore<Fr>)>)
 	-> (ConstraintSystemRef<Fr>, NeoCore<Fr>) {
+		SEG0.with(|c| c.set(false)); // only this run's tamper sets it
 		let carried = StepQueueNeo::from_stepqueue(
 			carried_sq.clone());
 		let gen = gen_tagged(&carried, hm, info, default_min);
@@ -11222,6 +11245,22 @@ mod tests_neo_nonaggr {
 		(run_nat_nonaggr(&nat, default_min), nat)
 	}
 
+	thread_local! {
+		/// T970 M15: the next harness run is a word's first
+		/// segment (set by seg0_pin, consumed by inp_loc_var).
+		pub(crate) static SEG0: std::cell::Cell<bool> =
+			std::cell::Cell::new(false);
+	}
+
+	/// T970: the fsm inp_loc cell the nonaggr core reads. 1 (the
+	/// T938 S1 pin) after seg0_pin, else 2 (a later segment, where
+	/// the word-start check is vacuous).
+	pub(crate) fn inp_loc_var(cs: &ConstraintSystemRef<Fr>)
+	-> FpVar<Fr> {
+		new_var(cs, f(if SEG0.with(|c| c.replace(false)) { 1 }
+			else { 2 }))
+	}
+
 	/// allocate a (possibly tampered) native bundle and run the
 	/// non-aggressive entry over it.
 	pub(crate) fn run_nat_nonaggr(nat: &NeoCore<Fr>,
@@ -11231,8 +11270,9 @@ mod tests_neo_nonaggr {
 		let r1 = new_var(&cs, Fr::from(12345u32));
 		let r2 = new_var(&cs, Fr::from(67890u32));
 		let dmin = new_var(&cs, f(default_min));
+		let inp_loc = inp_loc_var(&cs);
 		DischargeAdvNeoGadget::<Fr>::assert_neo_nonaggr(
-			cs.clone(), nat, &vars, &dmin, &r1, &r2, 0)
+			cs.clone(), nat, &vars, &dmin, &inp_loc, &r1, &r2, 0)
 			.expect("assert core nonaggr");
 		cs
 	}
@@ -11615,8 +11655,9 @@ mod tests_neo_nonaggr {
 		//13 rows here, not 6: join +13, ns_gap +26; union / carry /
 		//fwd_prune / qm_lookups are identical at 235/193/104/330).
 		// D2: +2 cs per real row (D2a hi-limb booleanity, D2b
-		// freeze-neg product) x 26 = 2,890; T929 -35 -> 2,839.
-		assert_eq!(cs.num_constraints(), 2839, "T-C1 exact pin");
+		// freeze-neg product) x 26 = 2,890; T929 -35 -> 2,839;
+		// T970 +1 (word-start carry-in) -> 2,840.
+		assert_eq!(cs.num_constraints(), 2840, "T-C1 exact pin");
 	}
 
 	/// T925 T-P5 (gate G-B) -- the section-5 root repro. Carried
@@ -11942,11 +11983,13 @@ mod tests_neo_nonaggr {
 		// D2 (Figure 4 Q_c negations): +2 cs per real row -- the
 		// D2a boolean hi limb and the D2b freeze-neg product; the
 		// fused gaps, widened pins and widened queries are free.
-		// 2,799 + 2*26 = 2,851; T929 -35 -> 2,800.
-		assert_eq!(cs.num_constraints(), 2800);
+		// 2,799 + 2*26 = 2,851; T929 -35 -> 2,800; T970 +1 (the
+		// word-start carry-in row) -> 2,801.
+		assert_eq!(cs.num_constraints(), 2801);
 		// T929 regression guard (3352) + D2's h (+1 per row); T967
-		// -1: the K = 1 committed m_seed cell is gone.
-		assert_eq!(cs.num_witness_variables(), 3352 + 26 - 1,
+		// -1: the K = 1 committed m_seed cell is gone; T970 +2: the
+		// harness inp_loc cell and w_cin.
+		assert_eq!(cs.num_witness_variables(), 3352 + 26 - 1 + 2,
 			"T929 witness pin");
 	}
 }
@@ -12827,8 +12870,9 @@ mod tests_neo_nonaggr_neg {
 	const FIXED_G: bool = true;     // NONAGGR_T963 (BREAK2, q_i < max)
 	const FIXED_N11: bool = true;   // NONAGGR_T967 fix B (late seed)
 	const FIXED_NEW3: bool = true;  // NONAGGR_T967 S0 (dup seed row)
-	// FIXED_NEW4: also in zkp_driver.rs tests; flip both together
-	const FIXED_NEW4: bool = false; // NONAGGR_T970 (seg-0 n_cin pin)
+	// FIXED_NEW4: zkp_driver.rs test_t965_new4_pin_census checks
+	// the pinned cell T970 reads
+	const FIXED_NEW4: bool = true; // NONAGGR_T970 (word-start carry-in)
 
 	/// M0: red-test verdict switch (SAT while the hole is open).
 	fn assert_hole(tag: &str, sat: bool, fixed: bool) {
@@ -12871,9 +12915,11 @@ mod tests_neo_nonaggr_neg {
 		t.fill_d_sort(true);
 	}
 
-	/// M15: the seg-0 FirstSeg pin on n_cin. No n_cin cell exists at
-	/// HEAD, so a no-op; T970's body is `nat.n_cin_in = 0`.
-	fn seg0_pin(_nat: &mut NeoCore<Fr>) {}
+	/// M15: this run is a word's first segment: the harness feeds
+	/// the fsm inp_loc cell its T938 S1 pin value 1 (T970).
+	fn seg0_pin(_nat: &mut NeoCore<Fr>) {
+		super::tests_neo_nonaggr::SEG0.with(|c| c.set(true));
+	}
 
 	/// M6: drop JR row i and re-prepend one zero pad (keeps the cap).
 	fn remove_jr_row(nat: &mut NeoCore<Fr>, i: usize) {
@@ -13352,8 +13398,8 @@ mod tests_neo_nonaggr_neg {
 	/// the step-5 successor min is the decoy and 152 + 9 < mx-1, so
 	/// 152 goes BP (D2a) and is not carried; chunk 2 (161..180 =
 	/// steps 5-8) has no step-8 C row: a false clean. The control
-	/// without the decoy matches. Rejecter after T970: the seg-0 pin
-	/// n_cin_in = 0 (M15) vs sum(b_cin) = 1.
+	/// without the decoy matches. Rejecter after T970: inp_loc = 1
+	/// (M15) forces sum(b_cin) = 0, but the decoy has b_cin = 1.
 	#[test]
 	fn test_t965_new4_z0_bp_decoy() {
 		let info = a18_store();
@@ -13378,6 +13424,15 @@ mod tests_neo_nonaggr_neg {
 		assert!(!qc_c_rows(&r[1].1, 1).iter().any(|x| x.0 == 8),
 			"false clean");
 		assert_hole("new4_z0_bp_decoy", r[0].0 && r[1].0, FIXED_NEW4);
+		//differential: the same decoy chunk at a later segment
+		//(inp_loc 2) is SAT, so the seg-0 rejecter is T970's row
+		let (cs, nat) = run_core_nonaggr(&info, &z0, &hm1, 161, None);
+		assert!(accepted_na(&cs, &nat), "decoy chunk at inp_loc 2");
+		if FIXED_NEW4 {
+			let (cs, _) = run_core_nonaggr(&info, &z0, &hm1, 161,
+				Some(&pin));
+			assert!(!cs.is_satisfied().unwrap(), "decoy chunk at seg 0");
+		}
 		//sanity: the decoy without its b_cin stamp dies at U1
 		let unstamp = |nat: &mut NeoCore<Fr>| {
 			let i = row(nat, (1u32 << read_global_config().range2_bit) - 2);
@@ -13424,9 +13479,9 @@ mod tests_neo_nonaggr_neg {
 	}
 
 	/// T965 G8 (green, NEW-4 guard): honest seg 0 carries the seed
-	/// only (sum b_cin over step >= 1 rows = 0), so the T970 pin (M15)
-	/// holds; a later segment (a18 carry) has carried rows and is
-	/// not pinned.
+	/// only (sum b_cin over step >= 1 rows = 0), so T970's check at
+	/// inp_loc = 1 (M15) holds; a later segment (a18 carry) has
+	/// carried rows and inp_loc 2.
 	#[test]
 	fn test_t965_green_new4_seg0_seeds_only() {
 		let info = a18_store();
@@ -13440,6 +13495,12 @@ mod tests_neo_nonaggr_neg {
 			&a18_carried().to_stepqueue(), &fig14c2_hm(),
 			A18_DEFAULT_MIN, None);
 		assert!(accepted_na(&cs, &nat) && n_cin(&nat) > 0);
+		//the same carried chunk claimed as a word start must fail
+		let (cs, nat) = run_core_nonaggr(&info,
+			&a18_carried().to_stepqueue(), &fig14c2_hm(),
+			A18_DEFAULT_MIN, Some(&pin));
+		assert_eq!(accepted_na(&cs, &nat), !FIXED_NEW4,
+			"carried rows at a word start");
 	}
 
 	/// T965 G9 (green, vacuity tripwire for M13): the honest chunk-2
@@ -16301,8 +16362,9 @@ mod tests_t929_fs_adaptive {
 		let r1 = new_var(&cs, r1);
 		let r2 = new_var(&cs, r2);
 		let dmin = new_var(&cs, f(A18_DEFAULT_MIN));
+		let inp_loc = super::tests_neo_nonaggr::inp_loc_var(&cs);
 		DischargeAdvNeoGadget::<Fr>::assert_neo_nonaggr(cs.clone(),
-			nat, &vars, &dmin, &r1, &r2, 0)
+			nat, &vars, &dmin, &inp_loc, &r1, &r2, 0)
 			.expect("assert core nonaggr");
 		cs.is_satisfied().unwrap()
 	}
@@ -16605,8 +16667,9 @@ pub(crate) mod tp_g3 {
 		let vars = super::tests_neo_m6::alloc_vars(&cs, nat);
 		let (r1v, r2v) = (new_var(&cs, r1), new_var(&cs, r2));
 		let dm = new_var(&cs, dmin);
+		let il = super::tests_neo_nonaggr::inp_loc_var(&cs);
 		DischargeAdvNeoGadget::<Fr>::assert_neo_nonaggr(cs.clone(), nat,
-			&vars, &dm, &r1v, &r2v, 0).expect("assert core nonaggr");
+			&vars, &dm, &il, &r1v, &r2v, 0).expect("assert core nonaggr");
 		cs
 	}
 	/// (12345, 67890) as run_nat_nonaggr, then 2 seeded pairs (StdRng
