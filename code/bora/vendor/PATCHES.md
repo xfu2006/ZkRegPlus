@@ -145,14 +145,16 @@ keep the registry copy.
 
 - `src/nfa.rs:96-101` — **behavioural.** `big_to_dfa` now dispatches to a new
   `big_to_dfa_new`; the stock body is kept as `big_to_dfa_old`
-  (`#[allow(dead_code)]`, `:161`). The subset construction keys its
-  set-to-state map on a 64-bit `DefaultHasher` digest of the sorted state
-  vector instead of on a `BTreeSet<usize>`, which is what makes large NFA
-  determinisation tractable here. Two consequences a reviewer should know:
-  a 64-bit digest collision would merge two distinct state subsets (never
-  observed on our datasets, but it is a hash, not a set comparison); and the
-  alphabet is now iterated in sorted order, so state numbering is
-  deterministic where the stock `HashSet` iteration was not.
+  (`#[allow(dead_code)]`, `:154`). The subset construction keys its
+  set-to-state map on the sorted state vector (`HashMap<Vec<usize>,
+  usize>`) instead of on a `BTreeSet<usize>`, which is what makes large NFA
+  determinisation tractable here. Until T973 the key was a 64-bit
+  `DefaultHasher` digest of that vector, so a collision could merge two
+  distinct subsets. The vector itself is now the key, so no merge is
+  possible. The alphabet is iterated in sorted order, so `big_to_dfa` state
+  numbering is deterministic. `small_to_dfa` (NFAs under 128 states, also
+  reached through `minimize`) still iterates the `RandomState` `HashSet`
+  alphabet, so its numbering can change from process to process.
 - `src/dfa.rs:21` — added `MyHashSet`, a `HashSet<usize>` newtype with an
   order-independent `Hash`, used as a partition key.
 - `src/dfa.rs:43` — `DFA`'s fields made `pub` and a `pub raw_str: String`

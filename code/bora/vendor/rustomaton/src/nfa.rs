@@ -8,7 +8,7 @@ use std::{
     cmp::{Ordering, Ordering::*, PartialEq, PartialOrd},
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fmt::{Debug, Display},
-    hash::{Hash,DefaultHasher,Hasher},
+    hash::Hash,
     iter::{repeat, FromIterator},
     ops::{Add, BitOr, Bound::*, Mul, Neg, Not, RangeBounds, Sub},
     str::FromStr,
@@ -99,8 +99,10 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> NFA<V> {
 	}
 
 	// Added by BORA paper author: Idea replace BTreeSet by a sorted vector
+	// T973: the map is keyed on the sorted vector itself, not on a digest
+	// of it, so two distinct subsets can never share a DFA state.
     fn big_to_dfa_new(&self) -> DFA<V> {
-        let mut map: HashMap<u64, usize> = HashMap::new();
+        let mut map: HashMap<Vec<usize>, usize> = HashMap::new();
         let mut stack = VecDeque::new();
 
         let mut dfa = DFA::new_empty(&self.alphabet);
@@ -109,16 +111,14 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> NFA<V> {
 
         let mut initial: Vec<usize> = self.initials.iter().copied().collect();
 		initial.sort();
-        map.insert(Self::hash(&initial), 0);
-        stack.push_back(initial);
+        map.insert(initial.clone(), 0);
+        stack.push_back((0, initial));
 
         if self.initials.iter().any(|x| self.finals.contains(x)) {
             dfa.finals.insert(0);
         }
 
-        while let Some(set) = stack.pop_front() {
-			let set_hash = Self::hash(&set);
-            let num = *map.get(&set_hash).unwrap();
+        while let Some((num, set)) = stack.pop_front() {
             for v in &vec_alpha{
                 let mut it = HashSet::new();
                 for s in &set {
@@ -134,28 +134,21 @@ impl<V: Eq + Hash + Display + Copy + Clone + Debug + Ord> NFA<V> {
 
                 let mut other = it.into_iter().collect::<Vec<usize>>();
 				other.sort();
-				let hash_other = Self::hash(&other);
-                if !map.contains_key(&hash_other) {
+                let next = *map.entry(other).or_insert_with_key(|key| {
                     let l = dfa.transitions.len();
-                    map.insert(hash_other, l);
-                    if other.iter().any(|x| self.finals.contains(x)) {
+                    if key.iter().any(|x| self.finals.contains(x)) {
                         dfa.finals.insert(l);
                     }
-                    stack.push_back(other.clone());
+                    stack.push_back((l, key.clone()));
                     dfa.transitions.push(HashMap::new());
-                }
-                dfa.transitions[num].insert(*v, *map.get(&hash_other).unwrap());
+                    l
+                });
+                dfa.transitions[num].insert(*v, next);
             }
         }
 
 		dfa
     }
-
-	fn hash(vec: &Vec<usize>) -> u64{
-		let mut hasher = DefaultHasher::new();
-		vec.hash(&mut hasher);
-		hasher.finish()
-	}
 
 	#[allow(dead_code)]
     fn big_to_dfa_old(&self) -> DFA<V> {
@@ -967,9 +960,9 @@ mod tests {
         m.iter().all(|x| *x != usize::MAX)
     }
 
-    /// T973 green: big_to_dfa (64-bit hash of the state set) builds the
-    /// same DFA as big_to_dfa_old (BTreeSet keys) on seeded random NFAs
-    /// with >= 128 states, the size where to_dfa dispatches to it.
+    /// T973 green: big_to_dfa (map keyed on the sorted state vector)
+    /// builds the same DFA as big_to_dfa_old (BTreeSet keys) on seeded
+    /// random NFAs with >= 128 states, where to_dfa dispatches to it.
     #[test]
     fn test_t973_big_to_dfa_diff() {
         let mut rng = StdRng::seed_from_u64(973);
