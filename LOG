@@ -32110,9 +32110,13 @@ Goal 4. B2
 		option B: no change of CS.
 	[b] NONAGGR_T963 (a carried-in row may neverbe the last
 		row of its group): no cost fix
-	[c]
+		-> implement and test
+	[c] NONAGGR_T967 (N11-B + S0):
+		N11: seed can be 0
+		NEW3: duplicate seed row
+		-> implement and test
 Goal 5. B3p
-	[a] B1-B2: 
+	[a] B1-B2: full byte and nibble translation, repeat limit translation bug 
 	
 
 

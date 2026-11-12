@@ -253,6 +253,7 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 	//
 	//   block         value (active rows)       active class
 	//   1 d_sort      loc[i]-loc[i-1] /         in-group rows /
+	//                 (nonaggr T967 S0: minus is_step0)
 	//                 subsig[i]-subsig[i-1]-1   run boundaries
 	//   2 d_below_lo  loc-pl1-rg2-1             FP, pl1 != 0
 	//   3 d_above_lo  pl2+rg1-loc-1             FP, pl2 != max
@@ -312,9 +313,10 @@ impl<F: PrimeField + ColEle> SigmaGadget<F>
 		let f_max = F::from(((1u64 <<
 			read_global_config().range2_bit) - 1) as u64);
 		// ---- block 1: d_sort ----
-		// rule = QmTable::fill_d_sort: the non-strict loc sort
-		// inside a group, the strict subsig ascent at a run
-		// boundary, 0 elsewhere (pad predecessor stays 0).
+		// rule = QmTable::fill_d_sort(false) (aggr): the
+		// non-strict loc sort inside a group, the strict subsig
+		// ascent at a run boundary, 0 elsewhere (pad predecessor
+		// stays 0).
 		let mut out = vec![F::zero(); n];
 		for k in 1..n {
 			if enc[k - 1].is_zero() { continue; }
@@ -1540,6 +1542,7 @@ pub(crate) struct QmTable<F: PrimeField + ColEle> {
 	pub d_below_lo: Vec<F>, pub d_above_lo: Vec<F>,
 	/// non-strict sort diff advice: loc[i]-loc[i-1] on same-group
 	/// adjacencies (RANGE2-si'd), 0 elsewhere; 0 = legal duplicate.
+	/// Nonaggr step-0 groups are strict (T967 S0): gap - 1 stored.
 	pub d_sort: Vec<F>,
 	// si columns (variable; const RANGE2 si cols are emitted at
 	// container-assembly time for the d_* advice)
@@ -1599,13 +1602,17 @@ impl<F: PrimeField + ColEle> QmTable<F> {
 	/// the loc gap inside a group, the strict subsig ascent gap at a
 	/// run boundary, 0 elsewhere (a pad predecessor stays 0 -- the
 	/// circuit masks those rows, and a real store enc is never 0).
-	pub(crate) fn fill_d_sort(&mut self) {
+	/// b_s0 (T967 S0, nonaggr): a step-0 group's gap is strict, so
+	/// it is stored minus 1.
+	pub(crate) fn fill_d_sort(&mut self, b_s0: bool) {
 		let n = self.enc.len();
 		self.d_sort = vec![F::zero(); n];
 		for i in 1..n {
 			if self.enc[i - 1].is_zero() { continue; }
 			self.d_sort[i] = if self.enc[i] == self.enc[i - 1] {
+				let s0 = b_s0 && self.step[i].is_zero();
 				self.loc[i] - self.loc[i - 1]
+					- if s0 { F::one() } else { F::zero() }
 			} else if self.subsig[i] != self.subsig[i - 1] {
 				self.subsig[i] - self.subsig[i - 1] - F::one()
 			} else { F::zero() };
@@ -2279,7 +2286,7 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 		}
 		// sort + key-ascent advice; see fill_d_sort. Before padding:
 		// pads are separate groups and the circuit masks them.
-		t.fill_d_sort();
+		t.fill_d_sort(!b_aggr);
 		// front pads + CapErr (fixed budget)
 		let n_keys = Self::n_wrap_keys(&subsigs, info);
 		let n_total = Self::qm_rows_size(&self.capacity, info);
@@ -3343,7 +3350,9 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		//               is b_same * (1 - is_pad) = (1 - is_pad) -
 		//               grp_start: a FREE rewrite of two columns
 		//               Section 3 already paid for. Equal neighbors
-		//               (straddle duplicates) stay legal.
+		//               (straddle duplicates) stay legal, except
+		//               (T967 S0, nonaggr) in a step-0 group, where
+		//               the gap is strict (loc[i] - loc[i-1] - 1).
 		//   bnd_r[i] -> subsig[i] - subsig[i-1] - 1, so subsig
 		//               STRICTLY ascends across run boundaries.
 		//   neither  -> 0 (pads, and group starts INSIDE a run,
@@ -3386,13 +3395,21 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		// RANGE2 query value. Native twin: eval_virt_queries, a
 		// mirror of QmTable::fill_d_sort. Slot order: row 0
 		// (const 0) first, then rows 1..n. Nonaggr (vq = None)
-		// keeps the committed cell + bind, byte-identical.
+		// keeps the committed cell + bind (with -is_step0, S0).
 		if let Some(q) = vq.as_deref_mut() {
 			q.push(FpVar::<F>::Constant(F::zero()));
 		}
+		// T967 S0 (NEW-3), NONAGGR only: loc STRICTLY ascends inside
+		// a step-0 group (gap - 1 >= 0), so a 2nd seed row at loc 1
+		// (q_c would carry two seed packs of one subsig, paying a
+		// duplicated slot next chunk) gives d_sort = -1, not RANGE2.
+		// Aggr keeps the non-strict rule (m also feeds its virtual
+		// slot; byte-identical).
 		for i in 1..n {
 			let same = &(&c_one - &sel.is_pad[i]) - &grp_start[i];
-			let m = &same * &(&v.loc[i] - &v.loc[i - 1]);
+			let gap = &v.loc[i] - &v.loc[i - 1];
+			let gap = if b_aggr { gap } else { &gap - &sel.is_step0[i] };
+			let m = &same * &gap;
 			match vq.as_deref_mut() {
 				Some(q) => q.push(&m + &(&bnd_r[i]
 					* &(&(&v.subsig[i] - &v.subsig[i - 1])
@@ -3714,10 +3731,6 @@ pub(crate) struct NeoCore<F: PrimeField + ColEle> {
 	/// for the split q_i = {carried rows of Q_m} (len 4; empty in
 	/// aggr).
 	pub union_prf: Vec<F>,
-	/// T929: the seed-table multiplicities m_seed (len K): how
-	/// many q_i rows are slot k's seed (subsig*2^4rb, loc 1).
-	/// COMMITTED so they are fixed before r1 (empty in aggr).
-	pub m_seed: Vec<F>,
 	/// JOIN RESULT temp table (all vecs empty in aggr).
 	pub jr: JrTable<F>,
 }
@@ -3741,7 +3754,6 @@ pub(crate) struct NeoCoreVars<F: PrimeField + ColEle> {
 	pub qc_enc: Vec<FpVar<F>>, pub qc_loc: Vec<FpVar<F>>,
 	pub mtbl_qc: Vec<FpVar<F>>,
 	pub union_prf: Vec<FpVar<F>>,
-	pub m_seed: Vec<FpVar<F>>,
 	pub jr: JrVars<F>,
 }
 
@@ -4200,34 +4212,6 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			.map(|s| *s * sh5 + F::one()).collect()
 	}
 
-	/// T929: the seed-table multiplicities, committed in
-	/// core_container so they are fixed before r1. m_seed[k] =
-	/// #{q_i rows packing to slot k's seed pack}, credited to the
-	/// FIRST slot holding that subsig (0 on a dummy-0 slot and on
-	/// a repeated slot). Loud honest-prover guard: every q_i row
-	/// whose enc is a listed seed enc must be at loc 1, else the
-	/// union would be honest-UNSAT.
-	fn gen_seed_m(qi_enc: &[F], qi_loc: &[F], subsig_nat: &[F])
-	-> Vec<F> {
-		let base = F::from(1u64
-			<< read_global_config().range2_bit);
-		let sh4 = base * base * base * base;
-		for (e, l) in qi_enc.iter().zip(qi_loc.iter()) {
-			assert!(e.is_zero() || *l == F::one()
-				|| !subsig_nat.iter().any(|s| !s.is_zero()
-					&& *s * sh4 == *e),
-				"T929: a q_i seed row is not at loc 1");
-		}
-		let pk: Vec<F> = qi_enc.iter().zip(qi_loc.iter())
-			.map(|(e, l)| *e * base + *l).collect();
-		let mut seen = HashSet::new();
-		subsig_nat.iter().map(|s| {
-			if s.is_zero() || !seen.insert(*s) { return F::zero(); }
-			let kp = *s * sh4 * base + F::one();
-			F::from(pk.iter().filter(|x| **x == kp).count() as u64)
-		}).collect()
-	}
-
 	/// The zero-count reconciliation scalars of the two multiset
 	/// identities assert_qm_union checks in-circuit over pack(enc,
 	/// loc): [0..2] the total Q_m = q_i union JR, [2..4] (T925) the
@@ -4254,7 +4238,22 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		let seeds = Self::seed_packs(subsig_nat);
 		let pk = |e: &[F], l: &[F]| e.iter().zip(l.iter())
 			.map(|(x, y)| *x * base + *y).collect::<Vec<F>>();
-		let vec1: Vec<F> = pk(qi_enc, qi_loc).into_iter()
+		// T967 honest-prover guard: the seed table charges ONE q_i
+		// seed pack per nonzero slot (m_k = 1 - z_sub[k]), so q_i
+		// must hold, per subsig, exactly as many seed packs as
+		// slots list it, each at loc 1; else honest-UNSAT.
+		let sh4 = base * base * base * base;
+		let pk1 = pk(qi_enc, qi_loc);
+		for s in subsig_nat.iter().filter(|s| !s.is_zero()) {
+			let n_slot = subsig_nat.iter().filter(|x| *x == s).count();
+			let n_pack = pk1.iter()
+				.filter(|x| **x == *s * sh4 * base + F::one()).count();
+			let n_enc = qi_enc.iter().filter(|e| **e == *s * sh4).count();
+			assert!(n_pack == n_slot && n_enc == n_slot,
+				"T967: q_i seed rows of a listed subsig: {} packs, \
+				{} encs, {} slots", n_pack, n_enc, n_slot);
+		}
+		let vec1: Vec<F> = pk1.into_iter()
 			.filter(|x| !seeds.contains(x)).collect();
 		let vec2 = pk(&jr.enc, &jr.loc);
 		let vec3: Vec<F> = (0..t.enc.len()).map(|i|
@@ -4399,12 +4398,10 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 		};
 		let (qi_enc, qi_loc) = (col(&ct_qi, "encoded"),
 			col(&ct_qi, "locs"));
-		let m_seed = Self::gen_seed_m(&qi_enc, &qi_loc,
-			&subsig_nat);
 		let union_prf = Self::gen_union_scalars(&t, &jr, &qi_enc,
 			&qi_loc, &subsig_nat)?;
 		let nat = NeoCore {
-			qi_enc, qi_loc, m_seed,
+			qi_enc, qi_loc,
 			qc_enc: col(&ct_qc, "encoded"),
 			qc_loc: col(&ct_qc, "locs"),
 			t, l_pat, l_id, l_loc, subsig_nat, s_enc, mtbl_qr,
@@ -6323,6 +6320,10 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		r1: &FpVar<F>, r1sq: &FpVar<F>,
 		n_runs: &FpVar<F>,
 		                 // run count from assert_neo_wf
+		z_pre: Option<&[FpVar<F>]>,
+		                 // T967: nonaggr hands in the zero bits it
+		                 //   already shares with assert_qm_union
+		                 //   (None = allocate here, aggr)
 		job_id: usize,
 	) -> Result<(), SynthesisError> {
 		let n0 = cs.num_constraints();
@@ -6336,7 +6337,10 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		// the logup sees only multiplicities 0/1. A gate-bit cut
 		// (1cs) would be sound but costs a negative-multiplicity
 		// argument for ~m saved constraints -- not worth it.
-		let z_sub = gen_zero_bits(&cs, s_nat, s_var)?;
+		let z_sub = match z_pre {
+			Some(z) => z.to_vec(),
+			None => gen_zero_bits(&cs, s_nat, s_var)?,
+		};
 		for (j, s) in s_var.iter().enumerate() {
 			// seed key: enc(s, 0) = s * 2^(4*rb); rank 1, loc 1.
 			// Reachability is by CONSTRUCTION of the lookup: the
@@ -6355,17 +6359,23 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		// obligation attached. Section 4's ascent makes run subsigs
 		// distinct and ascending, so listed-subset-of-runs plus
 		// equal counts forces the two SETS equal.
-		// KNOWN RESIDUAL: a prover who zeroes one slot AND
-		// duplicates another rebalances the count. Closing that
-		// needs strict ascent on the subsig LIST too, which costs a
-		// RANGE2 diff column of length |S| -- deliberately not paid
-		// here; see T202 in the task record.
+		// KNOWN RESIDUAL (T202): a prover who zeroes one slot AND
+		// duplicates another rebalances the count. Aggr: open (no
+		// strict ascent on the subsig LIST, a RANGE2 diff column of
+		// length |S| not paid). Nonaggr since T967: each listed
+		// slot charges one carried seed pack (union seed table, m_k
+		// = 1 - z_sub[k]) and q_c carries one seed per subsig (S0),
+		// so at t >= 1 a duplicated slot is unpaid. S(0) = z_0's
+		// seeds is the prover's pick but frozen for the word (a
+		// subsig left out is never discharged: compute_sig's q_c
+		// run-end lookup); z_0's step >= 1 rows are T970's.
 		let mut n_listed = FpVar::<F>::Constant(F::zero());
 		for z in z_sub.iter() { n_listed = &n_listed + &(&c_one - z); }
 		check_eq(n_runs, &n_listed, "neo run/subsig count")?;
 		log(job_id, LOG4, &format!(
 			"PERF 61082.8: block=seed_anchors cs={} pred={}",
-			cs.num_constraints() - n0, 2 * m));
+			cs.num_constraints() - n0,
+			if z_pre.is_some() { 0 } else { 2 * m }));
 		Ok(())
 	}
 
@@ -6391,17 +6401,27 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 	/// (enc subsig*2^4rb, loc 1) are paid by a SEED TABLE on the
 	/// right side of both identities (T929): one term
 	/// m_k / (kp_k + r1) per statement slot, kp_k = pack(s_k *
-	/// 2^4rb, 1) = s_k * 2^5rb + 1, m_k COMMITTED (neo_core
-	/// "m_seed", in cmF before r1) and s_k RANGE2 (T929). kp_k has
+	/// 2^4rb, 1) = s_k * 2^5rb + 1, s_k RANGE2 (T929) and (T967)
+	/// m_k = 1 - z_sub[k], the seed anchors' strong zero bit: a
+	/// free LC, 1 on every listed slot, 0 on a pad slot. So every
+	/// listed slot DEMANDS one carried seed (a subsig added late,
+	/// with no carried seed, leaves its table term unpaid) and
+	/// q_i's seed multiset equals the listed slot multiset. kp_k has
 	/// base-2^rb digits (s_k, 0, 0, 0, 0, 1), so no step >= 1 pack
 	/// can equal it: not a real carried q_i row (enc limbs < 2^rb,
 	/// q_i loc RANGE2) and not a step >= 1 Q_m row (its loc is
 	/// 2^rb - 1 minus at most n RANGE2 d_sort gaps). The table
 	/// can therefore absorb q_i seed rows only, and must absorb
-	/// every one (it has no other partner). A post-r1 m_seed
-	/// would absorb ANY carried row's term (solve m_0 at r1), and
-	/// the prover could drop that row from Q_m and q_c; an
-	/// unranged s_k would let kp_k be any field element.
+	/// every one (it has no other partner). A free m_k (post-r1,
+	/// or the committed m_seed advice before T967) would absorb a
+	/// carried row's term or skip a listed slot's seed; an
+	/// unranged s_k would let kp_k be any field element. With m
+	/// fixed, no JR row may pack to kp_k either: the JR si_pat pin
+	/// admits only DB (pat, dst enc) pairs, all at step >= 1.
+	/// At t >= 1, q_i = q_c(t-1) holds one seed per subsig (S0 in
+	/// assert_neo_wf), so S(t) equals S(t-1) as a multiset; S(0)
+	/// equals z_0's seeds (prover-chosen, then frozen; T970 pins
+	/// z_0's step >= 1 rows).
 	/// Halo-straddle duplicates are two Q_m rows, one paid by
 	/// each side.
 	///
@@ -6443,8 +6463,9 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		                 // join table enc, loc (pad rows = 0)
 		subsigs: &[FpVar<F>],
 		                 // statement subsig slots (seed table keys)
-		m_seed: &[FpVar<F>],
-		                 // T929: COMMITTED seed-table multiplicities
+		z_sub: &[FpVar<F>],
+		                 // T967: their strong zero bits (shared
+		                 //   with assert_seed_anchors); m_k = 1 - z
 		prf: &QmUnionAdvice<F>,
 		r1: &FpVar<F>,
 		job_id: usize,
@@ -6457,7 +6478,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let f1 = F::from(1u64 << rb);
 		let c_sh5 = new_const_var(&cs, f1 * f1 * f1 * f1 * f1);
 		let z = F::zero();
-		assert_eq!(m_seed.len(), subsigs.len());
+		assert_eq!(z_sub.len(), subsigs.len());
 		assert_eq!(gs.len(), n);
 		// pack(enc, loc) = enc * 2^rb + loc: a free linear combo,
 		// injective (loc < 2^rb), all-zero rows pack to 0.
@@ -6473,6 +6494,9 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		// T929 seed table keys kp_k = pack(s_k * 2^4rb, 1), free.
 		let kp: Vec<FpVar<F>> = subsigs.iter()
 			.map(|s| &(s * &c_sh5) + &c_one).collect();
+		// T967 (N11 fix B): m_k = 1 - z_sub[k], free.
+		let m_seed: Vec<FpVar<F>> = z_sub.iter()
+			.map(|z| &c_one - z).collect();
 		// ---- T925 carry-in bit: (B) + (K), 2cs per row ----
 		let b_cin: Vec<FpVar<F>> = (0..n).map(|i|
 			&qm.b_cin[i] - &sel.is_seed[i]).collect();
@@ -6856,7 +6880,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    blocks the vacuous all-FP labeling) --
 		Self::assert_seed_anchors(cs.clone(),
 			(&vars.subsigs, &nat.subsig_nat), &mut buf, r1,
-			&r1sq, &n_runs, job_id)?;
+			&r1sq, &n_runs, None, job_id)?;
 		// -- 9. close the batch: one logup of all buffered
 		//    queries into Q_m; consumes buf by value (qc
 		//    side passed empty) --
@@ -6951,10 +6975,15 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 			diff_zero: vars.union_prf[1].clone(),
 			b_left_more_zero_cin: vars.union_prf[2].clone(),
 			diff_zero_cin: vars.union_prf[3].clone() };
+		// T967: the statement slots' strong zero bits, shared by
+		// the union's seed table (m_k = 1 - z_sub[k]) and the seed
+		// anchors (step 12).
+		let z_sub = gen_zero_bits(&cs, &nat.subsig_nat,
+			&vars.subsigs)?;
 		let b_cin = Self::assert_qm_union(cs.clone(), &vars.qm,
 			&sel, &gs, (&vars.qi_enc, &vars.qi_loc),
 			(&vars.jr.enc, &vars.jr.loc), &vars.subsigs,
-			&vars.m_seed, &prf, r1,
+			&z_sub, &prf, r1,
 			job_id)?;
 		// -- 8. predecessor certs of every citing row (non-seed
 		//    C/BP/SP with b_cin = 0) into the REACHABLE buffer,
@@ -6988,7 +7017,7 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		//    blocks the vacuous all-FP labeling) --
 		Self::assert_seed_anchors(cs.clone(),
 			(&vars.subsigs, &nat.subsig_nat), &mut buf_qr, r1,
-			&r1sq, &n_runs, job_id)?;
+			&r1sq, &n_runs, Some(&z_sub), job_id)?;
 		// -- 13. close the batch: one logup per buffer into
 		//    Q_m; consumes both buffers by value --
 		Self::assert_qm_lookups(cs.clone(), &vars.qm, &sel,
@@ -7088,7 +7117,6 @@ impl<F: PrimeField + ColEle> NeoCore<F> {
 			acc_out, mtbl_acc,
 			qi_enc: vec![], qi_loc: vec![], qc_enc: vec![],
 			qc_loc: vec![], mtbl_qc: vec![], union_prf: vec![],
-			m_seed: vec![],
 			jr: JrTable::default() })
 	}
 }
@@ -7190,11 +7218,9 @@ impl<F: PrimeField + ColEle> StepQueueNeo<F> {
 			fix(&na.d_kept, "d_kept", f_r2);
 			fix(&nat.mtbl_qc, "mtbl_qc", z);
 			fix(&nat.union_prf, "union_prf", z);
-			//T929: the seed-table multiplicities, committed (NOT
-			//post-r1 new_var: a post-r1 m_seed absorbs any real
-			//carried row's union term); si 0 (a multiplicity, bound
-			//by the two union identities).
-			fix(&nat.m_seed, "m_seed", z);
+			//T967: no m_seed cell; the seed-table multiplicity is
+			//1 - z_sub[k] in-circuit (a committed free m let a
+			//listed slot skip its carried seed, N11).
 			//Task A: carry-in bit, committed (not value()-derived)
 			//so the carried-row exemption rests on the commitment;
 			//si 0 (booleanity, containment and the split union are
@@ -7784,7 +7810,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			acc_out: acc_out_n, mtbl_acc: mtbl_acc_n,
 			qi_enc: vec![], qi_loc: vec![], qc_enc: vec![],
 			qc_loc: vec![], mtbl_qc: vec![], union_prf: vec![],
-			m_seed: vec![],
 			jr: JrTable::default() };
 		let qm = QmVars { enc, id, loc, cat, step, subsig,
 			prev_id1, prev_loc1, prev_loc2, pat, rg1, rg2,
@@ -7797,7 +7822,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			d_ns_hi, mtbl_ns, acc_out, mtbl_acc,
 			qi_enc: vec![], qi_loc: vec![], qc_enc: vec![],
 			qc_loc: vec![], mtbl_qc: vec![], union_prf: vec![],
-			m_seed: vec![],
 			jr: JrVars::empty() };
 		Ok((nat, vars))
 	}
@@ -7915,8 +7939,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 		let (mtbl_ns, mtbl_ns_n) = c2("mtbl_ns")?;
 		let (mtbl_qc, mtbl_qc_n) = c2("mtbl_qc")?;
 		let (union_prf, union_prf_n) = c2("union_prf")?;
-		//T929: committed seed-table multiplicities.
-		let (m_seed, m_seed_n) = c2("m_seed")?;
 		// -- 5b. JOIN RESULT temp table (join view + si_pat
 		//    companion of the outer-lookup share) --
 		let (jr_enc, jr_enc_n) = c2("jr_enc")?;
@@ -7970,7 +7992,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			qi_enc: qi_enc_n, qi_loc: qi_loc_n,
 			qc_enc: qc_enc_n, qc_loc: qc_loc_n,
 			mtbl_qc: mtbl_qc_n, union_prf: union_prf_n,
-			m_seed: m_seed_n,
 			jr: JrTable { enc: jr_enc_n, pat: jr_pat_n,
 				id: jr_id_n, loc: jr_loc_n,
 				si_pat: jr_si_pat_n } };
@@ -7990,7 +8011,6 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoGadget<F> {
 			d_ns_lo, d_ns_hi, mtbl_ns,
 			acc_out: vec![], mtbl_acc: vec![],
 			qi_enc, qi_loc, qc_enc, qc_loc, mtbl_qc, union_prf,
-			m_seed,
 			jr: JrVars { enc: jr_enc, pat: jr_pat, id: jr_id,
 				loc: jr_loc, si_pat: jr_si_pat } };
 		Ok((nat, vars, default_min))
@@ -9525,7 +9545,6 @@ pub(crate) mod tests_neo_m6 {
 			qc_enc: av(&nat.qc_enc), qc_loc: av(&nat.qc_loc),
 			mtbl_qc: av(&nat.mtbl_qc),
 			union_prf: av(&nat.union_prf),
-			m_seed: av(&nat.m_seed),
 			jr: JrVars { enc: av(&nat.jr.enc),
 				pat: av(&nat.jr.pat), id: av(&nat.jr.id),
 				loc: av(&nat.jr.loc),
@@ -10280,7 +10299,7 @@ mod tests_neo_m6_neg {
 				assert!(t.enc[i + 1] == t.enc[i]
 					&& t.loc[i + 1] == Fr::from(131u32));
 				t.loc[i] = Fr::from(131u32);
-				t.fill_d_sort(); //honest non-strict rebind
+				t.fill_d_sort(false); //honest non-strict rebind (aggr)
 				regen_aggr_advice(nat, &a18_store(), &a18_s_pat());
 			}));
 		assert!(!cs.is_satisfied().unwrap());
@@ -11365,11 +11384,9 @@ mod tests_neo_nonaggr {
 		assert_eq!(get("mtbl_qc"), nat.mtbl_qc);
 		assert_eq!(get("union_prf"), nat.union_prf);
 		assert_eq!(nat.union_prf.len(), 4, "T925: total + split");
-		//T929: the seed-table multiplicities sit in neo_core
-		//(committed, cmF); fig14c2 carries exactly one seed row,
-		//(subsig_0 * 2^4rb, loc 1).
-		assert_eq!(get("m_seed"), nat.m_seed);
-		assert_eq!(nat.m_seed.len(), nat.subsig_nat.len());
+		//T967: no committed seed-table multiplicity (m_k = 1 -
+		//z_sub[k] in-circuit); fig14c2 carries exactly one seed
+		//row, (subsig_0 * 2^4rb, loc 1), for its one listed slot.
 		let sh4 = {
 			let b = f(1u32 << read_global_config().range2_bit);
 			b * b * b * b };
@@ -11378,8 +11395,8 @@ mod tests_neo_nonaggr {
 			.collect::<Vec<usize>>();
 		assert_eq!(one.len(), 1, "fig14c2 carries one seed row");
 		assert_eq!(nat.qi_loc[one[0]], f(1), "q_i seed at loc 1");
-		assert_eq!(nat.m_seed[0], f(1));
-		assert!(nat.m_seed[1..].iter().all(|m| m.is_zero()));
+		assert!(!nat.subsig_nat[0].is_zero());
+		assert!(nat.subsig_nat[1..].iter().all(|m| m.is_zero()));
 		//T929: nonaggr subsig slots are RANGE2 (outer range check),
 		//so a slot key s*2^4rb can never be a step>=1 enc.
 		let si_sub = get("si_subsigs");
@@ -11927,8 +11944,9 @@ mod tests_neo_nonaggr {
 		// fused gaps, widened pins and widened queries are free.
 		// 2,799 + 2*26 = 2,851; T929 -35 -> 2,800.
 		assert_eq!(cs.num_constraints(), 2800);
-		// T929 regression guard (3352) + D2's h (+1 per row).
-		assert_eq!(cs.num_witness_variables(), 3352 + 26,
+		// T929 regression guard (3352) + D2's h (+1 per row); T967
+		// -1: the K = 1 committed m_seed cell is gone.
+		assert_eq!(cs.num_witness_variables(), 3352 + 26 - 1,
 			"T929 witness pin");
 	}
 }
@@ -12014,7 +12032,7 @@ mod tests_neo_nonaggr_neg {
 		//recompute d_sort (a removed row changes an adjacency) and
 		//fix ids within the group (ids stay contiguous).
 		let n = t.enc.len();
-		rebind_d_sort_na(t); //T965 M13 (S0 rewrites its body)
+		rebind_d_sort_na(t); //T965 M13 (S0 rule since T967)
 		for j in i..n {
 			if t.enc[j] == e_rm && !t.id[j].is_zero() {
 				t.id[j] = t.id[j] - Fr::from(1u32);
@@ -12047,21 +12065,20 @@ mod tests_neo_nonaggr_neg {
 	// and a COMMITTED m (fixed before r1) cannot cancel the
 	// residual 1/(pack + r1). Before T929 the prover stamped a
 	// post-r1 b_seed = 1 on the row and solved the seed-key logup
-	// for a post-r1 m_seed (SAT, NEED_T929). Tested m plays:
-	// honest, m_0 += #dropped (the count a naive forger adds).
-	// HARNESS LIMIT: run_nat_nonaggr pins r1 = 12345 BEFORE the
-	// tamper, so a tamper that solves m_0 at 12345 is SAT here
-	// (test_t929_sole_rejecter_is_seed_table). Commitment order
-	// is what excludes it: m_seed is in neo_core, hence in cmF,
-	// which r1 is squeezed from (test_nonaggr_stmt_golden pins
-	// the placement, test_nonaggr_cost_exact the witness count).
+	// for a post-r1 m_seed (SAT, NEED_T929). Since T967 m_k = 1 -
+	// z_sub[k] is no advice at all (the old m_0 += #dropped play
+	// has no knob; the fixtures' K = 1 has no pad slot to re-list
+	// s_0 in either). Tested plays: honest, and the D2 refresh
+	// (successor/kept/freeze witnesses + m-tables of the rows that
+	// stay). The slot list is untouched, so the count and anchor
+	// checks stay honest and the union is what rejects.
 
-	/// How the attacker sets m_seed[0] after the drop.
+	/// How the attacker repairs the rest after the drop.
 	#[derive(Clone, Copy, Debug)]
-	enum T929M { Honest, Bump, AdaptR1 }
+	enum T929M { Honest, Refresh }
 
 	/// run the T929 attack: drop the carried rows `locs` from Q_m
-	/// (+ q_c for C rows), set m_seed[0] per `m`, re-derive the
+	/// (+ q_c for C rows), play `m`, re-derive the
 	/// committed zero scalars for the smaller Q_m. q_i is NOT
 	/// touched (it is the previous chunk's committed carry-out).
 	/// drop = false keeps the rows (m play only). Returns
@@ -12070,16 +12087,12 @@ mod tests_neo_nonaggr_neg {
 		hm: &HashMap<u32, Vec<u32>>, dmin: u32, locs: &[u32],
 		m: T929M, drop: bool) -> (bool, Option<String>) {
 		let tamper = |nat: &mut NeoCore<Fr>| {
-			let r = f(12345); //run_nat_nonaggr's pinned challenge
-			let b = f(1u32 << read_global_config().range2_bit);
-			let mut resid = f(0);
 			for &loc in locs {
 				let i = row(nat, loc);
 				let (e, l) = (nat.t.enc[i], nat.t.loc[i]);
 				assert!((0..nat.qi_enc.len()).any(|j|
 					nat.qi_enc[j] == e && nat.qi_loc[j] == l),
 					"row is not carried (not in q_i)");
-				resid += (e * b + l + r).inverse().unwrap();
 				if drop {
 					if nat.t.cat[i] == f(CAT_C) {
 						let k = (0..nat.qc_enc.len()).find(|&k|
@@ -12095,20 +12108,9 @@ mod tests_neo_nonaggr_neg {
 			// D2 co-test: an ADAPTIVE prover also refreshes the D2
 			// witness families (successor min, kept min, freeze
 			// witness) of the rows that stay, and the QC m-table.
-			if drop && matches!(m, T929M::AdaptR1) {
+			if drop && matches!(m, T929M::Refresh) {
 				nat.t.fill_nonaggr(info, f(dmin));
 				regen_mtbls(nat);
-			}
-			match m {
-				T929M::Honest => {}
-				T929M::Bump => nat.m_seed[0] += f(locs.len() as u32),
-				// the residual 1/(pack + r1) of every dropped row,
-				// the same in U and U1, cancelled by m_0 at r1
-				T929M::AdaptR1 => {
-					let kp0 = nat.subsig_nat[0] * b * b * b * b * b
-						+ f(1);
-					nat.m_seed[0] += (kp0 + r) * resid;
-				}
 			}
 			if drop { nat.union_prf = t929_zero_scalars(nat); }
 		};
@@ -12134,10 +12136,10 @@ mod tests_neo_nonaggr_neg {
 	/// T929-R1 (SAT before T929 with a post-r1 b_seed/m_seed):
 	/// fig14c2, drop carried C row a3:27 (no fresh row of this
 	/// chunk cites it) from Q_m and q_c. MUST be UNSAT for every
-	/// committed m_seed play.
+	/// seed-table play.
 	#[test]
 	fn test_t929_seed_table_drop_c27() {
-		for m in [T929M::Honest, T929M::Bump] {
+		for m in [T929M::Honest, T929M::Refresh] {
 			let (sat, w) = t929_c2(&[27], m, true);
 			assert!(!sat, "T929: drop C 27 SAT m={:?} ({:?})", m, w);
 		}
@@ -12148,20 +12150,20 @@ mod tests_neo_nonaggr_neg {
 	/// 39} at once: q_c would keep only the seed.
 	#[test]
 	fn test_t929_seed_table_kill_chain_emptyl() {
-		for m in [T929M::Honest, T929M::Bump] {
+		for m in [T929M::Honest, T929M::Refresh] {
 			let (sat, w) = t929_empty(&[6, 21, 27, 33, 39], m, true);
 			assert!(!sat, "T929: chain drop SAT m={:?} ({:?})", m, w);
 		}
 	}
 
 	/// T929-R3: every carried non-seed row of both fixtures (C
-	/// 6..39, BP 73/79), dropped alone, both m_seed plays. Before
+	/// 6..39, BP 73/79), dropped alone, both seed-table plays. Before
 	/// T929 every UNCITED one of them was SAT (probe table in
 	/// NEED_T929 section 2).
 	#[test]
 	fn test_t929_seed_table_drop_each_carried() {
 		for loc in [6u32, 21, 27, 33, 39, 73, 79] {
-			for m in [T929M::Honest, T929M::Bump] {
+			for m in [T929M::Honest, T929M::Refresh] {
 				let (s1, w1) = t929_c2(&[loc], m, true);
 				assert!(!s1, "fig14c2 drop {} m={:?} SAT ({:?})",
 					loc, m, w1);
@@ -12172,30 +12174,24 @@ mod tests_neo_nonaggr_neg {
 		}
 	}
 
-	/// T929-L (localization; HARNESS LIMIT made explicit).
-	/// THIS TEST ASSERTS NOTHING ABOUT PRODUCTION SOUNDNESS. A
-	/// green run does NOT mean "the attack works": it pins that,
-	/// with m_0 solved at the harness's pinned r1 = 12345 (a
-	/// prover who sees r1 first, which commitment rules out in
-	/// production), the SAME drops as R1/R2 are SAT. So the seed
-	/// table's multiplicity is the sole thing that could pay a
-	/// dropped row, and what makes it binding is only that m_seed
-	/// is committed (in cmF) before r1 is squeezed. If this test
-	/// ever goes UNSAT, some other constraint started to catch
-	/// the drop: re-check before deleting. The third play drops
-	/// BP 73, the HEAD of its enc group, in the empty-L chunk: it
-	/// is SAT only if remove_row renumbers the group's ids (the
-	/// old helper left 79 at id 2 and wf rejected it first).
+	/// T929-L. The SAME drops as R1/R2 (+ BP 73, the HEAD of its
+	/// enc group, empty-L) with the D2 witness families refreshed.
+	/// Before T967 a committed m_0 solved at the harness's pinned
+	/// r1 made all three SAT (the seed table was the sole
+	/// rejecter, held only by commitment order); since T967 m_k =
+	/// 1 - z_sub[k] leaves no such knob, so they are UNSAT.
+	/// remove_row renumbers the group's ids, so wf does not reject
+	/// the head drop for a side reason.
 	#[test]
-	fn test_t929_sole_rejecter_is_seed_table() {
+	fn test_t929_refreshed_drop_rejected() {
 		let plays: [(&str, bool, &[u32]); 3] = [
 			("fig14c2 drop 27", true, &[27]),
 			("empty-L chain", false, &[6, 21, 27, 33, 39]),
 			("empty-L drop group head 73", false, &[73])];
 		for (tag, c2, locs) in plays {
-			let (s, w) = if c2 { t929_c2(locs, T929M::AdaptR1, true) }
-				else { t929_empty(locs, T929M::AdaptR1, true) };
-			assert!(s, "{} adapted: {:?}", tag, w);
+			let (s, w) = if c2 { t929_c2(locs, T929M::Refresh, true) }
+				else { t929_empty(locs, T929M::Refresh, true) };
+			assert!(!s, "{} refreshed drop accepted ({:?})", tag, w);
 		}
 	}
 
@@ -12231,30 +12227,36 @@ mod tests_neo_nonaggr_neg {
 		v
 	}
 
-	/// T929-M: the committed m_seed is CHECKED, both directions,
-	/// with no row dropped. (a) m_0 += 1: the table pays a seed
-	/// row q_i does not hold. (b) m_0 -= 1: the true seed row of
-	/// q_i is left unpaid (it has no step >= 1 Q_m partner).
-	/// (c) the seed row moved to loc 2 in q_i (scalars
-	/// re-derived, m_0 honest for the new q_i = 0): the table key
-	/// is pack(enc, 1), a seed anywhere else is unpaid.
+	/// T929-M (T967 form): q_i's seed multiset must equal the
+	/// listed slots', both directions, no row dropped. (a) a 2nd
+	/// seed of s_0 in a q_i pad slot: one slot pays one, the other
+	/// is unpaid. (b) q_i's seed of s_0 zeroed: the listed slot's
+	/// table term is unpaid (N11). (c) the seed row moved to loc 2:
+	/// the table key is pack(enc, 1), a seed anywhere else is
+	/// unpaid. Scalars re-derived each time.
 	#[test]
 	fn test_t929_seed_table_tamper() {
-		expect_unsat("m_seed += 1", &|nat| {
-			nat.m_seed[0] += f(1);
+		let sh4 = || {
+			let b = f(1u32 << read_global_config().range2_bit);
+			b * b * b * b };
+		let seed_j = |nat: &NeoCore<Fr>| (0..nat.qi_enc.len()).find(|&j|
+			nat.qi_enc[j] == nat.subsig_nat[0] * sh4())
+			.expect("seed row");
+		expect_unsat("q_i 2nd seed of s_0", &|nat| {
+			let j = (0..nat.qi_enc.len()).find(|&j|
+				nat.qi_enc[j].is_zero()).unwrap();
+			nat.qi_enc[j] = nat.subsig_nat[0] * sh4();
+			nat.qi_loc[j] = f(1);
+			nat.union_prf = t929_zero_scalars(nat);
 		});
-		expect_unsat("m_seed -= 1 (seed row unpaid)", &|nat| {
-			nat.m_seed[0] -= f(1);
+		expect_unsat("q_i seed of s_0 dropped (slot unpaid)", &|nat| {
+			let j = seed_j(nat);
+			(nat.qi_enc[j], nat.qi_loc[j]) = (f(0), f(0));
+			nat.union_prf = t929_zero_scalars(nat);
 		});
 		expect_unsat("q_i seed row at loc 2", &|nat| {
-			let sh4 = {
-				let b = f(1u32 << read_global_config().range2_bit);
-				b * b * b * b };
-			let j = (0..nat.qi_enc.len()).find(|&j|
-				nat.qi_enc[j] == nat.subsig_nat[0] * sh4)
-				.expect("seed row");
+			let j = seed_j(nat);
 			nat.qi_loc[j] = f(2);
-			nat.m_seed[0] = f(0);
 			nat.union_prf = t929_zero_scalars(nat);
 		});
 	}
@@ -12265,7 +12267,7 @@ mod tests_neo_nonaggr_neg {
 	/// such a drop failed.
 	#[test]
 	fn test_t929_ctrl_cited_row() {
-		let (sat, w) = t929_c2(&[39], T929M::Bump, true);
+		let (sat, w) = t929_c2(&[39], T929M::Refresh, true);
 		assert!(!sat, "cited 39 must be caught ({:?})", w);
 	}
 
@@ -12377,18 +12379,8 @@ mod tests_neo_nonaggr_neg {
 			nat.qi_enc[j] = f(7) * sh4;
 			nat.qi_loc[j] = f(1);
 		});
-		// T929: the same row with m_seed[0] += 1 and the zero
-		// scalars re-derived (one pad fewer). Slot 0's table pole is
-		// pack(s_0 * 2^4rb, 1), not the foreign row's pack, so the
-		// bump pays a phantom seed and the foreign row stays unpaid.
-		expect_unsat("foreign seed enc in q_i, m bumped", &|nat| {
-			let j = (0..nat.qi_enc.len()).find(|&j|
-				nat.qi_enc[j].is_zero()).unwrap();
-			nat.qi_enc[j] = f(7) * sh4;
-			nat.qi_loc[j] = f(1);
-			nat.m_seed[0] += f(1);
-			nat.union_prf = t929_zero_scalars(nat);
-		});
+		// (T929's "m_seed[0] += 1" variant is gone with T967: m_k =
+		// 1 - z_sub[k] has no knob.)
 	}
 
 	/// N4 FALSE BP MIN: BP row 96 claims min_7 = 150 (consistent
@@ -12833,8 +12825,8 @@ mod tests_neo_nonaggr_neg {
 	const FIXED_D: bool = true;     // ALL_T958 D (N7 run splice)
 	const FIXED_N8: bool = true;    // NONAGGR_T959 (JR rank after pad)
 	const FIXED_G: bool = true;     // NONAGGR_T963 (BREAK2, q_i < max)
-	const FIXED_N11: bool = false;  // NONAGGR_T967 fix B (late seed)
-	const FIXED_NEW3: bool = false; // NONAGGR_T967 S0 (dup seed row)
+	const FIXED_N11: bool = true;   // NONAGGR_T967 fix B (late seed)
+	const FIXED_NEW3: bool = true;  // NONAGGR_T967 S0 (dup seed row)
 	// FIXED_NEW4: also in zkp_driver.rs tests; flip both together
 	const FIXED_NEW4: bool = false; // NONAGGR_T970 (seg-0 n_cin pin)
 
@@ -12873,17 +12865,10 @@ mod tests_neo_nonaggr_neg {
 		cs.is_satisfied().unwrap() && range2_bad_na(nat).is_empty()
 	}
 
-	/// M13: rebind d_sort after a tamper. B0 = the native rule; the
-	/// S0 commit (T967) rewrites this one body to the nonaggr S0 rule.
+	/// M13: rebind d_sort after a tamper: the nonaggr native rule,
+	/// strict inside step-0 groups since T967 S0.
 	pub(crate) fn rebind_d_sort_na(t: &mut QmTable<Fr>) {
-		t.fill_d_sort();
-	}
-
-	/// M14: regenerate the committed seed-table multiplicities. T967
-	/// (fix B deletes m_seed) turns this into a no-op.
-	fn regen_seed_m(nat: &mut NeoCore<Fr>) {
-		nat.m_seed = NeoCore::<Fr>::gen_seed_m(&nat.qi_enc,
-			&nat.qi_loc, &nat.subsig_nat);
+		t.fill_d_sort(true);
 	}
 
 	/// M15: the seg-0 FirstSeg pin on n_cin. No n_cin cell exists at
@@ -13253,8 +13238,8 @@ mod tests_neo_nonaggr_neg {
 
 	/// T965 N11 (late seed add, NONAGGR_T967 fix B). Chunk 0 lists
 	/// S = {1}; chunk 1 lists S = {1, 2} (2 in a former pad slot) but
-	/// its q_i (= q_c(0)) has no seed of 2. At HEAD m_seed is free
-	/// advice: M14 gives m = 0 for slot 2, so t = 0 and nothing is
+	/// its q_i (= q_c(0)) has no seed of 2. Before T967 m_seed was
+	/// free advice: m = 0 for slot 2, so t = 0 and nothing was
 	/// unpaid. 2 opens a fresh run in chunk 1: its step-1 match in
 	/// chunk 0 (pat7 30) is lost, 220 goes FP. Rejecter after fix B:
 	/// m := 1 - z_sub[k] forces t != 0 on slot 2, unpaid by q_i.
@@ -13277,7 +13262,6 @@ mod tests_neo_nonaggr_neg {
 			let j = nat.qi_enc.iter().position(|x| *x == seed_enc(2))
 				.unwrap();
 			(nat.qi_enc[j], nat.qi_loc[j]) = (f(0), f(0));
-			regen_seed_m(nat);
 			nat.union_prf = t929_zero_scalars(nat);
 		};
 		let r = run_two_chunk_nonaggr(&info, &seeds_sq(&[1]),
@@ -13315,8 +13299,8 @@ mod tests_neo_nonaggr_neg {
 		assert!(qc_c_rows(n1, 2).contains(&(2, 220)));
 	}
 
-	/// T965 NEW-3 R1 (dup seed row, NONAGGR_T967 S0). The in-group
-	/// loc sort is non-strict and the step-0 group is outside the
+	/// T965 NEW-3 R1 (dup seed row, NONAGGR_T967 S0). Before S0 the
+	/// in-group loc sort was non-strict and the step-0 group is outside the
 	/// union, so a 2nd seed row (enc(1,0), loc 1, C) is free in Q_m
 	/// and q_c then carries two seed packs of subsig 1 (r14 chain).
 	/// Plays: Rebind (M13 d_sort) and Stale (d_sort[dup] := 0).
@@ -13406,8 +13390,8 @@ mod tests_neo_nonaggr_neg {
 
 	/// T965 G7 (green, NEW-3 end (c)): a z_0 dup is harmless. Chunk
 	/// 0, S = [1, 2], empty L. Tamper: slot 2 := 1 and q_i's seed of
-	/// 2 := a 2nd seed of 1 (M14: m = [2, 0] at HEAD, [1, 1] under
-	/// fix B). Runs 2 = listed 2; the extra run (subsig 2) starts at
+	/// 2 := a 2nd seed of 1 (fix B: m = 1 - z_sub = [1, 1], one
+	/// seed pack each). Runs 2 = listed 2; the extra run (subsig 2) starts at
 	/// doc start, i.e. honest semantics: q_c holds ONE seed per
 	/// subsig and subsig 2's Q_m rows equal the honest gen's.
 	#[test]
@@ -13425,7 +13409,6 @@ mod tests_neo_nonaggr_neg {
 			let j = nat.qi_enc.iter().position(|x| *x == seed_enc(2))
 				.unwrap();
 			nat.qi_enc[j] = seed_enc(1);
-			regen_seed_m(nat);
 			regen_mtbls(nat);
 			nat.union_prf = t929_zero_scalars(nat);
 		};
@@ -13866,17 +13849,21 @@ mod tests_neo_seg0_seed {
 	}
 
 	/// A carried queue that is a strict SUBSET of the obligation
-	/// seed is accepted (the queue may lag the seed).
+	/// seed is the N11 shape (T967): each listed slot charges one
+	/// carried seed, so the circuit would be UNSAT and the prover
+	/// stops loudly. No honest queue lags: z_0 is seeded from the
+	/// same set, and q_c carries every seed after it.
 	#[test]
-	fn test_seg0_carried_subset_of_seed_passes() {
+	#[should_panic(expected = "T967: q_i seed rows")]
+	fn test_seg0_carried_subset_of_seed_rejected() {
 		let info = store_with_composite();
 		let inp = vec![f(1), f(2)]; //demand: chain + composite
 		let q = init_queue(&vec![f(1)], &info); //chain only
 		let r = DischargeAdvNeoAdvice::<Fr>::new_nonaggr(false,
 			1, &mk_pat_loc(&pl()), &inp, 0, &info,
 			&cap_full(), &q, f(80), 0);
-		assert!(r.is_ok(), "subset carry must be accepted: {:?}",
-			r.err());
+		//not reached: gen_union_scalars' guard fires first
+		panic!("subset carry not rejected (ok = {})", r.is_ok());
 	}
 
 	/// seg-0 contract: the unfiltered init seed (legacy shape, what
@@ -16170,15 +16157,15 @@ mod tests_d2_need {
 	}
 }
 
-// ---- T929 under a Fiat-Shamir model: the two adaptive forgeries ----
+// ---- T929 under a Fiat-Shamir model: the adaptive t_seed forgery ----
 // The T929 tests in tests_neo_nonaggr_neg pin r1 = 12345 BEFORE the
-// tamper, so they cannot tell a committed m_seed from a post-r1 one,
-// and they never touch the post-r1 seed-table advice t_seed. Here
-// (r1, r2) come from the committed cells (fs below). Both tests drop
+// tamper and never touch the post-r1 seed-table advice t_seed. Here
+// (r1, r2) come from the committed cells (fs below). The test drops
 // the uncited carried C row a3:27 (fig14c2 and empty-L) with the D2
-// refresh of t929_attack's AdaptR1 play, then forge the one knob the
-// union has left. Each forgery is SAT under exactly one mutant
-// (TESTPLAN G5 5c: T-tab, T-mnew) that the T929 tests above miss.
+// refresh of t929_attack's Refresh play, then forges the one knob the
+// union has left. The forgery is SAT under mutant T-tab (TESTPLAN G5
+// 5c) that the T929 tests above miss. (Mutant T-mnew, a post-r1
+// m_seed, has no knob since T967: m_k = 1 - z_sub[k].)
 #[cfg(test)]
 mod tests_t929_fs_adaptive {
 	use super::*;
@@ -16259,7 +16246,7 @@ mod tests_t929_fs_adaptive {
 			.expect("gen_nonaggr").0
 	}
 
-	/// t929_attack's drop (AdaptR1 play, no m change) of the carried
+	/// t929_attack's drop (Refresh play) of the carried
 	/// C row at `loc`: out of Q_m and q_c, q_i untouched, then the
 	/// D2 refresh (fill_nonaggr + m-tables) and the committed zero
 	/// scalars of the smaller Q_m. Returns the row's pack enc * 2^rb
@@ -16324,7 +16311,8 @@ mod tests_t929_fs_adaptive {
 	/// + r1) = m_k removed from assert_qm_union. After the drop of
 	/// C 27 every committed cell is honest, so r1 = fs(nat) is
 	/// fixed, and the prover forges the post-r1 advice t_seed[0] =
-	/// m_0 / (kp_0 + r1) + 1 / (pack_27 + r1). That balances both
+	/// m_0 / (kp_0 + r1) + 1 / (pack_27 + r1), m_0 = 1 (slot 0 is
+	/// listed: m_0 = 1 - z_sub[0]). That balances both
 	/// union identities (U and U1 miss the same pole), so only the
 	/// seed-table row can reject it.
 	#[test]
@@ -16334,7 +16322,7 @@ mod tests_t929_fs_adaptive {
 			let mut nat = gen_nat(&hm);
 			let pd = drop_c_row(&mut nat, 27);
 			let (r1, _) = fs(&nat);
-			let t0 = nat.m_seed[0] * (kp0(&nat) + r1).inverse().unwrap()
+			let t0 = (kp0(&nat) + r1).inverse().unwrap()
 				+ (pd + r1).inverse().unwrap();
 			let g = TSeedGuard::on(0, t0);
 			let sat = sat_at_fs(&nat);
@@ -16343,31 +16331,6 @@ mod tests_t929_fs_adaptive {
 		}
 		assert!(bad.is_empty(),
 			"drop C 27 + forged t_seed[0] accepted on {:?}", bad);
-	}
-
-	/// AdaptFS. Guards mutant T-mnew: m_seed taken out of the
-	/// committed neo_core container (a post-r1 new_var). After the
-	/// drop of C 27 the prover solves m_seed[0] = m_0 + (kp_0 + r1)
-	/// / (pack_27 + r1) at r1 = fs of its previous attempt, 4
-	/// rounds. m_seed is in the FS preimage, so each new m_0 moves
-	/// r1 and no round is SAT.
-	#[test]
-	fn test_t929_fs_adaptive_m_seed_rejected() {
-		let mut bad = vec![];
-		for (tag, hm) in fixtures() {
-			let mut nat = gen_nat(&hm);
-			let pd = drop_c_row(&mut nat, 27);
-			let (m0, kp) = (nat.m_seed[0], kp0(&nat));
-			let mut r1 = fs(&nat).0;
-			for j in 0..4 {
-				let mut nx = nat.clone();
-				nx.m_seed[0] = m0 + (kp + r1) * (pd + r1).inverse().unwrap();
-				if sat_at_fs(&nx) { bad.push(format!("{} round {}", tag, j)); }
-				r1 = fs(&nx).0;
-			}
-		}
-		assert!(bad.is_empty(),
-			"drop C 27 + m_seed[0] solved at r1 accepted on {:?}", bad);
 	}
 }
 

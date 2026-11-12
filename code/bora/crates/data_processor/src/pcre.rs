@@ -246,43 +246,12 @@ fn preprocess_rep(s: &str)->String{
 	s2
 }
 
-/// preprocess some chars not accepted by the rustomaton
-fn preprocess_badchars(s: &str, b_double_dot: bool)->String{
-	//1. handle slash
-	let s2 = s.replace("\\/", "\\x2f");
-	//for each "." as long as it is continued with alpha-numeric letter
-	//(but not *, ?), it is converted to a sequenc of ".."
-	//the reason is that one "." in pcre is 2-hex nibbles
-
-	//2. handle dot. ONLY on nibble paths (b_double_dot): a PCRE '.'
-	//before a hex literal must become ".." (2 nibbles = 1 byte). On
-	//the byte-level DFA path '.' is already a full byte
-	//(handle_class_full), so doubling there double-encodes -> skip
-	//it (#3 fix).
-	if !b_double_dot { return s2; }
-	let mut s3 = String::with_capacity(s2.len());
-    let mut chars = s2.chars().peekable();
-    let mut bs = 0usize; //consecutive '\' just before current char
-
-    while let Some(c) = chars.next() {
-        //only double an UNescaped '.' (even # of preceding '\').
-        //an escaped "\." is a literal period -> HIR emits byte 2e,
-        //already 2 nibbles, so doubling injects a spurious wildcard
-        //nibble (#4 fix).
-        if c == '.' && bs % 2 == 0 {
-            if let Some(&next) = chars.peek() {
-                if next == '.' || next.is_ascii_alphanumeric() {
-                    s3.push_str("..");
-                    bs = 0;
-                    continue;
-                }
-            }
-        }
-        if c == '\\' { bs += 1; } else { bs = 0; }
-        s3.push(c);
-    }
-
-	s3
+/// preprocess some chars not accepted by the rustomaton.
+/// A PCRE '.' is not rewritten here. to_hir parses it as a full-byte
+/// class: handle_class emits ".." (2 nibbles) on the nibble path,
+/// handle_class_full one byte on the DFA path (T974 B1).
+fn preprocess_badchars(s: &str)->String{
+	s.replace("\\/", "\\x2f")
 }
 
 /// preprocess named references and numbered backreferences
@@ -410,7 +379,7 @@ pub fn pcre_to_dfa(s: &str, combination_limit: usize, repeat_limit: usize)->DFA<
 	let (_trigger, _src, b_c, pi) = parse_pcre_subsig(s, combination_limit, repeat_limit);
 	let b_ignore_case = !b_c;
 	let (_, s, _) = extract_clamav_reg(s);
-	let s = preprocess_badchars(&s, false);//#3: dots already bytes
+	let s = preprocess_badchars(&s);
 	let (s, _b_backref) = preprocess_backref(&s);
 	let mut s = preprocess_rep(&s);
 	if !pi.b_begin{ s = ".*".to_string() + &s; }
@@ -943,15 +912,10 @@ fn class_to_pcre(class: &Class) -> String {
 	let mut dummy = 0usize;
 	let bytes = class_to_arr(class, &mut dummy);
 	if bytes.is_empty() { return String::new(); }
-	// M9 fix-A (2026-06-02): collapse the full-byte class to "."
-	// instead of "[\x00-\xff]". The variant string is only consumed
-	// by pcre_to_rustomaton_regex downstream; in the rustomaton-hex
-	// domain "." matches any single nibble, so ".?.?" per byte gives
-	// the same matching power as the 256-element byte alternation but
-	// at ~200x smaller string size. Soundness: every real
-	// SubSigObj.value consumer is gated on CounterConstraint or
-	// DFA-routed sigs; DLP variants are GeneralRegex/SED-routed and
-	// pass through this path only at the rustomaton level.
+	// M9 fix-A (2026-06-02): collapse the full-byte class to the PCRE
+	// "." instead of "[\x00-\xff]" (~200x smaller string). The variant
+	// string is consumed by pcre_to_rustomaton_regex, which parses "."
+	// as a full-byte class and emits ".." (2 nibbles, T974 B1).
 	if bytes.len() == 256 {
 		return ".".to_string();
 	}
@@ -1298,7 +1262,7 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 /// convert a pcre regex to the rustomaton format of hex strings
 /// e.g., "AB.*" to "4142.*"
 pub fn pcre_to_rustomaton_regex(s: &str, combination_limit: usize, repeat_limit: usize) -> (String, PcreInfo){
-	let s = preprocess_badchars(&s, true);//nibble path: keep doubling
+	let s = preprocess_badchars(&s);
 	let (s, b_backref) = preprocess_backref(&s);
 	let s = preprocess_rep(&s);
 	let hir  = to_hir(&s);
@@ -1499,7 +1463,8 @@ fn handle_concat(vec: &Vec<Hir>, limit: &mut usize, repeat_limit: usize)->(Vec<S
 fn handle_class(v: &Class, _limit: &mut usize, _repeat_limit: usize)->(Vec<String>, PcreInfo){
 	let vbytes = class_to_arr(v, _limit);
 
-	let vstr = if vbytes.len()==256 {vec![".".to_string()]} else{
+	//full byte = 2 nibble wildcards (T974 B1)
+	let vstr = if vbytes.len()==256 {vec!["..".to_string()]} else{
 		factor_high_nibble(&vbytes)
 	};
 	(vstr, PcreInfo::new_pcre())
@@ -1589,10 +1554,18 @@ fn handle_repeat(v: &Repetition, limit: &mut usize, repeat_limit: usize)->(Vec<S
 	let vec = handle_boundary(&vec![*v.sub.clone()], false);
 	let (vstr, pi) = pcre_hir_to_rustomaton_regex(&vec[0], limit, repeat_limit);
 	let sub_str = join_vs(&vstr);
-	let sub_str = if sub_str=="." {sub_str} else {"(".to_string() + &sub_str 
-		+ ")"};
 	let (min,mut max) = (v.min as usize, v.max);
 	if max==Some(999777979){ max = None;} 
+	//full-byte unit: 2 nibble wildcards per byte (T974 B1)
+	if sub_str==".." {
+		let lo = 2*min;
+		let res = if lo > repeat_limit {".".repeat(repeat_limit) + ".*"}
+			else { match max {
+				Some(m) => ".".repeat(lo) + &".?".repeat(2*(m as usize-min)),
+				None => ".".repeat(lo) + ".*" }};
+		return (vec![res], pi);
+	}
+	let sub_str = "(".to_string() + &sub_str + ")";
 	let substr_len =sub_str.len();
 
 	//min2 is the approximated part
@@ -1602,18 +1575,13 @@ fn handle_repeat(v: &Repetition, limit: &mut usize, repeat_limit: usize)->(Vec<S
 		{(min, 0usize)} else 
 		{( repeat_limit/substr_len, min - repeat_limit/substr_len)};
 
-	//2. decide (heurstics) if all unioned substrings have equal length
-	let mut b_literal = true;
-	let mut min_unit_len = repeat_limit;
-	let mut max_unit_len = 0;
-	for s in &vstr {
-		b_literal = b_literal && is_match(r"[0-9a-f]+", s);
-		min_unit_len = if s.len()<min_unit_len {s.len()} else {min_unit_len};
-		max_unit_len = if s.len()>max_unit_len {s.len()} else {max_unit_len};
-	}
-	// deep approx happens when we are not sure of the substr length
-	// simply padd the rest with .*
-	let deep_approx = !b_literal || min_unit_len != max_unit_len;
+	//2. unit width w in nibbles (2 per byte) from the HIR, not the
+	// regex-string length. Deep approx (.*) unless the width is fixed
+	// (T974 B2).
+	let pr = v.sub.properties();
+	let unit_w = match (pr.minimum_len(), pr.maximum_len()) {
+		(Some(a), Some(b)) if a==b && pr.look_set().is_empty() => Some(2*a),
+		_ => None };
 	
 	let res = match max{
 		Some(max_v) => {
@@ -1622,10 +1590,9 @@ fn handle_repeat(v: &Repetition, limit: &mut usize, repeat_limit: usize)->(Vec<S
 				sub_str.repeat(min) + 
 					&format!("{}?", &sub_str).repeat(max_v - min)
 			}else{
-				if !deep_approx{
-					sub_str.repeat(min1) + 
-						&".".to_string().repeat(min2*min_unit_len) + 
-						&".?".repeat( (max_v - min)*min_unit_len)
+				if let Some(w) = unit_w{
+					sub_str.repeat(min1) + &".".repeat(min2*w) + 
+						&".?".repeat((max_v - min)*w)
 				}else{
 					sub_str.repeat(min1) + ".*" //deep approx
 				}
@@ -1634,9 +1601,8 @@ fn handle_repeat(v: &Repetition, limit: &mut usize, repeat_limit: usize)->(Vec<S
 		None => if min2==0{
 			sub_str.repeat(min) + &format!("{}*", &sub_str)
 		}else{
-			if !deep_approx{
-				sub_str.repeat(min1) + 
-				&".".to_string().repeat(min2*min_unit_len) + ".*"
+			if let Some(w) = unit_w{
+				sub_str.repeat(min1) + &".".repeat(min2*w) + ".*"
 			}else{
 				sub_str.repeat(min1) + ".*" //deep approx 
 			}
@@ -1815,62 +1781,6 @@ fn handle_alt_bagwords(v: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
 
 	b_full_res = b_full_res && res.len()<=1;
 	(res, b_full_res)
-}
-
-/// for a known rustomaton regex convert to support ignore case
-pub fn rustomaton_regex_to_ignore_case(s: &str, repeat_limit: usize) -> String{
-	let hir = rustomaton_to_hir(s); 
-	let res = rustomaton_hir_to_ignore_case(&hir, repeat_limit);
-
-	res
-}
-
-/// assuming the hir is already converted from rustomaton
-fn rustomaton_hir_to_ignore_case(hir: &Hir, repeat_limit: usize)->String{
-	let res = match hir.kind(){
-		Empty => "".to_string(),
-		HirKind::Literal(x) => {
-			let sx = String::from_utf8(x.0.to_vec()).expect("failed u8_to_s");
-			to_ignore_case(&sx)
-		},
-		HirKind::Concat(v) => {
-			let mut s = "".to_string();
-			for x in v{
-				let s2 = rustomaton_hir_to_ignore_case(x, repeat_limit);
-				s = s + &s2;
-			}
-			s
-		},
-		HirKind::Capture(v) => {
-			let item_s = rustomaton_hir_to_ignore_case(&v.sub, repeat_limit);
-			 "(".to_string() + &item_s  + ")" 
-		},
-		HirKind::Look(v) => {
-			panic!("rustomaton_to_igc cannot handle look: {:?}", v)
-		},
-		HirKind::Class(v) => {
-			let mut limit = 255;
-			let (vs, _info) = handle_class(v, &mut limit, repeat_limit);
-			join_vs(&vs)
-		},
-		HirKind::Alternation(v) => {
-			let mut s = "(".to_string();
-			for id in 0..v.len(){
-				let x = &v[id];
-				let s2 = rustomaton_hir_to_ignore_case(x, repeat_limit);
-				let s2 = if id==0 {s2} else { "|".to_string() + &s2};
-				s = s + &s2;
-			}
-			s = s + ")";
-			s
-		},
-		HirKind::Repetition(v) =>{
-			assert!(v.min==0 && v.max.is_none(), "rustomaton_regex should already be processed, only allowing 0 and max inf. rep info wrong: min: {}, max: {:?}", v.min, v.max);
-			let new_substr = rustomaton_hir_to_ignore_case(&v.sub, repeat_limit);
-			"(".to_string() + &new_substr + ")*"
-		}
-	};
-	res
 }
 
 /// additional bool results indicates if the collection of bag of words
@@ -2250,7 +2160,7 @@ mod tests_pcre{
 	extern crate utils;
 
 	use crate::{
-		pcre::{pcre_to_rustomaton_regex, rustomaton_regex_to_ignore_case, pcre_to_dfa, clamav_genregex_to_dfa, collect_pm_reg_from_rustomaton_regex}
+		pcre::{pcre_to_rustomaton_regex, pcre_to_dfa, clamav_genregex_to_dfa, collect_pm_reg_from_rustomaton_regex}
 	};
 	use crate::preprocess::handle_location_for_pm;
 	use utils::{data::{str_to_hex}, os::{perl_is_match}};
@@ -2361,24 +2271,6 @@ mod tests_pcre{
 		}
 	}
 
-	#[test]
-	pub fn test_rustomaton_to_ignore_case(){
-		let testcases = vec![
-			( //ignore case 
-				"6162(11|22)3132", 
-				//expected conversion
-				"(61|41)(62|42)((11|22))3132"
-			),
-			("(6111)*", "(((61|41)11))*")
-		];
-		for tc in testcases{
-			let src = tc.0;
-			let dst = tc.1;
-			let act = rustomaton_regex_to_ignore_case(src, REPEAT_LEN_LIMIT);
-			assert!(dst==act, "ERROR: converting src: {} => {}, expected: {}",
-				src, act, dst);
-		}
-	}
 
 	#[test]
 	pub fn test_pcre_to_dfa(){
@@ -3011,4 +2903,114 @@ mod tests_pcre{
 		assert_eq!(expose_hi_nibble_anchor(c), c);
 	}
 
+}
+
+/// T974: the hex (nibble) regex must accept every doc the parent PCRE
+/// matches (superset). Random members of the parent are checked against
+/// the anchored hex regex over the doc's nibble string.
+#[cfg(test)]
+mod tests_t974_superset {
+	use regex_syntax::hir::{Hir, HirKind, Class};
+	use crate::pcre::pcre_to_rustomaton_regex;
+	use crate::preprocess::extract_clamav_reg;
+	use crate::clamav::default_clamav_cfg;
+
+	struct Lcg(u64);
+	impl Lcg { fn n(&mut self, k: usize) -> usize { self.0 = self.0
+		.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+		if k == 0 { 0 } else { ((self.0 >> 33) as usize) % k } } }
+
+	/// random member of L(hir); reps uniform in [min, min(max, min+400)]
+	fn gen(h: &Hir, r: &mut Lcg, out: &mut Vec<u8>) {
+		if out.len() > 20000 { return; } //bound doc size
+		match h.kind() {
+			HirKind::Empty | HirKind::Look(_) => {},
+			HirKind::Literal(l) => out.extend_from_slice(&l.0),
+			HirKind::Class(Class::Bytes(c)) => {
+				let rs = c.ranges(); let g = &rs[r.n(rs.len())];
+				out.push(g.start() + r.n((g.end()-g.start()) as usize + 1) as u8) },
+			HirKind::Class(Class::Unicode(_)) => panic!("unicode class"),
+			HirKind::Repetition(rp) => {
+				let mx = rp.max.map(|m| m as usize).unwrap_or(rp.min as usize + 4)
+					.min(rp.min as usize + 400);
+				let k = rp.min as usize + r.n(mx - rp.min as usize + 1);
+				for _ in 0..k { gen(&rp.sub, r, out); } },
+			HirKind::Capture(c) => gen(&c.sub, r, out),
+			HirKind::Concat(v) => for x in v { gen(x, r, out); },
+			HirKind::Alternation(v) => gen(&v[r.n(v.len())], r, out),
+		}
+	}
+
+	/// hex form of `reg` at the production limits
+	pub(crate) fn to_hex(reg: &str) -> String {
+		let cfg = default_clamav_cfg();
+		pcre_to_rustomaton_regex(reg, cfg.combination_limit, cfg.repeat_limit).0
+	}
+
+	/// returns (parent-matching docs, docs the hex regex rejects)
+	pub(crate) fn violations(reg: &str, ndocs: usize, seed: u64) -> (usize, usize) {
+		let parent = regex::bytes::RegexBuilder::new(&format!("(?s-u){}", reg))
+			.size_limit(1 << 24).build().unwrap();
+		let hir = regex_syntax::ParserBuilder::new().utf8(false).unicode(false)
+			.dot_matches_new_line(true).build().parse(reg).unwrap();
+		let hre = regex::RegexBuilder::new(&format!("^(?s:{})$", to_hex(reg)))
+			.size_limit(1 << 26).dfa_size_limit(1 << 24).build().unwrap();
+		let mut rng = Lcg(seed);
+		let (mut npos, mut nviol) = (0, 0);
+		for _ in 0..ndocs {
+			let mut d = vec![b'x'; rng.n(20)];
+			gen(&hir, &mut rng, &mut d); d.push(b' ');
+			if !parent.is_match(&d) { continue; }
+			npos += 1;
+			let nib: String = d.iter().map(|b| format!("{:02x}", b)).collect();
+			if !hre.is_match(&nib) { nviol += 1; }
+		}
+		(npos, nviol)
+	}
+
+	/// strip the outer ".*" wrap of unanchored output
+	fn core(reg: &str) -> String {
+		let s = to_hex(reg);
+		let s = s.strip_prefix(".*").unwrap_or(&s).to_string();
+		s.strip_suffix(".*").unwrap_or(&s).to_string()
+	}
+
+	/// B1: a full-byte unit is 2 nibbles. B2: the approximated tail
+	/// pads 2 nibbles per byte (repeat_limit 256).
+	#[test]
+	fn test_t974_widths() {
+		assert_eq!(core("A.{3}B"), "41......42");
+		assert_eq!(core("A.?B"), "41.?.?42");
+		assert_eq!(core("A.{0,3}B"), "41.?.?.?.?.?.?42");
+		assert_eq!(core("A(.){2,4}B"), "41.....?.?.?.?42");
+		// approximated: exactly the true width, 10 / 22 nibbles
+		for (r, ok, short, long) in [
+			("A[A-Za-z]{5}B", "41414243444542", "414142434442", "4141424344454642"),
+			("A[0-9]{11}B", "41303132333435363738393042",
+				"413031323334353637383942", "4130313233343536373839303142")] {
+			let h = regex::Regex::new(&format!("^(?:{})$", core(r))).unwrap();
+			assert!(h.is_match(ok) && !h.is_match(short) && !h.is_match(long), "{}", r);
+		}
+	}
+
+	/// real Dlp/Mal sigs hit by B1/B2 plus synthetic shapes
+	#[test]
+	fn test_t974_superset_fixed() {
+		let sigs = [
+			"/\\x20DL\\x20.{0,300}[0-9]{5,9}/s",
+			"/\\x20DL\\x20.{0,300}[A-Za-z]{5}\\x2D?[0-3][0-9][01][0-9]{6}/s",
+			"/[A-Za-z0-9][0-9]{2}[A-Za-z0-9]{6}[0-9][A-Za-z0-9].{0,300}\\x20ausstellungsdatum\\x20/s",
+			"/trailer.{0,50}\\x2fSize\\s+?\\x2d/s",
+			"/[a-f0-9]{37}\\.exe/",
+			"/A.{3}B/s", "/A.?B/s", "/A(.){2,4}B/s", "/A[0-9]{11}B/",
+			"/A\\d{16}B/", "/A[A-Za-z]{5}B/", "/x(ab|c){3,5}y/",
+			"/A[^\\x0a]{0,40}B/",
+		];
+		for (i, s) in sigs.iter().enumerate() {
+			let (_t, reg, _f) = extract_clamav_reg(s);
+			let (npos, nviol) = violations(&reg, 64, 974 + i as u64);
+			assert!(npos > 0, "no parent docs for {}", s);
+			assert_eq!(nviol, 0, "{}: {}/{} parent docs rejected", s, nviol, npos);
+		}
+	}
 }
