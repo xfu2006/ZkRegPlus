@@ -2599,9 +2599,12 @@ impl ClamavSig{
 					min_required: 0, b_fanout_variant: false});
 				continue;
 			}
+			//parent m flag + offset for the variant anchors (T974 B3)
+			let mut b_mo = (false, false);
 			let variants_opt = if self.vec_pcre_info[id].b_pcre {
-				let (_t, body, _f) = extract_clamav_reg(
+				let (t, body, f) = extract_clamav_reg(
 					&self.vec_pcre_info[id].original_str);
+				b_mo = (f.contains("m"), t.contains(":"));
 				expand_rep_subsig(&body, b_igc, cfg)
 			} else { None };
 			let start = vec_sig_obj.len();
@@ -2618,7 +2621,7 @@ impl ClamavSig{
 						let (v_hex, _pi) =
 							pcre_to_rustomaton_regex(v,
 								cfg.variant_combine_cap,
-								cfg.repeat_limit);
+								cfg.repeat_limit, b_mo.0, b_mo.1);
 						let v_hex = expose_hi_nibble_anchor(&v_hex);
 						new_ids.push(vec_sig_obj.len());
 						vec_sig_obj.push(SubSigObj{
@@ -3962,6 +3965,44 @@ mod tests_clamav{
 		pcre::{pcre_to_rustomaton_regex, expand_rep_subsig}
 	};
 
+	/// T974 B3m: counted m-flag `^` subsigs. pat = hex minus the last `.*`,
+	/// repeated n+1 times (op >) must accept n+1 matching lines; on HEAD
+	/// `^` was a file anchor, so the copies had to be adjacent.
+	#[test]
+	fn test_t974_b3_counter_mflag() {
+		use crate::pcre::{parse_pcre_subsig, pcre_to_dfa};
+		use crate::strings::drop_last_dotstar;
+		use rustomaton::automaton::Buildable;
+		let cfg = default_clamav_cfg();
+		let txt = std::fs::read_to_string(format!("{}/data/paper_data/clamav/config/main.dat",
+			proj_root())).unwrap();
+		for (name, sid, ns, line) in [
+			("Doc.Macro.Emotet-6374344-0", 4usize, vec![20usize], "ab = cd + Mid"),
+			("Doc.Macro.Emotet-6376221-0", 4, vec![50], "v = \"x\"\nw = Mid(v"),
+			("Doc.Macro.Obfuscation-6398752-1", 3, vec![50, 150], "ab = \"x\"\n")] {
+			let l = txt.lines().find(|l| l.starts_with(&format!("{};", name))).unwrap();
+			let sub = l.split(';').nth(3 + sid).unwrap();
+			let hex = parse_pcre_subsig(sub, cfg.combination_limit, cfg.repeat_limit).1;
+			let pat = drop_last_dotstar(&hex);
+			for n in ns {
+				let n = n.min(cfg.repeat_limit);
+				let (_b, rel) = ClamavSig::extract_rel_pat(">", n, &pat, "");
+				let re = regex::RegexBuilder::new(&format!("^(?s:{})$", rel))
+					.size_limit(1 << 28).dfa_size_limit(1 << 26).build().unwrap();
+				for sep in ["\n", "\r\n"] {
+					let d = vec![line; n + 1].join(sep);
+					let nd: String = d.bytes().map(|b| format!("{:02x}", b)).collect();
+					assert!(re.is_match(&nd), "{} n={} sep={:?}", name, n, sep);
+				}
+			}
+			//byte DFA counter (k=3 copies to bound test time)
+			let dfa = pcre_to_dfa(sub, cfg.combination_limit, cfg.repeat_limit).repeat(3..=3);
+			let d = vec![line; 3].join("\n");
+			let nd: Vec<char> = d.bytes().map(|b| format!("{:02x}", b)).collect::<String>().chars().collect();
+			assert!(dfa.run(&nd), "{} dfa", name);
+		}
+	}
+
 	/// Independent Perl substring oracle: slurp the scan file (binmode,
 	/// handles binary/large) and test whether pcre_body matches anywhere
 	/// (no ^$ anchor, /s dotall). m! ! delimiter avoids the {} in
@@ -5057,7 +5098,7 @@ mod tests_clamav{
 			cfg.combination_limit = combination_limit;
 			let (orig_w, _) = pcre_to_rustomaton_regex(
 				orig_pcre, cfg.combination_limit,
-				cfg.repeat_limit);
+				cfg.repeat_limit, false, false);
 			let orig = strip_wrap(&orig_w);
 			let vars = expand_rep_subsig(
 				orig_pcre, b_igc, &cfg)
@@ -5068,7 +5109,7 @@ mod tests_clamav{
 			let vs: Vec<String> = vars.iter().map(|v|
 				strip_wrap(&pcre_to_rustomaton_regex(v,
 					cfg.combination_limit,
-					cfg.repeat_limit).0)).collect();
+					cfg.repeat_limit, false, false).0)).collect();
 			let union = format!("({})", vs.join("|"));
 			assert!(
 				nfa_eq(&build_nfa_slow(&orig),

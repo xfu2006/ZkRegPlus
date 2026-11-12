@@ -99,7 +99,9 @@ fn parse_group(s: &str, start: usize, end: usize, id: usize) -> GroupInfo{
 	let news = s[start..end+1].chars().collect::<String>();
 	assert!(chars[0]=='(' && chars[chars.len()-1]==')',"start/end not paren!");
 	if chars[1]=='?'{
-		if chars[2]=='P' && chars[3]=='<' || chars[2]=='<'{
+		//`(?<=` / `(?<!` are lookbehinds, not named groups (T974 B4)
+		if chars[2]=='P' && chars[3]=='<' ||
+			chars[2]=='<' && chars[3]!='=' && chars[3]!='!'{
 			let arr = find_all(r"<(.*?)>", &news);
 			assert!(arr.len()==1, "ERROR in parsing: news: {}", &news);
 			let name = arr[0][1..arr[0].len()-1].to_string();
@@ -204,7 +206,8 @@ pub fn parse_pcre_subsig(s: &str, combination_limit: usize, repeat_limit: usize)
 	->(String, String, bool, PcreInfo){
 	let (mut trigger, reg_s, flags) = extract_clamav_reg(s);
 	let b_ignore_case = flags.contains("i");
-	let (rustomaton_reg_s, pcre_info) = pcre_to_rustomaton_regex(&reg_s, combination_limit, repeat_limit);
+	//an offset (and m) only drops anchors: Free is a superset (T974 B3)
+	let b_off = trigger.contains(":");
 
 	//very rare, trigger might have location decorator 0:, in this
 	//case we chop it off for engineering convenience. can be improved.
@@ -213,6 +216,8 @@ pub fn parse_pcre_subsig(s: &str, combination_limit: usize, repeat_limit: usize)
 		assert!(arr_t.len()==2, "arr_t.len() != 2 for {}", &trigger);
 		trigger = arr_t[1].clone();
 	}
+	let (rustomaton_reg_s, pcre_info) = pcre_to_rustomaton_regex(&reg_s,
+		combination_limit, repeat_limit, flags.contains("m"), b_off);
 	(trigger, rustomaton_reg_s, !b_ignore_case, pcre_info)
 }
 
@@ -265,44 +270,53 @@ fn preprocess_backref(s: &str) -> (String, bool){
 	// an ID, and the corresponding regex, and the (start, end) idx
 	//let mut vec_group = vec![];
 	let chars = s.chars().collect::<Vec<char>>();
-	let mut stack: Vec<usize> = vec![];
+	let at = |j: usize| chars.get(j).copied().unwrap_or('\0');
+	//(open paren idx, group id). Ids follow PCRE: captures (incl. named)
+	//numbered by OPEN paren; 0 = non-capturing (T974 B4)
+	let mut stack: Vec<(usize, usize)> = vec![];
+	let mut cls: Option<usize> = None; //inside [...]: idx of first member
 	let mut vec_groups_def = vec![]; 
 	let mut vec_groups_use = vec![]; 
 	let mut backslahes = 0;
 	let mut i = 0;
 	let mut gid = 1;
 	while i<chars.len(){
-		let ch = chars[i];
-		if ch=='('{
-			//only there are even backslahes before it is NOT escaled
-			if backslahes%2==0{
-				stack.push(i); 
+		let (ch, n1, n2, n3) = (chars[i], at(i+1), at(i+2), at(i+3));
+		let esc = backslahes%2==1;
+		if let Some(k) = cls {
+			//parens in a class are literals. Nested/POSIX classes and
+			//backrefs in a class are not supported: refuse, never guess.
+			assert!(esc || (ch!='[' && !(ch=='\\' && n1.is_ascii_digit())),
+				"preprocess_backref: unsupported class in: {}", &s);
+			if ch==']' && !esc && i>k { cls = None; } //first ']' is literal
+		}else if ch=='[' && !esc{
+			cls = Some(i + 1 + (n1=='^') as usize);
+		}else if ch=='(' && !esc{
+			let cap = n1!='?' || (n2=='P' && n3=='<') ||
+				(n2=='<' && n3!='=' && n3!='!');
+			stack.push((i, if cap {gid} else {0}));
+			if cap { gid+=1; }
+		}else if ch==')' && !esc{
+			let (start, id) = stack.pop().expect(&format!("ERROR no pop for stack for case: {}", &s));
+			let group_info = parse_group(&s, start, i, id);
+			if group_info.is_define_group(){
+				vec_groups_def.push( group_info );
+			}else{
+				vec_groups_use.push( group_info );
 			}
-		}else if ch==')'{
-			if backslahes%2==0{
-				let (start, end) = (stack.pop().expect(&format!("ERROR no pop for stack for case: {}", &s)), i);
-				let group_info = parse_group(&s, start, end, gid);
-				if !group_info.b_not_cap { gid+=1; }
-				if group_info.is_define_group(){
-					vec_groups_def.push( group_info );
-				}else{
-					vec_groups_use.push( group_info );
-				}
-			}
-		}else if ch=='\\' && chars[i+1]>='0' && chars[i+1]<='9'{
-			assert!(chars.len()<=i+2 || (chars.len()>i+2 && chars[i+2]<'0' || chars[i+2]>'9'), "we do not allow backreferences with more than 1 digit");
-			let refid = chars[i+1] as usize - '0' as usize;
+		}else if ch=='\\' && n1.is_ascii_digit(){
+			assert!(!n2.is_ascii_digit(), "we do not allow backreferences with more than 1 digit");
+			let refid = n1 as usize - '0' as usize;
 			let group_info = GroupInfo{start: i, end: i+1, id: usize::MAX,
 				b_not_cap: false,
 				more_info: MoreGroupInfo::UseUnnamedGroup{id: refid}};
 			vec_groups_use.push( group_info );
-			i+=1;
+			backslahes = 0; i += 2; continue; //skip "\N"
 		}
 		backslahes = if ch=='\\' {backslahes+1} else {0};
-		//println!("-- i: {}, ch: {}, backshales: {}, stack: {:?}, ", 
-		//	i, ch, backslahes, stack);
 		i +=1;
 	}
+	assert!(stack.is_empty() && cls.is_none(), "preprocess_backref: unbalanced: {}", &s);
 
 	//3. replace the USE of groups first and replace the group definitions
 	// as it's processed by stack, the OUTER layer will be guaranteed to
@@ -345,12 +359,16 @@ fn preprocess_backref(s: &str) -> (String, bool){
 		};
 		assert!(vdef.len()==1, "find group by: {:?} resulting in array: {:?}", 
 			&minfo, &vdef);
+		//a backref matches what the group captured, so the group's regex
+		//is a superset, kept as one atom (T974 D3). Not so if the group
+		//has a zero-width assertion that the move would relocate.
 		let src_s = match &vdef[0].more_info{
 			MoreGroupInfo::DeclareNamedGroup{name:_, content} 
-				=> content.clone(),
-			MoreGroupInfo::DeclareUnnamedGroup{content} => content.clone(),
+				=> format!("(?:{})", content),
+			MoreGroupInfo::DeclareUnnamedGroup{content} => format!("(?:{})", content),
 			_ => panic!("ERROR in src_s: {:?}", vdef[0])
 		};
+		assert!(!has_zero_width(&src_s), "zero-width backref splice: {}", &s);
 		let old_s = slice(&s, useitem.start, useitem.end);  
 		res = res.replace(&old_s, &src_s);
 	}
@@ -359,13 +377,12 @@ fn preprocess_backref(s: &str) -> (String, bool){
 		let old_s= slice(&s, defitem.start, defitem.end);
 		let new_s = match &defitem.more_info{
 			MoreGroupInfo::DeclareNamedGroup{name:_,content} 
-				=> {content.clone()},
+				=> {format!("(?:{})", content)},
 			MoreGroupInfo::DeclareUnnamedGroup{content:_}
 				=>{old_s.clone()},
 			_ => panic!("ERROR passing defitem: {:?}", defitem)
 		};
 		res = res.replace(&old_s, &new_s);
-		res = res.replace("?:", ""); //remove the ?: of non-capture group
 	}
 
 	let res = res.replace(holder, "\\\\");
@@ -373,17 +390,29 @@ fn preprocess_backref(s: &str) -> (String, bool){
 	(res.clone(), b_changed)
 }
 
+/// true if `x` (holder space, no `\\`) has a zero-width assertion outside
+/// a negated-class opener: ^ $ \b \B \A \z \Z \G or a lookaround.
+/// Conservative: may also refuse e.g. `[a^]` (T974 B4).
+fn has_zero_width(x: &str) -> bool {
+	let x = x.replace("\\[", "\\x5b").replace("[^", "[");
+	let b = x.as_bytes();
+	(0..b.len()).any(|i| if i>0 && b[i-1]==b'\\' { b"bBAzZG".contains(&b[i]) }
+		else { b[i]==b'^' || b[i]==b'$' })
+	|| ["(?=", "(?!", "(?<=", "(?<!"].iter().any(|t| x.contains(t))
+}
+
 /// pcre regex to dfa directly
 /// takes the entire input like 0&1/abc/i
 pub fn pcre_to_dfa(s: &str, combination_limit: usize, repeat_limit: usize)->DFA<char>{
-	let (_trigger, _src, b_c, pi) = parse_pcre_subsig(s, combination_limit, repeat_limit);
+	let (_trigger, _src, b_c, _pi) = parse_pcre_subsig(s, combination_limit, repeat_limit);
 	let b_ignore_case = !b_c;
-	let (_, s, _) = extract_clamav_reg(s);
+	let (t, s, flags) = extract_clamav_reg(s);
 	let s = preprocess_badchars(&s);
 	let (s, _b_backref) = preprocess_backref(&s);
-	let mut s = preprocess_rep(&s);
-	if !pi.b_begin{ s = ".*".to_string() + &s; }
-	if !pi.b_end{ s = s + ".*"; }
+	let s = preprocess_rep(&s);
+	//group the body so a top-level `X|Y` is wrapped whole (T974 B3)
+	let (beg, end) = anchors(&to_hir(&s), flags.contains("m"), t.contains(":"));
+	let s = anchor_str(beg, false).to_string() + "(?:" + &s + ")" + anchor_str(end, false);
 	let hir  = to_hir(&s);
 	let dfa = hex_hir_to_dfa(&s, &hir, b_ignore_case, true);
 
@@ -1117,6 +1146,11 @@ fn render_variants(hir: &Hir, legs: &[Leg],
 /// b_process_literal is set then convert every char e.g., 'a' to '61'
 /// IT IS USED when in hex mode
 fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bool) -> DFA<char>{
+	//zero-width (Look, Empty, x{0}, ...) = {eps}; build_dfa("") is the
+	//EMPTY language (T974 B3)
+	if hir.properties().maximum_len()==Some(0){
+		return build_dfa("", false).repeat(0..2);
+	}
 	let mut res = match hir.kind(){
 		Empty => build_dfa("", false),
 		HirKind::Concat(v) => {
@@ -1127,6 +1161,8 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 			let mut b_initialized = false;
 			for i in 0..v.len(){
 				let x = &v[i];
+				//eps item: skip, as HEAD did for Look/Empty (T974 B3)
+				if x.properties().maximum_len()==Some(0) {continue;}
 				let cur_dfa = hex_hir_to_dfa("",x, b_ignore_case, b_process_literal);
 				let cur_dfa = cur_dfa.minimize();
 				if !b_initialized && (cur_dfa.transitions.len()>1
@@ -1208,25 +1244,10 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 			let dfa = dfa.minimize();
 			dfa
 		},
-		HirKind::Look(v) => {//no need to handle, later pcre info
-			//will have it
-			match v{
-				Look::WordAscii => {
-					let mut vec:Vec<u8> = vec![];
-					for i in 0..=255{
-						if i!=0x09 && i!=0x0a && i!=0x0d && i!=0x20{
-							vec.push(i);
-						}
-					}
-					let vstr = vec.iter().map(|v| 
-						(&format!("{:#04x}",v)[2..]).to_string())
-						.collect::<Vec<String>>();
-					let s = join_vs(&vstr);
-					build_dfa(&s, false)
-				}
-				_ => build_dfa("", false)
-			}
-		}
+		HirKind::Look(_) => {//zero-width: caught by the guard above
+			debug_assert!(false, "Look reached past the zero-width guard");
+			build_dfa("", false).repeat(0..2)
+		},
 		HirKind::Alternation(v) => {
 			let mut dfa_res = build_dfa("", false);
 			let dummy_fa = build_dfa("", false);
@@ -1259,9 +1280,43 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 }
 
 
+/// begin/end anchor of a converted PCRE (T974 B3)
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Anchor { Exact, Line, LineEnd, Free }
+
+/// (begin, end) anchors of `hir`; every choice is a superset (T974 B3).
+/// Exact: non-m `^` prefix (look_set_prefix contract), no offset. Line:
+/// m `^` = offset 0 or after a NL byte. LineEnd: `$` (m or not, \z, D/E)
+/// = EOF or before a NL byte. Any offset (window, `e`) gives Free. NL =
+/// {0a-0d,85} covers PCRE2 LF/CR/CRLF/ANYCRLF/ANY (non-UTF), NOT NUL or
+/// (*..) verbs: ClamAV passes no compile context, 0 sigs use them.
+fn anchors(hir: &Hir, b_multi: bool, b_off: bool) -> (Anchor, Anchor) {
+	if b_off { return (Anchor::Free, Anchor::Free); }
+	let p = hir.properties();
+	let beg = if !p.look_set_prefix().contains(Look::Start) {Anchor::Free}
+		else if b_multi {Anchor::Line} else {Anchor::Exact};
+	let end = if p.look_set_suffix().contains(Look::End) {Anchor::LineEnd}
+		else {Anchor::Free};
+	(beg, end)
+}
+
+/// anchor as a regex string: nibble (b_hex) or byte PCRE form
+fn anchor_str(a: Anchor, b_hex: bool) -> &'static str {
+	match (a, b_hex) {
+		(Anchor::Exact, _) => "",
+		(Anchor::Free, _) => ".*",
+		(Anchor::Line, true) => "(.*(0(a|b|c|d)|85))?",
+		(Anchor::Line, false) => "(?:.*[\\x0a-\\x0d\\x85])?",
+		(Anchor::LineEnd, true) => "((0(a|b|c|d)|85).*)?",
+		(Anchor::LineEnd, false) => "(?:[\\x0a-\\x0d\\x85].*)?",
+	}
+}
+
 /// convert a pcre regex to the rustomaton format of hex strings
 /// e.g., "AB.*" to "4142.*"
-pub fn pcre_to_rustomaton_regex(s: &str, combination_limit: usize, repeat_limit: usize) -> (String, PcreInfo){
+/// b_multi: PCRE `m` flag. b_off: the subsig has an offset (T974 B3).
+pub fn pcre_to_rustomaton_regex(s: &str, combination_limit: usize, repeat_limit: usize,
+	b_multi: bool, b_off: bool) -> (String, PcreInfo){
 	let s = preprocess_badchars(&s);
 	let (s, b_backref) = preprocess_backref(&s);
 	let s = preprocess_rep(&s);
@@ -1271,9 +1326,11 @@ pub fn pcre_to_rustomaton_regex(s: &str, combination_limit: usize, repeat_limit:
 	let (vec_s, mut pi) = pcre_hir_to_rustomaton_regex(&hir, &mut limit, repeat_limit);
 
 	pi.b_backref = b_backref;
-	let mut res = join_vs(&vec_s);
-	if !pi.b_begin{ res = ".*".to_string() + &res; }
-	if !pi.b_end{ res = res + ".*"; }
+	let (beg, end) = anchors(&hir, b_multi, b_off);
+	pi.b_begin = beg != Anchor::Free;
+	pi.b_end = end != Anchor::Free;
+	let res = anchor_str(beg, true).to_string() + &join_vs(&vec_s)
+		+ anchor_str(end, true);
 
 	(res, pi)
 }
@@ -1300,98 +1357,11 @@ fn pcre_hir_to_rustomaton_regex(hir: &Hir, combination_limit: &mut usize, repeat
 }
 
 
-/// simply return empty string for zero assertions
-/// we handle 3 cases only: (1) beginning, (2) end, (3) \b
-/// for begin and end case, eventually no .* is appended at
-/// the beginning and end of the generated regex, and for (3)
-/// we require that either the previous one is a repeat pattern (which
-/// we minus the repeat length by 1), or at the beginning of the
-/// entire pattern (so that it's actually -1 for the .* at the beginning)
-/// of pattern. For others we use the APPROXIMATATION of no look
-/// given that the subsignatures are not negated, this is over approximation.
-fn handle_look(v: &Look, _limit: &mut usize, _repeat_limit: usize) -> (Vec<String>, PcreInfo){
-	let (mut b_begin, mut b_end, mut b_boundary) = (false, false, false);
-	match v{
-		Look::Start => b_begin = true,
-		Look::End =>  b_end = true,
-		Look::WordAscii => b_boundary = true,
-		_ => println!("WARN: look: {:?} not handled", v)
-	}
-	let fill_str = if b_boundary {"!(09|0a|0d|20)".to_string()}
-		else {"".to_string()}; //assuming the previous item's length -1
-	(vec![fill_str], PcreInfo{b_pcre: true, b_backref: false, b_zero_assert: true, b_begin: b_begin, b_end: b_end, b_boundary: b_boundary, original_str: String::new() })
-}
-
-/// only handle it in the concat case,  for all other cases
-/// just do not handle (do not enforce, over approximation). 
-/// In the concat has two cases to handle:
-/// (1) left_case: it is located at the beginning or
-/// its right is a fixed word, in this case insert a 
-/// whitespace char and reduce the previous item by one.
-/// (2) right_case: it is located at the right end of a word
-/// the resulting vec of Hir is either a copy of the original,
-/// or with a \W item inserted (with preceding item or subsequent item
-/// modified.
-fn handle_boundary(vec: &Vec<Hir>, b_can_handle: bool) -> Vec<Hir>{
-	if !b_can_handle {return vec.clone()};
-	let mut vec = vec.clone();
-
-	//1. some assisting functions
-	let is_boundary = |h: &Hir| -> bool {
-		match h.kind(){
-			HirKind::Look(v) => {*v==Look::WordAscii},
-			_ => false
-		}
-	};
-	let idx_bitem = |v: &Vec<Hir>|->usize {
-		for i in 0..v.len(){ if is_boundary(&v[i]) {return i;} }
-		v.len()
-	};
-	let is_leftcase = |v: &Vec<Hir>, i: usize| -> bool{
-		i==0 || match v[i-1].kind(){
-			HirKind::Repetition(_v) => true,
-			_ => false
-		}
-	};
-	let is_rightcase = |v: &Vec<Hir>, i: usize| -> bool{
-		i==v.len()-1 || match v[i+1].kind(){
-			HirKind::Repetition(_v) => true,
-			_ => false
-		}
-	};
-	let reduced = |h: &Hir| -> Hir{//if possible reduce length by one
-		match h.kind(){
-			HirKind::Repetition(v) => {
-				let min = if v.min>1 {v.min-1} else {v.min};
-				let max = if v.max.is_none() {v.max} else {
-					if v.max.unwrap()>1 {Some(v.max.unwrap()-1)} 
-					else {Some(v.max.unwrap())}
-				};
-				let mut v2 = v.clone();
-				v2.min = min;
-				v2.max = max;
-				Hir::repetition(v2)
-			},
-			_ => h.clone()
-		}
-	};
-	let spaceclass = || -> Hir{
-		to_hir("[ \t\n]")
-	};
-			
-	while idx_bitem(&vec) < vec.len(){//break
-		let idx = idx_bitem(&vec);
-		if is_leftcase(&vec, idx){
-			vec[idx] = spaceclass();
-			if idx>=1 {vec[idx-1] = reduced(&vec[idx-1]);}
-		}
-		if is_rightcase(&vec, idx){
-			vec[idx] = spaceclass();
-			if idx+1<=vec.len()-1 {vec[idx+1] = reduced(&vec[idx+1]);}
-		}
-	}
-
-	vec
+/// zero-width assertions (\b, \B, ^, $, ...) become the empty string,
+/// a superset of every position filter; the anchors are set from the HIR
+/// in pcre_to_rustomaton_regex (T974 B3).
+fn handle_look(_v: &Look, _limit: &mut usize, _repeat_limit: usize) -> (Vec<String>, PcreInfo){
+	(vec![String::new()], PcreInfo{b_zero_assert: true, ..PcreInfo::new_pcre()})
 }
 
 /// check if all components are literal strings recursively
@@ -1431,7 +1401,6 @@ fn is_all_literals(hir: &Hir)->bool{
 /// e.g. (a|b)(c|d) generates blow up of (ab|ad|bc|bd), if the limit
 /// is 3 then the function does not generate the combinations.
 fn handle_concat(vec: &Vec<Hir>, limit: &mut usize, repeat_limit: usize)->(Vec<String>, PcreInfo){
-	let vec = handle_boundary(vec, true);
 	let mut vres:Vec<String> = vec![String::new()];
 	let mut cur_pi = PcreInfo::new_pcre(); 
 	let mut last_is_lit = true;
@@ -1551,8 +1520,7 @@ fn handle_class_full(v: &Class, _limit: &mut usize)->(Vec<String>, PcreInfo){
 /// in this case, when length exceeding the limit, approximate the
 /// substr with .
 fn handle_repeat(v: &Repetition, limit: &mut usize, repeat_limit: usize)->(Vec<String>, PcreInfo){
-	let vec = handle_boundary(&vec![*v.sub.clone()], false);
-	let (vstr, pi) = pcre_hir_to_rustomaton_regex(&vec[0], limit, repeat_limit);
+	let (vstr, pi) = pcre_hir_to_rustomaton_regex(&v.sub, limit, repeat_limit);
 	let sub_str = join_vs(&vstr);
 	let (min,mut max) = (v.min as usize, v.max);
 	if max==Some(999777979){ max = None;} 
@@ -1621,15 +1589,12 @@ fn handle_repeat(v: &Repetition, limit: &mut usize, repeat_limit: usize)->(Vec<S
 /// or backreferences (as Rust regex).
 /// _limit: combination limit, not used here.
 fn handle_capture(v: &Capture, limit: &mut usize, repeat_limit: usize)->(Vec<String>, PcreInfo){
-	let vec = handle_boundary(&vec![*v.sub.clone()], false);
-	assert!(vec.len()==1, "handle_capture: after handle boundary vec.len!=1");
-	pcre_hir_to_rustomaton_regex(&vec[0], limit, repeat_limit)
+	pcre_hir_to_rustomaton_regex(&v.sub, limit, repeat_limit)
 }
 
 /// handle alternation
 /// _limit: combination limit, not used here.
 fn handle_alt(v: &Vec<Hir>, limit: &mut usize, repeat_limit: usize)->(Vec<String>, PcreInfo){
-	let _vec = handle_boundary(&v, false);
 	let mut vec = vec![];
 	let mut cur_pi = PcreInfo::new_pcre();
 	for hir in v{
@@ -2225,7 +2190,8 @@ mod tests_pcre{
 				vec!["axbXc", "a.bc"]),
 			("lookend1", "AA.*BB$", vec!["AA123BB"], vec!["AA11BBC"]),
 			("lookbegin1", "^AA.*", vec!["AA123"], vec!["BAA123"]),
-			("boundary1", r".*\bGreat", vec!["AA Great"], vec!["AAGreat"]),
+			//"AAGreat" is not a parent match but \b is now eps (T974 B3)
+			("boundary1", r".*\bGreat", vec!["AA Great"], vec![]),
 			("Txt.Downloader.Generic-5657800-0", 
 				//r"\x3B function\s+(?P<function_name>[a-z]{5,})\x28\x29 \{var [a-z]{5,} = [\x22\x27][0-9]{6,}[\x22\x27]\x3B var[^}]+} (?P=function_name)\x28\x29\x3B",
 				r"\x3B function\s+(?P<function_name>[a-z]{5,})\x28\x29 \{var [a-z]{5,} = [\x22\x27][0-9]{6,}[\x22\x27]\x3B var[^}]+\} (?P=function_name)\x28\x29\x3B",
@@ -2250,7 +2216,7 @@ mod tests_pcre{
 		for tc in tcs{
 			let pcre_reg = tc.1;
 			let processed_pcre_reg = &massage(tc.1);
-			let (rustomaton2_reg, _) = pcre_to_rustomaton_regex(pcre_reg, COMBINATION_LIMIT, REPEAT_LEN_LIMIT); 
+			let (rustomaton2_reg, _) = pcre_to_rustomaton_regex(pcre_reg, COMBINATION_LIMIT, REPEAT_LEN_LIMIT, false, false); 
 			for s in tc.2{//yes case
 				let ns = str_to_hex(s);
 				let (b1, b2) = (perl_is_match(processed_pcre_reg, s), 
@@ -2315,7 +2281,18 @@ mod tests_pcre{
 			// zero position lookups
 			(r"/^123$/", vec!["123"], vec!["123a", "a123"]),
 			(r"/^[1|2|3]{1,3}ab$/", vec!["123ab", "1ab"], vec!["1a", "1234ab", "ab", "123a"]),
-			(r"/.*\b[1|2|3]ab$/", vec!["aa1ab", "bb1ab"], vec!["a 1ab", "4ac", "ab", "123b"]),
+			//"a 1ab", "1ab" ARE parent matches (T974 B3)
+			(r"/.*\b[1|2|3]ab$/", vec!["aa1ab", "bb1ab", "a 1ab", "1ab"], vec!["4ac", "ab", "123b"]),
+			//T974 B3: zero-width = eps, anchors, top-level alt
+			(r"/^123$/", vec!["123\n"], vec!["123a"]),
+			(r"/a|\b/", vec![""], vec![]),
+			(r"/(\b|x)foo/", vec!["foo"], vec!["fo"]),
+			(r"/(\b)foo/", vec!["foo", " foo"], vec![]),
+			(r"/A\b+B/", vec!["AB"], vec![]),
+			(r"/Target=(\x22|\x27|)http/", vec!["Target=http"], vec![]),
+			(r"/X1|Y2/", vec!["aX1b", "aY2b"], vec![]),
+			(r"/^ab/m", vec!["x\nab", "ab"], vec!["xab"]),
+			(r"/ab$/m", vec!["ab\nx", "ab"], vec!["abx"]),
 			// capture
 			(r"/^(ab(cd)+)+12$/", vec!["abcdcdabcd12"], vec!["abcdab12"]),
 			// alternation
@@ -2911,7 +2888,10 @@ mod tests_pcre{
 #[cfg(test)]
 mod tests_t974_superset {
 	use regex_syntax::hir::{Hir, HirKind, Class};
-	use crate::pcre::pcre_to_rustomaton_regex;
+	use crate::pcre::{pcre_to_rustomaton_regex, parse_pcre_subsig, pcre_to_dfa,
+		collect_pm_reg_from_rustomaton_regex};
+	use crate::fsa_utils::build_dfa;
+	use super::rustomaton::automaton::Automata;
 	use crate::preprocess::extract_clamav_reg;
 	use crate::clamav::default_clamav_cfg;
 
@@ -2944,8 +2924,11 @@ mod tests_t974_superset {
 	/// hex form of `reg` at the production limits
 	pub(crate) fn to_hex(reg: &str) -> String {
 		let cfg = default_clamav_cfg();
-		pcre_to_rustomaton_regex(reg, cfg.combination_limit, cfg.repeat_limit).0
+		pcre_to_rustomaton_regex(reg, cfg.combination_limit, cfg.repeat_limit, false, false).0
 	}
+
+	/// separator before the generated member; "\n" is mandatory (m sigs)
+	const SEPS: [&[u8]; 6] = [b"", b"\n", b"\"", b",", b"\r", b"("];
 
 	/// returns (parent-matching docs, docs the hex regex rejects)
 	pub(crate) fn violations(reg: &str, ndocs: usize, seed: u64) -> (usize, usize) {
@@ -2959,6 +2942,7 @@ mod tests_t974_superset {
 		let (mut npos, mut nviol) = (0, 0);
 		for _ in 0..ndocs {
 			let mut d = vec![b'x'; rng.n(20)];
+			d.extend_from_slice(SEPS[rng.n(SEPS.len())]);
 			gen(&hir, &mut rng, &mut d); d.push(b' ');
 			if !parent.is_match(&d) { continue; }
 			npos += 1;
@@ -3005,6 +2989,8 @@ mod tests_t974_superset {
 			"/A.{3}B/s", "/A.?B/s", "/A(.){2,4}B/s", "/A[0-9]{11}B/",
 			"/A\\d{16}B/", "/A[A-Za-z]{5}B/", "/x(ab|c){3,5}y/",
 			"/A[^\\x0a]{0,40}B/",
+			"/\\x2ff\\s*?\\x28\\s*?((ht|f)tps?:\\x2f\\x2f)[^\\x29]*?#@[^\\x29]/",
+			"/x(?P<n>ab)+y/",
 		];
 		for (i, s) in sigs.iter().enumerate() {
 			let (_t, reg, _f) = extract_clamav_reg(s);
@@ -3013,4 +2999,148 @@ mod tests_t974_superset {
 			assert_eq!(nviol, 0, "{}: {}/{} parent docs rejected", s, nviol, npos);
 		}
 	}
+
+	fn nib(d: &[u8]) -> String { d.iter().map(|b| format!("{:02x}", b)).collect() }
+	fn hex_ok(hex: &str, d: &[u8]) -> bool {
+		regex::RegexBuilder::new(&format!("^(?s:{})$", hex)).size_limit(1 << 26)
+			.build().unwrap().is_match(&nib(d))
+	}
+	fn sub_hex(sub: &str) -> String {
+		let cfg = default_clamav_cfg();
+		parse_pcre_subsig(sub, cfg.combination_limit, cfg.repeat_limit).1
+	}
+
+	/// B3: \b is eps, no inserted byte, no hang, no '!' fallback
+	#[test]
+	fn test_t974_b3_boundary() {
+		assert_eq!(core("\\bfoo"), "666f6f");
+		assert_eq!(core("x.{3}\\bfoo"), "78......666f6f");
+		let (tx, rx) = std::sync::mpsc::channel();
+		std::thread::spawn(move || { tx.send(to_hex("foo\\bbar")).ok(); });
+		let h = rx.recv_timeout(std::time::Duration::from_secs(5))
+			.expect("foo\\bbar hangs");
+		assert!(hex_ok(&h, b"foobar"), "{}", h);
+		for r in ["(\\b)a", "a|\\b", "\\b+a"] {
+			let h = to_hex(r);
+			assert!(!h.contains('!'), "{} -> {}", r, h);
+			let _ = build_dfa(&h, false); //no rustomaton parse panic
+			assert!(hex_ok(&h, b"a"), "{} -> {}", r, h);
+		}
+	}
+
+	/// B3m + offset: m `^` = Line, no m = Exact, offset = Free
+	#[test]
+	fn test_t974_b3_anchors() {
+		let h = sub_hex("0/^abcd/m");
+		assert!(h.starts_with("(.*(0(a|b|c|d)|85))?"), "{}", h);
+		assert!(hex_ok(&h, b"x\nabcd") && hex_ok(&h, b"x\r\nabcd") && hex_ok(&h, b"abcd"));
+		assert!(!hex_ok(&h, b"xabcd"));
+		assert!(sub_hex("0/^abcd/").starts_with("61626364"));
+		assert!(sub_hex("0:0/^abcd/").starts_with(".*"));
+		let e = sub_hex("0/abcd$/m");
+		assert!(hex_ok(&e, b"abcd\nx") && hex_ok(&e, b"abcd") && !hex_ok(&e, b"abcdx"));
+		let e = sub_hex("0/abcd$/");
+		assert!(hex_ok(&e, b"abcd\n") && !hex_ok(&e, b"abcdx"));
+		let cfg = default_clamav_cfg();
+		let pm = |x: &str| format!("{:?}", collect_pm_reg_from_rustomaton_regex(x, cfg.min_pm_word_len));
+		assert_eq!(pm(&h), pm(".*61626364.*"));
+		assert_eq!(pm(&sub_hex("0/abcd$/m")), pm(".*61626364.*"));
+	}
+
+	/// B3 differential: 20 of the 21 changed Mal subsigs (13 \b, 5 m
+	/// anchors, 2 eps alt, 1 top-level alt), real flags, nibble hex AND
+	/// byte DFA. VOF1-6295631-2 is left out: its DFA build takes ~200 s.
+	#[test]
+	fn test_t974_b3_superset_real() {
+		let names = ["Email.Trojan.Toa-",
+			"Html.Exploit.CVE_2018_8174-6700490-0;", "Doc.Macro.Emotet-6374344-0;",
+			"Doc.Macro.Emotet-6376221-0;", "Doc.Macro.Obfuscation-6398752-1;",
+			"Pdf.Exploit.CVE_2018_19717-6818331-0;",
+			"Doc.Downloader.TemplateInjection-6332119-0;",
+			"Doc.Downloader.TemplateInjection-6332123-0;", "Doc.Downloader.URSNIF-6729855-3;"];
+		let txt = std::fs::read_to_string(format!("{}/data/paper_data/clamav/config/main.dat",
+			utils::os::proj_root())).unwrap();
+		let cfg = default_clamav_cfg();
+		let mut nsub = 0;
+		for line in txt.lines().filter(|l| names.iter().any(|n| l.starts_with(n))) {
+			let fs: Vec<&str> = line.split(';').collect();
+			for sub in fs[3..].iter().filter(|x| crate::preprocess::is_pcre_subsig(x)) {
+				if !line.starts_with("Email.Trojan.Toa-") || sub.contains("\\b") {
+					nsub += 1;
+				} else { continue; }
+				let (_t, reg, fl) = extract_clamav_reg(sub);
+				//backrefs: the parent is BORA's backref approximation
+				let body = super::preprocess_backref(&super::preprocess_badchars(&reg)).0;
+				let parent = regex::bytes::RegexBuilder::new(&format!("(?s{}-u){}",
+					if fl.contains('m') {"m"} else {""}, body)).size_limit(1 << 26).build().unwrap();
+				let hir = super::to_hir(&super::preprocess_rep(&body));
+				//S3 (eps alt, top-level alt) changes the byte DFA only; its
+				//nibble hex is unchanged and too big for a fast nibble check
+				let b_s3 = fs[0].starts_with("Doc.Downloader.");
+				let hre = regex::RegexBuilder::new(&format!("^(?s:{})$",
+					if b_s3 {".*".to_string()} else {sub_hex(sub)}))
+					.size_limit(1 << 27).dfa_size_limit(1 << 24).build().unwrap();
+				let dfa = pcre_to_dfa(sub, cfg.combination_limit, cfg.repeat_limit);
+				let mut rng = Lcg(9740 + nsub as u64);
+				let (mut npos, mut vh, mut vd) = (0, 0, 0);
+				for k in 0..96 {
+					let mut d = vec![b'x'; rng.n(8)];
+					d.extend_from_slice(SEPS[k % SEPS.len()]);
+					gen(&hir, &mut rng, &mut d);
+					d.extend_from_slice([&b""[..], b"\n", b" "][k % 3]); //tail; `$` sigs
+					if d.len() > 600 || !parent.is_match(&d) { continue; } //bound match time
+					npos += 1;
+					if !hre.is_match(&nib(&d)) { vh += 1; }
+					if !dfa.run(&nib(&d).chars().collect::<Vec<char>>()) { vd += 1; }
+				}
+				assert!(npos > 0, "{}: no parent docs", fs[0]);
+				assert_eq!((vh, vd), (0, 0), "{}: hex/dfa rejects of {}", fs[0], npos);
+			}
+		}
+		assert_eq!(nsub, 20);
+	}
+}
+
+/// T974 B4/D3/D4: preprocess_backref keeps `?:` and group atoms, numbers
+/// groups like PCRE, and refuses shapes it cannot splice soundly.
+#[cfg(test)]
+mod tests_t974_backref {
+	use super::preprocess_backref;
+	use super::tests_t974_superset::to_hex;
+
+	#[test]
+	fn test_t974_backref_rewrite() {
+		for (src, dst) in [
+			("(ht|f)tps?:\\x2f\\x2f", "(ht|f)tps?:\\x2f\\x2f"),
+			("(?:ab)c", "(?:ab)c"), ("a\\?:b(c)", "a\\?:b(c)"),
+			("x(?P<n>a|b)y", "x(?:a|b)y"),
+			("((a)b)\\2", "((a)b)(?:a)"),
+			("(x[(]y)\\1", "(x[(]y)(?:x[(]y)"),
+			("(a)\\1(b)\\2", "(a)(?:a)(b)(?:b)"),
+			("(a)\\1[()](b)\\2c", "(a)(?:a)[()](b)(?:b)c"),
+			("(a[^b])\\1", "(a[^b])(?:a[^b])"),
+		] {
+			assert_eq!(preprocess_backref(src).0, dst, "src {}", src);
+		}
+	}
+
+	/// docs the parent PCRE matches but the HEAD conversion rejected
+	#[test]
+	fn test_t974_backref_witness() {
+		for (reg, doc) in [("x(?P<n>ab)+y", "xababy"), ("((a)b)\\2", "aba"),
+			("(a)(?P<n>b)(?P=n)(c)(d)\\4", "abbcdd"), ("(x[(]y)\\1", "x(yx(y"),
+			("(a)\\1[()](b)\\2c", "aa(bbc"), ("(ht|f)tps?:\\x2f\\x2f", "http://")] {
+			let nib: String = doc.bytes().map(|b| format!("{:02x}", b)).collect();
+			let h = regex::Regex::new(&format!("^(?s:{})$", to_hex(reg))).unwrap();
+			assert!(h.is_match(&nib), "{} rejects {}", reg, doc);
+		}
+	}
+
+	#[test] #[should_panic] fn test_t974_bk_zw1() { preprocess_backref("(^a|b)x\\1"); }
+	#[test] #[should_panic] fn test_t974_bk_zw2() { preprocess_backref("(a\\b|c) \\1"); }
+	#[test] #[should_panic] fn test_t974_bk_zw3() { preprocess_backref("(a\\[^b)\\1"); }
+	#[test] #[should_panic] fn test_t974_bk_unbal() { preprocess_backref("(a(b)"); }
+	#[test] #[should_panic] fn test_t974_bk_lookbehind() { preprocess_backref("(?<=a)b"); }
+	#[test] #[should_panic] fn test_t974_bk_posix() { preprocess_backref("(a)[[:alpha:]()](b)\\2c"); }
+	#[test] #[should_panic] fn test_t974_bk_cls_ref() { preprocess_backref("(a)[\\1](b)"); }
 }
