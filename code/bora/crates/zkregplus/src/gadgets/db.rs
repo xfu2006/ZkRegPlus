@@ -48,7 +48,8 @@ use crate::gadgets::commons::{verify_inverse, check_eq,
 	multiset_prod_2col,var_to_lb, is_zero_better_adv, gen_vec_inverse,
 	var_to_tuple, var_to_tuple_adv, encode_cols_better,
 	verify_encode_cols_in_range, gen_2d_lkup_prf, gen_1d_lkup_prf,
-	verify_2d_lkup_prf, verify_1d_lkup_prf, check_prod_eq, sum_vec_vars};
+	verify_2d_lkup_prf, verify_1d_lkup_prf, check_prod_eq, check_prod_zero,
+	sum_vec_vars};
 
 
 // ----------------------------------------------------
@@ -345,9 +346,13 @@ pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 /// When sid_sort_diff is some, it also asserted that the val1 column
 /// in each subsegement (by keys) is sorted, by checking that sid column
 /// for the cell difference is contained in RANGE2 table (i.e., non-negative)
-/// When sort_diff_key is Some, it verifies that key col is in the
-/// asencding order. This is useful when the table is NOT a part of
-/// a verified external table, this guarantees UNIQUE KEY.
+/// When sort_diff_key is Some (SORTED mode, T937), it enforces
+/// key[i] = key[i-1] + sort_diff_key[i-1] on every row, and every key
+/// run opens at (key,0,0) (row 0 and each key change, ungated).
+/// PRECONDITION. key, id, val1 and sort_diff_key are RANGE2 cells
+/// (const f_rg si cols, see tbl_to_sorted_tbl). Then keys ascend, each
+/// key is ONE run (UNIQUE KEY) and the key-0 pads are a prefix.
+/// sid_diff_key is ignored (the in-circuit key sign is retired).
 /// NOTE: zero entries (key=0) are ignored (as they are dummy entry)
 ///
 /// COST: 5n (to 7n depending on setting)
@@ -374,6 +379,8 @@ pub fn assert_well_formed_sorted<F:PrimeField + ColEle>(
 /// When b_relaxed is set (sid_sort and sid_diff) must be off.
 /// b_relaxed means that when key is the same, the id either remains or 
 /// increase by 1. Still entries are wrapped with two dummy entries
+/// SORTED mode (sort_diff_key Some, T937) is documented on
+/// assert_well_formed_sorted.
 pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 	cs: ConstraintSystemRef<F>,
 	key: &Vec<FpVar<F>>,
@@ -382,7 +389,7 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 	sort_diff: Option<&Vec<FpVar<F>>>, //the pair-wise diff of val1 (n-1)
 	sid_sort_diff: Option<&Vec<FpVar<F>>>, //len n (n-1)
 	sort_diff_key: Option<&Vec<FpVar<F>>>,//diff of key (n-1)
-	sid_diff_key: Option<&Vec<FpVar<F>>>, //sid for the above
+	_sid_diff_key: Option<&Vec<FpVar<F>>>, //T937 unused, key sign retired
 	r: FpVar<F>, //the random challenge
 	state_part_bits: usize,
 	b_relaxed: bool
@@ -410,9 +417,17 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 	let one = FpVar::<F>::new_constant(cs.clone(), F::one())?;
 	let max = FpVar::<F>::new_constant(cs.clone(), F::from(max_val as u32))?;
 	let _rg2 = FpVar::<F>::new_constant(cs.clone(), F::from(RANGE2))?;
-	check_eq(&id[0], &zero, "check id0")?;
 	let b_check_sort = sid_sort_diff.is_some();
-	let b_check_sort_key = sid_diff_key.is_some();
+	// T937 SORTED mode is on iff sort_diff_key is given (precondition in
+	// the docstring of assert_well_formed_sorted).
+	let b_sorted = sort_diff_key.is_some();
+	if b_sorted {
+		// row 0 opens its run at (key,0,0). id, val1 are RANGE2, so
+		// id + val1 = 0 forces both 0. Same 1 cs as the id0 pin.
+		check_eq(&(&id[0] + &val1[0]), &zero, "T937 row 0 opens")?;
+	} else {
+		check_eq(&id[0], &zero, "check id0")?;
+	}
 	if b_check_sort{
 		let sort_diff = sort_diff.unwrap();
 		assert!(sort_diff.len()==val1.len()-1);
@@ -423,20 +438,20 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 		// NO LONGER NEEDED - as this is checked in
 		// gen_assert_sidcol_for_diff
 	}
-	if b_check_sort_key{
-		let sort_diff_key = sort_diff_key.unwrap();
-		assert!(sort_diff_key.len()==key.len()-1);
-		//let exp_key = key.iter().zip(sort_diff_key.iter()).map(|(a,b)|{
-		//	a + b
-		//}).collect::<Vec<FpVar<F>>>();
-		//check_arr_eq_arr(&key[1..], &exp_key[0..n-1], "err diff key")?;
-		//simply check here all are in ascending order
-		//we do not have the value problem ascending by chunks
-		//this is ascending along the entire column.
-		//NOT needed as it's constant
-		//check_arr_eq(&sid_diff_key.unwrap(), &rg2, "err sid_sort key")?; 
-		// NO LONGER NEEDED - as this is checked in
-		// gen_assert_sidcol_for_diff
+	if b_sorted{
+		// T937 (a) key ascent over the WHOLE column, pads included.
+		// key[i] = key[i-1] + dk[i-1] with dk RANGE2 (const f_rg si col
+		// of diff_key, see tbl_to_sorted_tbl). Keys never decrease, so
+		// each key is ONE run and the key-0 pads are a prefix. This
+		// replaces the in-circuit key SIGN witness of
+		// gen_assert_sidcol_for_diff, whose free up/down choice let runs
+		// split and reorder. The prf const column sid_diff_key stays.
+		assert!(b_check_sort && !b_relaxed, "T937 sorted mode needs the val sort");
+		let dk = sort_diff_key.unwrap();
+		assert!(dk.len()==n-1);
+		for i in 1..n{
+			check_eq(&key[i], &(&key[i-1] + &dk[i-1]), "T937 key ascent")?;
+		}
 	}
 
 	// -------------------------------------------------------
@@ -541,7 +556,11 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 			let part1 = &id_diff + &(sid_diff*&r2);  //sid_diff
 				//note that it might be about val depending on which
 				//array is being checked ensures increasing
-			let part2 = &val_diff + &(&r * &val1[i]);
+			// T937 (b). In SORTED mode the border keeps only
+			// val1[i-1] = max. val1[i] = 0 moves to the ungated opener
+			// below, together with id[i] = 0.
+			let part2 = if b_sorted { val_diff.clone() }
+				else { &val_diff + &(&r * &val1[i]) };
 			let res = &(&bk * &(part1-&part2)) + &part2;
 			//check res is 0
 			if B_DEBUG {
@@ -554,6 +573,13 @@ pub fn assert_well_formed_sorted_adv<F:PrimeField + ColEle>(
 				lb_res,
 				lb_zero.clone()
 			)?;
+			if b_sorted{
+				// T937 (b). Every key change (bk = 0) opens its run at
+				// (key,0,0). UNGATED, so the pad -> first-real border
+				// (key[i-1] = 0, skipped by the gate above) is covered.
+				check_prod_zero(&(&one - &bk), &(&id[i] + &val1[i]),
+					lb_zero.clone(), "T937 opener")?;
+			}
 		}
 		//sum = &sum * &r + &res; CHECKED locally in each branch
 	}
@@ -1660,10 +1686,16 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	vec![diff_key, diff_val].into_iter().zip(d_names.iter()).for_each(|(c,n)|{
 		prf.lock().unwrap().add_col(Col::new(c, &format!("{}",n),IDX_DATA));
 	}); 
+	// T937 LOAD-BEARING. These const f_rg si cols and the sid_sorted_*
+	// cols above are the ONLY RANGE2 bound on diff_key/diff_val and
+	// sorted_key/id/val (outer (si,val) lookup, paired by add order).
+	// verify_tbl_to_sorted_tbl's key ascent key[i] = key[i-1] +
+	// diff_key[i-1] and opener id + val = 0 are sound only under it.
+	// Keep them although the verifier never reads them.
 	vec![vec![f_rg; d1], vec![f_rg; d2]].into_iter().zip(d_names.iter())
 	.for_each(|(c,n)|{
 		prf.lock().unwrap().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
-	}); //this one is not const
+	});
 
 	//3. lkup in both directions (ignore 0 entries).
 	let encoded_src = encode_2col(&keys, &vals);
@@ -1692,7 +1724,7 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 
 /// verify in bundle contains a sorted table
 /// of the given columns of (keys, vals)
-/// COST: 27*n
+/// COST: 26*n (T937 saves 1 per row)
 pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
@@ -1706,6 +1738,9 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	let vals = vals.lock().unwrap().to_vec();
 	let prf = bundle.lock().unwrap().get_container("prf")?;
 	let sorted_tbl = bundle.lock().unwrap().get_container("sorted_tbl")?;
+	// T937. cols_prf[1]/[3] (sid_diff_val/sid_diff_key) are const f_rg
+	// cols. They bind cols_prf[0]/[2] to RANGE2 through the outer lookup
+	// only (see tbl_to_sorted_tbl), never in-circuit. Do not drop them.
 	let cols_prf = vec!["diff_val","sid_diff_val","diff_key","sid_diff_key"]
 		.iter().map(|n| prf.lock().unwrap().get_container(n)
 			.expect(&format!("can't find {}",n)).lock().unwrap().to_vec())
@@ -1715,7 +1750,6 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	let sel_ids=sorted_tbl.lock().unwrap().get_container_by_idx(1).lock().unwrap().to_vec();
 	let sel_vals=sorted_tbl.lock().unwrap().get_container_by_idx(2).lock().unwrap().to_vec();
 	let sid_diff_val = gen_assert_sidcol_for_diff(&sel_vals, &cols_prf[0]);
-	let sid_diff_key= gen_assert_sidcol_for_diff(&sel_keys, &cols_prf[2]);
 	assert_well_formed_sorted(cs.clone(),
 		&sel_keys,
 		&sel_ids,
@@ -1723,17 +1757,16 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 		Some(&cols_prf[0]), //diff_val
 		//Some(&cols_prf[1]), //sid_diff_val
 		Some(&sid_diff_val),
-		Some(&cols_prf[2]), //diff_key
-		//Some(&cols_prf[3]), //sid_diff_key
-		Some(&sid_diff_key),
+		Some(&cols_prf[2]), //diff_key, T937 SORTED mode (key ascent)
+		None, //T937 key sign witness retired
 		r1.clone(), 
                 read_global_config().range2_bit)?;
 
 	//2. check sid columns (f_rg) but don't have to check those zeros,
 	// e.g., those m_tbl values' sid
-	// ALSO Note sid_diff_key and sid_diff_val is already checked
-	// in assert_well_formed_sorted. So we only need to check sid for
-	// sorted_key, id, val.
+	// ALSO Note sid_diff_key and sid_diff_val are const f_rg cols too,
+	// enforced by the same outer lookup (not in assert_well_formed_sorted,
+	// T937).
 	// SKIP THE ENTIRE SECTION OF CHECK AS THE ARE CHECKING CONSTANTS.
 	//let f_rg = new_var(&cs, F::from(RANGE2)); 
 	//let sid_names = vec!["sorted_key", "sorted_id", "sorted_val"];
@@ -3062,6 +3095,207 @@ use utils::consts::read_global_config;
 			verify_tbl_to_sorted_tbl(
 				&r1, &r2, &states, &locs, &sorted_tbl, cs.clone()).is_ok());
 		assert!(cs.is_satisfied().unwrap());
+	}
+
+
+	// ---------------------------------------------------------
+	// T937 tests: forged sorted tables for verify_tbl_to_sorted_tbl
+	// ---------------------------------------------------------
+	use std::sync::{Arc, Mutex};
+	use std::panic::{catch_unwind, AssertUnwindSafe};
+	use crate::gadgets::traits::IDX_SI_DATA;
+	use crate::gadgets::commons::{gen_abs_diff_col, encode_2col};
+
+	type FrCtn = Arc<Mutex<Container<Fr>>>;
+
+	fn t937_max()->u32{ (1u32 << read_global_config().range2_bit) - 1 }
+
+	fn t937_fr(v: Vec<u32>)->Vec<Fr>{ v.into_iter().map(Fr::from).collect() }
+
+	/// T937 test-only. The bundle of tbl_to_sorted_tbl, but with GIVEN
+	/// (forged) rows. Only two_col_tbl_to_sorted is bypassed. Diff cols,
+	/// const f_rg sid cols and both m-tables are rebuilt as in
+	/// tbl_to_sorted_tbl, so only the gadget can reject the bundle.
+	/// Returns (keys, vals, bundle).
+	fn mk_forged_sorted_bundle(src: &[(u32,u32)], rows: &[(u32,u32,u32)])
+	->(FrCtn, FrCtn, FrCtn){
+		let max = Fr::from(t937_max());
+		let f_rg = Fr::from(RANGE2);
+		let keys = t937_fr(src.iter().map(|x| x.0).collect());
+		let vals = t937_fr(src.iter().map(|x| x.1).collect());
+		let s_key = t937_fr(rows.iter().map(|x| x.0).collect());
+		let s_id = t937_fr(rows.iter().map(|x| x.1).collect());
+		let s_val = t937_fr(rows.iter().map(|x| x.2).collect());
+		let n = rows.len();
+		let sel = |k: &[Fr], v: &[Fr]| k.iter().zip(v.iter()).map(|(x,y)|
+			*x * (max - *x) * *y * (max - *y)).collect::<Vec<Fr>>();
+		let (enc_src, sel_src) = (encode_2col(&keys, &vals), sel(&keys, &vals));
+		let (enc_dst, sel_dst) = (encode_2col(&s_key, &s_val), sel(&s_key, &s_val));
+		let m_sd = gen_m_table_cond(&enc_src, &sel_src, &enc_dst, &sel_dst);
+		let m_ds = gen_m_table_cond(&enc_dst, &sel_dst, &enc_src, &sel_src);
+		let (dk, dv) = (gen_abs_diff_col(&s_key), gen_abs_diff_col(&s_val));
+
+		let tbl = Container::<Fr>::new("sorted_tbl");
+		let prf = Container::<Fr>::new("prf");
+		let names = ["sorted_key", "sorted_id", "sorted_val"];
+		for (c, nm) in vec![s_key, s_id, s_val].into_iter().zip(names){
+			tbl.lock().unwrap().add_col(Col::new(c, nm, IDX_DATA));
+		}
+		let mut p = prf.lock().unwrap();
+		for nm in names{
+			p.add_col(Col::new_const(vec![f_rg; n], &format!("sid_{}", nm), IDX_SI_DATA));
+		}
+		p.add_col(Col::new(dk, "diff_key", IDX_DATA));
+		p.add_col(Col::new(dv, "diff_val", IDX_DATA));
+		p.add_col(Col::new_const(vec![f_rg; n-1], "sid_diff_key", IDX_SI_DATA));
+		p.add_col(Col::new_const(vec![f_rg; n-1], "sid_diff_val", IDX_SI_DATA));
+		p.add_col(Col::new_const(vec![Fr::zero(); m_sd.len()], "sid_mtbl_src_dst", IDX_SI_DATA));
+		p.add_col(Col::new_const(vec![Fr::zero(); m_ds.len()], "sid_mtbl_dst_src", IDX_SI_DATA));
+		p.add_col(Col::new(m_sd, "mtbl_src_dst", IDX_DATA));
+		p.add_col(Col::new(m_ds, "mtbl_dst_src", IDX_DATA));
+		drop(p);
+		let res = Container::<Fr>::new("sorted tbl");
+		res.lock().unwrap().add_container(tbl);
+		res.lock().unwrap().add_container(prf);
+		let kc = Container::new_single(Col::new(keys, "states", IDX_DATA));
+		let vc = Container::new_single(Col::new(vals, "locs", IDX_DATA));
+		(kc, vc, res)
+	}
+
+	/// T937 runner. true iff verify_tbl_to_sorted_tbl accepts the bundle
+	/// and cs is satisfied. A panic counts as rejected.
+	fn t937_sat(src: &[(u32,u32)], rows: &[(u32,u32,u32)],
+		edit: Option<&dyn Fn(&FrCtn)>)->bool{
+		let (keys, vals, bundle) = mk_forged_sorted_bundle(src, rows);
+		if let Some(f) = edit { f(&bundle); }
+		catch_unwind(AssertUnwindSafe(||{
+			let mut rng = test_rng();
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let r1 = FpVar::new_witness(cs.clone(), || Ok(Fr::rand(&mut rng))).unwrap();
+			let r2 = FpVar::new_witness(cs.clone(), || Ok(Fr::rand(&mut rng))).unwrap();
+			let keys = Container::rc_from(&keys.lock().unwrap(), cs.clone());
+			let vals = Container::rc_from(&vals.lock().unwrap(), cs.clone());
+			let bundle = Container::rc_from(&bundle.lock().unwrap(), cs.clone());
+			verify_tbl_to_sorted_tbl(&r1, &r2, &keys, &vals, &bundle, cs.clone()).is_ok()
+				&& cs.is_satisfied().unwrap()
+		})).unwrap_or(false)
+	}
+
+	#[test]
+	fn test_t937_split_block_rejected(){
+		// pat 2 split into two runs, the hit 17 is hidden behind pat 5.
+		let m = t937_max();
+		let rows = [(0,0,0),(2,0,0),(2,1,25),(2,2,m),(5,0,0),(5,1,40),(5,2,m),
+			(2,0,0),(2,1,17),(2,2,m)];
+		assert!(!t937_sat(&[(2,17),(2,25),(5,40)], &rows, None));
+	}
+
+	#[test]
+	fn test_t937_block_order_rejected(){
+		let m = t937_max();
+		let rows = [(0,0,0),(3,0,0),(3,1,11),(3,2,m),(9,0,0),(9,1,19),(9,2,m),
+			(5,0,0),(5,1,13),(5,2,m)];
+		assert!(!t937_sat(&[(3,11),(5,13),(9,19)], &rows, None));
+	}
+
+	#[test]
+	fn test_t937_first_block_open_rejected(){
+		// first real run opens at (2,0,17) right after the pads.
+		let m = t937_max();
+		let rows = [(0,0,0),(0,0,0),(2,0,17),(2,1,25),(2,2,m),(5,0,0),(5,1,40),
+			(5,2,m)];
+		assert!(!t937_sat(&[(2,17),(2,25),(5,40)], &rows, None));
+	}
+
+	#[test]
+	fn test_t937_row0_open_rejected(){
+		let m = t937_max();
+		let rows = [(2,0,17),(2,1,25),(2,2,m),(5,0,0),(5,1,40),(5,2,m)];
+		assert!(!t937_sat(&[(2,17),(2,25),(5,40)], &rows, None));
+	}
+
+	#[test]
+	fn test_t937_mid_pad_rejected(){
+		let m = t937_max();
+		let rows = [(0,0,0),(2,0,0),(2,1,17),(2,2,m),(0,0,0),(5,0,40),(5,1,m)];
+		assert!(!t937_sat(&[(2,17),(5,40)], &rows, None));
+	}
+
+	#[test]
+	fn test_t937_opener_id_rejected(){
+		let m = t937_max();
+		let rows = [(0,0,0),(2,0,0),(2,1,17),(2,2,m),(5,1,0),(5,2,40),(5,3,m)];
+		assert!(!t937_sat(&[(2,17),(5,40)], &rows, None));
+	}
+
+	#[test]
+	fn test_t937_helper_honest_control(){
+		// the helper on honest rows equals tbl_to_sorted_tbl and is SAT.
+		let m = t937_max();
+		let src = [(2,17),(2,25),(5,40)];
+		let rows = [(0,0,0),(2,0,0),(2,1,17),(2,2,25),(2,3,m),(5,0,0),(5,1,40),
+			(5,2,m)];
+		let (keys, vals, forged) = mk_forged_sorted_bundle(&src, &rows);
+		let honest = tbl_to_sorted_tbl(&keys, &vals, 8, "sorted tbl").unwrap();
+		assert!(forged.lock().unwrap().to_vec() == honest.lock().unwrap().to_vec());
+		assert!(t937_sat(&src, &rows, None));
+	}
+
+	#[test]
+	fn test_t937_guards_stay_rejected(){
+		let m = t937_max();
+		// (a) border opens at val 7, guards the r*val1[i] removal.
+		let rows = [(0,0,0),(2,0,0),(2,1,17),(2,2,m),(5,0,7),(5,1,40),(5,2,m)];
+		assert!(!t937_sat(&[(2,17),(5,7),(5,40)], &rows, None));
+		// (b) run of pat 2 does not end at max.
+		let rows = [(0,0,0),(2,0,0),(2,1,17),(5,0,0),(5,1,40),(5,2,m)];
+		assert!(!t937_sat(&[(2,17),(5,40)], &rows, None));
+		// (c) id jumps by 2 inside a run.
+		let rows = [(0,0,0),(2,0,0),(2,2,17),(2,3,m),(5,0,0),(5,1,40),(5,2,m)];
+		assert!(!t937_sat(&[(2,17),(5,40)], &rows, None));
+	}
+
+	#[test]
+	fn test_t937_range2_si_cols_pinned(){
+		// The const f_rg si cols are the only RANGE2 bound on the diff and
+		// sorted cols (outer lookup). Pin their shape and add order.
+		let keys = Container::new_single(Col::new(t937_fr(vec![2,2,5]), "states", IDX_DATA));
+		let vals = Container::new_single(Col::new(t937_fr(vec![17,25,40]), "locs", IDX_DATA));
+		let n = 8;
+		let bundle = tbl_to_sorted_tbl(&keys, &vals, n, "sorted tbl").unwrap();
+		let prf = bundle.lock().unwrap().get_container("prf").unwrap();
+		let prf = prf.lock().unwrap();
+		let order = (0..11).map(|i| prf.get_container_by_idx(i).lock().unwrap().name())
+			.collect::<Vec<String>>();
+		assert_eq!(order, vec!["sid_sorted_key", "sid_sorted_id", "sid_sorted_val",
+			"diff_key", "diff_val", "sid_diff_key", "sid_diff_val",
+			"sid_mtbl_src_dst", "sid_mtbl_dst_src", "mtbl_src_dst", "mtbl_dst_src"]);
+		let col = |nm: &str| prf.get_col(nm).unwrap().lock().unwrap().clone();
+		for (nm, len) in [("sid_sorted_key", n), ("sid_sorted_id", n),
+			("sid_sorted_val", n), ("sid_diff_key", n-1), ("sid_diff_val", n-1)]{
+			let c = col(nm);
+			assert!(c.b_const, "{} must be const", nm);
+			assert!(c.data == vec![Fr::from(RANGE2); len], "{} must be f_rg", nm);
+		}
+		for nm in ["diff_key", "diff_val"]{
+			let c = col(nm);
+			assert!(!c.b_const && c.data.len() == n-1, "{} shape", nm);
+		}
+	}
+
+	#[test]
+	fn test_t937_negative_dk_needs_range2(){
+		// Dependency pin. diff_key[3] = -3 makes the ascent hold for a
+		// descending key. The gadget accepts it. Only the outer RANGE2
+		// lookup on diff_key (const sid_diff_key) rejects it.
+		let m = t937_max();
+		let rows = [(0,0,0),(5,0,0),(5,1,40),(5,2,m),(2,0,0),(2,1,17),(2,2,m)];
+		let edit = |b: &FrCtn|{
+			let prf = b.lock().unwrap().get_container("prf").unwrap();
+			let dk = prf.lock().unwrap().get_col("diff_key").unwrap();
+			dk.lock().unwrap().data[3] = -Fr::from(3u32);
+		};
+		assert!(t937_sat(&[(2,17),(5,40)], &rows, Some(&edit)));
 	}
 
 
