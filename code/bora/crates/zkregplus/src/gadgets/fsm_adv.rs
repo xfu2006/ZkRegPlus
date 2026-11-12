@@ -1635,11 +1635,15 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 
 		let locs = fsm_acc.get_container("locs")?.lock().unwrap().to_vec();
 		let inp_loc = &locs[0];
-		let _oup_loc = &locs[1];
-		if B_DEBUG {
-			assert!(inp_loc.value()?
-				+ F::from(nlen as u32) == _oup_loc.value()?);
-		}
+		let oup_loc = &locs[1];
+		// T975 (NEW-5): oup_loc is the next segment's inp_loc (fold
+		// link) and the discharge gadgets' default_min - 1 (neo and
+		// legacy), so bind it to the chunk's
+		// true end. Unbound, the prover shifts every later loc and
+		// bwd pruning drops real rows. 1 cs (linear).
+		check_eq(oup_loc, &(inp_loc
+			+ &FpVar::<F>::constant(F::from(nlen as u64))),
+			"fsm oup_loc = inp_loc + nlen")?;
 		//check_increase(&locs)?;
 		//optimized to: as locs are already guarnateed to be less than
 		//26 bit, use packcheck_increase() instead
@@ -2402,7 +2406,7 @@ pub mod tests_fsm_adv_gadget{
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
-			tests_word_extract_gadget::{test_gadget_adv},
+			tests_word_extract_gadget::{test_gadget_adv, test_gadget_adv_ex},
 		},
 		fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
@@ -2526,7 +2530,10 @@ pub mod tests_fsm_adv_gadget{
 	/// complete in the halo region (trace idx 64 > nlen=62) and the
 	/// committed boundary loc must stay at inp_loc+nlen. Negative control:
 	/// with halo off, "abc" never completes.
-	fn build_fsm_halo_locs(halo: &[Fr], m: usize) -> (Vec<Fr>, Vec<Fr>){
+	/// `shift` != 0 (T975 red test) moves the committed oup_loc off
+	/// inp_loc + nlen and expects the gadget to reject.
+	fn build_fsm_halo_locs(halo: &[Fr], m: usize, shift: i64)
+		-> (Vec<Fr>, Vec<Fr>){
 		let path = "debug/sed/simple";
 		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
 		let wlen = 1usize;
@@ -2562,6 +2569,15 @@ pub mod tests_fsm_adv_gadget{
 			inp_state, inp_loc, &input_subsigs, &cap, fsm_id,
 			&bundle.vec_subsig_stores[0], 0).unwrap();
 		let stmt_faa = adv_faa.stmt_container;
+		if shift != 0 {
+			let c = stmt_faa.lock().unwrap().search_container(
+				"fsm_adv_stmt_cs fsm_acc locs oup_loc").unwrap();
+			match &*c.lock().unwrap() {
+				crate::gadgets::traits::Container::Single(col) =>
+					col.lock().unwrap().data[0] += Fr::from(shift),
+				_ => panic!("oup_loc is not a column"),
+			};
+		}
 		let cfg_faa = stmt_faa.lock().unwrap().get_cfg();
 
 		let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa];
@@ -2584,10 +2600,10 @@ pub mod tests_fsm_adv_gadget{
 			fsm_id, &vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0]);
 		fag.set_container_cfg(vec_cfg.clone().into(), 1);
 		let _sizes = fag.get_to_add_size();
-		test_gadget_adv::<Fr>(Arc::new(fag), &word, &cps[0], &cps[1],
+		test_gadget_adv_ex::<Fr>(Arc::new(fag), &word, &cps[0], &cps[1],
 			&cps[2], &cps[6], &cps[7],
 			&vec![cps[3].clone(), cps[4].clone(), cps[5].clone()].concat(),
-			4, false, Some(vec_cfg));
+			4, false, Some(vec_cfg), shift == 0);
 		(locs, locs_final)
 	}
 
@@ -2595,7 +2611,7 @@ pub mod tests_fsm_adv_gadget{
 	fn test_fsm_adv_halo_straddle(){
 		let halo = vec![Fr::from(6u32), Fr::from(3u32),
 			Fr::zero(), Fr::zero()]; //"c" then filler
-		let (locs, locs_final) = build_fsm_halo_locs(&halo, 4);
+		let (locs, locs_final) = build_fsm_halo_locs(&halo, 4, 0);
 		//boundary loc committed at inp_loc+nlen = 1+62 = 63 (NOT +M).
 		assert_eq!(locs[1], Fr::from(63u32),
 			"oup_loc must stay at the true boundary");
@@ -2606,9 +2622,23 @@ pub mod tests_fsm_adv_gadget{
 			"no loc may exceed nlen+M+inp_loc");
 
 		//negative control: halo off -> "abc" never completes.
-		let (locs0, locs_final0) = build_fsm_halo_locs(&[], 0);
+		let (locs0, locs_final0) = build_fsm_halo_locs(&[], 0, 0);
 		assert_eq!(locs0[1], Fr::from(63u32));
 		assert!(locs_final0.iter().all(|x| *x <= Fr::from(63u32)),
 			"without halo, no accepting loc may exceed the boundary");
+	}
+
+	/// T975 (NEW-5): oup_loc is the next chunk's inp_loc (fold link)
+	/// and dan's default_min - 1, so the circuit must pin it to
+	/// inp_loc + nlen. A +1 shift (63 -> 64) moves every later loc
+	/// and lets bwd pruning drop a real row; -1 likewise. Rejected,
+	/// with and without the halo (M = 4 does not move the boundary).
+	#[test]
+	fn test_t975_fsm_oup_loc_shift_rejected(){
+		let halo = [Fr::from(6u32), Fr::from(3u32), Fr::zero(), Fr::zero()];
+		for d in [1i64, -1] {
+			build_fsm_halo_locs(&[], 0, d);
+			build_fsm_halo_locs(&halo, 4, d);
+		}
 	}
 }

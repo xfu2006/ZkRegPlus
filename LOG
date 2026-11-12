@@ -32120,13 +32120,15 @@ Goal 5. B3p
 	[a] B1-B2: full byte and nibble translation, repeat limit translation bug 
 
 Thursday 11/12/2026
+Goal 1. B3p
+	[a] B4: fix preprocessing line for ?:
+	[b] B4: fix handling of ()
+	[c] no change of iccuit size but incrased false ositive rate from
+			0.93% to 1.3%
 Goal 1. B2
 	[a] T970: initial chunk no check of carrie-in q_i
 		-> +1cs 
 	[b] NEW-5: fsm inp/oup match issue
-Goal 2. B3p
-	[a] B4: fix preprocessing line for ?:
-	[b] B4: fix handling of ()
 
 	
 
