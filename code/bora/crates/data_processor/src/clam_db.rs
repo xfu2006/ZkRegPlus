@@ -53,11 +53,16 @@ pub const STATE_BIT:usize =  24;
 /// The bit-width of RANGE2 table 
 /// IN PRODUCTION NEEDS TO CHANGE THE SAME SIZE OF STATE_BIT
 
-// the following are trival related sub-table ids
-// they are located at the very beginning of the entire lkup
-pub const TRI_VAL:u32 = 0x20000001;
-pub const TRI_OP:u32 = 0x20000002;
-pub const TRI_TRUTH_TBL:u32 = 0x20000003;
+// the following are trival related sub-table ids (no gadget reads them).
+// T978 moved them off 0x20000001..3 = pm_acdfa_id(0,false)+1..+3, the cs
+// SED ACDFA's NON_FINAL/FINAL/TRANSITIONS. There accepting states 1..3
+// also read NON_FINAL (fsm LogUp weight 0, hit dropped) and the truth rows
+// acted as transitions. Keep them above every raw u32 sub-table band.
+pub const TRI_VAL:u32 = 0x7A000001;
+pub const TRI_OP:u32 = TRI_VAL + 1;
+pub const TRI_TRUTH_TBL:u32 = TRI_VAL + 2;
+const _: () = assert!(TRI_VAL > ID_SIG_NO_CRIT_COUNT,
+	"T978 TRI ids must sit above every raw u32 sub-table band");
 
 // the following are sub-table ids
 pub const CHAR:u32 = 0x70000001;
@@ -81,14 +86,17 @@ pub const CRIT_IGC_STATE_2_SIG:u32 = 0x10000105;
 pub const CRIT_IGC_STATE_SIG_COUNT:u32 = 0x10000106;
 pub const CRIT_IGC_STATES:u32 = 0x10000107;
 
-// offset definitino for each acdfa in lkup.
+// offset definition for each acdfa in lkup, as add_acdfa_to_lkup writes
+// them (fsm_adv and sigs read fsm_id + the same literals). T978 fixed
+// FINAL..STATES, which were one too high (nothing read them).
 pub const INIT:u32= 0;
 pub const NON_FINAL:u32=1;
-pub const FINAL:u32=3;
-pub const TRANSITIONS:u32=4;
-pub const STATE_2_SIG:u32=5;
-pub const STATE_SIG_COUNT:u32=6;
-pub const STATES:u32=7;
+pub const FINAL:u32=2;
+pub const TRANSITIONS:u32=3;
+pub const STATE_2_SIG:u32=4;
+pub const STATE_SIG_COUNT:u32=5;
+pub const STATES:u32=6;
+pub const STATE_2_PAT:u32=7;
 pub const STORE_SUBSIG:u32=8; //for subsig-state-pat info
 pub const STORE_SUBSIG_STEP:u32=9; //for subsig-step info
 pub const STORE_SUBSIG_INFO:u32=10; //for subsig-step component subsig and other
@@ -122,9 +130,9 @@ pub const ID_SIG_NO_CRIT:u32 = 0x73010001;
 pub const ID_SIG_NO_CRIT_COUNT:u32 = 0x73020001;
 
 /* COMMENT: each bag acdfa has the following entries see above.
-	INIT (offset: 0), NON_FINAL, FINAL, 
-	TRANSITIONS, STATE_2_SIG, STATE_SIG_COUNT, 
-	STATE_SIG_COUNT, STATES, SUBSIG_PATTEN_STORE (offset: 8)
+	INIT (offset 0), NON_FINAL, FINAL, TRANSITIONS, STATE_2_SIG,
+	STATE_SIG_COUNT, STATES, STATE_2_PAT (offset 7). Offsets 0..0xFF
+	above an ACDFA base are reserved for that ACDFA (T978 test).
 */
 
 /// check the percentage of non-zero items (assuming padded item
@@ -2125,9 +2133,9 @@ impl <F:PrimeField> ClamavDB<F>{
 	/// when sig_id is 0, it stands for ALL. 
 	/// It returns the corresponding ACDFA sub-tbl_id
 	/// This id stands for the INIT state of that ACDFA.
-	/// following that we have 
-	/// (INIT, NON_FINAL, TRANSITIONS, STATE_2_SIG, STATE_SIG_COUNT
-	///  CRIT_STATES, STORE_SUBSIG) 
+	/// following that we have (offsets 0..7, see INIT..STATE_2_PAT)
+	/// (INIT, NON_FINAL, FINAL, TRANSITIONS, STATE_2_SIG,
+	///  STATE_SIG_COUNT, STATES, STATE_2_PAT)
 	pub fn pm_acdfa_id(sig_id: usize, b_igc: bool)->u32{
 		let start:u32 = if !b_igc {0x20000000} else {0x30000000};
 		let mixed = start + ((sig_id as u32)<<8); //leave about 16 subtbls
@@ -2613,9 +2621,9 @@ impl <F:PrimeField> ClamavDB<F>{
 			&self.aggressive_max_span_nibbles).unwrap();
 		write_to_file(&format!("{}/aggressive_meta.txt", &sdir),
 			&s_agg);
-		//cache format tag (T936, bumped by T966/T969/T961: lookup and
-		//sig compile changed); caches without it are rebuilt
-		write_to_file(&format!("{}/fmt_t961.txt", &sdir), "1");
+		//cache format tag (T936, bumped by T966/T969/T961/T978 as lookup
+		//and sig compile changed). Caches without it are rebuilt
+		write_to_file(&format!("{}/fmt_t978.txt", &sdir), "1");
 
 	}
 
@@ -2715,7 +2723,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			"vec_bag_words.txt", "vec_bag_words_igc.txt", "map_crit_pat.txt",
 			"map_crit_pat_igc.txt", "dfa_crit.txt", "dfa_crit_igc.txt",
 			"sig_to_id.txt", "lkup.txt", "bundle_subsig.txt", "bundle_subsig_igc.txt",
-			"fmt_t961.txt"
+			"fmt_t978.txt"
 		];
 		for f in files {
 			if !file_exists(&format!("{}{}", sdir, f)) {
@@ -3417,5 +3425,45 @@ mod tests_clam_db{
 			}
 		}
 		assert_eq!(b_one, FIXED_NH4 && FIXED_NH5, "one tag / one value per key");
+	}
+
+	/// T978 red. Each ACDFA window [base, base+0xFF] holds only that
+	/// ACDFA's own rows (pm cs/igc entry 0, crit cs/igc). At HEAD the TRI
+	/// tables sit at pm cs base+1..+3 = NON_FINAL/FINAL/TRANS, so accepting
+	/// states 1..3 read NON_FINAL and the truth rows act as transitions.
+	/// Every TRANS row must also stay < 2^56 (T936 S7, 4-slot packing).
+	#[test]
+	fn test_t978_acdfa_window_owned(){
+		use crate::clam_db::{CRIT_INIT, CRIT_IGC_INIT};
+		let (db, _neo) = t965_nh_db("t978");
+		let set = db_lkup_set(&db);
+		let (bs, bi) = (&db.bundle_subsig, &db.bundle_subsig_igc);
+		let wins = [
+			(&bs.vec_acdfa[0], ClamavDB::<Fr>::pm_acdfa_id(0, false),
+				&bs.vec_map_pattern_sig[0]),
+			(&bi.vec_acdfa[0], ClamavDB::<Fr>::pm_acdfa_id(0, true),
+				&bi.vec_map_pattern_sig[0]),
+			(&db.dfa_crit, CRIT_INIT, &db.map_crit_pat),
+			(&db.dfa_crit_igc, CRIT_IGC_INIT, &db.map_crit_pat_igc),
+		];
+		let max56 = Fr::from(1u64 << 56);
+		let mut foreign: Vec<(u32, (Fr,Fr))> = vec![];
+		for (acdfa, base, pats) in wins {
+			let mut lk = LookupTableTwoCol_Inst::<Fr>::dummy();
+			let n0 = lk.vals.len();
+			ClamavDB::<Fr>::add_acdfa_to_lkup(&mut lk, acdfa, base, pats,
+				&db.sig_to_id);
+			let own: HashSet<(Fr,Fr)> = lk.vals[n0..].iter().cloned().collect();
+			assert!(own.is_subset(&set), "own rows of {:#x} missing", base);
+			let (lo, hi, tr) = (Fr::from(base), Fr::from(base + 0xFF),
+				Fr::from(base + 3));
+			for r in set.iter().filter(|r| r.0 >= lo && r.0 <= hi){
+				if !own.contains(r) { foreign.push((base, *r)); }
+				assert!(r.0 != tr || r.1 < max56,
+					"T978 TRANS row {:?} >= 2^56 at {:#x}", r.1, base);
+			}
+		}
+		assert!(foreign.is_empty(), "T978 {} foreign rows in ACDFA \
+			windows, first {:?}", foreign.len(), foreign.first());
 	}
 }

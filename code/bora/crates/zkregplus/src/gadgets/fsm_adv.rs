@@ -1503,6 +1503,12 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		// weights m_tbl_1 + 1 with m_tbl_1 pinned to RANGE2) and by the
 		// set-only tie of sorted_tbl (db.rs). The LogUp still forces at
 		// least one copy (O1, 10/13). Keep the RANGE2 pin.
+		// All of this needs the window [fsm_id, fsm_id+0xFF] to hold
+		// only this ACDFA's rows (T978). A foreign (fsm_id+1, s) row lets
+		// an accepting s take sel 0, so its hit drops out of the LogUp.
+		// A foreign fsm_id+3 row >= 2^70 (the packed slot weight below)
+		// can carry into the next slot of the 4-transition check. The
+		// TRI_* tables sat at pm cs +1..+3 until T978 moved them.
 		//check_arr_eq(&si_states,&tblid_state,"checking states in range")?;
 		//check_arr_eq(&si_trans,&tblid_trans,"checking trans in range")?;
 
@@ -2688,5 +2694,73 @@ pub mod tests_fsm_adv_gadget{
 		assert!(lf.contains(&Fr::from(max - 1)), "control hit missing");
 		let (_, lf) = build_fsm_halo_locs_at(&halo, 4, 0, max - 64, false);
 		assert!(lf.contains(&Fr::from(max)), "no FSM hit at max");
+	}
+
+	/// T978 red (gadget). A hit on accepting state 1..3 labelled NON_FINAL
+	/// (witness from an ACDFA clone with no accepting state) keeps the
+	/// gadget SAT, so the verdict is the outer (si, state) lookup. HEAD
+	/// passes it via TRI_VAL (false clean). A panic is never a rejection.
+	#[test]
+	fn test_t978_fsm_hit_dropped_as_nonfinal(){
+		use crate::gadgets::word_extract::tests_word_extract_gadget::{
+			test_gadget_adv_nc, outer_lkup_ok};
+		let db = ClamavDB::<Fr>::build_db_from_dir("debug/sed/simple")
+			.expect("db err");
+		let (bundle, fsm_id) = (&db.bundle_subsig,
+			ClamavDB::<Fr>::pm_acdfa_id(0, false));
+		let acdfa = &bundle.vec_acdfa[0];
+		let p = (0..acdfa.patterns.len()).find(|&i|
+			!acdfa.pattern_to_accept_ids[i].is_empty()
+			&& acdfa.pattern_to_accept_ids[i].iter().all(|&s| s < 3)
+			&& acdfa.patterns[i].chars().all(|c| c.is_ascii_hexdigit()))
+			.expect("fixture: no literal pattern on states 1..3");
+		let mut own = vec![Fr::zero(); LEGS];
+		for (k, c) in acdfa.patterns[p].chars().enumerate(){
+			own[10 + k] = Fr::from(c.to_digit(16).unwrap());
+		}
+		let word = pad_word_to_multiple::<Fr>(&pack_nibbles(&own), 1);
+		let cap = FsmAdvCapacity{max_nibble_len: LEGS, acdfa_state_part_bits:
+			acdfa.state_part_bits, subsigs: 5, avg_pats_per_subsig: 4,
+			basis_pats_in_trace: 15*100, basis_unique_states: 40*100,
+			basis_acc_states: 10*100, halo_nibbles: 0};
+		let run = |evil: bool| {
+			let stmt_wea = WordExtractAdvAdvice::new(&word, word.len(), false)
+				.expect("wea").stmt_container;
+			let cfg_wea = stmt_wea.lock().unwrap().get_cfg();
+			let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
+				.unwrap().lock().unwrap().to_vec();
+			let mut wit = acdfa.clone();
+			if evil { wit.num_acc_states = 0; } //every state reads NON_FINAL
+			let stmt_faa = FsmAdvAdvice::new(false, 1, &nibbles, &[], &wit,
+				Fr::from((acdfa.init_state + 1) as u32), Fr::from(1u32),
+				&vec![Fr::from(acdfa.gen_subsig_id(1, 1) as u32)], &cap, fsm_id,
+				&bundle.vec_subsig_stores[0], 0).expect("faa").stmt_container;
+			let mut vec_cfg = vec![cfg_wea.clone(),
+				stmt_faa.lock().unwrap().get_cfg()];
+			ContainerConfig::adjust_locations(&mut vec_cfg);
+			let sf = stmt_faa.lock().unwrap().search_container(
+				"fsm_adv_stmt_cs fsm_acc states_final").unwrap()
+				.lock().unwrap().to_vec();
+			let (c1, c2) = (stmt_wea.lock().unwrap().gen_stmt_components(),
+				stmt_faa.lock().unwrap().gen_stmt_components());
+			let cps = c1.0.into_iter().zip(c2.0.into_iter())
+				.map(|(a,b)| vec![a,b].concat()).collect::<Vec<Vec<Fr>>>();
+			let mut fag = FsmAdvGadget::<Fr>::new(false, 1, acdfa, &cap,
+				fsm_id, &vec![cfg_wea.clone()], &bundle.vec_subsig_stores[0]);
+			fag.set_container_cfg(vec_cfg.clone().into(), 1);
+			let _sizes = fag.get_to_add_size();
+			let (sat, _nc, pan) = test_gadget_adv_nc::<Fr>(Arc::new(fag),
+				&word, &cps[0], &cps[1], &cps[2], &cps[6], &cps[7],
+				&[cps[3].clone(), cps[4].clone(), cps[5].clone()].concat(),
+				4, false, Some(vec_cfg));
+			(sat && !pan, outer_lkup_ok(&cps, &db.lkup), sf)
+		};
+		let (sat, ok, sf) = run(false);
+		let hits: Vec<&Fr> = sf.iter().filter(|x| !x.is_zero()).collect();
+		assert!(sat && ok && !hits.is_empty() && hits.iter().all(|x|
+			**x <= Fr::from(3u32)), "control/fixture: hits on 1..3 {:?}", hits);
+		let (sat, ok, sf) = run(true);
+		assert!(sat && sf.iter().all(|x| x.is_zero()), "evil: SAT, no hit");
+		assert!(!ok, "T978 accepting state read NON_FINAL passes the DB lookup");
 	}
 }
