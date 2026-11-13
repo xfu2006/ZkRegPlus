@@ -32131,7 +32131,7 @@ Goal 1. B2
 	[b] NEW-5: fsm inp/oup match issue
 	[c] T937: pat order does not go up, block range check missing -> DONE
 	[d] T976: design yet.  Fix FSM skip wrong rows.
-		-> implement
+		-> implement -> approved
 Goal 2. B3.
 	[a] T973: fix NFA to DFA translation bug (64-bit too low)
 		-> implemented and tested
@@ -32144,6 +32144,17 @@ Goal 2. B3.
 		T969 SPEC-1: (0|1)>1, improve the conservative approximation
 		T969b (2&3)>3 has false negative. approximate it
 			with 2&3 still conservative
+	[c] design T961 now
+
+Friday 11/13/2026
+Goal 1. B2
+	[a] T977: 
+Goal 2. B3
+	[a] T961: duplicated subsig
+		F1: subsig duplicated -> fix: enforce strict order
+		NH3: cs and igc share type tag: fix separate IGC subsig type
+		union proof: proves the same - remove
+		full ist panic: should raise CapErr
 	
 
 	

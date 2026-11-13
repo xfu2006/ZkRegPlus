@@ -40,7 +40,7 @@ use crate::gadgets::{
 		encode_cols, encode_cols_var,
 		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
 		check_prod_zero, better_select, verify_encode_cols_in_range},
-	db::{assert_logup,  gen_union_prf, verify_union_prf,
+	db::{assert_logup,
 		//verify_encoded_table, assert_well_formed_sorted
 	},
 	traits::{
@@ -60,7 +60,7 @@ use data_processor::{
 		CompOp,SubSigType,ClamavSig},
 	clam_db::{RANGE2,ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP,
 		ID_COMP_OP, ID_COMP_NUM, ID_COMP_SUBSIG,ID_MIN_REQUIRED,
-		ID_SUBSIG_TYPE, reverse_pm_bounds,
+		ID_SUBSIG_TYPE, ID_SUBSIG_TYPE_IGC, reverse_pm_bounds,
 //		ID_SUBSIG_IGC
 	},
 	hex_acdfa::HexACDFA,
@@ -296,6 +296,13 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let off_cs = if capacity.b_skip_igc {-1} else {-2};
 		let pad_cs = vec![F::zero(); capacity.subsigs_cs-inp_subsigs_cs.len()];
 		let inp_subsigs_cs = [&pad_cs[..], &inp_subsigs_cs[..]].concat();
+		// E2 (T961): slot 0 must be the dummy 0 (assert in
+		// gen_synthesis_subsig_combo); a full list has none. Real ids
+		// are nonzero, so this fires iff len == cap (or cap == 0).
+		if inp_subsigs_cs.first().map_or(true, |x| !x.is_zero()) {
+			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_cs"),
+				inp_subsigs_cs.len())]));
+		}
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 		let (eval_res_combo_cs, raw_res_cs) =
 			Self::gen_eval_subsig_by_sq_combo(false, off_cs, //case sensitive
@@ -616,6 +623,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			else {capacity.subsigs_cs};
 		assert!(inp_subsigs.len()==cap_subsigs);
 		let n = inp_subsigs.len();
+		assert!(n >= 1, "by_acc: empty subsig list (cap {}, b_igc={})",
+			cap_subsigs, b_igc);
 
 		//1. external ref to acc_out (committed; no extra space)
 		let acc_ext = acc_ct.lock().unwrap().duplicate_as_external_adv(
@@ -713,8 +722,22 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		res.lock().unwrap().add_container(Arc::new(Mutex::new(acc_ext)));
 		res.lock().unwrap().add_col(Col::new(inp_subsigs.clone(),
 			"inp_subsig", IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(vec![frg;n],
+		// T961 F1: inp is ranged by "inp_subsig_chain" (LOAD-BEARING,
+		// see validate_eval_subsig_by_acc), not by its own si.
+		res.lock().unwrap().add_col(Col::new_const(vec![zero;n],
 			"sid_inp_subsig", IDX_SI_DATA));
+		// chain d (n+1 cells, all RANGE2): d[0] = inp[0], d[n] = inp[n-1],
+		// d[i] = inp[i] - inp[i-1] - [inp[i-1] != 0] in between. A const
+		// si col uses only its 1st value in circuit: keep it uniform.
+		let nz = |x: &F| if x.is_zero() {zero} else {F::one()};
+		let chain: Vec<F> = (0..=n).map(|i| if i == 0 {inp_subsigs[0]}
+			else if i == n {inp_subsigs[n-1]}
+			else {inp_subsigs[i] - inp_subsigs[i-1] - nz(&inp_subsigs[i-1])})
+			.collect();
+		res.lock().unwrap().add_col(Col::new(chain, "inp_subsig_chain",
+			IDX_DATA));
+		res.lock().unwrap().add_col(Col::new_const(vec![frg;n+1],
+			"sid_inp_subsig_chain", IDX_SI_DATA));
 		res.lock().unwrap().add_col(Col::new(encoded_last,
 			"inp_subsig_encoded", IDX_DATA));
 		res.lock().unwrap().add_col(Col::new_const(vec![zero;n],
@@ -799,8 +822,9 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let frg = F::from(RANGE2);
 
 		//0.5 merge the inp_subsigs and raw_result.
-		//NOTE that inp_subsigs is simply a concat of input_subsigs_cs and igc
-		// but we do need the proof for disjoint of two sets.
+		//NOTE that inp_subsigs is simply a concat of input_subsigs_cs and igc.
+		// Disjointness (one slot per subsig overall) is enforced by the
+		// NH3 arm TYPE tag + the per-list F1 chain (T961).
 		if b_debug{//inp_subsigs_cs and inp_subsigs_igc are disjoint
 			//for non-zero values
 			let vec1= inp_subsigs_cs.iter().filter(|x| !x.is_zero())
@@ -816,15 +840,10 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		}
 		let inp_subsigs = vec![&inp_subsigs_cs[..], &inp_subsigs_igc[..]]
 			.concat();
-		let prf_inp_subsigs = gen_union_prf(
-			&inp_subsigs_cs, &inp_subsigs_igc, &inp_subsigs,
-			"prf_inp_subsigs"
-		).unwrap();
 		let raw_result = vec![&raw_result_cs[..], &raw_result_igc[..]]
 			.concat();
 		let n1 = n1_cs + n1_igc;
 		assert!(inp_subsigs.len()==n1 && raw_result.len()==n1);
-		res.lock().unwrap().add_container(prf_inp_subsigs);
 
 
 		//1. prepare the result of general_regex
@@ -896,8 +915,10 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			vec_sid_op[i] = sid_op;
 			vec_sid_num[i] = sid_num;
 			vec_type[i] = F::from(subsig_type as u8);
+			//NH3 (T961): TYPE tag by arm (position), pads included
+			let ty = if i>=n1_cs {ID_SUBSIG_TYPE_IGC} else {ID_SUBSIG_TYPE};
 			vec_sid_type[i] = SubsigInfoStore::gen_info_tbl_id(acdfa_id,
-				f_subsig, ID_SUBSIG_TYPE);
+				f_subsig, ty);
 		}
 
 		//3. prepare the result for the subsig_count_constraint
@@ -1781,15 +1802,33 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//2. per entry: subsig_raw_eval ∈ {1,3} (dummy subsig=0 exempt);
 		//   maybe_masked[i] = encoded_last[i] iff Maybe, else 0.
 		let mut maybe_masked = Vec::with_capacity(n);
+		let mut v_dummy = Vec::with_capacity(n);
 		for i in 0..n{
 			let v = &subsig_raw_eval[i];
 			let is_dummy = is_zero_better(&inp_subsig[i], &cs).unwrap();
+			v_dummy.push(is_dummy.clone());
 			let prod = (v - &one) * (v - &three);
 			check_prod_zero(&(&one - &is_dummy), &prod, lb_zero.clone(),
 				"aggr_raw_eval_in_{1,3}")?;
 			let b_maybe = is_zero_better(&(v - &three), &cs).unwrap();
 			maybe_masked.push(&encoded_last[i] * &b_maybe);
 		}
+
+		//2.5 T961 F1 (W1): d = "inp_subsig_chain" is RANGE2. inp[0] = d[0];
+		//inp[i] = inp[i-1] + 1 - is_dummy[i-1] + d[i]; inp[n-1] = d[n].
+		//=> zeros form a prefix and nonzero ids strictly ascend, so no
+		//subsig owns two slots (a Maybe one absorbing acc, a False one
+		//exporting (s,False)). LOAD-BEARING: it is also the range of
+		//every inp (sid_inp_subsig is 0): no wrap, as the sum stays
+		//< n*(2^rb+1) << p and the last slot is < 2^rb.
+		let d = get("inp_subsig_chain");
+		assert!(d.len() == n + 1);
+		check_eq(&inp_subsig[0], &d[0], "F1 chain start")?;
+		for i in 1..n{
+			check_eq(&inp_subsig[i], &(&inp_subsig[i-1] + &one
+				- &v_dummy[i-1] + &d[i]), "F1 strict ascent")?;
+		}
+		check_eq(&inp_subsig[n-1], &d[n], "F1 chain end")?;
 
 		//3. SOUNDNESS logup: acc_out subset-of maybe_masked
 		assert_logup(cs.clone(), &acc_out, &maybe_masked, &mtbl, &r1)?;
@@ -2005,12 +2044,9 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 
 		//1. verify the correctness of inp_subsigs with gen_regex_res
 		//NOTE that we simply retrieve from the eval_res_combo of
-		//cs version and igc version.
-		// Here for the valididty: we call verify_union_prf
-		// to make sure the subsigs in cs and igc parts are DISJIONT (regarding
-		//   non-zero) values. This ensures that for any-subsig involved later
-		//  there is NO DUPLICATES that affect valididity.
-		// COST: 4 * n where n is the sum of inp_subsig_cs and inp_subsig_igc
+		//cs version and igc version. One slot per subsig overall: per list
+		// by F1 (strict ascent, aggr; nonaggr after T960), across lists by
+		// the NH3 arm TYPE tag below (T961; the old union proof was vacuous).
 		let input_subsigs_cs= eval_res_combo_cs
 			.get_container("inp_subsig").unwrap().lock().unwrap().to_vec();
 		let input_subsigs_igc= if self.capacity.b_skip_igc { vec![] }
@@ -2027,14 +2063,6 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			.concat();
 		assert!(inp_subsigs.len()==gen_regex_res.len());
 		assert!(inp_subsigs.len() == n);
-		//skip mode: the union with the empty igc set is the cs list
-		//itself (same vars); disjointness is vacuous -- no proof needed
-		if !self.capacity.b_skip_igc {
-			let prf_inp_subsigs = synthesis_res_combo
-				.get_container("prf_inp_subsigs")?;
-			verify_union_prf(&input_subsigs_cs, &input_subsigs_igc,
-				&inp_subsigs, &prf_inp_subsigs, &r1)?;
-		}
 
 
 		//2. verify the result of counter constraint 
@@ -2072,13 +2100,18 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let piece_op = new_const_var(&cs, F::from(ID_COMP_OP as u32)); 
 		let piece_num = new_const_var(&cs, F::from(ID_COMP_NUM as u32)); 
 		let piece_type= new_const_var(&cs, F::from(ID_SUBSIG_TYPE as u32)); 
+		//NH3 (T961): arm tag, cs slots first then igc slots
+		let piece_type_igc = new_const_var(&cs,
+			F::from(ID_SUBSIG_TYPE_IGC as u32));
+		let n1_cs = input_subsigs_cs.len();
 		for i in 0..n{//non-constants
 			let f3 = &inp_subsigs[i];
 			let f3_fac = f3 * &factor_var; 
 			let prefix = &part1 + &f3_fac;
 			let exp_sid_op = &prefix + &piece_op;
 			let exp_sid_num = &prefix + &piece_num;
-			let exp_sid_type= &prefix + &piece_type;
+			let exp_sid_type= &prefix +
+				if i < n1_cs {&piece_type} else {&piece_type_igc};
 			check_eq(&exp_sid_op, &vec_sid_op[i], "sid_op check fails")?;
 			check_eq(&exp_sid_num, &vec_sid_num[i], "sid_num check fails")?;
 			check_eq(&exp_sid_type, &vec_sid_type[i], "sid_type check fails")?;
@@ -3264,6 +3297,7 @@ use utils::consts::{read_global_config, get_global_config};
 					false, //not legacy mode
 					Some(vec_cfg),
 				);
+				T965_R1CS_SAT.with(|c| c.set(sat)); //T961 NH3 control
 				res = (sat && outer_lkup_ok(&cps, &db.lkup), nc, panicked);
 			}
 
@@ -3361,6 +3395,12 @@ use utils::consts::{read_global_config, get_global_config};
 		(f_nibbles, info, sig.clone())
 	}
 
+	thread_local!{
+		/// R1CS-only verdict of the last csa_case run (no outer lookup).
+		pub(crate) static T965_R1CS_SAT: std::cell::Cell<bool> =
+			std::cell::Cell::new(false);
+	}
+
 	// ---- T965 helpers M4b + context (TEST ONLY) ----
 	/// column values of `c` (one level).
 	pub(crate) fn t965_col(c: &Container<Fr>, n: &str) -> Vec<Fr> {
@@ -3372,6 +3412,19 @@ use utils::consts::{read_global_config, get_global_config};
 		let mut col = col.lock().unwrap();
 		assert!(col.data.len() == v.len(), "t965_set {}: len", n);
 		col.data = v;
+	}
+
+	/// T961: recompute the F1 chain "inp_subsig_chain" from the (possibly
+	/// forged) inp with the gen rule, in the field, so a dup slot gives
+	/// d = p-1 and only the RANGE2 cell can reject it. Identity on
+	/// honest input.
+	pub(crate) fn t965_fix_chain(c: &Container<Fr>) {
+		let inp = t965_col(c, "inp_subsig");
+		let n = inp.len();
+		let nz = |x: &Fr| if x.is_zero() {Fr::zero()} else {Fr::one()};
+		t965_set(c, "inp_subsig_chain", (0..=n).map(|i| if i == 0 {inp[0]}
+			else if i == n {inp[n-1]}
+			else {inp[i] - inp[i-1] - nz(&inp[i-1])}).collect());
 	}
 
 	/// what the later stages need from the earlier ones (M4b).
@@ -3387,10 +3440,9 @@ use utils::consts::{read_global_config, get_global_config};
 		})
 	}
 
-	/// T965 M4b (non-aggr; aggr Eval = mtbl_membership + mtbl_seed):
-	/// recompute the logup m-tables of stage `st`
-	/// from its possibly tampered columns (the union proof needs none: the
-	/// circuit's union is the concat, so its zero counts always agree),
+	/// T965 M4b (non-aggr; aggr Eval = mtbl_membership + mtbl_seed + the
+	/// T961 F1 chain via t965_fix_chain): recompute the logup m-tables
+	/// (and the chain) of stage `st` from its possibly tampered columns,
 	/// as the advice does, so a tamper is judged by the constraints, not
 	/// by a stale m-table. Identity on honest input. Records the cs ++ igc
 	/// inp / raw lists and the final results in `ctx` for later stages.
@@ -3421,6 +3473,7 @@ use utils::consts::{read_global_config, get_global_config};
 				z.clone(), z], &vec![0,1,2,3,4]);
 			t965_set(c, "mtbl_seed", gen_m_table(&enc_inp,
 				&sub("seed_ref", "encoded")));
+			t965_fix_chain(c);
 			ctx.inp.extend(inp);
 			ctx.raw.extend(raw);
 		},
@@ -3486,8 +3539,11 @@ use utils::consts::{read_global_config, get_global_config};
 	// 2x2-clause fixture). A red test is SAT at HEAD and ends with
 	// assert_hole(tag, sat, FIXED_<id>); the fix commit flips its const. ----
 	const FIXED_V: bool = false;
-	const FIXED_F1: bool = false;
-	const FIXED_NH3: bool = false;
+	/// F1 aggr (T961). Non-aggr W1 needs BREAK1 and is closed by T960
+	/// (shared by_acc core), which flips FIXED_F1_NA.
+	const FIXED_F1: bool = true;
+	const FIXED_F1_NA: bool = false;
+	const FIXED_NH3: bool = true;
 	const FIXED_F2: bool = false;
 	const FIXED_F3: bool = false;
 	const FIXED_H1U: bool = false;
@@ -3677,7 +3733,9 @@ use utils::consts::{read_global_config, get_global_config};
 		let (sat, nc, _) = t965_run("pin_nonaggr", T965_SIG5, T965_DOC5, false,
 			None, None);
 		assert!(sat);
-		assert_eq!(nc, 2939, "csa sig5 constraint count moved");
+		//T961: 2939 - (2*50 + 6) = 2833, the union-proof verify dropped
+		//(2n inverses + 6, n = k_cs + k_igc = 25 + 25)
+		assert_eq!(nc, 2833, "csa sig5 constraint count moved");
 	}
 
 	/// BREAK1: rotate the (fully matched, steps 0..2) block of s in step
@@ -3806,7 +3864,7 @@ use utils::consts::{read_global_config, get_global_config};
 		let (sat, _, p) = t965_run("f1_dup_na", T965_SIG5, T965_DOC5, false,
 			None, Some(t965_f1_na_seam(s, slot.clone(), true, false)));
 		assert!(slot.get() > 0 && !p, "seam did not run / panicked");
-		assert_hole("F1/nonaggr", sat, FIXED_F1);
+		assert_hole("F1/nonaggr", sat, FIXED_F1_NA);
 	}
 
 	/// T965 NH3: the cs subsig s (Maybe) is listed again in the igc list
@@ -3858,12 +3916,23 @@ use utils::consts::{read_global_config, get_global_config};
 				t965_copy_slot(c, v, &T965_SYN_COLS, j, g.2);
 				t965_set_res(c, v, &["vec_counter_res", "vec_subsig_final_res"],
 					j, Fr::from(T965_FALSE));
+				if FIXED_NH3 { //worst case: the sid the circuit expects
+					use data_processor::{clam_db::ID_SUBSIG_TYPE_IGC,
+						type_def::SubsigInfoStore};
+					t965_set1(c, "vec_sid_type", j, SubsigInfoStore::
+						gen_info_tbl_id::<Fr>(0, field_to_usize(&s),
+						ID_SUBSIG_TYPE_IGC));
+				}
 			},
 			_ => {},
 		});
 		let (sat, _, p) = t965_run("nh3_cross", T965_SIG5, T965_DOC5, false,
 			None, Some(seam));
 		assert!(st0.borrow().3 > 0 && !p, "seam did not run / panicked");
+		if FIXED_NH3 { //control: csa R1CS (check_eq) accepts; the DB rejects
+			assert!(T965_R1CS_SAT.with(|c| c.get()),
+				"NH3 control: R1CS must be SAT, reject must be the missing lkup row");
+		}
 		assert_hole("NH3", sat, FIXED_NH3);
 	}
 
@@ -4072,7 +4141,7 @@ use utils::consts::{read_global_config, get_global_config};
 
 	// ---- T965 M5: neo discharge + csa harness (aggr and non-aggr) ----
 	const FIXED_ST: bool = false;
-	const FIXED_E2: bool = false;
+	const FIXED_E2: bool = true;
 
 	/// M5 knobs (all default off = honest).
 	#[derive(Default)]
@@ -4317,6 +4386,24 @@ use utils::consts::{read_global_config, get_global_config};
 		let r2 = t965_neo_aggr("green_aggr", T965_FWD_DOC0, T965NeoOpt{
 			seam: Some(Box::new(|_, _, _| {})), ..Default::default() });
 		assert!(r2.sat && r2.nc == r.nc, "G4: idle seam changed the verdict/cost");
+		//T961 F1 structure: inp si 0 (ranged by the chain), chain n+1
+		//cells with a uniform RANGE2 si, honest values < 2^rb
+		let seen = std::rc::Rc::new(std::cell::Cell::new(false));
+		let sn = seen.clone();
+		let r3 = t965_neo_aggr("green_aggr", T965_FWD_DOC0, T965NeoOpt{
+			seam: Some(Box::new(move |st, c, _| if let T965Stage::EvalCs = st {
+				use ark_ff::PrimeField;
+				use data_processor::clam_db::RANGE2;
+				let n = t965_col(c, "inp_subsig").len();
+				assert!(t965_col(c, "sid_inp_subsig").iter().all(|x| x.is_zero()));
+				let si = t965_col(c, "sid_inp_subsig_chain");
+				assert!(si.len() == n + 1 && si.iter().all(|x| *x == Fr::from(RANGE2)));
+				let lim = Fr::from(1u64 << read_global_config().range2_bit);
+				assert!(t965_col(c, "inp_subsig_chain").iter()
+					.all(|x| x.into_bigint() < lim.into_bigint()));
+				sn.set(true);
+			})), ..Default::default() });
+		assert!(seen.get() && r3.sat && !r3.panicked, "T961 F1 structure");
 	}
 
 	/// T965 M10 (aggr): csa cost pin of the fwd fixture at HEAD (B3 gate).
@@ -4324,7 +4411,9 @@ use utils::consts::{read_global_config, get_global_config};
 	fn test_t965_csa_pin_aggr(){
 		let r = t965_neo_aggr("pin_aggr", T965_FWD_DOC0, T965NeoOpt::default());
 		assert!(r.sat);
-		assert_eq!(r.nc, 1616, "csa aggr constraint count moved");
+		//T961: 1616 + (25 + 1) = 1642, F1 chain check_eq (n+1, k_cs = 25,
+		//b_skip_igc; its RANGE2 cells are outer-lookup cost, not in nc)
+		assert_eq!(r.nc, 1642, "csa aggr constraint count moved");
 	}
 
 	/// T965 N2 / ST: the matched s is never seeded (dan demand without s,
@@ -4372,9 +4461,16 @@ use utils::consts::{read_global_config, get_global_config};
 		const EV: [&str; 7] = ["inp_subsig", "inp_subsig_encoded", "enc_step",
 			"enc_pat", "enc_rgs", "enc_rge", "subsig_raw_eval"];
 		let slot = std::rc::Rc::new(std::cell::Cell::new((0usize, 0usize)));
-		let sl = slot.clone();
-		let seam: T965SeamFn = Box::new(move |st, c, v| match st {
+		// si_off: control, the chain's RANGE2 si zeroed on all n+1 cells
+		// (uniform) -> the forged dup must be SAT: the red verdict comes
+		// from the chain range cell, not from a stale witness.
+		let mk = |si_off: bool| -> T965SeamFn { let sl = slot.clone();
+		Box::new(move |st, c, v| match st {
 			T965Stage::EvalCs => {
+				if si_off {
+					let m = t965_col(c, "sid_inp_subsig_chain").len();
+					t965_set(c, "sid_inp_subsig_chain", vec![Fr::zero(); m]);
+				}
 				let a = t965_maybe_slot(c);
 				let inp = t965_col(c, "inp_subsig");
 				let b = inp.iter().rposition(|x| x.is_zero()).unwrap();
@@ -4392,9 +4488,16 @@ use utils::consts::{read_global_config, get_global_config};
 					b, Fr::from(T965_MAYBE));
 			},
 			_ => {},
-		});
+		}) };
+		if FIXED_F1 {
+			let r0 = t965_neo_aggr("f1_dup_ag", T965_FWD_DOC, T965NeoOpt{
+				seam: Some(mk(true)), ..Default::default() });
+			assert!(slot.get().1 > 0 && !r0.panicked && r0.sat,
+				"F1 control: chain range off must be SAT ({:?})", r0.err);
+			slot.set((0, 0));
+		}
 		let r = t965_neo_aggr("f1_dup_ag", T965_FWD_DOC, T965NeoOpt{
-			seam: Some(seam), ..Default::default() });
+			seam: Some(mk(false)), ..Default::default() });
 		assert!(slot.get().1 > 0 && !r.panicked, "seam did not run / panicked");
 		assert_hole("F1/aggr", r.sat, FIXED_F1);
 	}
@@ -4516,7 +4619,7 @@ use utils::consts::{read_global_config, get_global_config};
 			slot.clone(), false, true)), ..Default::default() });
 		assert!(slot.get() > 0 && !r.panicked && r.err.is_none(),
 			"F1/nonaggr/neo: panicked / {:?}", r.err);
-		assert_hole("F1/nonaggr/neo", r.sat, FIXED_F1);
+		assert_hole("F1/nonaggr/neo", r.sat, FIXED_F1_NA);
 	}
 
 	/// T965 G6 (V-EC guard): honest neo + csa non-aggr with an

@@ -98,6 +98,8 @@ pub const ID_COMP_OP:u32=0x70130002;
 pub const ID_COMP_NUM:u32=0x70130003;
 pub const ID_MIN_REQUIRED:u32=0x70130004;
 pub const ID_COMP_SUBSIG:u32=0x70130005;
+// T961 NH3: TYPE row of the igc info store (arm tag; cs keeps ID_SUBSIG_TYPE)
+pub const ID_SUBSIG_TYPE_IGC:u32=0x70130006;
 // the following are pice ids for SubsigStepStore's encoded_to_attribute table
 pub const ID_ENCODED_SUBSIG:u32=0x71090001;
 pub const ID_ENCODED_NORMAL_STEP:u32=0x71090002;
@@ -1180,6 +1182,7 @@ impl SubsigInfoStore{
 		lkup: &mut LookupTableTwoCol_Inst<F>, 
 		acdfa_id: u32,
 		_state_part_bits: usize, //deprecated. use read_global_config().range2_bit directly
+		b_igc: bool, //T961 NH3: selects the arm TYPE tag
 	) {
 		let factor = F::from(1u32 << read_global_config().range2_bit);
 		let max_val:usize = (1<<read_global_config().range2_bit) - 1;
@@ -1203,8 +1206,8 @@ impl SubsigInfoStore{
 					&format!("cannot find subsig_id: {}", subsig_id)).clone()
 			};
 			//1. the subsig_type
-			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, 
-				ID_SUBSIG_TYPE); 
+			let ty = if b_igc {ID_SUBSIG_TYPE_IGC} else {ID_SUBSIG_TYPE};
+			let tbl_id = Self::gen_info_tbl_id::<F>(acdfa_id, *subsig_id, ty);
 			let t_subsig_type = (tbl_id, F::from(rec.subsig_type));
 
 			//2. the comp_op 
@@ -1782,7 +1785,7 @@ impl <F:PrimeField> ClamavDB<F>{
 					.add_store_to_lkup(lkup, dfa_id, state_bits);
 			} else { st.add_store_to_lkup(lkup, dfa_id, state_bits); }
 			bundle.vec_subsig_info_stores[i]
-				.add_store_to_lkup(lkup, dfa_id, state_bits);
+				.add_store_to_lkup(lkup, dfa_id, state_bits, b_igc);
 		}
 		Ok( () )
 	}
@@ -2610,9 +2613,9 @@ impl <F:PrimeField> ClamavDB<F>{
 			&self.aggressive_max_span_nibbles).unwrap();
 		write_to_file(&format!("{}/aggressive_meta.txt", &sdir),
 			&s_agg);
-		//cache format tag (T936, bumped by T966/T969: lookup and sig
-		//compile changed); caches without it are rebuilt
-		write_to_file(&format!("{}/fmt_t966.txt", &sdir), "1");
+		//cache format tag (T936, bumped by T966/T969/T961: lookup and
+		//sig compile changed); caches without it are rebuilt
+		write_to_file(&format!("{}/fmt_t961.txt", &sdir), "1");
 
 	}
 
@@ -2712,7 +2715,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			"vec_bag_words.txt", "vec_bag_words_igc.txt", "map_crit_pat.txt",
 			"map_crit_pat_igc.txt", "dfa_crit.txt", "dfa_crit_igc.txt",
 			"sig_to_id.txt", "lkup.txt", "bundle_subsig.txt", "bundle_subsig_igc.txt",
-			"fmt_t966.txt"
+			"fmt_t961.txt"
 		];
 		for f in files {
 			if !file_exists(&format!("{}{}", sdir, f)) {
@@ -3236,7 +3239,7 @@ mod tests_clam_db{
 	// ---------------------------------------------------------------
 	use std::collections::HashSet;
 	use crate::clam_db::{SubsigInfoStore, ID_ENCODED_NORMAL_STEP,
-		ID_ENCODED_LAST_STEP, ID_SUBSIG_TYPE};
+		ID_ENCODED_LAST_STEP, ID_SUBSIG_TYPE, ID_SUBSIG_TYPE_IGC};
 	use crate::type_def::SubSigType;
 
 	const FIXED_NH4: bool = true;
@@ -3381,6 +3384,19 @@ mod tests_clam_db{
 		let ty = (SubsigInfoStore::gen_info_tbl_id::<Fr>(0, 0, ID_SUBSIG_TYPE),
 			Fr::from(SubSigType::GeneralRegex as u8));
 		assert!(set.contains(&ty), "subsig-0 TYPE row missing");
+		// T961 NH3: each arm's info store emits its own TYPE tag only
+		// (igc: TYPE_IGC, incl. subsig 0 for the igc pads)
+		let tyk = |u: usize, p: u32| SubsigInfoStore::gen_info_tbl_id::<Fr>(0, u, p);
+		let keys: HashSet<Fr> = db.lkup.vals.iter().map(|(k, _)| *k).collect();
+		assert!(set.contains(&(tyk(0, ID_SUBSIG_TYPE_IGC),
+			Fr::from(SubSigType::GeneralRegex as u8))), "subsig-0 TYPE_IGC row missing");
+		for (bd, own, other) in [(&db.bundle_subsig, ID_SUBSIG_TYPE, ID_SUBSIG_TYPE_IGC),
+			(&db.bundle_subsig_igc, ID_SUBSIG_TYPE_IGC, ID_SUBSIG_TYPE)]{
+			for u in bd.vec_subsig_info_stores[0].subsig_ids.iter(){
+				assert!(keys.contains(&tyk(*u, own)), "own TYPE row of {} missing", u);
+				assert!(!keys.contains(&tyk(*u, other)), "other-arm TYPE row of {}", u);
+			}
+		}
 		// universal: every subsig has ONE step-0 tag and every store key
 		// in the DB ONE value. Red on NH4 (and on NH5 when an ISED chain
 		// shares a key with the "all" chain); NH5 has its own red test.

@@ -927,8 +927,8 @@ basis_pats={} perc={} compress={}", q_type, res, size_pat,
 			//2.3 propgate from last step .. to 2 (included).
 			// NOTE that we never produce the bwdprf from step1 -> step0
 			// because we want to keep step0 for each subsig for future use
-			// we break from the loop when there is no more backward proof to produce
-			// (i.e., no more locs to delete from previous step).
+			// The loop walks the whole chain (steps-1 iterations, from the
+			// last step down to step 2); there is no early break.
 			if steps>=2{
 			  for j in 0..steps-1{//number of iterations:
 			  					  //LAST_STEP_ID - 2 + 1, e.g., for steps=2
