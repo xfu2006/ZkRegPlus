@@ -220,7 +220,9 @@ pub fn verify_encoded_table<F:PrimeField + ColEle>(
 /// *** ASSUMPTION: all cell values are in RANGE2 ***
 /// This reduces encoding cost.
 /// Well formed means that for each key there is a consecutive sequence
-/// of ID starting from 0 to count_1.
+/// of ID starting from 0 to count_1. T977: row 0 is pinned to id 0, and
+/// every other block opens after a closer (id = count), where 2(b) sets
+/// id 0. So no block opens mid-run (Fig alg_db: id[1] = 0).
 /// NOTE that the func does NOT guarantee key is sorted, nor val is sorted.
 /// IT does NOT guarantee that key is unique, i.e.,
 /// there might be cases that a same key appear MULTIPLE times,
@@ -229,7 +231,7 @@ pub fn verify_encoded_table<F:PrimeField + ColEle>(
 /// this "unique" state to pat block mapping is guaranteed by an
 /// extra check with the external lookup that encodes acdfa state-pat relation.
 ///
-/// COST: 3n
+/// COST: 3n-1 (3(n-1) transitions, closer, T977 pin)
 pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 	tbl: &std::sync::Arc<std::sync::Mutex<Container<FpVar<F>>>>,
 	keycol_name: &str, //default it's "key" but can be something else
@@ -320,6 +322,9 @@ pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
 		)?;
 
 	}
+	// T977: row 0 opens a block (id[0] = 0). Every other opener follows
+	// a closer, which 2(b) sets to id 0. 1 cs, no range assumption.
+	check_eq(&id[0], &FpVar::<F>::Constant(F::zero()), "T977 row 0 opens")?;
 	check_eq(&id[n-1], &count[n-1], "last row not good")?;
 	if b_debug{
 		assert!(cs.is_satisfied().unwrap());
@@ -3334,6 +3339,157 @@ use utils::consts::read_global_config;
 		let a = t976_sat(&[(0,0),(2,17),(2,m)]);
 		let b = t976_sat(&[(0,0),(2,17),(m,5)]);
 		assert!(!a && !b, "T976 hidden: loc=max {} pat=max {}", a, b);
+	}
+
+	// ALL_T977 round 3 tests. Paste into crates/zkregplus/src/gadgets/db.rs
+	// mod tests_db, right after test_t976_sentinel_src_rows_rejected.
+	// Uses only existing module imports (db.rs:2780-2792, 3113-3118):
+	// Container, Col, IDX_DATA, IDX_SI_DATA, RANGE2, Fr, Zero,
+	// ConstraintSystem, FpVar, UniformRand, test_rng, new_var,
+	// catch_unwind, AssertUnwindSafe, FrCtn. Others via fn-local `use`.
+	// Rust 1.76, edition 2021. Lines <= 80 cols at tab = 4.
+
+	// ---------------------------------------------------------
+	// T977 tests: row 0 of a wide-wellformed table opens a block
+	// ---------------------------------------------------------
+	/// T977: honest wide rows (key,val,id,count). 2 pads, state 1 ->
+	/// pats 11,12, state 2 -> pats 21,22,23.
+	const T977_WW: [[u32;4];7] = [[0,0,0,0],[0,0,0,0],[1,11,0,1],
+		[1,12,1,1],[2,21,0,2],[2,22,1,2],[2,23,2,2]];
+	/// T977: honest join rows (loc,state,pat,id,count) of the hits
+	/// (100,1),(200,1) and (400,2).
+	const T977_S1: [[u32;5];4] = [[100,1,11,0,1],[100,1,12,1,1],
+		[200,1,11,0,1],[200,1,12,1,1]];
+	const T977_S2: [[u32;5];3] = [[400,2,21,0,2],[400,2,22,1,2],
+		[400,2,23,2,2]];
+
+	/// T977: assert_wide_wellformed on GIVEN rows. Returns (SAT, nc
+	/// delta, witness delta) of the call. A panic counts as rejected.
+	fn t977_ww_run(rows: &[[u32;4]])->(bool, usize, usize){
+		use crate::gadgets::db::assert_wide_wellformed;
+		let t = Container::<Fr>::new("t977_ww");
+		for (j, nm) in ["key","val","id","count"].into_iter().enumerate(){
+			let c = rows.iter().map(|r| Fr::from(r[j])).collect::<Vec<Fr>>();
+			t.lock().unwrap().add_col(Col::new(c, nm, IDX_DATA));
+		}
+		catch_unwind(AssertUnwindSafe(||{
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let t = Container::rc_from(&t.lock().unwrap(), cs.clone());
+			let (nc, nw) = (cs.num_constraints(), cs.num_witness_variables());
+			let ok = assert_wide_wellformed(&t, "key", 0).is_ok()
+				&& cs.is_satisfied().unwrap();
+			(ok, cs.num_constraints()-nc, cs.num_witness_variables()-nw)
+		})).unwrap_or((false, 0, 0))
+	}
+
+	/// T977 test-only. The bundle of tbl_left_join_wide, but with GIVEN
+	/// join rows (c1,c2,val,id,count). Only the expansion is bypassed.
+	/// enc_c12, both lookup proofs and the const RANGE2 sid cols are
+	/// rebuilt in its add order (db.rs:2091-2141), so only the verifier
+	/// can reject the bundle.
+	fn mk_forged_join_bundle(col1: &[Fr], col2: &[Fr], tbl2: &FrCtn,
+		rows: &[[u32;5]])->FrCtn{
+		use crate::gadgets::commons::{encode_cols_better as enc,
+			gen_2d_lkup_prf as p2, gen_1d_lkup_prf as p1};
+		fn sl(v: &[Vec<Fr>])->Vec<&[Fr]>{ v.iter().map(|c| &c[..]).collect() }
+		let (n, rg) = (rows.len(), Fr::from(RANGE2));
+		let jc = (0..5).map(|j| rows.iter().map(|r| Fr::from(r[j]))
+			.collect::<Vec<Fr>>()).collect::<Vec<Vec<Fr>>>();
+		let t2 = ["key","val","id","count"].iter().map(|nm| tbl2.lock()
+			.unwrap().get_container(nm).unwrap().lock().unwrap().to_vec())
+			.collect::<Vec<Vec<Fr>>>();
+		let (res, jt, prf) = (Container::<Fr>::new("loc_state_pat_tbl"),
+			Container::<Fr>::new("join_tbl"), Container::<Fr>::new("prf"));
+		{
+			let mut p = prf.lock().unwrap();
+			p.add_col(Col::new(enc(sl(&jc[..2]), vec![0,1]), "enc_c12",
+				IDX_DATA));
+			p.add_col(Col::new_const(vec![Fr::zero(); n], "sid_enc_c12",
+				IDX_SI_DATA));
+			p.add_container(p2(sl(&jc[..2]), vec![col1, col2], "lkupprf_c1c2"));
+			p.add_container(p1(sl(&jc[1..]), sl(&t2), "lkupprf_tbl2"));
+			let mut g = jt.lock().unwrap();
+			for (j, nm) in ["c1","c2","val","id","count"].iter().enumerate(){
+				g.add_col(Col::new(jc[j].clone(), nm, IDX_DATA));
+				g.add_col(Col::new_const(vec![rg; n], &format!("sid_{}", nm),
+					IDX_SI_DATA));
+			}
+		}
+		res.lock().unwrap().add_container(jt);
+		res.lock().unwrap().add_container(prf);
+		res
+	}
+
+	/// T977: data of test_tbl_left_join_wide. FSM hits (loc,state) =
+	/// (0,0),(100,1),(200,1),(400,2), tbl2 = proj states-pats (8 rows).
+	fn t977_join_data()->(Vec<Fr>, Vec<Fr>, FrCtn){
+		use crate::gadgets::commons::two_col_to_wide_wellformed;
+		let fr = |v: &[u32]| v.iter().map(|x| Fr::from(*x))
+			.collect::<Vec<Fr>>();
+		let tbl2 = two_col_to_wide_wellformed::<Fr>(&fr(&[1,1,2,2,2]),
+			&fr(&[11,12,21,22,23]), 8, "proj_states_pats").unwrap();
+		(fr(&[0,100,200,400]), fr(&[0,1,1,2]), tbl2)
+	}
+
+	/// T977: 16 join rows = head, zero rows, tail.
+	fn t977_join_rows(head: &[[u32;5]], tail: &[[u32;5]])->Vec<[u32;5]>{
+		let z = vec![[0u32;5]; 16 - head.len() - tail.len()];
+		[head, &z[..], tail].concat()
+	}
+
+	/// T977 runner. true iff verify_tbl_left_join_wide accepts the rows
+	/// and cs is satisfied. A panic counts as rejected.
+	fn t977_join_sat(rows: &[[u32;5]])->bool{
+		use crate::gadgets::db::verify_tbl_left_join_wide as vfy;
+		let (locs, states, tbl2) = t977_join_data();
+		let b = mk_forged_join_bundle(&locs, &states, &tbl2, rows);
+		catch_unwind(AssertUnwindSafe(||{
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let r = new_var(&cs, Fr::rand(&mut test_rng()));
+			let v = |c: &Vec<Fr>| c.iter().map(|x| new_var(&cs, *x))
+				.collect::<Vec<FpVar<Fr>>>();
+			let t2 = Container::rc_from(&tbl2.lock().unwrap(), cs.clone());
+			let b = Container::rc_from(&b.lock().unwrap(), cs.clone());
+			vfy(&r, &r, &v(&locs), &v(&states), &t2, &b, cs.clone(), 0)
+				.is_ok() && cs.is_satisfied().unwrap()
+		})).unwrap_or(false)
+	}
+
+	/// T1. T977 W0 through every join check. Control: the helper on
+	/// honest rows equals tbl_left_join_wide and is SAT. Forged: only
+	/// (400,2,23,id 2,cnt 2) at row 0, then pads, then state 1. Both
+	/// lookups and HEAD's wellformed hold, so pats 21,22 at loc 400 never
+	/// reach pat_loc. HEAD: SAT (RED). After T977: UNSAT.
+	#[test]
+	fn test_t977_join_row0_drops_pats(){
+		use crate::gadgets::db::tbl_left_join_wide;
+		let (locs, states, tbl2) = t977_join_data();
+		let hon = t977_join_rows(&[], &[&T977_S1[..], &T977_S2[..]].concat());
+		let h = tbl_left_join_wide(&locs, &states, &tbl2, 16, "lsp").unwrap();
+		let b = mk_forged_join_bundle(&locs, &states, &tbl2, &hon);
+		assert!(b.lock().unwrap().to_vec() == h.lock().unwrap().to_vec(),
+			"T977 helper differs from tbl_left_join_wide");
+		assert!(t977_join_sat(&hon), "T977 honest control");
+		let forged = t977_join_rows(&[[400,2,23,2,2]], &T977_S1);
+		assert!(!t977_join_sat(&forged), "T977: pats 21,22 dropped, SAT");
+	}
+
+	/// T2. T977 W0 at the gadget: row 0 = (2,23,id 2,cnt 2), the LAST
+	/// row of state 2, then a pad and state 1. HEAD: SAT (RED). Cost
+	/// after T977: 3n-1 cs, 2(n-1) witnesses (no-fix count 3n-2 = 19).
+	/// T3 folded in: the 2(b) guards A relies on (an opener after a
+	/// closer has id 0, ids step by 1) stay UNSAT.
+	#[test]
+	fn test_t977_ww_row0_mid_block(){
+		let forged = [[2,23,2,2],[0,0,0,0],[1,11,0,1],[1,12,1,1]];
+		assert!(!t977_ww_run(&forged).0, "T977: mid-block row 0 accepted");
+		let (ok, nc, nw) = t977_ww_run(&T977_WW);
+		let n = T977_WW.len();
+		assert!(ok, "T977 honest control");
+		assert_eq!((nc, nw), (3*n-1, 2*(n-1)), "T977 cost moved");
+		let g = [t977_ww_run(&[[0,0,0,0],[1,11,0,0],[2,22,1,2],[2,23,2,2]]).0,
+			t977_ww_run(&[[0,0,0,0],[2,21,0,2],[2,23,2,2]]).0];
+		assert!(g == [false, false], "T977 guards {:?}", g);
 	}
 
 
