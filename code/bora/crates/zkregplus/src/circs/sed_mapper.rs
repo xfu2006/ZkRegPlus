@@ -1294,14 +1294,17 @@ failed_c_segs={} failed_c_total={}", seg_id,
 				word_info.vec_sed_sigs.len(),
 				word_info.failed_c_all_segs.len(), n_fc);
 		}
-		let init_steps_queue_cs = DischargeAdvAdvice
+		let sq0_cs = DischargeAdvAdvice
 			::gen_empty_steps_queue_serialized(
 				false, //b_igc = false
 				&inp_subsigs_cs,
 				&subsig_step_store_cs,
 				pm_fsm_id_cs,
-				&self.capacity.cs.da_capacity()
-			).to_vec(&subsig_step_store_cs)?; //it's ok even with capacity
+				&self.capacity.cs.da_capacity());
+		#[cfg(test)] //T970 S3: a test may forge seg 0's q_i (z_0)
+		let sq0_cs = t970_s3::seam(sq0_cs, subsig_step_store_cs);
+		let init_steps_queue_cs = sq0_cs
+			.to_vec(&subsig_step_store_cs)?; //it's ok even with capacity
 				//it's just to pass it as data member, will not crash
 				//if lack of capacity
 
@@ -1696,5 +1699,41 @@ where F: 'static,
 			clamdb: self.clamdb.clone(),
 			job_id: self.job_id,
 		}))
+	}
+}
+
+/// T970 S3 (test builds only): forge the cs arm's seg-0 q_i (z_0).
+#[cfg(test)]
+pub(crate) mod t970_s3 {
+	use super::*;
+	use std::cell::Cell;
+	thread_local!{
+		/// Decoy loc, 0 = off. Per thread: libtest runs each test on its
+		/// own thread, so an armed loc dies with a panicking test.
+		pub(crate) static DECOY_LOC: Cell<u32> = Cell::new(0);
+		/// Decoys injected since the test's last reset.
+		pub(crate) static HITS: Cell<u32> = Cell::new(0);
+	}
+
+	/// The fresh cs init queue (nonaggr reads it at a word's first
+	/// segment only). Armed: beside the seed of the first listed subsig
+	/// s with >= 2 steps, push a carried decoy (s, step 1, store pat/rg,
+	/// DECOY_LOC) and count it. Identity when off or with no such s (the
+	/// dummy word). A 1-step s is skipped: its step 1 would be a
+	/// last-step match (more rejecters). The test asserts HITS == 1.
+	pub(super) fn seam<F: PrimeField + ColEle>(mut q: StepQueue<F>,
+		store: &SubsigStepStore) -> StepQueue<F> {
+		let loc = DECOY_LOC.with(|c| c.get());
+		if loc == 0 { return q }
+		let pick = q.subsigs.iter().find_map(|s| store.subsig_to_steps
+			.get(&field_to_usize(s)).filter(|it| it.vec_pm_bounds.len() >= 2)
+			.map(|it| (*s, it.vec_pm_bounds[0])));
+		let Some((s, (p, (a, b)))) = pick else { return q };
+		HITS.with(|c| c.set(c.get() + 1));
+		q.store_items.get_mut(&s).unwrap().push(crate::gadgets
+			::discharge_adv::StepQueueItem::new(s, F::one(),
+			F::from(p as u64), F::from(a as u64), F::from(b as u64),
+			vec![F::from(loc as u64)]));
+		q
 	}
 }

@@ -9281,6 +9281,15 @@ range2_bit={}", ds, b, nu, rb);
 	fn t938_step(circ: &mut T938Fc, z: &folding_schemes::folding::foldpot
 		::sigma_ir1cs::ZiPartTwoInst<Fr>, st: &T938Stmt, forged: bool)
 		-> Result<bool, String>{
+		t938_step_with(circ, z, st, forged, |cs| cs.is_satisfied().unwrap())
+	}
+
+	/// t938_step, but `f` reads the synthesized cs (inside the same
+	/// panic guard) in place of is_satisfied. T970 R4: row census.
+	fn t938_step_with<R>(circ: &mut T938Fc, z: &folding_schemes::folding
+		::foldpot::sigma_ir1cs::ZiPartTwoInst<Fr>, st: &T938Stmt,
+		forged: bool, f: impl FnOnce(ark_relations::r1cs
+		::ConstraintSystemRef<Fr>) -> R) -> Result<R, String>{
 		use folding_schemes::frontend::FCircuit;
 		use folding_schemes::folding::foldpot::sigma_ir1cs::SigmaIR1CS;
 		use ark_r1cs_std::{alloc::AllocVar, fields::fp::FpVar};
@@ -9302,7 +9311,7 @@ range2_bit={}", ds, b, nu, rb);
 				.collect::<Vec<_>>();
 			circ.generate_step_constraints(cs.clone(), 0, z_i, ext_in)
 				.expect("gen step err");
-			cs.is_satisfied().unwrap()
+			f(cs)
 		}));
 		std::panic::set_hook(old_hook);
 		res.map_err(|e| e.downcast_ref::<&str>().map(|s| s.to_string())
@@ -9637,5 +9646,52 @@ range2_bit={}", ds, b, nu, rb);
 			pinned fsm inp_loc", pins, n_dan);
 		let r = t938_step(&mut circ, &t938_z0(), &stmts[0][0], false);
 		assert!(r==Ok(true), "honest first segment rejected: {:?}", r);
+	}
+
+	/// T970 R4 e2e (seam S3). Neo nonaggr small_data, word "AaaaaXYbbbbX"
+	/// (one segment; CP fires sed_cs = "Aaaaa" {2} "bbbbc", so the cs arm
+	/// seeds its subsig s). Forged z_0: seg 0's q_i also holds a carried
+	/// decoy (s, step 1, loc 2), b = 1, no pred cert. Through the FirstSeg
+	/// pin, the fsm inp_loc cell and dan's locs[0], T970's row reads
+	/// (inp_loc-1, w, sum b) = (0, 0, 1): the census must find exactly
+	/// that row. dan unit tests feed inp_loc directly and miss a locs[1]
+	/// read (63 here). Honest leg first: it must be SAT on its own.
+	#[test]
+	fn test_t970_r4_seg0_decoy_e2e(){
+		use crate::circs::sed_mapper::t970_s3::{DECOY_LOC, HITS};
+		use ark_std::{Zero, One};
+		let _cfg = t938_cfg_guard();
+		let (db, cp, sed, dfa) = t938_small_arm(true);
+		let fw = t938_word("t970_s3", b"AaaaaXYbbbbX");
+		let (mut c0, s0) = t938_env(db.clone(), &fw, 1, &cp, &sed, &dfa);
+		assert!(s0[0].len()==1, "one segment expected");
+		let r = t938_step(&mut c0, &t938_z0(), &s0[0][0], false);
+		assert!(r==Ok(true), "honest neo first segment rejected: {:?}", r);
+		HITS.with(|c| c.set(0));
+		DECOY_LOC.with(|c| c.set(2)); //armed for this one env build
+		let (mut c1, s1) = t938_env(db, &fw, 1, &cp, &sed, &dfa);
+		DECOY_LOC.with(|c| c.set(0));
+		let _ = std::fs::remove_file(&fw);
+		let hits = HITS.with(|c| c.replace(0));
+		assert!(hits==1, "S3: {} decoys injected, want 1 (a cs subsig \
+			with >= 2 steps at seg 0)", hits);
+		let r = t938_step_with(&mut c1, &t938_z0(), &s1[0][0], true, |cs|{
+			let sat = cs.is_satisfied().unwrap();
+			cs.finalize();
+			let m = cs.to_matrices().expect("matrices");
+			let g = cs.borrow().unwrap();
+			let z = [g.instance_assignment.as_slice(),
+				g.witness_assignment.as_slice()].concat();
+			let ev = |row: &Vec<(Fr, usize)>| row.iter()
+				.map(|(c, i)| *c * z[*i]).sum::<Fr>();
+			let bad = (0..m.a.len()).map(|i| (ev(&m.a[i]), ev(&m.b[i]),
+				ev(&m.c[i]))).filter(|(a, b, c)| *a * *b != *c)
+				.collect::<Vec<_>>();
+			assert!(sat==bad.is_empty(), "census != is_satisfied");
+			bad
+		});
+		assert!(r==Ok(vec![(Fr::zero(), Fr::zero(), Fr::one())]),
+			"T970: forged first segment must fail exactly its row \
+			(inp_loc-1, w, sum b) = (0, 0, 1): {:?}", r);
 	}
 }
