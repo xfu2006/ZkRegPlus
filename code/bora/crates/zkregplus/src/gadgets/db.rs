@@ -1641,6 +1641,9 @@ pub fn verify_tbl_filtered_to_sorted_tbl_old<F:PrimeField + ColEle>(
 /// filtering step. Given 2 columns, compress all pairs to unique
 /// and organize them as sorted table of form (key-id-val) which is well
 /// formed and key column is sorted.
+/// T976 precondition (verify side): a src row with key != 0 must have
+/// key and val outside {0, max}, else the tie is UNSAT. Key-0 rows are
+/// pads and drop out. Dead v1 (fsm_adv.rs:2041) breaks it.
 ///
 /// might throw CapErr("target_size")
 pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
@@ -1697,11 +1700,12 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 		prf.lock().unwrap().add_col(Col::new_const(c, &format!("sid_{}",n),IDX_SI_DATA));
 	});
 
-	//3. lkup in both directions (ignore 0 entries).
+	//3. lkup in both directions. dst skips its 0/max sentinel rows.
+	// T976: src has no sentinels, only key-0 pads, so sel_src = key.
+	// A src row with key != 0 on a sentinel value (loc = max, pat =
+	// max) keeps weight key and fails the tie.
 	let encoded_src = encode_2col(&keys, &vals);
-	let sel_src = keys.iter().zip(vals.iter()).map(|(x,y)|
-		*x * (max-*x) * (*y * (max-*y))
-	).collect::<Vec<F>>();
+	let sel_src = keys.clone();
 
 	let mtbl_src_dst = gen_m_table_cond(&encoded_src, &sel_src, 
 		&encoded_dst, &sel_dst);
@@ -1724,7 +1728,7 @@ pub fn tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 
 /// verify in bundle contains a sorted table
 /// of the given columns of (keys, vals)
-/// COST: 26*n (T937 saves 1 per row)
+/// COST: 23*n (T937 saves 1 per row, T976 3 more per src row)
 pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
 	_r2: &FpVar<F>,
@@ -1790,9 +1794,11 @@ pub fn verify_tbl_to_sorted_tbl<F:PrimeField + ColEle>(
 		.lock().unwrap().to_vec();
 	let mtbl_dst_src= prf.lock().unwrap().get_container("mtbl_dst_src")?
 		.lock().unwrap().to_vec();
-	let sel_src = keys.iter().zip(vals.iter()).map(|(x,y)| {
-		x * &(&max-x) * &(y * &(&max-y))
-	}).collect::<Vec<FpVar<F>>>(); 
+	// T976: src rows drop out only as key-0 pads. The old mirror of
+	// sel_dst gave a real FSM hit at loc = max (the closer value)
+	// weight 0, so it never reached pat_loc. Now it must land on a dst
+	// row with sel_dst != 0, which a sentinel value cannot. -3 cs/row.
+	let sel_src = keys.clone();
 	let sel_dst = sel_keys.iter().zip(sel_vals.iter()).map(|(x,y)|
 		x * &(&max-x) * &(y * &(&max-y))).collect::<Vec<FpVar<F>>>();
 
@@ -2120,6 +2126,8 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 	let names = vec!["c1","c2","val","id","count"];
 	let join_cols = jcols.into_iter().zip(names.iter()).map(|(c,n)|
 		Col::new(c, n, IDX_DATA)).collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
+	// T976 LOAD-BEARING: const RANGE2 on val (pat) and c1 (loc) bounds the
+	// src of verify_tbl_to_sorted_tbl. Its sel_src = key relies on it.
 	let join_sid_cols = names.iter().map(|n| Col::new_const(
 		vec![f_rg2;target_size], &format!("sid_{}", n), IDX_SI_DATA)
 	).collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
@@ -3129,7 +3137,7 @@ use utils::consts::read_global_config;
 		let n = rows.len();
 		let sel = |k: &[Fr], v: &[Fr]| k.iter().zip(v.iter()).map(|(x,y)|
 			*x * (max - *x) * *y * (max - *y)).collect::<Vec<Fr>>();
-		let (enc_src, sel_src) = (encode_2col(&keys, &vals), sel(&keys, &vals));
+		let (enc_src, sel_src) = (encode_2col(&keys, &vals), keys.clone());
 		let (enc_dst, sel_dst) = (encode_2col(&s_key, &s_val), sel(&s_key, &s_val));
 		let m_sd = gen_m_table_cond(&enc_src, &sel_src, &enc_dst, &sel_dst);
 		let m_ds = gen_m_table_cond(&enc_dst, &sel_dst, &enc_src, &sel_src);
@@ -3296,6 +3304,36 @@ use utils::consts::read_global_config;
 			dk.lock().unwrap().data[3] = -Fr::from(3u32);
 		};
 		assert!(t937_sat(&[(2,17),(5,40)], &rows, Some(&edit)));
+	}
+
+	/// T976: honest tbl_to_sorted_tbl + verify; true iff SAT, panic = reject.
+	fn t976_sat(src: &[(u32,u32)])->bool{
+		catch_unwind(AssertUnwindSafe(||{
+			let mk = |v: Vec<u32>, n: &str| Container::new_single(
+				Col::new(t937_fr(v), n, IDX_DATA));
+			let keys = mk(src.iter().map(|x| x.0).collect(), "pats");
+			let vals = mk(src.iter().map(|x| x.1).collect(), "locs");
+			let b = tbl_to_sorted_tbl(&keys, &vals, 8, "pat_loc").unwrap();
+			let mut rng = test_rng();
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let r1 = FpVar::new_witness(cs.clone(), || Ok(Fr::rand(&mut rng))).unwrap();
+			let k = Container::rc_from(&keys.lock().unwrap(), cs.clone());
+			let v = Container::rc_from(&vals.lock().unwrap(), cs.clone());
+			let b = Container::rc_from(&b.lock().unwrap(), cs.clone());
+			verify_tbl_to_sorted_tbl(&r1, &r1, &k, &v, &b, cs.clone()).is_ok()
+				&& cs.is_satisfied().unwrap()
+		})).unwrap_or(false)
+	}
+
+	/// T976: (2,max) and (max,5) are dropped from the table, as for a real
+	/// FSM hit at loc = max. HEAD's sel_src gave them weight 0: SAT, hit lost.
+	#[test]
+	fn test_t976_sentinel_src_rows_rejected(){
+		let m = t937_max();
+		assert!(t976_sat(&[(0,0),(0,9),(2,17),(5,40)]), "honest control");
+		let a = t976_sat(&[(0,0),(2,17),(2,m)]);
+		let b = t976_sat(&[(0,0),(2,17),(m,5)]);
+		assert!(!a && !b, "T976 hidden: loc=max {} pat=max {}", a, b);
 	}
 
 

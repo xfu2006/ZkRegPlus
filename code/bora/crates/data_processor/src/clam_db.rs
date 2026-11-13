@@ -1479,6 +1479,8 @@ impl <F:PrimeField> ClamavDB<F>{
 		// NOTE that state_id and pat_id all starts from 1, i.e.,
 		// they have +1 from their real ID in acdfa
 		let f_final_2_pat = F::from(state_2_pat);
+		assert!(acdfa.patterns.len() + 1 < (1usize << read_global_config().range2_bit),
+			"T976: pat id (raw + 1) must stay below 2^range2_bit - 1");
 		//5.1 real state to pat tuples
 		let mut vec_final_2_pat =  (0..acdfa.num_acc_states).into_par_iter().map(|i|
 		{

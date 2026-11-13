@@ -1442,6 +1442,20 @@ failed_c_segs={} failed_c_total={}", seg_id,
 			_job_id
 			)?;
 
+		// T976 (honest prover only, not soundness): an FSM hit at loc
+		// >= 2^range2_bit-1 makes the step UNSAT (pat_loc sel_src, or
+		// RANGE2 above it). Fail here, not at the decider.
+		let max = F::from((1u64 << read_global_config().range2_bit) - 1);
+		for (fa, arm) in [(Some(&advice.fsm_adv_advice_cs), "cs"),
+			(advice.fsm_adv_advice_igc.as_ref(), "igc")] {
+			let Some(fa) = fa else { continue };
+			let lf = fa.stmt_container.lock().unwrap().search_container(
+				&format!("fsm_adv_stmt_{} fsm_acc locs_final", arm))
+				.unwrap().lock().unwrap().to_vec();
+			assert!(lf.iter().all(|x| *x < max), "T976: seg {} {} arm: \
+				FSM hit at loc >= 2^range2_bit-1, word too long", seg_id, arm);
+		}
+
 		Ok( Arc::new(advice) )
 
 	}

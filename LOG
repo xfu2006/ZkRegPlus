@@ -32130,7 +32130,8 @@ Goal 1. B2
 		-> +1cs 
 	[b] NEW-5: fsm inp/oup match issue
 	[c] T937: pat order does not go up, block range check missing -> DONE
-	[d] T976: design yet. 
+	[d] T976: design yet.  Fix FSM skip wrong rows.
+		-> implement
 Goal 2. B3.
 	[a] T973: fix NFA to DFA translation bug (64-bit too low)
 		-> implemented and tested

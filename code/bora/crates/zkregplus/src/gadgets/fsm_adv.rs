@@ -2038,6 +2038,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 			&format!("{} proj_subsig_store state", sname))?;
 		let pat_state_tbl = all.search_container(
 			&format!("{} packed_trace pat_state_tbl", sname))?;
+		// T976: dead v1. Proj-store exit rows (pat = max) fail sel_src = key.
 		verify_tbl_to_sorted_tbl(&r1, &r2,
 			&proj_pats_col, &proj_states_col, &pat_state_tbl, cs.clone())?;
 		if b_perf{
@@ -2188,7 +2189,7 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		}
 
 		//4. verify the pat-loc table is projected from the pat_state_loc_tbl 
-		//COST: 27*plen 
+		//COST: 23*plen (db.rs verify_tbl_to_sorted_tbl, T976 -3)
 		let pat_col= loc_state_pat_tbl.lock().unwrap()
 			.get_container("join_tbl")?.lock().unwrap()
 			.get_container("val")?;
@@ -2534,6 +2535,12 @@ pub mod tests_fsm_adv_gadget{
 	/// inp_loc + nlen and expects the gadget to reject.
 	fn build_fsm_halo_locs(halo: &[Fr], m: usize, shift: i64)
 		-> (Vec<Fr>, Vec<Fr>){
+		build_fsm_halo_locs_at(halo, m, shift, 1, shift == 0)
+	}
+
+	/// T976: build_fsm_halo_locs with a given inp_loc and verdict.
+	fn build_fsm_halo_locs_at(halo: &[Fr], m: usize, shift: i64,
+		inp_loc0: u64, b_sat: bool) -> (Vec<Fr>, Vec<Fr>){
 		let path = "debug/sed/simple";
 		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
 		let wlen = 1usize;
@@ -2561,7 +2568,7 @@ pub mod tests_fsm_adv_gadget{
 		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles")
 			.unwrap().lock().unwrap().to_vec();
 		let inp_state = Fr::from((acdfa.init_state + 1) as u32);
-		let inp_loc = Fr::from(1u32);
+		let inp_loc = Fr::from(inp_loc0);
 		let input_subsigs = vec![Fr::from(
 			acdfa.gen_subsig_id(1, 1) as u32)];
 		let fsm_id = ClamavDB::<Fr>::pm_acdfa_id(0, b_igc);
@@ -2603,7 +2610,7 @@ pub mod tests_fsm_adv_gadget{
 		test_gadget_adv_ex::<Fr>(Arc::new(fag), &word, &cps[0], &cps[1],
 			&cps[2], &cps[6], &cps[7],
 			&vec![cps[3].clone(), cps[4].clone(), cps[5].clone()].concat(),
-			4, false, Some(vec_cfg), shift == 0);
+			4, false, Some(vec_cfg), b_sat);
 		(locs, locs_final)
 	}
 
@@ -2640,5 +2647,19 @@ pub mod tests_fsm_adv_gadget{
 			build_fsm_halo_locs(&[], 0, d);
 			build_fsm_halo_locs(&halo, 4, d);
 		}
+	}
+
+	/// T976: "abc" completes in the halo at loc inp_loc + 64. At inp_loc
+	/// = max - 64 the hit sits on pat_loc's closer value max. HEAD dropped
+	/// it from the set tie (SAT, hit lost). Control: one loc lower, SAT.
+	#[test]
+	fn test_t976_fsm_hit_at_max_rejected(){
+		let halo = [Fr::from(6u32), Fr::from(3u32), Fr::zero(), Fr::zero()];
+		let max = (1u64 << utils::consts::read_global_config()
+			.range2_bit) - 1;
+		let (_, lf) = build_fsm_halo_locs_at(&halo, 4, 0, max - 65, true);
+		assert!(lf.contains(&Fr::from(max - 1)), "control hit missing");
+		let (_, lf) = build_fsm_halo_locs_at(&halo, 4, 0, max - 64, false);
+		assert!(lf.contains(&Fr::from(max)), "no FSM hit at max");
 	}
 }
