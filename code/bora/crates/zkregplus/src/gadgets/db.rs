@@ -227,9 +227,9 @@ pub fn verify_encoded_table<F:PrimeField + ColEle>(
 /// IT does NOT guarantee that key is unique, i.e.,
 /// there might be cases that a same key appear MULTIPLE times,
 /// each time correpsonds to a DIFFERENT BLOCK. 
-/// In the case where it is used as a projected state-pat table,
-/// this "unique" state to pat block mapping is guaranteed by an
-/// extra check with the external lookup that encodes acdfa state-pat relation.
+/// T979: no longer called on the projected state-pat table. Its one
+/// caller, verify_tbl_left_join_wide, needs no key uniqueness here
+/// (see its T979 PRECONDITION).
 ///
 /// COST: 3n-1 (3(n-1) transitions, closer, T977 pin)
 pub fn assert_wide_wellformed<F:PrimeField + ColEle>(
@@ -2133,6 +2133,8 @@ pub fn tbl_left_join_wide<F:PrimeField + ColEle>(
 		Col::new(c, n, IDX_DATA)).collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
 	// T976 LOAD-BEARING: const RANGE2 on val (pat) and c1 (loc) bounds the
 	// src of verify_tbl_to_sorted_tbl. Its sel_src = key relies on it.
+	// T979 LOAD-BEARING: const RANGE2 on c2, val, id, count makes each
+	// join row decode uniquely against tbl2's state_2_pat encoding.
 	let join_sid_cols = names.iter().map(|n| Col::new_const(
 		vec![f_rg2;target_size], &format!("sid_{}", n), IDX_SI_DATA)
 	).collect::<Vec<std::sync::Arc<std::sync::Mutex<Col<F>>>>>();
@@ -2659,18 +2661,26 @@ pub fn verify_tbl_left_join<F:PrimeField + ColEle>(
 /// if we regard <loc,state> as one column, it is actually
 ///   well-formed, i.e., for each unique <loc,state>, the 
 ///   pat-id-count is well formed.
-/// Then if we run the two-direction lookup between
+/// Then if we run the lookups (2-way on tbl1, 1-way on tbl2) between
 /// the output table and the original two source tables, we
 /// are able to prove that it is indeed the cross-product
 /// of the two, i.e., expanding each row in the 1st table 
 /// with the corresponding blocks of records from the 2nd table.
+/// T979 PRECONDITION. tbl2 is read only as the table side of the 1-way
+/// lookup (step 3). Its layout is NOT checked. The caller must bind each
+/// tbl2 row's encoding F^3 key + F^2 val + F id + count (F =
+/// 2^range2_bit, the coefs and column order of verify_1d_lkup_prf) to a
+/// DB table with one block per key: ids 0..count, count fixed per key,
+/// (key,id) -> val unique. fsm_adv step 2.2 does this (const sid
+/// fsm_id+7 = state_2_pat). The join cells keep const RANGE2 sids
+/// (tbl_left_join_wide), so each join row decodes to such a DB row.
 ///
 /// COST: let n1,n2,n be the lenth of tbl1, tbl2, output tbl
 /// COST = 3*n + n + n + 2*n2 + n + 2*n1 
 ///      = 2*n1 + 2*n2 + 6*n
 ///      =~ roughly 10n
 /// Compared with verify_tbl_left_join() this is MUCH LIGHTER
-///    mainly because we have assumption on tbl2 has no non-zero duplicates.
+///    mainly because tbl2 is only a 1-way lookup table (T979).
 ///    and using wide table (so less check of border conditions).
 pub fn verify_tbl_left_join_wide<F:PrimeField + ColEle>(
 	r1: &FpVar<F>, //random challenges from msg2
@@ -3490,6 +3500,102 @@ use utils::consts::read_global_config;
 		let g = [t977_ww_run(&[[0,0,0,0],[1,11,0,0],[2,22,1,2],[2,23,2,2]]).0,
 			t977_ww_run(&[[0,0,0,0],[2,21,0,2],[2,23,2,2]]).0];
 		assert!(g == [false, false], "T977 guards {:?}", g);
+	}
+
+	// ---------------------------------------------------------
+	// T979 tests. Paste into db.rs mod tests_db right after
+	// test_t977_ww_row0_mid_block. Step 2.1 (assert_wide_wellformed on
+	// tbl2) is gone, so tbl2 may be any multiset of state_2_pat (S2P)
+	// rows. The S2P rows of the T977 fixture are the rows of T977_WW.
+	// Reuses T977_WW, T977_S1, T977_S2, t977_ww_run, t977_join_data,
+	// t977_join_rows, mk_forged_join_bundle. GREEN at HEAD and after.
+	// ---------------------------------------------------------
+
+	/// T979 runner. verify_tbl_left_join_wide on a GIVEN tbl2 (S2P rows
+	/// only, the premise that step 2.2 and the const sid fsm_id+7 give)
+	/// and GIVEN join rows. Some(is_satisfied), None on any panic or
+	/// Err: neither is ever counted as a rejection.
+	fn t979_join(t2: &[[u32;4]], rows: &[[u32;5]])->Option<bool>{
+		use crate::gadgets::db::verify_tbl_left_join_wide as vfy;
+		assert!(t2.iter().all(|r| T977_WW.contains(r)), "T979: not S2P");
+		let (locs, states, _) = t977_join_data();
+		let tbl2 = Container::<Fr>::new("proj_states_pats");
+		for (j, nm) in ["key","val","id","count"].into_iter().enumerate(){
+			let c = t2.iter().map(|r| Fr::from(r[j])).collect::<Vec<Fr>>();
+			tbl2.lock().unwrap().add_col(Col::new(c, nm, IDX_DATA));
+		}
+		catch_unwind(AssertUnwindSafe(||{
+			let b = mk_forged_join_bundle(&locs, &states, &tbl2, rows);
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let r = new_var(&cs, Fr::rand(&mut test_rng()));
+			let v = |c: &Vec<Fr>| c.iter().map(|x| new_var(&cs, *x))
+				.collect::<Vec<FpVar<Fr>>>();
+			let t2 = Container::rc_from(&tbl2.lock().unwrap(), cs.clone());
+			let b = Container::rc_from(&b.lock().unwrap(), cs.clone());
+			vfy(&r, &r, &v(&locs), &v(&states), &t2, &b, cs.clone(), 0)
+				.unwrap();
+			cs.is_satisfied().unwrap()
+		})).ok()
+	}
+
+	/// T979 (1)+(2). SCR is complete but scrambled (row 0 has id 1, pads
+	/// mid-table, a dup). PART keeps only the closer of hit state 2. HEAD's
+	/// 2.1 rejects both (UNSAT with its full 3n-1 cs, so no panic). The
+	/// join check alone (no 2.1 inside): SCR still serves the honest join,
+	/// and joins that lose pats of hit (400,2) stay UNSAT. W0 and state-1
+	/// pats on SCR. On PART, the honest join and a lone (400,2,23,2,2) at
+	/// every slot (pin at slot 0, 2(b) after a closer, or a broken block).
+	#[test]
+	fn test_t979_tbl2_layout_not_needed(){
+		const SCR: [[u32;4];8] = [[2,22,1,2],[1,11,0,1],[0,0,0,0],
+			[2,23,2,2],[1,12,1,1],[2,21,0,2],[2,22,1,2],[0,0,0,0]];
+		const PART: [[u32;4];8] = [[2,23,2,2],[0,0,0,0],[1,11,0,1],
+			[1,12,1,1],[0,0,0,0],[0,0,0,0],[0,0,0,0],[0,0,0,0]];
+		for t in [&SCR, &PART]{
+			assert_eq!(t977_ww_run(t), (false, 23, 14), "T979: 2.1 verdict");
+		}
+		let s1 = &T977_S1[..];
+		let hon = t977_join_rows(&[], &[s1, &T977_S2[..]].concat());
+		assert_eq!(t979_join(&SCR, &hon), Some(true), "T979 SCR control");
+		let w0 = t977_join_rows(&[[400,2,23,2,2]], s1);
+		let s1p = t977_join_rows(&[],
+			&[s1, &[[400,2,11,0,1],[400,2,12,1,1]][..]].concat());
+		assert_eq!(t979_join(&SCR, &w0), Some(false), "T979 SCR W0");
+		assert_eq!(t979_join(&SCR, &s1p), Some(false), "T979 SCR s1 pats");
+		assert_eq!(t979_join(&PART, &hon), Some(false), "T979 PART honest");
+		let mut base = t977_join_rows(&[], s1);
+		base.remove(0); //11 zero rows, then S1
+		for k in 0..=base.len(){
+			let mut v = base.clone();
+			v.insert(k, [400,2,23,2,2]);
+			assert_eq!(t979_join(&PART, &v), Some(false), "T979 slot {}", k);
+		}
+	}
+
+	/// T979 (3), premise pin (0 cs). The join cells keep CONST RANGE2
+	/// sids (db.rs:2134-2138). They make each join row decode uniquely
+	/// against the S2P encoding. The db.rs and fsm harnesses skip the
+	/// outer (si,val) lookup, so a Col::new_const -> Col::new edit would
+	/// pass every other test. The encoded sid fsm_id+7 is pinned in
+	/// fsm_adv.rs build_fsm_halo_locs_at.
+	#[test]
+	fn test_t979_join_sids_const(){
+		use crate::gadgets::db::tbl_left_join_wide;
+		let (locs, states, tbl2) = t977_join_data();
+		let h = tbl_left_join_wide(&locs, &states, &tbl2, 16, "lsp").unwrap();
+		let jt = h.lock().unwrap().get_container("join_tbl").unwrap();
+		for nm in ["c1","c2","val","id","count"]{
+			let c = jt.lock().unwrap().get_container(&format!("sid_{}", nm))
+				.unwrap();
+			match &*c.lock().unwrap(){
+				Container::Single(col) => {
+					let g = col.lock().unwrap();
+					assert!(g.b_const && g.data.iter().all(|x|
+						*x == Fr::from(RANGE2)), "T979: sid_{} not const", nm);
+				},
+				_ => panic!("T979: sid_{} is not a column", nm),
+			};
+		}
 	}
 
 

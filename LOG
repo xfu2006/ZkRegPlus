@@ -32148,13 +32148,19 @@ Goal 2. B3.
 
 Friday 11/13/2026
 Goal 1. B2
-	[a] T977: 
+	[a] T977: 1st row must be starting fro mid 0 
+		-> tested
+	[b] T979: can remove tbl2 wide-wellformed call.
+		-> save wide table check a lot of constraints
+		-> 
 Goal 2. B3
 	[a] T961: duplicated subsig
 		F1: subsig duplicated -> fix: enforce strict order
 		NH3: cs and igc share type tag: fix separate IGC subsig type
 		union proof: proves the same - remove
 		full ist panic: should raise CapErr
+Goal 3. start writing plan
+	[a] planning
 	
 
 	

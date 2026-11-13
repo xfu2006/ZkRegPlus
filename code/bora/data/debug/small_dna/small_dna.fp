@@ -1,6 +1,6 @@
 circ_cat_0_circ_0.ext_in 10548
-circ_cat_0_circ_0.nc 28646
-circ_cat_0_circ_0.nv 32521
+circ_cat_0_circ_0.nc 28528
+circ_cat_0_circ_0.nv 32445
 config.chunk_len 1
 config.lk_share 1
 paircycle.ext_in 489

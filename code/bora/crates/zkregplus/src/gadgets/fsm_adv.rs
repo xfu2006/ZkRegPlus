@@ -54,7 +54,7 @@ use crate::gadgets::{
 		 verify_encode_cols_in_range},
 	traits::{Container,Col,IDX_WORD, IDX_INP,IDX_DATA, IDX_SI_INP, 
 		IDX_OUP, IDX_SI_OUP, IDX_SI_DATA,ComponentAdvice},
-	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join, verify_tbl_left_join_wide, assert_wide_wellformed, tbl_left_join_wide},
+	db::{assert_logup,verify_encoded_table,assert_well_formed_sorted,col_to_sorted_set, verify_col_to_sorted_set, tbl_filtered_to_sorted_tbl, verify_tbl_filtered_to_sorted_tbl,tbl_to_sorted_tbl, verify_tbl_to_sorted_tbl, tbl_left_join, verify_tbl_left_join, verify_tbl_left_join_wide, /* assert_wide_wellformed (T979), */ tbl_left_join_wide},
 };
 
 // -----------------------------------------------
@@ -1240,7 +1240,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 		// HERE the well-formed means that the id for a key starts
 		// from 0 and ends at count-1. Thus it guarantees that
 		// the entries projected from lookup is "COMPLETE" (having
-		// all related entries copied).
+		// all related entries copied). Honest layout only. T979: the
+		// circuit does not check it, step 3 (the join) implies it.
 		// NOTE2: here we construct the table with NO duplicate entries.
 		// even if there are duplicate entries (same key-multi val)
 		// appeared multiple times, it does not affect the correctness
@@ -2076,8 +2077,8 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 	/// let alen = ratio_of_acc_states * nlen (usually 5%)
 	///   plen = ratio_of_patterns * nlen (usually alen *1.1 6%)
 	///   ulen = ratio of unique states * neln (usually less than 1%) 
-	/// 3*ulen + ulen + 2ulen + 2aleb + 6plen + 27plen
-	/// = 6ulen + 4alen + 33plen
+	/// ulen + 2ulen + 2aleb + 6plen + 27plen (T979: 2.1 dropped)
+	/// = 3ulen + 4alen + 33plen
 	/// roughly 34 * ratio_of_patterns * nlen (usually< 1.5 nlen)
 	fn validate_packed_trace_v2(
 		&self, 
@@ -2116,22 +2117,35 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		}
 
 		//2. verify the projected states-pat table.
-		//2.1 verify the proj_states-pat table is lightly 
-		// well formed (i.e., a 2-col sorted-val table)
-		//NOTE that this proof mainly guarantees that
-		//the projection from the acdfa part of lookup is COMPLETE (covering
-		//all pat_id entries related to a state).
-		//COST: 3*ulen
+		//2.1 T979: the layout check on tbl_proj_states_pats (tbl2) is
+		// commented out below. It asserted tbl2 is wide-wellformed
+		// (sorted by key, one block per state, ids 0..count). It cost
+		// 3n-1 cs per arm and is not needed for soundness:
+		// (a) 2.2 binds every tbl2 row to a real state_2_pat DB row
+		//     (col_encoded has the CONST sid fsm_id+7). So tbl2 holds
+		//     only authentic (state, pat, id, count) rows, in any order.
+		// (b) step 3 reads tbl2 only as the table side of a 1-way
+		//     lookup. Its order, duplicates and pads are never read.
+		// (c) the join table has its own wellformed check (T977 row-0
+		//     pin). Each (loc, state) block runs id 0..count and each
+		//     row must be a tbl2 row. So a hit state's block holds ALL
+		//     its pats. Dropping one breaks the id run or the lookup.
+		// Example: state 2 has pats 21,22,23 (ids 0,1,2, count 2). A
+		//     scrambled tbl2 [(2,22,1,2),(1,11,0,1),(0,0,0,0),(2,23,2,2),
+		//     ..] fails the old check, yet the honest join still
+		//     verifies, and a join that keeps only (400,2,23) fails.
+		// Load-bearing instead: the const sids in (a) and in
+		// tbl_left_join_wide (db.rs). Tests: db.rs test_t979_*.
 		let tbl_proj_states_pats = 
 			all.search_container(
 			&format!("{} packed_trace tbl_proj_states_pats", sname))?;
-		assert_wide_wellformed(&tbl_proj_states_pats, "key", self.job_id)?;
-		if b_perf{
-			log_perf(self.job_id, log_level, &format!(
-				"valid_packed_trace step 2.1, ulen: {} cs: {}", 
-					ulen, cs.num_constraints()-nc), &mut gt);
-			nc = cs.num_constraints();
-		}
+		//assert_wide_wellformed(&tbl_proj_states_pats, "key", self.job_id)?;
+		//if b_perf{
+		//	log_perf(self.job_id, log_level, &format!(
+		//		"valid_packed_trace step 2.1, ulen: {} cs: {}", 
+		//			ulen, cs.num_constraints()-nc), &mut gt);
+		//	nc = cs.num_constraints();
+		//}
 
 		//2.2. verify the encoded column is indeed an encoded
 		//form of the proj_states and proj_pats column
@@ -2145,7 +2159,8 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//Also note: we do NOT have to check if the proj_states
 		//cover ALL the accept states along the trace, as
 		//later when we assert the left-join relation, 
-		// it automatically implies this relation.
+		// it automatically implies this relation (T979: and that every
+		// row of each hit state is present in this table).
 		//
 		// COST: ulen
 		let col_encoded = 
@@ -2576,6 +2591,18 @@ pub mod tests_fsm_adv_gadget{
 			inp_state, inp_loc, &input_subsigs, &cap, fsm_id,
 			&bundle.vec_subsig_stores[0], 0).unwrap();
 		let stmt_faa = adv_faa.stmt_container;
+		// T979 (3), premise pin (0 cs). col_encoded's sid stays CONST
+		// fsm_id+7 (state_2_pat). The harness skips the outer lookup.
+		let c = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs packed_trace si_encoded_proj_stat_pat").unwrap();
+		match &*c.lock().unwrap() {
+			crate::gadgets::traits::Container::Single(col) => {
+				let g = col.lock().unwrap();
+				assert!(g.b_const && g.data.iter().all(|x|
+					*x == Fr::from(fsm_id + 7)), "T979: encoded sid");
+			},
+			_ => panic!("T979: encoded sid is not a column"),
+		};
 		if shift != 0 {
 			let c = stmt_faa.lock().unwrap().search_container(
 				"fsm_adv_stmt_cs fsm_acc locs oup_loc").unwrap();
