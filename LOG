@@ -32120,7 +32120,7 @@ Goal 5. B3p
 	[a] B1-B2: full byte and nibble translation, repeat limit translation bug 
 
 Thursday 11/12/2026
-Goal 1. B3p
+Goal 1. B3p -> DONE
 	[a] B4: fix preprocessing line for ?:
 	[b] B4: fix handling of ()
 	[c] no change of iccuit size but incrased false ositive rate from
@@ -32129,10 +32129,20 @@ Goal 1. B2
 	[a] T970: initial chunk no check of carrie-in q_i
 		-> +1cs 
 	[b] NEW-5: fsm inp/oup match issue
+	[c] T937: pat order does not go up, block range check missing -> DONE
+	[d] T976: design yet. 
 Goal 2. B3.
 	[a] T973: fix NFA to DFA translation bug (64-bit too low)
 		-> implemented and tested
-	[b] T966+T969
+	[b] T966+T969:two holes in lkup
+		NH4: dual tag in lkup table. each arm (igc/cs) writes its
+			OWN step chains and do not do empty changes.
+			it cuts the lookup size
+		NH5: ISED dual chain: not in paper anymore.	
+			remove the corresponding dead code
+		T969 SPEC-1: (0|1)>1, improve the conservative approximation
+		T969b (2&3)>3 has false negative. approximate it
+			with 2&3 still conservative
 	
 
 	

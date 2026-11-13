@@ -1755,7 +1755,14 @@ impl <F:PrimeField> ClamavDB<F>{
 		b_igc: bool,
 	)->Result<(), Error>{
 		let state_bits = bundle.vec_acdfa[0].state_part_bits;
-		for i in 0..bundle.vec_sig_names.len(){
+		// T966 (neo). NH5: only entry 0 ("all") has a reader (the
+		// sed_mapper `sig_id = 0` path); an ISED entry would add a 2nd
+		// chain from the shared seed enc(s,0). NH4: a store lists every
+		// subsig, the other arm's as an empty chain whose LAST tag at
+		// enc(s,0) doubles the own NORMAL one. So emit own-arm items.
+		let b_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
+		let n = if b_neo {1} else {bundle.vec_sig_names.len()};
+		for i in 0..n{
 			let sig_id:usize = if i==0 {0} 
 				else {*sig_to_id.get(&bundle.vec_sig_names[i]).expect(
 					&format!("can't find sig: {}",bundle.vec_sig_names[i]))};
@@ -1766,8 +1773,12 @@ impl <F:PrimeField> ClamavDB<F>{
 			//	.add_store_to_lkup(lkup, dfa_id, state_bits)?;
 			// SubsigPatternStore no longer needed
 			// replaced by state_2_pat in acc_dfa.
-			bundle.vec_subsig_step_stores[i]
-				.add_store_to_lkup(lkup, dfa_id, state_bits);
+			let st = &bundle.vec_subsig_step_stores[i];
+			if b_neo {
+				st.project_by(&st.subsig_ids.iter().filter(|u|
+					st.subsig_to_steps[*u].igc==b_igc).cloned().collect())
+					.add_store_to_lkup(lkup, dfa_id, state_bits);
+			} else { st.add_store_to_lkup(lkup, dfa_id, state_bits); }
 			bundle.vec_subsig_info_stores[i]
 				.add_store_to_lkup(lkup, dfa_id, state_bits);
 		}
@@ -2597,8 +2608,9 @@ impl <F:PrimeField> ClamavDB<F>{
 			&self.aggressive_max_span_nibbles).unwrap();
 		write_to_file(&format!("{}/aggressive_meta.txt", &sdir),
 			&s_agg);
-		//T936: cache format tag; caches without it are rebuilt
-		write_to_file(&format!("{}/fmt_t936.txt", &sdir), "1");
+		//cache format tag (T936, bumped by T966/T969: lookup and sig
+		//compile changed); caches without it are rebuilt
+		write_to_file(&format!("{}/fmt_t966.txt", &sdir), "1");
 
 	}
 
@@ -2698,7 +2710,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			"vec_bag_words.txt", "vec_bag_words_igc.txt", "map_crit_pat.txt",
 			"map_crit_pat_igc.txt", "dfa_crit.txt", "dfa_crit_igc.txt",
 			"sig_to_id.txt", "lkup.txt", "bundle_subsig.txt", "bundle_subsig_igc.txt",
-			"fmt_t936.txt"
+			"fmt_t966.txt"
 		];
 		for f in files {
 			if !file_exists(&format!("{}{}", sdir, f)) {
@@ -3225,8 +3237,8 @@ mod tests_clam_db{
 		ID_ENCODED_LAST_STEP, ID_SUBSIG_TYPE};
 	use crate::type_def::SubSigType;
 
-	const FIXED_NH4: bool = false;
-	const FIXED_NH5: bool = false;
+	const FIXED_NH4: bool = true;
+	const FIXED_NH5: bool = true;
 
 	/// M0: a red test is SAT (hole open) iff its fix has not landed.
 	fn assert_hole(tag: &str, sat: bool, fixed: bool){
@@ -3325,7 +3337,7 @@ mod tests_clam_db{
 		assert!(bd.vec_sig_names.len()==2, "fixture: one ISED entry");
 		let bits = bd.vec_acdfa[0].state_part_bits;
 		let sid = db.sig_to_id["T965.Nh.Ised-1"];
-		let r0 = lkup_rows(&bd.vec_subsig_step_stores[0],
+		let r0 = lkup_rows(&own_arm(&bd.vec_subsig_step_stores[0], false),
 			ClamavDB::<Fr>::pm_acdfa_id(0, false), bits);
 		let r1 = lkup_rows(&bd.vec_subsig_step_stores[1],
 			ClamavDB::<Fr>::pm_acdfa_id(sid, false), bits);
@@ -3367,5 +3379,25 @@ mod tests_clam_db{
 		let ty = (SubsigInfoStore::gen_info_tbl_id::<Fr>(0, 0, ID_SUBSIG_TYPE),
 			Fr::from(SubSigType::GeneralRegex as u8));
 		assert!(set.contains(&ty), "subsig-0 TYPE row missing");
+		// universal: every subsig has ONE step-0 tag and every store key
+		// in the DB ONE value. Red on NH4 (and on NH5 when an ISED chain
+		// shares a key with the "all" chain); NH5 has its own red test.
+		let mut kv: std::collections::HashMap<Fr, HashSet<Fr>> =
+			std::collections::HashMap::new();
+		for (k, v) in db.lkup.vals.iter() { kv.entry(*k).or_default().insert(*v); }
+		let mut b_one = true;
+		for bd in [&db.bundle_subsig, &db.bundle_subsig_igc]{
+			let bits = bd.vec_acdfa[0].state_part_bits;
+			for st in bd.vec_subsig_step_stores.iter(){
+				for s in st.subsig_ids.iter().filter(|i| **i != 0){
+					b_one &= set.contains(&step0_row(*s, ID_ENCODED_NORMAL_STEP))
+						^ set.contains(&step0_row(*s, ID_ENCODED_LAST_STEP));
+				}
+				for (k, _) in lkup_rows(st, 0, bits).iter(){
+					b_one &= kv.get(k).map_or(true, |vs| vs.len() == 1);
+				}
+			}
+		}
+		assert_eq!(b_one, FIXED_NH4 && FIXED_NH5, "one tag / one value per key");
 	}
 }

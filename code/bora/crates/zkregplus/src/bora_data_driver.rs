@@ -7050,7 +7050,8 @@ pub mod tests_bora_data_driver {
 		let mut seen = HashMap::new();
 		let mut rep = tp_g3::C5Rep::default();
 		for b in [&db.bundle_subsig, &db.bundle_subsig_igc] {
-			for s in b.vec_subsig_step_stores.iter() {
+			// T966: under neo only entry 0 enters the lookup.
+			for s in b.vec_subsig_step_stores.iter().take(1) {
 				tp_g3::c5_store(s, &mut seen, &mut rep, Some(&db.lkup));
 			}
 		}

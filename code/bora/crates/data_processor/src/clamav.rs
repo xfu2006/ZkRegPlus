@@ -2749,6 +2749,19 @@ impl ClamavSig{
 				let ids = &nums[0..nums.len()-1];
 				let num = nums[nums.len()-1]; 
 				let sop = find_only(r">|<|=", &subexp);
+				// T969 (SPEC-1): ClamAV counts a group as the SUM of
+				// member matches. ">x" and "=x" (x>0) imply some member
+				// matched, so a plain OR is a superset (as the ",y"
+				// path). "<x" and "=0" keep the per-id counters below,
+				// which are already a superset.
+				if sop==">" || (sop=="=" && num>0) {
+					let ors: Vec<String> = ids.iter().map(|id|{
+						if b_pm { self.validate_subsig_single_pattern(*id);}
+						format!("{}", id)}).collect();
+					sexpr2 = sexpr2.replace(&old_subexp,
+						&format!("({})", ors.join("|")));
+					continue;
+				}
 				let mut newexpr = String::from("(");
 				let mut b_first = true;
 				let mut set_subsigs = HashSet::<usize>::new();
@@ -2834,7 +2847,7 @@ impl ClamavSig{
 
 		}
 
-		//5. process "(id1&id2&id3...&idn)>x" case or < or = cases
+		//5. process "(id1&id2&id3...&idn)>x" (or "=x") case: plain AND
 		for subexp in find_all(r"\(\d+(\&\d+)+\)( *)(>|=|<)( *)(\d+)(,\d+)?", &self.expr){
 //			if find_all(",", &subexp).len()>0{
 //				println!("WARNING : expressions such as (0&2&4)>1,3 makes no sense. Details: {}", &subexp);
@@ -2847,28 +2860,16 @@ impl ClamavSig{
 			let ids = &nums[0..nums.len()-1];
 			let num = nums[nums.len()-1]; 
 			let sop = find_only(r">|<|=", &subexp);
-			let mut newexpr = String::from("(");
-			let mut b_first = true;
-			for id in ids{
-				if b_pm {self.validate_subsig_single_pattern(*id);}
-				let newstr = format!("{}{}{}", id, sop, num);
-				let newid = vec_sig_obj.len(); 
-				let pat = drop_last_dotstar(&self.vec_subsigs[*id]);
-				let (b_neg, r_val) = Self::extract_rel_pat(&sop, 
-					num, &pat, &newstr);
-				let b_igc = !self.vec_bcase_sensitive[*id];
-				let newobj = SubSigObj{value: newstr.clone(), subsig_type: SubSigType::CounterConstraint, real_value: r_val, b_ignore_case: b_igc,
-				set_subsigs: HashSet::<usize>::new(),
-				min_required: 0, b_fanout_variant: false,
-				}; 
-				vec_sig_obj.push(newobj);
-				self.vec_bneg.push(b_neg);
-				let newitem = if b_first {format!("{}", newid)} else {format!("&{}",newid)};
-				newexpr = newexpr + &newitem;
-				b_first = false;
-			}
-			newexpr = newexpr + ")";
-			sexpr2 = sexpr2.replace(&old_subexp, &newexpr);
+			// T969b: ClamAV AND = all members matched AND SUM op x.
+			// ">x" and "=x" (x>0) -> plain AND, a superset. "<x" and
+			// "=0" are refused loudly (no DB sig uses them).
+			assert!(sop==">" || (sop=="=" && num>0), "T969: AND group \
+				'{}' (<x or =0) unsupported, sig {}", old_subexp, self.name);
+			let ands: Vec<String> = ids.iter().map(|id|{
+				if b_pm { self.validate_subsig_single_pattern(*id);}
+				format!("{}", id)}).collect();
+			sexpr2 = sexpr2.replace(&old_subexp,
+				&format!("({})", ands.join("&")));
 		}
 
 		// Aggressive remaps EVERY original id (fanned -> variant union,
@@ -3964,6 +3965,63 @@ mod tests_clamav{
 		clamav::{find_sig,gen_clamav_sig,quick_discharge_file_by_crit_bag_pm, filter_by,default_clamav_cfg,RANGE_MAX},
 		pcre::{pcre_to_rustomaton_regex, expand_rep_subsig}
 	};
+
+	const FIXED_T969: bool = true;
+	const FIXED_T969B: bool = true;
+
+	/// T969 helper: compile `line`, return (BORA accepts `doc`, number
+	/// of CounterConstraint objs).
+	fn t969_eval(line: &str, doc: &str) -> (bool, usize){
+		let cfg = default_clamav_cfg();
+		let mut g = gen_clamav_sig(line, ClamSigType::General, &cfg);
+		g.set_vec_automaton(&cfg);
+		let n_cc = g.vec_subsig_obj.iter().filter(|o|
+			o.subsig_type == SubSigType::CounterConstraint).count();
+		(g.accepts_by_automaton(0, &hex_to_u8(doc)).0, n_cc)
+	}
+	const T969_P: [&str; 4] = ["4142434445464748", "494a4b4c4d4e4f50",
+		"5152535455565758", "6162636465666768"];
+	fn t969_doc(copies: &[usize]) -> String {
+		let mut d = "99".to_string();
+		for (k, &n) in copies.iter().enumerate() {
+			for _ in 0..n { d += T969_P[k]; d += "99"; } }
+		d
+	}
+
+	/// T969 red (SPEC-1). ClamAV counts an OR group as the SUM of its
+	/// members (matcher-ac.c cli_ac_chklsig). HEAD's per-id counters
+	/// miss docs whose sum, not any one member, reaches x (FN). Shape as
+	/// Mal Win.Trojan.Bladabindi-6196648-0 "((0|1)>1)&2".
+	#[test]
+	fn test_t969_group_counter_sum(){
+		let p = &T969_P;
+		// ">x": one copy each of 0, 1 (S = 2 > 1), plus 2
+		let l = format!("T969.Gt-1;Target:0;((0|1)>1)&2;{};{};{}", p[0], p[1], p[2]);
+		let (m, n_cc) = t969_eval(&l, &t969_doc(&[1, 1, 1]));
+		assert_eq!((m, n_cc == 0), (FIXED_T969, FIXED_T969), ">x OR group");
+		// "=x" (x>0): one copy each of 0 and 1, S = 2
+		let l = format!("T969.EqX-1;Target:0;(0|1)=2&2;{};{};{}", p[0], p[1], p[2]);
+		let (m, n_cc) = t969_eval(&l, &t969_doc(&[1, 1, 1]));
+		assert_eq!((m, n_cc == 0), (FIXED_T969, FIXED_T969), "=x OR group");
+		// "=0" keeps per-id counters: plain OR would reject this doc
+		// (none of 1..3 present), which ClamAV matches
+		let l = format!("T969.Eq0-1;Target:0;0&((1|2|3)=0);{};{};{};{}",
+			p[0], p[1], p[2], p[3]);
+		let (m, n_cc) = t969_eval(&l, &t969_doc(&[1]));
+		assert!(m && n_cc == 3, "=0 group must stay per-id: m {} n_cc {}",
+			m, n_cc);
+	}
+
+	/// T969b red. ClamAV AND group "(a&b)>x" = all members matched AND
+	/// sum > x (as Mal Win.Ransomware.PyCL-6185098-3 "(2&3)>3"). 2+2
+	/// copies: ClamAV matches; HEAD's (a>3&b>3) reads False (FN).
+	#[test]
+	fn test_t969b_and_group_counter_sum(){
+		let l = format!("T969b.And-1;Target:0;(0&1)>3;{};{}",
+			T969_P[0], T969_P[1]);
+		let (m, n_cc) = t969_eval(&l, &t969_doc(&[2, 2]));
+		assert_eq!((m, n_cc == 0), (FIXED_T969B, FIXED_T969B), "AND group");
+	}
 
 	/// T974 B3m: counted m-flag `^` subsigs. pat = hex minus the last `.*`,
 	/// repeated n+1 times (op >) must accept n+1 matching lines; on HEAD
