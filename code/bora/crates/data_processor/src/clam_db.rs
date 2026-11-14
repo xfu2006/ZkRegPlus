@@ -2065,6 +2065,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			let bag_pm = s.collect_bagwords_from_pmreg(b_igc); 
 			let mut vec_pm = bag_pm.iter().map(|s| s.clone())
 				.collect::<Vec<String>>();
+			vec_pm.sort(); //HashSet order would renumber the ACDFA
 			vec_pm.push("0123456789abcdef190918230981212fa"
 				.to_owned());//to satisfy hex alphbet
 			let dfa_pm = HexACDFA::new(0, &vec_pm);
@@ -2380,11 +2381,15 @@ impl <F:PrimeField> ClamavDB<F>{
 		}
 
 		//3. build dfas for critical pattern	
-		let vec_crit_pat = map_crit_pat.keys().cloned()
+		//Sorted. Map order is random per build, and the ACDFA state
+		//numbering (so the lkup values) follows the input order.
+		let mut vec_crit_pat = map_crit_pat.keys().cloned()
 			.collect::<Vec<String>>();
+		vec_crit_pat.sort();
 		let dfa_crit = HexACDFA::new(0, &vec_crit_pat);
-		let vec_crit_pat_igc = map_crit_pat_igc.keys().cloned()
+		let mut vec_crit_pat_igc = map_crit_pat_igc.keys().cloned()
 				.collect::<Vec<String>>();
+		vec_crit_pat_igc.sort();
 		//RECOVER LATER: we changed false to true. Keep it
 		//if data is correct.
 		let dfa_crit_igc = HexACDFA::new_adv(0, &vec_crit_pat_igc, true);
@@ -2395,12 +2400,12 @@ impl <F:PrimeField> ClamavDB<F>{
 		//4. generate bag of words
 		let pats = (&v_sigs).into_iter().map(|s| 
 			s.collect_bagwords_from_pmreg(false)).flat_map(|s| s).
-			collect::<HashSet<String>>().into_iter().map(|s| s)
+			collect::<std::collections::BTreeSet<String>>().into_iter()
 			.collect::<Vec<String>>();
 
 		let pats_igc = (&v_sigs).into_iter().map(|s| 
 			s.collect_bagwords_from_pmreg(true)).flat_map(|s| s).
-			collect::<HashSet<String>>().into_iter().map(|s| s)
+			collect::<std::collections::BTreeSet<String>>().into_iter()
 			.collect::<Vec<String>>();
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 5: Build Bag-of-Words."), &mut timer, vlog);}
 
@@ -3425,6 +3430,48 @@ mod tests_clam_db{
 			}
 		}
 		assert_eq!(b_one, FIXED_NH4 && FIXED_NH5, "one tag / one value per key");
+	}
+
+	/// T984 red. Two builds of one sig file give one DB. Each Zip sig
+	/// is a 12x12 alternation, past combination_limit 127, so its bags
+	/// come from the zipped pairing. HEAD zipped in HashSet order (random
+	/// per instance), so the crit keys moved between builds. Equal ACDFAs
+	/// also need the sorted inputs (crit keys, ISED pm words). The lkup is
+	/// not compared. Its rows also follow the global neo flag, which the
+	/// T965 tests flip while this test runs.
+	#[test]
+	fn test_t984_build_deterministic(){
+		let cfg = default_clamav_cfg();
+		let w = |b: usize| format!("{:02x}", b).repeat(5);
+		let mut sigs: Vec<String> = (0..4).map(|k| {
+			let br = |c: usize| (0..12).map(|i| w(c + 12 * k + i))
+				.collect::<Vec<String>>().join("*");
+			format!("T984.Zip-{};Engine:81-255,Target:0;0;({}|{})",
+				k, br(0x30), br(0x60))
+		}).collect();
+		sigs.push(format!("T984.Ised;Engine:81-255,Target:0;0;{}",
+			(0..6).map(|i| w(0x90 + i)).collect::<Vec<String>>().join("*")));
+		let ised = vec!["T984.Ised".to_string()];
+		let none: Vec<String> = vec![];
+		let build = |tag: &str| {
+			let d = format!("debug/t984_{}", tag);
+			std::fs::create_dir_all(
+				format!("{}/data/{}", proj_root(), d)).unwrap();
+			let db = ClamavDB::<Fr>::build_test_db(&cfg, &d, &sigs,
+				&none, &ised, &none).expect("build");
+			std::fs::remove_dir_all(format!("{}/data/{}", proj_root(), d)).ok();
+			let nc: Vec<String> = db.vec_sigs_no_critical_pat.iter()
+				.map(|s| s.name.clone()).collect();
+			let crit: std::collections::BTreeMap<String, Vec<String>> =
+				db.map_crit_pat.clone().into_iter().collect();
+			let dfas = serde_json::to_value((&db.dfa_crit,
+				&db.bundle_subsig.vec_acdfa)).unwrap();
+			(nc, crit, dfas)
+		};
+		let (a, b) = (build("a"), build("b"));
+		assert!(a.1.len() >= 8, "fixture: {} crit keys", a.1.len());
+		assert!(a.0 == b.0 && a.1 == b.1, "crit choice differs between builds");
+		assert!(a.2 == b.2, "ACDFA numbering differs between builds");
 	}
 
 	/// T978 red. Each ACDFA window [base, base+0xFF] holds only that

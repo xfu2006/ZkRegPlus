@@ -32159,7 +32159,7 @@ Goal 1. B2
 	[e] T981: one (file,sig) case of 0x80 char issue. fixed.
 	[f] T982: more precise semantics of ::i, ::w, and ::f following
 		clamav, e.g., odd case handling of ::i
-	[g] T983: 
+	[g] T983: fix stale unit test cases 
 Goal 2. B3
 	[a] T961: duplicated subsig
 		F1: subsig duplicated -> fix: enforce strict order
@@ -32170,6 +32170,12 @@ Goal 2. B3
 Goal 3. start writing plan
 	[a] planning
 	[b] resolve questions
+
+Saturday 11/14/2026
+Goal 1. B2
+	[a] T985: fix byteclass translation, empty lternation.
+		T984: DB build non-deterministic. make pair branches
+			in lexicalgraphic order.
 	
 
 	

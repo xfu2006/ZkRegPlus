@@ -1677,6 +1677,10 @@ fn handle_concat_bagwords(vec: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
 						acc
 					});
 		}else{
+			//A split is never full, even when its parts dedup to one bag.
+			//E.g. (XX) with |X|*|X| >= limit gives {X}, and an outer
+			//concat would then glue a single X where every match has two.
+			b_full_res = false;
 			add_to_hs(&mut res, &cur_bag, min_bag_len);
 			if b_full{ //update the current bag, wait for next
 				cur_bag = next_bag.clone();
@@ -1721,10 +1725,13 @@ fn handle_alt_bagwords(v: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
 				.collect::<Vec<Vec<String>>>();
 			let mut vec2 = bag.iter().map(|x| x.clone())
 				.collect::<Vec<Vec<String>>>();
-			//Only the aggressive-SDE pipeline opts into the
-			//deterministic longest-clause-first pairing; other
-			//runners keep the original (HashSet-random) order
-			//so their baselines are byte-identical.
+			//Zip in a total order. HashSet order is random per
+			//instance, so an unsorted zip moves the bags (then the
+			//crit set and the DB) from build to build. Aggressive
+			//runs then pair longest-clause-first (stable sort, so
+			//ties keep the lexicographic order).
+			vec1.sort();
+			vec2.sort();
 			if utils::consts::read_global_config()
 				.clamav_cfg.b_aggressive_sde_for_rep {
 				let key = |c: &Vec<String>| c.iter()
@@ -1758,7 +1765,9 @@ fn collect_bag_words_from_rustomaton_regex_worker(hir: &Hir, limit: &mut usize,
 	min_bag_len: usize) 	-> (HashSet<Vec<String>>, bool){
 	let mut set = HashSet::<Vec<String>>::new();
 	let (res, bfull) = match hir.kind(){
-		Empty => { (set, true) },
+		//"" is the only match. An empty set would make an alternation
+		//drop its other branches, e.g. read (|63) as "" alone.
+		Empty => { set.insert(vec![String::new()]); (set, true) },
 		HirKind::Literal(x) => {
 			let sx = String::from_utf8(x.0.to_vec())
 				.expect("failed u8 to str");
@@ -1777,8 +1786,8 @@ fn collect_bag_words_from_rustomaton_regex_worker(hir: &Hir, limit: &mut usize,
 		},
 		HirKind::Class(v) => {
 			let vbytes = class_to_arr(v, limit);
-			let res = vbytes.iter().map(|v| 
-					(&format!("{:#04x}",v)[2..]).to_string())
+			//members are nibble chars, as in Literal (not hex of a byte)
+			let res = vbytes.iter().map(|v| (*v as char).to_string())
 					.collect::<Vec<String>>();
 			let mut hs = HashSet::<Vec<String>>::new();
 			hs.insert(res);
@@ -3143,4 +3152,64 @@ mod tests_t974_backref {
 	#[test] #[should_panic] fn test_t974_bk_lookbehind() { preprocess_backref("(?<=a)b"); }
 	#[test] #[should_panic] fn test_t974_bk_posix() { preprocess_backref("(a)[[:alpha:]()](b)\\2c"); }
 	#[test] #[should_panic] fn test_t974_bk_cls_ref() { preprocess_backref("(a)[\\1](b)"); }
+}
+
+/// T984. The bag-of-words generator must be sound (every match of the
+/// nibble regex holds a word of every bag) and deterministic.
+#[cfg(test)]
+mod tests_t984 {
+	use super::collect_bag_words_from_rustomaton_regex as bags;
+	use std::collections::HashSet;
+
+	fn set(v: &[&[&str]]) -> HashSet<Vec<String>> {
+		v.iter().map(|b| b.iter().map(|s| s.to_string()).collect()).collect()
+	}
+
+	/// 12 x 12 = 144 >= combination_limit 127, so the alternation zips
+	/// its clauses. HEAD zipped in HashSet order (random per instance).
+	#[test]
+	fn test_t984_alt_pairing_deterministic() {
+		let w = |c: u8| format!("{:02x}", c).repeat(3);
+		let a: Vec<String> = (0..12).map(|i| w(0x41 + i)).collect();
+		let b: Vec<String> = (0..12).map(|i| w(0x61 + i)).collect();
+		let s = format!("({}|{})", a.join(".*"), b.join(".*"));
+		let want: HashSet<Vec<String>> = (0..12)
+			.map(|i| vec![a[i].clone(), b[i].clone()]).collect();
+		for k in 0..4 {
+			assert_eq!(bags(&s, 6, 127), want, "zip drifted on call {}", k);
+		}
+	}
+
+	/// Class members are nibble chars. HEAD hex-encoded their code ('9'
+	/// -> "39"), so no matching file held the word. VOF1-6399659-0
+	/// (swift\scopy) thus discharged a file with "swift\tcopy".
+	#[test]
+	fn test_t984_class_nibble_chars() {
+		let want: Vec<String> = ["09", "0a", "0b", "0c", "0d", "20"].iter()
+			.map(|m| format!("7377696674{}636f7079", m)).collect();
+		assert_eq!(bags("7377696674(0(9|a|b|c|d)|20)636f7079", 6, 127),
+			HashSet::from([want]));
+		assert_eq!(bags("2e6578652(2|7)", 6, 127),
+			set(&[&["2e65786522", "2e65786527"]]));
+	}
+
+	/// An empty branch matches "" only. HEAD gave it no bag, so (|63)
+	/// lost 63 and the concat glued 61626465, absent from 6162636465.
+	#[test]
+	fn test_t984_empty_branch() {
+		assert_eq!(bags("6162(|63)6465", 6, 127),
+			set(&[&["6162636465", "61626465"]]));
+	}
+
+	/// T985. A concat split at the limit is never full, even when its
+	/// parts dedup to one bag. HEAD read (XX), |X| = 12, as the full bag
+	/// X, so 616263(XX)646566 glued 616263x646566. Every match is
+	/// 616263xy646566, so no match held a word of that bag.
+	#[test]
+	fn test_t985_split_concat_not_full() {
+		let x = "(0|1|2|3|4|5|6|7|8|9|a|b)";
+		let b = super::filter_bag_of_words(
+			&bags(&format!("616263({}{})646566", x, x), 6, 127), 6);
+		assert_eq!(b, set(&[&["616263"], &["646566"]]));
+	}
 }
