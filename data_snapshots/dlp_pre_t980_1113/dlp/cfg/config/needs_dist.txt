@@ -1,0 +1,41 @@
+=== NEEDS distribution: 504854 files ===
+
+-- View A: top 50486 files (10%) by max NEEDS --
+global p90(all chunks)=0  hi_thresh(4*MAX/5)=12000  MAX=15000
+ratio_ge_p90 (chunks>=p90 / file chunks): min=0.000 med=0.250 max=0.900
+ratio_hi     (chunks>=hi  / file chunks): min=0.000 med=0.000 max=0.500
+mean chunks/file (cohort) = 4.5
+worst 10 files (by max NEEDS):
+  file                                        chunks  maxNEEDS   r>=p90     r_hi
+  src/maildir/dasovich-j/all_documents/3512.      21     15000    0.238    0.048
+  l/src/maildir/dasovich-j/notes_inbox/1704.      21     15000    0.238    0.048
+  il/src/maildir/farmer-d/deleted_items/365.       3     15000    0.333    0.333
+  l/src/maildir/whalley-l/all_documents/654.       7     15000    0.143    0.143
+  /maildir/whalley-l/discussion_threads/522.       7     15000    0.143    0.143
+  ail/src/maildir/whalley-l/notes_inbox/311.       7     15000    0.143    0.143
+  src/maildir/dasovich-j/all_documents/2357.      29     14400    0.483    0.034
+  il/src/maildir/dasovich-j/notes_inbox/950.      29     14400    0.483    0.034
+  ail/src/maildir/kaminski-v/_sent_mail/114.       3     14400    0.667    0.333
+  /src/maildir/kaminski-v/all_documents/288.       3     14400    0.667    0.333
+
+-- File cut table (remove file if its max-chunk NEEDS > T) --
+  T=     0: remove   32900 of 504854 files (6.5167%)
+  T=  1000: remove    7485 of 504854 files (1.4826%)
+  T=  2840: remove    4687 of 504854 files (0.9284%)
+  T=  3500: remove    4684 of 504854 files (0.9278%)
+  T=  4500: remove     956 of 504854 files (0.1894%)
+  T=  5680: remove     852 of 504854 files (0.1688%)
+  T=  8520: remove     780 of 504854 files (0.1545%)
+  T= 11360: remove      18 of 504854 files (0.0036%)
+  T= 14199: remove      13 of 504854 files (0.0026%)
+
+-- View B: all chunks pooled --
+total_chunks=1431752  zero=1386296 (96.8%)  nonzero=45456 (3.2%)
+nonzero percentiles: p50=200 p80=600 p90=4000 p95=4000 p99=10400 p99.9=11000 MAX=15000
+5-bucket histogram over (0, MAX=15000]:
+  zeros                                 1386296  (96.8% all)
+  [      1,    3000]       40130  (2.80% all, 88.28% nz)
+  [   3001,    6000]        4470  (0.31% all, 9.83% nz)
+  [   6001,    9000]          63  (0.00% all, 0.14% nz)
+  [   9001,   12000]         775  (0.05% all, 1.70% nz)
+  [  12001,   15000]          18  (0.00% all, 0.04% nz)

@@ -1,0 +1,29 @@
+# DLP_T980 S1 baseline: copy of code/bora/data/paper_data/dlp at live HEAD 9e52c79a (2026-11-13 15:03)
+8ee6b3275874d6c271e3f08b19c4b277 2358 dlp/cfg/config/needs_dist.txt
+092a4d5150636489ea89bcf9406893c6 400 dlp/cfg/config/runcfg_full.json
+6e4b8a53afd30125049f0ac258725095 446 dlp/cfg/config/runcfg_sample.json
+9e51cadd1b0fc8c00949e9c80e188408 915 dlp/cfg/corpus.stat
+d2cb3884682177918cd442d81f4186fc 1534125 dlp/cfg/corpus.tgz
+106129c053f53eb85d25487ed4d7492d 1509504 dlp/cfg/jobs/final_enron_list.txt.tgz
+c2646e286388851acb46340f3dbe0348 3645869 dlp/cfg/jobs/jobs8/job_0.dat
+80f464d30ce7b6e86b4525d460103c00 3647292 dlp/cfg/jobs/jobs8/job_1.dat
+3a64736b8c42f0099ab0eeb7fc030f81 3648006 dlp/cfg/jobs/jobs8/job_2.dat
+725b28fc0183d081b17d45c6e311842e 3649443 dlp/cfg/jobs/jobs8/job_3.dat
+baa71a0c305119212c3cc51169024b5f 3648374 dlp/cfg/jobs/jobs8/job_4.dat
+1414fe3008cd89fdaad72cc463978a74 3650121 dlp/cfg/jobs/jobs8/job_5.dat
+4cda091c791bb17a46267c4828c78f96 3646230 dlp/cfg/jobs/jobs8/job_6.dat
+b89c38a49e7dbb5301a452f897a71d8c 3646193 dlp/cfg/jobs/jobs8/job_7.dat
+6defc6a7a9363b9ede4664c54612f91a 1486965 dlp/cfg/jobs/small_full_dlp_list.txt
+4e56dd14a8667b04347842df688424ae 513 dlp/cfg/jobs/suspect_list_full.txt
+bf57973bae905eed282fbec9cef3a87f 183 dlp/cfg/jobs/suspect_list.txt
+86dbe24a154418ee78bc950377392e64 2030 dlp/cfg/README.txt
+e51caa0ed745b86094fbd17e8243fe82 1450145 dlp/cfg/regex_pat/main_data_dlp_internationl.dat
+d41d8cd98f00b204e9800998ecf8427e 0 dlp/cfg/regex_pat/main_dfa.dat
+dba8c1affec0f3b06a6b4cc2f476b57c 639 dlp/cfg/regex_pat/main_fanout.dat
+d41d8cd98f00b204e9800998ecf8427e 0 dlp/cfg/regex_pat/needs_ised.dat
+d41d8cd98f00b204e9800998ecf8427e 0 dlp/cfg/regex_pat/needs_ised_igc.dat
+53162decca71eca39d454d0b0c36780c 838 dlp/README.txt
+4b360abc585b0d05692b373735ea2170 59 dlp/report/measure_fin.txt
+a67dca5b16ae1048094711944b96f24b 2322 dlp/report/needs_dist_report.txt
+# added 2026-11-13: old step-1 clean list from live code/bora/data/src_sig/ms_dlp/docs/clean_email_list_email_regex_zombie_international.txt.tgz
+bc14277b2a685bb204018dcd391f98ed 1326994 src_sig/ms_dlp/docs/clean_email_list_email_regex_zombie_international.txt.tgz
