@@ -32155,7 +32155,7 @@ Goal 1. B2
 		-> done
 	[c] T978: tri-logic table extra row into NON-FINAL. just change
 		macro values.
-	[d] T970 test
+	[d] T970 test -> but creates a new task to fix a bug
 Goal 2. B3
 	[a] T961: duplicated subsig
 		F1: subsig duplicated -> fix: enforce strict order
