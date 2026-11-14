@@ -11,7 +11,7 @@ use std::cmp::Ordering::{Less,Equal,Greater};
 use std::collections::{HashMap};
 use regex::Regex;
 use crate::{
-	strings::{dot_str,rng_str,chunks2,is_english,find_all,regex_non_alphanum,wide},
+	strings::{dot_str,rng_str,chunks2,is_english,find_all,wide},
 	fsa_utils::{build_dfa},
 };
 use utils::{
@@ -237,28 +237,28 @@ pub fn plug_in_trigger(i: usize, s: &str, trigger: &str)->String{
 	s
 }
 
-/// apply modifiers (no need to apply b_ignore - 
-/// it will be handled by automaton)
-pub fn gen_modified_str(arr: &Vec<String>, b_wide: bool, _b_ignore: bool, 
-	b_full: bool)->String{
-	let mut s = String::from("");
-	//1. apply b_ignore
-	for x in arr{
-		let s1 = if b_wide {wide(&x)} else {x.clone()};
-		s = s + &s1;
-		/* NO NEED to handle b_ignore any more. We'll handle it in ACDFA
-		if b_ignore && is_english(x){
-			let s2 = if b_wide {wide(&other_case(&x))} else {other_case(&x)};
-			s = s + "(" + &s1 + "|" + &s2 +")";
+/// Apply the wide modifier as ClamAV's cli_sigopts_handler does, on the
+/// RAW body before the `*`/`?`/range rewrite (T982). Each hex or `?` byte
+/// gets 00 appended. `* ( | ) !` and `{..}`/`[..]` are copied verbatim, so
+/// ranges stay in bytes. Ignore case is left to the (AC)DFA.
+pub fn gen_modified_str(body: &str, b_wide: bool)->String{
+	if !b_wide {return body.to_string();}
+	let b = body.as_bytes();
+	let h = |c: u8| c.is_ascii_hexdigit() || c==b'?';
+	let (mut s, mut i) = (String::new(), 0);
+	while i<b.len(){
+		if b[i]==b'{' || b[i]==b'['{
+			let j = i + body[i..].find(|c| c=='}' || c==']').unwrap();
+			s += &body[i..=j];
+			i = j + 1;
+		}else if i+1<b.len() && h(b[i]) && h(b[i+1]){
+			s += &wide(&body[i..i+2]);
+			i += 2;
 		}else{
+			s.push(b[i] as char);
+			i += 1;
 		}
-		*/
 	}
-	//2. apply b_full
-	if b_full{
-		s = s + &regex_non_alphanum();
-	}
-
 	s
 }
 
@@ -303,27 +303,26 @@ pub fn handle_modifier(s:&str)->(String, bool){
 	handle_modifier_worker(s, true)
 }
 
-/// worker function called by hanlde_modifier
-pub fn handle_modifier_worker(s:&str, handle_igc: bool)->(String, bool){
+/// worker function called by hanlde_modifier. It takes the RAW lowercased
+/// subsig, before the `*`/`?`/range rewrite (T982). An `N:` offset prefix
+/// stays outside the modified body. Only the first `::` group counts.
+/// `f` (fullword) is a zero-width word edge in ClamAV. Dropping it is a
+/// sound superset.
+pub fn handle_modifier_worker(s:&str, _handle_igc: bool)->(String, bool){
 	if !s.contains("::") {return (String::from(s), true);}
 	let arr = s.split("::").map(str::to_string).collect::<Vec<String>>();
 	let mods = &arr[1];
-	let chunks = chunks2(&arr[0]);
+	let (loc, body) = arr[0].split_at(arr[0].find(':').map_or(0, |k| k+1));
 	let b_w = mods.contains("w"); //wide char mode
 	let b_i = mods.contains("i"); //ignore case
 	let b_a = mods.contains("a"); //ascii mode
-	let b_f = mods.contains("f"); //full word mode
 
-	let final_str;
-	if b_a && b_w{//both
-		let s1 = gen_modified_str(&chunks, true, b_i && handle_igc, b_f);
-		let s2 = gen_modified_str(&chunks, false, b_i && handle_igc, b_f);
-
-		final_str = "(".to_owned() + &s1 + "|"  + &s2 + ")"
+	let final_str = if b_a && b_w{//both
+		"(".to_owned() + &gen_modified_str(body, true) + "|" + body + ")"
 	}else{//otherwise, only one string (depending on if wide)
-		final_str= gen_modified_str(&chunks, b_w, b_i && handle_igc, b_f)	
+		gen_modified_str(body, b_w)
 	};
-	(final_str, !b_i)
+	(loc.to_owned() + &final_str, !b_i)
 }
 
 /// This function handles the location specifiers as defined in
@@ -562,14 +561,13 @@ pub fn extract_clamav_reg(s: &str) -> (String,String,String){
 /// without approxiting range
 /// return (String, b_ignore_case)
 pub fn preprocess_general_regex_without_rep(s: &str)->(String,bool){
-	let mut s = s.to_lowercase();
+	let (mut s, b_igc) = handle_modifier_but_no_igc(&s.to_lowercase());
+		//raw body (T982). igc will be handled later in hir handling
 	s = s.replace("*", ".*");
 	s = s.replace("?", ".");
 	// REPLACE the old: s = handle_range(&s); with the following
 	s = handle_range_without_approx(&s, true);
-	let (s2, b_igc) = handle_modifier_but_no_igc(&s); //will be handled later
-							//in hir handling
-	s = handle_location(&s2);
+	s = handle_location(&s);
 	s = handle_negation(&s);
 
 	(s, b_igc)

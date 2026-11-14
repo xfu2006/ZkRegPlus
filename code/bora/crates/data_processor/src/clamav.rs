@@ -500,10 +500,10 @@ pub fn preprocess_regex(s:&str, name: &str, sigtype: ClamSigType, cfg: &ClamavAp
 			println!("WARN: preproces_regex len: {}, name: {}", s.len(), name);
 		}
 	}else if sigtype==ClamSigType::General{
+		(s, b_case_sensitive) = handle_modifier(&s); //raw body (T982)
 		s = s.replace("*", ".*");
 		s = s.replace("?", "."); 
 		s = handle_range(&s);
-		(s, b_case_sensitive) = handle_modifier(&s);
 		s = handle_location(&s);
 		s = handle_negation(&s);
 		validate_ra_regex_relaxed(&s, &name);

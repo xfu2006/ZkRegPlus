@@ -32156,12 +32156,16 @@ Goal 1. B2
 	[c] T978: tri-logic table extra row into NON-FINAL. just change
 		macro values.
 	[d] T970 test -> but creates a new task to fix a bug
+	[e] T981: one (file,sig) case of 0x80 char issue. fixed.
+	[f] T982: more precise semantics of ::i, ::w, and ::f following
+		clamav, e.g., odd case handling of ::i
 Goal 2. B3
 	[a] T961: duplicated subsig
 		F1: subsig duplicated -> fix: enforce strict order
 		NH3: cs and igc share type tag: fix separate IGC subsig type
 		union proof: proves the same - remove
 		full ist panic: should raise CapErr
+	[b]
 Goal 3. start writing plan
 	[a] planning
 	[b] resolve questions

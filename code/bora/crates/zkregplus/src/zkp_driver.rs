@@ -8187,15 +8187,18 @@ fail: {} ({:.4}%)",
 		n
 	}
 
-	/// Extract the one-file clean-list .tgz into /tmp; return its path.
-	/// Caller removes it when done.
+	/// Extract the one-file clean-list .tgz into a per-run /tmp dir (two
+	/// runs on one host must not share it); return the file path.
+	/// Caller removes its parent dir when done.
 	fn extract_clean_list(proot: &str) -> String {
 		let tgz = format!("{}/{}", proot, CLEAN_TGZ);
+		let dir = format!("/tmp/bora_clean_{}", std::process::id());
+		std::fs::create_dir_all(&dir).expect("mkdir clean-list dir");
 		let st = std::process::Command::new("tar")
-			.args(["-xzf", &tgz, "-C", "/tmp"]).status()
+			.args(["-xzf", &tgz, "-C", &dir]).status()
 			.expect("spawn tar -xzf");
 		assert!(st.success(), "tar -xzf {} failed", tgz);
-		format!("/tmp/{}", CLEAN_NAME)
+		format!("{}/{}", dir, CLEAN_NAME)
 	}
 
 	/// Read the clean-email list (paths relative to data/samples/email)
@@ -8214,7 +8217,8 @@ fail: {} ({:.4}%)",
 		names: &[&str]) {
 		let out = format!("{}/{}", proot, out_rel);
 		let parent = format!("{}/{}", proot, parent_rel);
-		let mut args: Vec<&str> = vec!["-czf", &out, "-C", &parent];
+		let mut args: Vec<&str> = vec!["--owner=0", "--group=0",
+			"--numeric-owner", "-czf", &out, "-C", &parent];
 		args.extend_from_slice(names);
 		let st = std::process::Command::new("tar").args(&args)
 			.status().expect("spawn tar -czf");
@@ -8406,7 +8410,8 @@ fail: {} ({:.4}%)",
 		//funnel snapshot under the DLP config dir
 		utils::os::write_lines(
 			"data/paper_data/dlp/cfg/corpus.stat", &body, true);
-		let _ = std::fs::remove_file(&list_tmp);
+		let _ = std::fs::remove_dir_all(
+			std::path::Path::new(&list_tmp).parent().unwrap());
 		println!("[corpus] DONE raw={} stage1={} passed={} \
 failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 			failed.len(), high.len(), final_list.len());

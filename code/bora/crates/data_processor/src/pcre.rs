@@ -427,10 +427,10 @@ pub fn clamav_genregex_to_dfa(s: &str) -> DFA<char>{
 	let mut s = s.to_lowercase();
 	let _old_s = s.clone();
 	let b_case_sensitive;
+	(s, b_case_sensitive) = handle_modifier(&s); //raw body (T982)
 	s = s.replace("*", ".*");
 	s = s.replace("?", ".");
 	s = handle_range_without_approx(&s, true); //no unrolling
-	(s, b_case_sensitive) = handle_modifier(&s);
 	let b_ignore_case = !b_case_sensitive;
 	s = handle_location(&s);
 	s = handle_negation(&s);

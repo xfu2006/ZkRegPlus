@@ -3467,3 +3467,136 @@ mod tests_clam_db{
 			windows, first {:?}", foreign.len(), foreign.first());
 	}
 }
+
+#[cfg(test)]
+pub mod tests_t982{
+	//! T982: subsig modifiers (::i/w/a/f) must over-approximate ClamAV
+	//! (readdb.c cli_sigopts_handler), or a ClamAV hit gets discharged.
+	use crate::clam_db::ClamavDB;
+	use crate::clamav::{default_clamav_cfg, quick_discharge_file_by_crit_bag_pm};
+	use crate::pcre::clamav_genregex_to_dfa;
+	use crate::preprocess::handle_modifier;
+	use crate::type_def::ClamavApproxConfig;
+	use rustomaton::automaton::Automata;
+	use utils::os::proj_root;
+	use ark_bn254::Fr;
+
+	fn wide(s: &[u8]) -> Vec<u8> { s.iter().flat_map(|x| [*x, 0]).collect() }
+	fn h(s: &str) -> Vec<u8> { hex::decode(s).unwrap() }
+	fn hexc(b: &[u8]) -> Vec<char> { hex::encode(b).chars().collect() }
+
+	/// true iff the native discharge (the decision the circuits prove)
+	/// clears sig `name` on file bytes `w`.
+	pub fn disch(db: &ClamavDB<Fr>, cfg: &ClamavApproxConfig, name: &str,
+		w: &[u8]) -> bool {
+		let nib: Vec<u8> = w.iter().flat_map(|x| [x >> 4, x & 15]).collect();
+		let (f, _) = quick_discharge_file_by_crit_bag_pm("w.bin", &nib,
+			&db.vec_sigs, &db.vec_sigs_no_critical_pat, &db.map_crit_pat,
+			&db.map_crit_pat_igc, &db.dfa_crit, &db.bundle_subsig.vec_acdfa[0],
+			&db.dfa_crit_igc, &db.bundle_subsig_igc.vec_acdfa[0], true, cfg,
+			&db.sig_to_id, 2, 2);
+		![&f.crit, &f.bag, &f.pm, &f.all_dfa].iter().all(|x| x.contains(name))
+	}
+
+	fn discharged(tag: &str, line: &str, w: &[u8]) -> bool {
+		let cfg = default_clamav_cfg();
+		let d = format!("debug/t982_{}", tag);
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), d)).unwrap();
+		let none: Vec<String> = vec![];
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, &d,
+			&vec![line.to_string()], &none, &none, &none).expect("build");
+		std::fs::remove_dir_all(format!("{}/data/{}", proj_root(), d)).ok();
+		disch(&db, &cfg, line.split(';').next().unwrap(), w)
+	}
+
+	/// ClamAV text of the pure-hex subsigs of `line` (UTF-16 if `w`),
+	/// space separated. Subsig `k` goes last, then `tail`. `skip` leaves
+	/// one subsig out (a ClamAV-clean control).
+	pub fn lits(line: &str, k: usize, tail: &[u8], skip: Option<usize>)
+		-> Vec<u8> {
+		let subs: Vec<&str> = line.split(';').skip(3).collect();
+		let txt = |i: usize| {
+			let (b, m) = subs[i].split_once("::").unwrap_or((subs[i], ""));
+			if m.contains('w') {(wide(&h(b)), wide(b" "))} else {(h(b), b" ".to_vec())}
+		};
+		let mut w = b"zz ".to_vec();
+		for i in (0..subs.len()).filter(|&i| i != k && Some(i) != skip) {
+			let (t, sp) = txt(i);
+			w.extend(t);
+			w.extend(sp);
+		}
+		w.extend(txt(k).0);
+		w.extend(tail);
+		w
+	}
+
+	/// (tag, sig line from Mal main.dat, file bytes, ClamAV-clean?).
+	/// ClamAV 1.5.4 matches every `false` row (r1/r2A), so discharging it
+	/// is a false clean. Each `true` row lacks one subsig.
+	pub fn cases() -> Vec<(&'static str, &'static str, Vec<u8>, bool)> {
+		let z = b"zz".to_vec();
+		let vb = "Win.Packer.VbPack-0-6334882-0;Engine:81-255,Target:1;0&1&2;E8{2}(0000|FFFF)4B45524E454C::i;56423521;5642362E4F4C4200";
+		let vbw = |k: &[u8]| [z.clone(), h("e801020000"), k.to_vec(), z.clone(),
+			h("56423521"), z.clone(), h("5642362e4f4c4200"), z.clone()].concat();
+		let rtf = "Rtf.Exploit.CVE_2017_0199-6335035-0;Engine:83-255,Container:CL_TYPE_RTF,Target:2;0&1;4c696e6b496e666f::w;68747470{0-2}3a2f2f::wi";
+		let rtfw = |u: Vec<u8>| [z.clone(), wide(b"LinkInfo"), z.clone(), u, z.clone()].concat();
+		let sh = "Win.Dropper.Shamoon-6781726-1;Engine:81-255,Target:1;0&1&2;49574842575748564349444252414655415349495755525254575254494249564a4447575452525245464445414542494145424a4747435356554847564a5548414449455741464757414452555744544a42485453495444565642434944435748524856544456434445535448575355414548475457544a57464952544252425443454955524147564644425542444452414842::w;237b(38|39)413644423744322d464543462d343166662d394139322d3645444136393636313344(46|45)7d23::w;5c3f5c456c5261774469736b::w";
+		let shs: Vec<String> = sh.split(';').skip(3).map(|s| s.replace("::w", "")
+			.replace("(38|39)", "39").replace("(46|45)", "46")).collect();
+		let shw = |s2: Vec<u8>| [z.clone(), wide(&h(&shs[0])), z.clone(),
+			wide(&h(&shs[1])), z.clone(), s2, z.clone()].concat();
+		let ord = "Win.Ransomware.Ordinypt-6370577-0;Engine:81-255,Target:1;(0&1&2&3&4&5&6);2e6261636b7570::fai;2e73716c69746533::fai;2e73716c6974656462::fai;2e786c736d::fai;426974636f696e::fa;446563727970742d4b6579::fa;2e6a617661::fai";
+		let spo = "Win.Ransomware.Spora-6369812-0;Engine:81-255,Target:1;(0&1&2&3&4&5&6);2e646f6378::wf;2e6261636b7570::wf;2e73716c697465::wf;2e6163636462::wf;67616d6573::wf;64656c65746520736861646f7773::wf;2d2d2d2d2d424547494e205253412050524956415445204b45592d2d2d2d2d::af";
+		vec![
+			//B1: odd `::i` body lost its last nibble ("KERNE" + pad 0)
+			("vb", vb, vbw(b"KERNEL"), false),
+			("vb_lc", vb, vbw(b"kernel"), false),
+			("vb_neg", vb, vbw(b"KERNE@"), true),
+			//B2: `::w` paired chars across `{0-2}` / `(` / `|`
+			("rtf", rtf, rtfw(wide(b"http://")), false),
+			("rtf_gap", rtf, rtfw([wide(b"HTTP"), h("4142"), wide(b"://")].concat()), false),
+			("rtf_neg", rtf, rtfw(b"http://".to_vec()), true),
+			("sham", sh, shw(wide(&h(&shs[2]))), false),
+			("sham_neg", sh, shw(h(&shs[2])), true),
+			//`::f` is a zero-width edge: EOF and 0x80 are word ends
+			("ord_80", ord, lits(ord, 6, b"\x80zz", None), false),
+			("ord_eof", ord, lits(ord, 6, b"", None), false),
+			("ord_neg", ord, lits(ord, 6, b" zz", Some(5)), true),
+			("spo_80", spo, lits(spo, 6, b"\x80zz", None), false),
+			("spo_neg", spo, lits(spo, 6, b"\x80zz", Some(4)), true),
+		]
+	}
+
+	/// T982: modifiers act on the RAW body like cli_sigopts_handler. No
+	/// odd truncation, `w` widens byte tokens only (ranges stay bytes),
+	/// an `N:` offset stays outside, `f` adds nothing, a second `::`
+	/// group is ignored.
+	#[test]
+	fn test_handle_modifier_t982(){
+		let o = |s: &str, cs: bool| (s.to_string(), cs);
+		assert_eq!(handle_modifier("e8{2}(0000|ffff)4b45524e454c::i"),
+			o("e8{2}(0000|ffff)4b45524e454c", false));
+		assert_eq!(handle_modifier("1024:5200??6500::i"), o("1024:5200??6500", false));
+		assert_eq!(handle_modifier("68747470{0-2}3a2f2f::wi"),
+			o("6800740074007000{0-2}3a002f002f00", false));
+		assert_eq!(handle_modifier("237b(38|39)4?*41::aw"),
+			o("(23007b00(3800|3900)4?00*4100|237b(38|39)4?*41)", true));
+		assert_eq!(handle_modifier("2e6a617661::fai"), o("2e6a617661", false));
+		assert_eq!(handle_modifier("2e646f6378::wf"), o("2e0064006f0063007800", true));
+		assert_eq!(handle_modifier("706f::i*5773::i"), o("706f", false));
+		//the per-sig DFA (clamav_genregex_to_dfa) accepts the UTF-16 text
+		assert!(clamav_genregex_to_dfa("68747470{0-2}3a2f2f::wi")
+			.run(&hexc(&wide(b"hTTp://"))));
+		assert!(clamav_genregex_to_dfa("237b(38|39)41::w").run(&hexc(&wide(b"#{9A"))));
+	}
+
+	/// T982 red test: no ClamAV-matching witness may be discharged, and
+	/// every ClamAV-clean control still is.
+	#[test]
+	fn test_modifier_no_false_clean_t982(){
+		let bad: Vec<&str> = cases().into_iter()
+			.filter(|(t, l, w, clean)| discharged(t, l, w) != *clean)
+			.map(|c| c.0).collect();
+		assert!(bad.is_empty(), "T982 wrong discharge: {:?}", bad);
+	}
+}

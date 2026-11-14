@@ -20,15 +20,15 @@
 # #-comments -- every line must be a real path, so provenance lives
 # here and not in the list.
 #
-# Usage:   python3 scripts/debug/gen_small_full_dlp_list.py [PERC]
+# Usage:   python3 attic/scripts/debug/gen_small_full_dlp_list.py [PERC]
 #          default PERC: 5   (stride = round(100/PERC))
 
 import os
 import sys
 import subprocess
 
-REPO = os.path.dirname(os.path.dirname(os.path.dirname(
-    os.path.abspath(__file__))))
+REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__)))))
 MASTER_TGZ = "data/paper_data/dlp/cfg/jobs/final_enron_list.txt.tgz"
 CORE = "data/debug/full_dlp_sample/scan_exp.dat"
 OUT = "data/paper_data/dlp/cfg/jobs/small_full_dlp_list.txt"
@@ -70,11 +70,12 @@ def main():
     # Stride, then union the core.  Sorted+deduped so the file is
     # stable under regeneration and diffable in git.
     sample = master[::stride]
-    keep = sorted(set(sample) | set(core) | set(EXTRA_HARD))
-
-    missing = [p for p in EXTRA_HARD if p not in set(master)]
-    if missing:
-        raise SystemExit("not in master (path wrong?): %s" % missing)
+    # T980: after T974 some core / EXTRA_HARD files fail discharge and
+    # left the master; keep only those still in it.
+    ms = set(master)
+    keep = sorted(set(sample) | (set(core) & ms) | (set(EXTRA_HARD) & ms))
+    print("not in master : core %d, extra %s"
+          % (len(set(core) - ms), sorted(set(EXTRA_HARD) - ms)))
 
     dst = os.path.join(REPO, OUT)
     with open(dst, "w") as f:

@@ -5586,18 +5586,28 @@ pub mod tests_bora_data_driver {
 			(\"b::neo_qm_real\", 77)])"), Some(77));
 	}
 
-	/// The curated corpus exists, is non-empty, and still carries the
-	/// hard core that pins the 4th rung.
+	/// The curated corpus exists, is non-empty, lies inside the full
+	/// list, and keeps every hard-core file the full list still has.
+	/// T980: after T974 the worst known files (e.g.
+	/// watson-k/e_mail_bin/379, 115M prod fan-out) fail discharge and
+	/// left the full list, so the core is checked against the master.
 	#[test]
 	fn test_small_dlp_corpus_keeps_hard_core() {
 		let files = read_path_list(SMALL_DLP.master_sources[0]);
 		assert!(files.len() > 20_000,
 			"small_full_dlp corpus only {} files -- regenerate with \
 			 attic/scripts/debug/gen_small_full_dlp_list.py", files.len());
-		// watson-k/e_mail_bin/379 is the worst known word (115M prod
-		// fan-out). Lose it and the ladder can drop to 3 rungs.
-		assert!(files.iter().any(|f|
-			f.ends_with("watson-k/e_mail_bin/379.")),
+		let master: std::collections::HashSet<String> =
+			read_path_list(DLP.master_sources[0]).into_iter().collect();
+		let small: std::collections::HashSet<&String> =
+			files.iter().collect();
+		assert!(files.iter().all(|f| master.contains(f)),
+			"small_full_dlp corpus has files outside the full list");
+		let core = read_path_list("data/debug/full_dlp_sample/scan_exp.dat");
+		let kept: Vec<&String> =
+			core.iter().filter(|f| master.contains(*f)).collect();
+		assert!(!kept.is_empty(), "no hard-core file left in the full list");
+		assert!(kept.iter().all(|f| small.contains(*f)),
 			"hard core missing from the small_full_dlp corpus");
 	}
 
