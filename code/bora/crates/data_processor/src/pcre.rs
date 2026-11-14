@@ -1613,8 +1613,54 @@ pub fn collect_bag_words_from_rustomaton_regex(s: &str, min_bag_len: usize, comb
 	let hir = rustomaton_to_hir(s);
 	let mut limit = combination_limit;
 	let (hs, _b) = collect_bag_words_from_rustomaton_regex_worker(&hir,
-		&mut limit, min_bag_len);
+		&mut limit, min_bag_len, None);
 	hs
+}
+
+/// T989: igc bags, each word cut to whole bytes (the igc ACDFA reads bytes)
+pub fn collect_bag_words_byte_aligned(s: &str, min_bag_len: usize, combination_limit: usize) -> HashSet<Vec<String>>{
+	let hir = rustomaton_to_hir(s);
+	let mut limit = combination_limit;
+	let (hs, b) = collect_bag_words_from_rustomaton_regex_worker(&hir,
+		&mut limit, min_bag_len, Some(Some(0)));
+	if b {byte_align_bags(hs, Some(0))} else {hs}
+}
+
+/// T989: nibble parity of a node's match len (None = varies; var `.` run = byte gap, as T986)
+fn nib_par(h: &Hir) -> Option<usize> {
+	match h.kind() {
+		Empty | HirKind::Look(_) => Some(0),
+		HirKind::Literal(x) => Some(x.0.len() % 2),
+		HirKind::Class(_) => Some(1),
+		HirKind::Capture(c) => nib_par(&c.sub),
+		HirKind::Concat(v) => v.iter().try_fold(0, |a, x| nib_par(x).map(|q| (a + q) % 2)),
+		HirKind::Alternation(v) => {
+			let q = nib_par(&v[0]);
+			if v.iter().all(|x| nib_par(x) == q) {q} else {None}
+		},
+		HirKind::Repetition(r) => match (nib_par(&r.sub), r.max) {
+			(Some(0), _) => Some(0),
+			(Some(q), Some(m)) if m == r.min => Some(q * m as usize % 2),
+			//T989: only the 256-member `.` is a byte gap
+			(Some(_), _) if matches!(r.sub.kind(), HirKind::Class(c)
+				if class_to_arr(c, &mut 0).len() == 256) => Some(r.min as usize % 2),
+			_ => None,
+		},
+	}
+}
+
+/// T989: cut words starting at parity s to whole bytes ("" if s unknown)
+fn byte_align_bag(bag: &[String], s: Option<usize>) -> Vec<String> {
+	bag.iter().map(|w| match s {
+		Some(s) => { let c: Vec<char> = w.chars().collect(); let i = s.min(c.len());
+			c[i..c.len() - (c.len() - i) % 2].iter().collect() },
+		None => String::new(),
+	}).collect()
+}
+
+/// T989: byte_align_bag on every bag
+fn byte_align_bags(hs: HashSet<Vec<String>>, s: Option<usize>) -> HashSet<Vec<String>> {
+	hs.iter().map(|x| byte_align_bag(x, s)).collect()
 }
 
 /// filter all VECs that contain at least one word less than min_word_len
@@ -1646,14 +1692,18 @@ fn add_to_hs (hs_res: &mut HashSet<Vec<String>>, vec: &Vec<String>, _min_bag_len
 
 /// handle the concat case, whenever possible explore the
 /// combination by concat
-fn handle_concat_bagwords(vec: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
+fn handle_concat_bagwords(vec: &Vec<Hir>, limit: &mut usize, min_bag_len: usize,
+	ip: Option<Option<usize>>)
 	->(HashSet<Vec<String>>, bool){
 	let mut b_full_res = true;
 	let mut cur_bag:Vec<String> = vec!["".to_string()];
 	let mut res = HashSet::<Vec<String>>::new();
+	let cut = |b: &Vec<String>, s| if ip.is_some() {byte_align_bag(b, s)} else {b.clone()};
+	//T989 igc: p = parity at this item, cur_s = parity at cur_bag start
+	let (mut p, mut cur_s) = (ip.flatten(), ip.flatten());
 	for (_id, hir) in vec.iter().enumerate(){
 		let (bag_words, b_full) 
-			= collect_bag_words_from_rustomaton_regex_worker(hir, limit, min_bag_len);
+			= collect_bag_words_from_rustomaton_regex_worker(hir, limit, min_bag_len, ip.map(|_| p));
 
 		if b_full{
 			if bag_words.len()>1{
@@ -1681,17 +1731,21 @@ fn handle_concat_bagwords(vec: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
 			//E.g. (XX) with |X|*|X| >= limit gives {X}, and an outer
 			//concat would then glue a single X where every match has two.
 			b_full_res = false;
-			add_to_hs(&mut res, &cur_bag, min_bag_len);
+			add_to_hs(&mut res, &cut(&cur_bag, cur_s), min_bag_len);
 			if b_full{ //update the current bag, wait for next
 				cur_bag = next_bag.clone();
+				cur_s = p;
 			}else{
 				for bag in &bag_words{ add_to_hs(&mut res, &bag, min_bag_len); }
 				cur_bag= vec!["".to_string()];
 			}
 		}
+		p = p.and_then(|a| nib_par(hir).map(|q| (a + q) % 2));
+		if cur_bag.len()==1 && cur_bag[0].is_empty() { cur_s = p; }
 	}
 	if cur_bag.len()>0 { 
-		add_to_hs(&mut res, &cur_bag, min_bag_len);
+		let last = if b_full_res {cur_bag.clone()} else {cut(&cur_bag, cur_s)};
+		add_to_hs(&mut res, &last, min_bag_len);
 	}
 	b_full_res = b_full_res && res.len()<=1;
 	(res, b_full_res)
@@ -1700,14 +1754,18 @@ fn handle_concat_bagwords(vec: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
 /// handle alternation
 /// _limit: combination limit, not used here.
 /// the bool indicates if ALL words are matches of the regex
-fn handle_alt_bagwords(v: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
+fn handle_alt_bagwords(v: &Vec<Hir>, limit: &mut usize, min_bag_len: usize,
+	ip: Option<Option<usize>>)
 ->(HashSet::<Vec<String>>, bool){
 	let mut res = HashSet::<Vec<String>>::new();
 	res.insert(vec![]);
 	let mut b_full_res = true;
-	for hir in v{
-		let (bag, b_full) = collect_bag_words_from_rustomaton_regex_worker(
-			hir, limit, min_bag_len);
+	let rs: Vec<_> = v.iter().map(|hir| collect_bag_words_from_rustomaton_regex_worker(
+		hir, limit, min_bag_len, ip)).collect();
+	//T989: a full branch keeps raw words. Cut them if the alt is not full.
+	let full = rs.iter().all(|(b, f)| *f && b.len() <= 1);
+	for (bag, b_full) in rs{
+		let bag = if ip.is_some() && b_full && !full {byte_align_bags(bag, ip.flatten())} else {bag};
 		b_full_res = b_full_res && b_full;
 		let mut hs = HashSet::<Vec<String>>::new();
 		if res.len() * bag.len() < *limit{//try every combination
@@ -1761,8 +1819,9 @@ fn handle_alt_bagwords(v: &Vec<Hir>, limit: &mut usize, min_bag_len: usize)
 /// where the first bag is {["abc"]} and second {["12", "34"]}
 /// we could generate combinations {["abc12", "abc34"]} this only
 /// happens when the elements are FULL MATCH of the regex.
+//T989 ip: None = cs; Some(p) = igc, item starts at nibble parity p (None unknown)
 fn collect_bag_words_from_rustomaton_regex_worker(hir: &Hir, limit: &mut usize,
-	min_bag_len: usize) 	-> (HashSet<Vec<String>>, bool){
+	min_bag_len: usize, ip: Option<Option<usize>>) 	-> (HashSet<Vec<String>>, bool){
 	let mut set = HashSet::<Vec<String>>::new();
 	let (res, bfull) = match hir.kind(){
 		//"" is the only match. An empty set would make an alternation
@@ -1774,14 +1833,16 @@ fn collect_bag_words_from_rustomaton_regex_worker(hir: &Hir, limit: &mut usize,
 			set.insert( vec![sx] );
 			(set, true)
 		},
-		HirKind::Concat(v) => handle_concat_bagwords(&v, limit, min_bag_len),
+		HirKind::Concat(v) => handle_concat_bagwords(&v, limit, min_bag_len, ip),
 		HirKind::Repetition(v) => {
 			let (bag, b_full) =collect_bag_words_from_rustomaton_regex_worker(
-				&v.sub.clone(), limit, min_bag_len);
+				&v.sub.clone(), limit, min_bag_len, ip);
 			let (min, max) = (v.min as usize, v.max);
+			let b_full_res = (min==1 && max==Some(1)) && b_full;
+			//T989: a full sub keeps raw words. Cut them if the rep is not full.
+			let bag = if ip.is_some() && b_full && !b_full_res {byte_align_bags(bag, ip.flatten())} else {bag};
 			let bag_res = if min>=1 {bag} 
 				else {HashSet::<Vec<String>>::new()};
-			let b_full_res = (min==1 && max==Some(1)) && b_full;
 			(bag_res, b_full_res)
 		},
 		HirKind::Class(v) => {
@@ -1794,11 +1855,11 @@ fn collect_bag_words_from_rustomaton_regex_worker(hir: &Hir, limit: &mut usize,
 			(hs, true)
 		},
 		HirKind::Capture(v) => {
-			let (res, b_res) = collect_bag_words_from_rustomaton_regex_worker(&v.sub, limit, min_bag_len);
+			let (res, b_res) = collect_bag_words_from_rustomaton_regex_worker(&v.sub, limit, min_bag_len, ip);
 			(res, b_res)
 		},
 		HirKind::Alternation(v) => {
-			let (res, b_res) = handle_alt_bagwords(&v, limit, min_bag_len);
+			let (res, b_res) = handle_alt_bagwords(&v, limit, min_bag_len, ip);
 			(res, b_res)
 		}
 		HirKind::Look(v) => panic!("rustomaton regex should not have zero-length assertion! Details: {:?}", v),
@@ -2061,27 +2122,27 @@ pub fn collect_pm_reg_from_rustomaton_regex_worker(hir: &Hir,
 	res
 }
 
+/// the candidate that appears first in s
+//T989: on a start tie prefer the longer word (HEAD indexed vec by position)
+fn first_appear(vec: &[String], s: &str) -> String{
+	let mut min_idx = s.len();
+	let mut res_idx = 0;
+	for id in 0..vec.len(){
+		let idx = s.find(&vec[id]).expect(
+			&format!("s: {} does not contain t: {}", s, &vec[id]));
+		if idx<min_idx || (idx==min_idx && vec[id].len()>vec[res_idx].len()){
+			min_idx = idx;
+			res_idx = id;
+		}
+	}
+	vec[res_idx].clone()
+}
+
 /// Use heurstic to handle alternation
 /// if successful, the last bool is set to true
 /// Idea: extract longest common substring. If all are
 /// Liberal type
 fn heu_handle_alt_pm_reg(v: &Vec<Hir>)->(Vec<PMRegItem>, bool){
-	//0. utility function
-	let first_appear = |vec: &Vec<String>, s: &str| -> String{
-		let mut min_idx = s.len();
-		let mut res_idx = 0;
-		for id in 0..vec.len(){
-			let idx = s.find(&vec[id]).expect(
-				&format!("s: {} does not contain t: {}", s, &vec[id]));
-			if idx<min_idx || (idx==min_idx && vec[idx].len()>vec[min_idx].len()){
-				min_idx = idx;
-				res_idx = id;
-			}
-		}
-		vec[res_idx].clone()
-	};
-
-	
 	//1. check if all are literal and collect strings
 	let mut cur_strs= vec![];
 	for h in v{ 
@@ -3283,5 +3344,61 @@ mod tests_t986 {
 		//no whole byte: the word goes into the next gap
 		assert_eq!(align(&v(&[("4", (0, 0)), ("4142", (1, 1))])),
 			v(&[("4142", (2, 2))]));
+	}
+}
+
+/// T989. igc bag words sit on bytes; first_appear tie index.
+#[cfg(test)]
+mod tests_t989 {
+	use super::{collect_bag_words_byte_aligned as igc,
+		collect_bag_words_from_rustomaton_regex as cs, filter_bag_of_words, first_appear};
+	use std::collections::HashSet;
+
+	fn set(v: &[&[&str]]) -> HashSet<Vec<String>> {
+		v.iter().map(|b| b.iter().map(|s| s.to_string()).collect()).collect()
+	}
+	fn f(s: &str, lim: usize) -> HashSet<Vec<String>> {
+		filter_bag_of_words(&igc(s, 6, lim), 6)
+	}
+
+	/// The `.` splits put 24344454 at nibble 3 (HEAD kept it). On bytes
+	/// it is 434445.
+	#[test]
+	fn test_t989_odd_start_cut() {
+		assert_eq!(igc("41.24344454.", 6, 127), set(&[&[""], &["434445"], &["41"]]));
+	}
+
+	/// (1|23) has no fixed parity, so the bag after it is dropped.
+	#[test]
+	fn test_t989_unknown_parity_dropped() {
+		assert_eq!(f("41424344(1|23)4546474849", 2), set(&[&["41424344"]]));
+	}
+
+	/// The alt is not full (its 2nd branch splits), so the full 1st
+	/// branch is cut at the alt start (nibble 1).
+	#[test]
+	fn test_t989_alt_cuts_branch() {
+		assert_eq!(f("4(142434445|5(0|1)(0|1)464748494a)", 3),
+			set(&[&["42434445", "464748494a"]]));
+	}
+
+	/// {2} of an odd full sub: the word is cut to its bytes.
+	#[test]
+	fn test_t989_rep_odd_sub() {
+		assert_eq!(igc("(4142434){2}", 6, 127), set(&[&["414243"]]));
+	}
+
+	/// Splits on byte boundaries only: igc bags == cs bags (Mal 0 diff).
+	#[test]
+	fn test_t989_aligned_same_as_cs() {
+		let s = "41424344(4546|5758)4950.*51525354(5556|6667)";
+		for lim in [2, 127] { assert_eq!(igc(s, 6, lim), cs(s, 6, lim)); }
+	}
+
+	/// HEAD indexed the candidate vec by string position: OOB panic.
+	#[test]
+	fn test_t989_first_appear_tie() {
+		let v = vec!["abcdef".to_string(), "abcdefgh".to_string()];
+		assert_eq!(first_appear(&v, "zzzzabcdefgh"), "abcdefgh");
 	}
 }

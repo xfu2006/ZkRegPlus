@@ -3699,6 +3699,60 @@ mod tests_t986{
 	}
 }
 
+/// T989. igc bag words that start mid-byte (native discharge).
+#[cfg(test)]
+mod tests_t989{
+	use crate::clam_db::ClamavDB;
+	use crate::clam_db::tests_t982::disch;
+	use crate::clamav::default_clamav_cfg;
+	use utils::os::proj_root;
+	use ark_bn254::Fr;
+
+	fn db(tag: &str, sigs: &[&str]) -> ClamavDB<Fr> {
+		let d = format!("debug/t989_{}", tag);
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), d)).unwrap();
+		let none: Vec<String> = vec![];
+		let v: Vec<String> = sigs.iter().map(|s| s.to_string()).collect();
+		let r = std::panic::catch_unwind(|| ClamavDB::<Fr>::build_test_db(
+			&default_clamav_cfg(), &d, &v, &none, &none, &none));
+		std::fs::remove_dir_all(format!("{}/data/{}", proj_root(), d)).ok();
+		r.unwrap_or_else(|e| std::panic::resume_unwind(e)).expect("build")
+	}
+
+	/// Each file matches its sig. HEAD discharged each one: a digit class
+	/// is `3(0|..|9)`, so the split bag started at a low nibble.
+	#[test]
+	fn test_t989_bag_no_false_clean(){
+		let d = db("bag", &[
+			"T989.Pcre;Engine:81-255,Target:0;1;61626364;0/abcd[0-9][0-9][0-9]efgh[0-9][0-9][0-9]/i",
+			"T989.PcreU;Engine:81-255,Target:0;1;61626364::i;0/abcd[0-9][0-9][0-9]efgh[0-9][0-9][0-9]/i",
+			//bytes 41 ?2 43 44 45 4?: bag word 24344454 at nibble 3
+			"T989.Hex2;Engine:81-255,Target:0;0;41?24344454?::i",
+		]);
+		let cfg = default_clamav_cfg();
+		let cases: Vec<(&str, Vec<u8>)> = vec![
+			("T989.Pcre", b"zz abcd123efgh456 zz".to_vec()),
+			("T989.PcreU", b"zz ABCD123EFGH456 zz".to_vec()),
+			("T989.Hex2", hex::decode("41724344454f").unwrap()),
+		];
+		let bad: Vec<&str> = cases.iter().filter(|(n, w)| disch(&d, &cfg, n, w))
+			.map(|c| c.0).collect();
+		assert!(bad.is_empty(), "T989 false clean: {:?}", bad);
+		assert!(disch(&d, &cfg, "T989.Pcre", b"zz zz"), "control");
+	}
+
+	/// `3?` nibbles gave odd igc bag words: HEAD panicked at the T986
+	/// odd-pattern assert.
+	#[test]
+	fn test_t989_hex_nibble_no_panic(){
+		let d = db("hex", &["T989.Hex;Engine:81-255,Target:0;0;616263643?3?3?656667683?3?3?::i"]);
+		let cfg = default_clamav_cfg();
+		for w in [b"zz abcd123efgh456 zz", b"zz ABCD123EFGH456 zz"] {
+			assert!(!disch(&d, &cfg, "T989.Hex", w), "false clean");
+		}
+	}
+}
+
 /// T987. Latent guards: EOF-n tail, negative count groups, unmodelled
 /// syntax. Each test fails at HEAD.
 #[cfg(test)]

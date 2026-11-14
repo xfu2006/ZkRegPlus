@@ -49,7 +49,7 @@ use crate::{
 	strings::{find_all,extract_nums,validate_counter_constraint,validate_ra_regex,validate_ra_regex_relaxed,validate_pm_regex,is_match,find_only,count_occ,drop_last_dotstar,split,validate_expr},
 	type_def::{PcreInfo,ClamSigType,SubSigType,SubSigObj,ClamavApproxConfig,TriVal,ClamavSig,EvalDNF,CompOp},
 	hex_acdfa::{HexACDFA},
-	pcre::{collect_bag_words_from_rustomaton_regex, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, expose_hi_nibble_anchor, to_hir, analyze_aggressive_shape, direction_from_name, AggShapeErr},
+	pcre::{collect_bag_words_from_rustomaton_regex, collect_bag_words_byte_aligned, collect_pm_reg_from_rustomaton_regex, rustomaton_to_hir, collect_pm_reg_from_rustomaton_regex_worker, vec_pmreg_to_res, pcre_to_dfa, clamav_genregex_to_dfa, filter_bag_of_words,parse_pcre_subsig, expand_rep_subsig, pcre_to_rustomaton_regex, expose_hi_nibble_anchor, to_hir, analyze_aggressive_shape, direction_from_name, AggShapeErr},
 	fsa_utils::{size_nfa,build_dfa,size_dfa,empty_nfa,build_nfa,get_total_size,start_at_zero},
 	preprocess::{is_pcre_subsig,handle_range,handle_modifier,handle_location,handle_negation,handle_modifier_for_pm,handle_location_for_pm,recursive_triggers,plug_in_trigger,extract_clamav_reg},
 	discharge_proof::{FailDischargeRecord, ChunkPeaks},
@@ -1816,7 +1816,14 @@ impl ClamavSig{
 				obj.subsig_type==SubSigType::CounterConstraint,
 				"type needs to be general regex or counter constraint");
 			let s = &obj.real_value;
-			let bags_both = Self::gen_approx_patterns_for_sig(s, cfg);
+			//T989: igc bag words cut to whole bytes (igc ACDFA reads bytes)
+			let bags_both = if obj.b_ignore_case {filter_bag_of_words(
+				&collect_bag_words_byte_aligned(s, cfg.min_bag_len,
+				cfg.combination_limit), cfg.min_bag_len)}
+				else {Self::gen_approx_patterns_for_sig(s, cfg)};
+			//T989: guard, igc bag words must be whole bytes
+			assert!(!obj.b_ignore_case || bags_both.iter().flatten()
+				.all(|w| w.chars().count() % 2 == 0), "T989: odd igc bag word");
 			self.vec_subsig_bagwords.push(bags_both);
 		}
 
