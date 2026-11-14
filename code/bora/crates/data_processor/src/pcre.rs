@@ -1887,7 +1887,8 @@ fn union(a: &PMRegItem, b: &PMRegItem) -> PMRegItem{
 
 /// sum all as wildcards and return one item of the sum of min, max
 fn sum_as_wildcards(v: &Vec<PMRegItem>)->PMRegItem{
-	assert!(v.len()>=1, "ERROR v.len==0!");
+	//no items = the empty match, e.g. the branch of (|63) (T986)
+	if v.is_empty() { return PMRegItem::Wildcard((0, 0)); }
 	let vec = v.iter().map(|x| to_wild(x)).collect::<Vec<PMRegItem>>();
 	let mut res = vec[0].clone();
 	for i in 1..vec.len(){
@@ -1944,6 +1945,32 @@ pub fn vec_pmreg_to_res(vec: &Vec<PMRegItem>)->Vec<(String,(usize,usize))>{
 
 	res
 }
+/// T986. The igc ACDFA matches whole bytes (hex_to_str), so an igc pm
+/// word must start and end on a byte. Cut each word to its whole bytes
+/// and move the cut nibbles into the gaps, which keeps every span. The
+/// start parity is the previous end plus the gap min: byte-level gaps
+/// are even, and heu_handle_alt_pm_reg gives a word one parity in all
+/// branches. A word with no whole byte goes into the next gap.
+pub fn byte_align_pm_igc(v: &[(String,(usize,usize))])
+	->Vec<(String,(usize,usize))>{
+	let mut res = vec![];
+	let (mut end, mut carry) = (0, (0, 0));
+	for (w, (a, b)) in v{
+		let (n, s) = (w.len(), (end + a % 2) % 2);
+		end = (s + n) % 2;
+		let (i, j) = (s.min(n), n.saturating_sub(end));
+		let (a, b) = (a.saturating_add(carry.0), b.saturating_add(carry.1));
+		if j > i {
+			res.push((w[i..j].to_string(),
+				(a.saturating_add(i), b.saturating_add(i))));
+			carry = (n - j, n - j);
+		}else{
+			carry = (a.saturating_add(n), b.saturating_add(n));
+		}
+	}
+	res
+}
+
 /// collect pm-reg information from a regex
 /// each item (String, usize, usize) indicates a literal string
 /// and the min distance from its previous item, i.e., the
@@ -1975,15 +2002,9 @@ pub fn collect_pm_reg_from_rustomaton_regex_worker(hir: &Hir,
 		HirKind::Capture(v) => {
 			collect_pm_reg_from_rustomaton_regex_worker(&v.sub, min_pm_word_len)
 		},
-		HirKind::Class(v) => { 
-			let arr = class_to_arr(&v, &mut 0); //limit not used
-			let v_size = arr.len();
-			let res = if v_size<16 {vec![ PMRegItem::Wildcard((1, 1)) ]}
-				else if v_size==256 {//this is specific for handling "."
-					vec![ PMRegItem::Wildcard((1, 1)) ]
-				}else{vec![ PMRegItem::Wildcard((2,2))]}; 
-			res
-		},
+		//one nibble char whatever its size (T986). HEAD gave a 16..255
+		//member class 2 nibbles, so the next window began too late.
+		HirKind::Class(_) => vec![PMRegItem::Wildcard((1, 1))],
 		HirKind::Alternation(v) => { 
 			let (vec, bres) = heu_handle_alt_pm_reg(&v);
 			if bres {vec} else{
@@ -2103,6 +2124,11 @@ fn heu_handle_alt_pm_reg(v: &Vec<Hir>)->(Vec<PMRegItem>, bool){
 				collect::<Vec<usize>>();
 			let idx_min = v_idx.iter().min().unwrap();
 			let idx_max = v_idx.iter().max().unwrap();
+			//T986: one nibble parity in all branches. Else the word is on
+			//bytes in some branches only, and the igc ACDFA reads bytes.
+			if v_idx.iter().any(|i| i % 2 != idx_min % 2) {
+				return (vec![], false);
+			}
 
 			//2.3 push the two PMRegItems
 			let nw_len = new_word.len();
@@ -3211,5 +3237,51 @@ mod tests_t984 {
 		let b = super::filter_bag_of_words(
 			&bags(&format!("616263({}{})646566", x, x), 6, 127), 6);
 		assert_eq!(b, set(&[&["616263"], &["646566"]]));
+	}
+}
+
+/// T986. pm-reg geometry: a class is one nibble, igc words sit on bytes.
+#[cfg(test)]
+mod tests_t986 {
+	use super::{collect_pm_reg_from_rustomaton_regex as pm,
+		byte_align_pm_igc as align};
+	type V = Vec<(String, (usize, usize))>;
+	fn v(x: &[(&str, (usize, usize))]) -> V {
+		x.iter().map(|(w, g)| (w.to_string(), *g)).collect()
+	}
+	const L16: &str = "(0|1|2|3|4|5|6|7|8|9|a|b|c|d|e|f)";
+
+	/// HEAD read a 16..255 member class as 2 nibbles: gap (2,2) here and
+	/// (6,9) for 2-3 bytes. Too high a min drops true matches
+	/// (Win.Trojan.MSShellcode-6360729-0).
+	#[test]
+	fn test_t986_class_one_nibble() {
+		assert_eq!(pm(&format!("4142434445463{}474849505152", L16), 4),
+			v(&[("4142434445463", (0, 0)), ("474849505152", (1, 1))]));
+		assert_eq!(pm(&format!("41424344(3{}){{2,3}}45464748", L16), 4),
+			v(&[("41424344", (0, 0)), ("45464748", (4, 6))]));
+	}
+
+	/// An empty branch is the empty match. HEAD panicked (v.len==0).
+	#[test]
+	fn test_t986_empty_branch() {
+		assert_eq!(pm("6162(|63)6465", 4),
+			v(&[("6162", (0, 0)), ("6465", (0, 2))]));
+	}
+
+	/// Words are cut to whole bytes, spans kept.
+	#[test]
+	fn test_t986_byte_align() {
+		let m = usize::MAX;
+		//odd end: the last nibble goes into the next gap
+		assert_eq!(align(&v(&[("4142433", (0, m)), ("4445", (1, 1)),
+			("4647", (0, m))])),
+			v(&[("414243", (0, m)), ("4445", (2, 2)), ("4647", (0, m))]));
+		//odd start (after `?x`): the first nibble goes into its own gap
+		assert_eq!(align(&v(&[("1424344", (1, 1))])), v(&[("424344", (2, 2))]));
+		assert_eq!(align(&v(&[("142434", (1, m))])), v(&[("4243", (2, m))]));
+		//no whole byte: the word goes into the next gap
+		assert_eq!(align(&v(&[("4", (0, 0)), ("4142", (1, 1))])),
+			v(&[("4142", (2, 2))]));
 	}
 }

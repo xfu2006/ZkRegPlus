@@ -2063,6 +2063,10 @@ impl <F:PrimeField> ClamavDB<F>{
 		//3. build the ISED ACDFA for the signature
 		let vec_ised_acdfa = sigs_needed.par_iter().map(|s|{
 			let bag_pm = s.collect_bagwords_from_pmreg(b_igc); 
+			//T987: this ACDFA is case-sensitive (HexACDFA::new), so an igc
+			//word would miss its case variants.
+			assert!(!b_igc || bag_pm.is_empty(),
+				"T987: igc pm words in ISED sig {}", s.name);
 			let mut vec_pm = bag_pm.iter().map(|s| s.clone())
 				.collect::<Vec<String>>();
 			vec_pm.sort(); //HashSet order would renumber the ACDFA
@@ -3645,5 +3649,121 @@ pub mod tests_t982{
 			.filter(|(t, l, w, clean)| discharged(t, l, w) != *clean)
 			.map(|c| c.0).collect();
 		assert!(bad.is_empty(), "T982 wrong discharge: {:?}", bad);
+	}
+}
+
+/// T986. Native pm stage on clamscan-confirmed matches (ClamAV 1.5.4,
+/// Target 0). HEAD discharged each one at pm.
+#[cfg(test)]
+mod tests_t986{
+	use crate::clam_db::ClamavDB;
+	use crate::clam_db::tests_t982::disch;
+	use crate::clamav::default_clamav_cfg;
+	use utils::os::proj_root;
+	use ark_bn254::Fr;
+
+	#[test]
+	fn test_t986_pm_no_false_clean(){
+		let sigs: Vec<String> = [
+			//F1: [\x50-\x5f\xb0-\xbf] read as 2 nibbles, gap min 5 > 4
+			r"Win.Trojan.MSShellcode-6360729-0;Engine:81-255,Target:0;1;d97424f4(5?|b?);0/\xd9\x74\x24\xf4[\x50-\x5f\xb0-\xbf].{0,20}[\x29\x2b\x31\x33].{0,500}\xc9\xb1.{0,8}\x31.[\x10-\x1f\x0f][\x03\x13\x23\x33\x43\x53\x63\x73\x83\x93\xa3\xb3\xc3\xd3\xe3\xf3]/s",
+			//N1: odd igc words ...282 / ...0282 (0-padded)
+			r"Html.Exploit.CVE_2018_0870-6500462-3;Engine:81-255,Target:0;1;7377666f626a6563742e656d62656473776628{1}68747470;0/swfobject\x2EembedSWF\x28[\x22\x27]https?\x3A\x2F\x2F[^\x22\x27]+?#/i",
+			r"Pdf.Exploit.CVE_2018_12757-6607385-0;Engine:81-255,Target:0;2;3C3C2F584641;7866612E7265736F6C76654E6F646528{-7}7866612E666F726D;0&1/xfa\.resolveNode\([\x22\x27](?P<nestxfa>xfa\.form(\.\w+?){4})[^>]*?(?P=nestxfa)[^>]*?(?P=nestxfa)/smi",
+			//N1: the common word starts at nibble 1 in one branch, 2 in
+			//the other, so it is on bytes in one branch only
+			"T986.AltPar;Engine:81-255,Target:0;0;(a1424344|bb142434)::i",
+		].iter().map(|s| s.to_string()).collect();
+		let h = |s: &str| hex::decode(s).unwrap();
+		let cases: Vec<(&str, Vec<u8>)> = vec![
+			("Win.Trojan.MSShellcode-6360729-0", h("d97424f45531c9b131c01303")),
+			("Html.Exploit.CVE_2018_0870-6500462-3",
+				b"zz swfobject.embedswf(\"http://x#zz".to_vec()),
+			("Pdf.Exploit.CVE_2018_12757-6607385-0", [&b"<</XFA xfa.resolveNode(\""[..],
+				&b"xfa.form.a.b.c.d xfa.form.a.b.c.d xfa.form.a.b.c.d"[..]].concat()),
+			("T986.AltPar", h("7a7a20a14243447a7a")),
+			("T986.AltPar", h("7a7a20bb1424347a7a")),
+		];
+		let cfg = default_clamav_cfg();
+		let d = "debug/t986_pm";
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), d)).unwrap();
+		let none: Vec<String> = vec![];
+		let db = ClamavDB::<Fr>::build_test_db(&cfg, d, &sigs, &none, &none,
+			&none).expect("build");
+		std::fs::remove_dir_all(format!("{}/data/{}", proj_root(), d)).ok();
+		let bad: Vec<String> = cases.iter().enumerate()
+			.filter(|(_, (n, w))| disch(&db, &cfg, n, w))
+			.map(|(i, (n, _))| format!("{} #{}", n, i)).collect();
+		assert!(bad.is_empty(), "T986 false clean: {:?}", bad);
+		assert!(disch(&db, &cfg, "T986.AltPar", b"zz zz"), "control");
+	}
+}
+
+/// T987. Latent guards: EOF-n tail, negative count groups, unmodelled
+/// syntax. Each test fails at HEAD.
+#[cfg(test)]
+mod tests_t987{
+	use crate::clam_db::ClamavDB;
+	use crate::clamav::{default_clamav_cfg, gen_clamav_sig};
+	use crate::pcre::clamav_genregex_to_dfa;
+	use crate::preprocess::handle_modifier;
+	use crate::type_def::ClamSigType;
+	use rustomaton::automaton::Automata;
+	use utils::os::proj_root;
+	use ark_bn254::Fr;
+
+	fn nib(b: &[u8]) -> Vec<char> { hex::encode(b).chars().collect() }
+	fn db(tag: &str, sigs: &[&str], ised_igc: &[&str]) -> ClamavDB<Fr> {
+		let d = format!("debug/t987_{}", tag);
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), d)).unwrap();
+		let none: Vec<String> = vec![];
+		let v = |x: &[&str]| x.iter().map(|s| s.to_string()).collect::<Vec<String>>();
+		let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ClamavDB::<Fr>::build_test_db(
+			&default_clamav_cfg(), &d, &v(sigs), &none, &none, &v(ised_igc))));
+		std::fs::remove_dir_all(format!("{}/data/{}", proj_root(), d)).ok();
+		r.unwrap_or_else(|e| std::panic::resume_unwind(e)).expect("build")
+	}
+
+	/// N2. ClamAV starts the match at EOF-n (clamscan FOUND on this
+	/// file). HEAD took the regex string length as the match length and
+	/// required a 1-byte tail here. A literal keeps its exact tail.
+	#[test]
+	fn test_t987_eof_tail(){
+		let f = b"zzzzzzzzzzABCDEFGHxIJKLMNOPyyy";
+		assert!(clamav_genregex_to_dfa("EOF-20:4142434445464748{1-3}494a4b4c4d4e4f50")
+			.run(&nib(f)));
+		let lit = clamav_genregex_to_dfa("EOF-4:41424344");
+		assert!(lit.run(&nib(b"zzABCD")) && !lit.run(&nib(b"zzABCDy")));
+	}
+
+	/// F2. (0|1)=0,0 holds on a file with neither word, so the sig has
+	/// no critical word. HEAD used the members' words. A ,1 floor needs
+	/// a member, so that group keeps them.
+	#[test]
+	fn test_t987_negative_group_no_crit(){
+		let d = db("neg", &["T987.Neg;Engine:81-255,Target:0;(0|1)=0,0;41424344454647;51525354555657",
+			"T987.Pos;Engine:81-255,Target:0;(0|1)<5,1;61626364656667;71727374757677"], &[]);
+		let nc: Vec<String> = d.vec_sigs_no_critical_pat.iter().map(|s| s.name.clone()).collect();
+		assert!(nc.contains(&"T987.Neg".to_string()), "no-crit: {:?}", nc);
+		assert!(!nc.contains(&"T987.Pos".to_string()), "no-crit: {:?}", nc);
+	}
+
+	/// N3. HEAD read (B) as the nibble group (b).
+	#[test] #[should_panic(expected = "T987: (B)/(L)/(W)")]
+	fn test_t987_token_refused(){
+		gen_clamav_sig("T987.B;Engine:81-255,Target:0;0;41424344(B)45464748",
+			ClamSigType::General, &default_clamav_cfg());
+	}
+
+	/// N4. The ISED igc ACDFA is case-sensitive. HEAD built it silently.
+	#[test] #[should_panic(expected = "T987: igc pm words in ISED")]
+	fn test_t987_ised_igc_refused(){
+		db("ised", &["T987.I;Engine:81-255,Target:0;0;41424344454647::i"], &["T987.I"]);
+	}
+
+	/// N6. HEAD read only the first `::` group and dropped the later w.
+	#[test] #[should_panic(expected = "T987: multi-`::`")]
+	fn test_t987_multi_modifier_refused(){
+		handle_modifier("41424344::i*45464748::w");
 	}
 }

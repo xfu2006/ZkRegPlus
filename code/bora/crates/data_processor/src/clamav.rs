@@ -500,6 +500,10 @@ pub fn preprocess_regex(s:&str, name: &str, sigtype: ClamSigType, cfg: &ClamavAp
 			println!("WARN: preproces_regex len: {}, name: {}", s.len(), name);
 		}
 	}else if sigtype==ClamSigType::General{
+		//T987: (B)/(L)/(W) consume bytes in ClamAV. Lowercased they read
+		//as a nibble group or fail to parse. Not modelled, so refuse.
+		assert!(!["(B)", "(L)", "(W)"].iter().any(|t| old_s.contains(t)),
+			"T987: (B)/(L)/(W) not supported: {} {}", name, old_s);
 		(s, b_case_sensitive) = handle_modifier(&s); //raw body (T982)
 		s = s.replace("*", ".*");
 		s = s.replace("?", "."); 
@@ -918,7 +922,9 @@ impl ClamavSig{
 					"fanout variant produced <2 pm anchors: {:?} -> {:?}",
 					s.value, vec);
 			}
-			new_vec
+			//T986: the igc ACDFA reads bytes, so align igc words
+			if s.b_ignore_case {crate::pcre::byte_align_pm_igc(&new_vec)}
+			else {new_vec}
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
 	}
 
@@ -2155,6 +2161,16 @@ impl ClamavSig{
 			for id in item{
 				let subtype = &self.vec_subsig_obj[*id].subsig_type;
 				if *subtype==SubSigType::SubsigCountConstraint{
+					//T987: count <x or =0 with no member floor (,0) holds
+					//with no member present, so it has no critical word.
+					let o = &self.vec_subsig_obj[*id];
+					let head = o.value.split(',').next().unwrap();
+					let x = *extract_nums(head).last().unwrap();
+					let op = find_only(r">|<|=", head);
+					if o.min_required==0 && (op=="<" || (op=="=" && x==0)){
+						hs_item_cs.insert(String::new());
+						continue;
+					}
 					//as it's union type
 					//should include CRITICAL SECTION of all UNION subsigs
 					for cid in &self.vec_subsig_obj[*id].set_subsigs{

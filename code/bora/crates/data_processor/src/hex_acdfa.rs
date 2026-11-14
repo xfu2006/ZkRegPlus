@@ -145,7 +145,7 @@ impl HexACDFA{
 
 		//0. process patterns for ACDFA ignore case
 		for pat in patterns{ 
-			if pat.len()%2==1{ println!("WARN: pattern len is odd: {}", pat); }
+			assert!(pat.len()%2==0, "T986: odd igc pattern, its 0 pad never matches: {}", pat);
 		}
 		let new_patterns = patterns.iter().map(|s| hex_to_str(s))
 			.collect::<Vec<String>>();

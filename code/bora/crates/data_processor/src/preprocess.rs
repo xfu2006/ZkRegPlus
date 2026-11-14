@@ -316,6 +316,11 @@ pub fn handle_modifier_worker(s:&str, _handle_igc: bool)->(String, bool){
 	let b_w = mods.contains("w"); //wide char mode
 	let b_i = mods.contains("i"); //ignore case
 	let b_a = mods.contains("a"); //ascii mode
+	//T987: only arr[1] is read. Refuse a later group that could change
+	//the mode: any w, or an i the first lacks (i, w are not hex).
+	assert!(arr.len() < 3 || (!arr[1..].iter().any(|g| g.contains('w'))
+		&& (b_i || !arr[2..].iter().any(|g| g.contains('i')))),
+		"T987: multi-`::` modifiers not supported: {}", s);
 
 	let final_str = if b_a && b_w{//both
 		"(".to_owned() + &gen_modified_str(body, true) + "|" + body + ")"
@@ -389,7 +394,11 @@ pub fn handle_location(s:&str)->String{
 			//log(WARN, &format!("parsing eof error n<pattern.len(): n: {}, len: {}, s: {}. Most likely caused by ! operators", n, pattern.len(), s));
 		}
 		let ndiff = if 2*n > pattern.len() {2*n-pattern.len()} else {0};
-		res = ".*".to_owned() + pattern + &".".repeat(ndiff);
+		//T987: the match STARTS at EOF-n, and the string length is the
+		//match length only for a literal. Else any tail in [0, 2n].
+		let lit = pattern.bytes().all(|c| c.is_ascii_hexdigit());
+		let tail = if lit {".".repeat(ndiff)} else {rng_str(0, 2*n, true)};
+		res = ".*".to_owned() + pattern + &tail;
 	}else{
 		panic!("Unhandled case: s: {}", s);
 		//res = String::from("ERROR");
