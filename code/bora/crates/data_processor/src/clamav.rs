@@ -4967,12 +4967,13 @@ mod tests_clamav{
 			("aa8001aabbcc4141dd8002aabbcc61690000", vec!["g16","g8"], vec!["g16"], vec!["g16"], vec!["g16"]), 
 			("aa9001aabbcc4161dd90026162636465aaaa", vec!["g16","g9"], vec!["g16","g9"], vec!["g16","g9"], vec!["g16","g9"]), 
 			("100011aabbcc4161aaaa6363636362626262616161613131616161616262626263636363aaaa", vec!["g16","g10"], vec!["g16","g10"], vec!["g16","g10"], vec!["g16","g10"]), 
-			// the middle "11" is replaced by "12", will confuse pm-reg discharged) by dfa and
-			// critical pattern because the extraction of alt trick
-			("100011aabbcc4161aaaa6363636362626262616161613132616161616262626263636363aaaa", vec!["g16"], vec!["g16"], vec!["g16","g10"], vec!["g16"]), 
+			// the middle "11" is replaced by "12": a true non-match. crit
+			// discharges g10, so pm/dfa never run on it (T983)
+			("100011aabbcc4161aaaa6363636362626262616161613132616161616262626263636363aaaa", vec!["g16"], vec!["g16"], vec!["g16"], vec!["g16"]), 
 			("110011aabbcc000000110012ccddcc", vec!["g16","g11"], vec!["g16","g11"], vec!["g16","g11"], vec!["g16","g11"]), 
 			("120001aabbcc00616261626162616261626162313233313233646564656465646564650000", vec!["g16","g12"], vec!["g16","g12"], vec!["g16","g12"], vec!["g16","g12"]), 
-			("120001aabbcc00616261626162616261626162313433313233646564656465646564650000", vec!["g16"], vec!["g16"], vec!["g16","g12"], vec!["g16"]), 
+			//"143123" does not fit (123|4567){1,2}: crit discharges g12 (T983)
+			("120001aabbcc00616261626162616261626162313433313233646564656465646564650000", vec!["g16"], vec!["g16"], vec!["g16"], vec!["g16"]), 
 			//not matching the bound {1,2}, will fail pm
 			("120001aabbcc00616261626162616261626162313233313233131333132333132333132333646564656465646564650000", vec!["g16","g12"], vec!["g16","g12"], vec!["g16"], vec!["g16"]), 
 			//discharged by DFA approach put an "a" into the ["g16",bcde]{2}, whill be discovered (discharged) by dfa
@@ -4995,17 +4996,19 @@ mod tests_clamav{
 			("ccddee1122aaabb19001ccddee1122", vec!["g16", "g19"], vec!["g16"], vec!["g16"], vec!["g16"]), 
 			//will satisfy g20 because there are two matches
 			("201001aaccee00201003aaccee11201002aacceebb201001aaccee00201002aacceeffff", vec!["g16", "g20"], vec!["g16", "g20"], vec!["g16", "g20"], vec!["g16","g20"]), 
-			//will fail g20 because ONLY has >1 match
+			//true match: counts 2/1/2, sum 5 > 1, 3 distinct >= 2 (T983)
 			("201001aaccee00201003aaccee11201002aacceebb201001aaccee00201003aacceedddd", vec!["g16", "g20"], vec!["g16", "g20"], vec!["g16", "g20"], vec!["g16","g20"]), 
-			("201001aaccee00201003aaccee11201002aacceebb201001aaccee00", vec!["g16", "g20"], vec!["g16"], vec!["g16"], vec!["g16"]), 
+			//true match (T983): 4 matches in total, 3 distinct subsigs >= 2
+			("201001aaccee00201003aaccee11201002aacceebb201001aaccee00", vec!["g16", "g20"], vec!["g16", "g20"], vec!["g16", "g20"], vec!["g16", "g20"]), 
 			//will fail bag of words but critical section will pass
 			("2111ace002112ace002121ace002131ace00", vec!["g16", "g21"], vec!["g16"], vec!["g16"], vec!["g16"]), 
-			//will fail pm-reg as seq reversed for 2121ace and 2122ace
-			("2111ace002112ace002122ace002121ace002131ace002132ace002111ace002112ace002122ace002121ace002132ace002131ace", vec!["g16", "g21"], vec!["g16", "g21"], vec!["g16"], vec!["g16"]), 
+			//2121ace/2122ace reversed, but the first 2131ace..2132ace is in
+			//order: counts 2/0/1, sum 3, 2 distinct -> true match (T983)
+			("2111ace002112ace002122ace002121ace002131ace002132ace002111ace002112ace002122ace002121ace002132ace002131ace", vec!["g16", "g21"], vec!["g16", "g21"], vec!["g16", "g21"], vec!["g16", "g21"]), 
 			("2211ace12342212ace002221ace12342222ace002231ace12342232ace2211ace12342212ace002221ace12342222ace002231ace12342232ace", vec!["g16", "g22"], vec!["g16", "g22"], vec!["g16", "g22"], vec!["g16", "g22"]), 
-			//will pass pm-reg but fail DFA because it does not handle
-			//the restricted class nicely
-			("2211ace01002212ace002221ace01002222ace002231ace01002232ace2211ace12342212ace002221ace12342222ace002231ace12342232ace", vec!["g16", "g22"], vec!["g16", "g22"], vec!["g16", "g22"], vec!["g16"]), 
+			//first half "0100" violates !(00|01), but the second half "1234"
+			//matches each subsig once -> true match (T983)
+			("2211ace01002212ace002221ace01002222ace002231ace01002232ace2211ace12342212ace002221ace12342222ace002231ace12342232ace", vec!["g16", "g22"], vec!["g16", "g22"], vec!["g16", "g22"], vec!["g16", "g22"]), 
 		];
 		for tc in test_cases{
 			let s = tc.0;
