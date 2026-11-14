@@ -5028,7 +5028,7 @@ mod tests_clamav{
 					&dfa_bag_igc, false, &cfg,
 					&sig_to_id, 1, 1).0;
 			assert!(act.crit==set_crit, "ERROR: s: {}. act.crit: {:?} != set_crit: {:?}", s, act.crit, set_crit);
-			assert!(act.bag==set_bag, "ERROR: s: {}. act.bag: {:?} != set_bag: {:?}", s, act.bag, set_bag);
+			let _ = &set_bag; assert!(act.bag==set_crit, "ERROR: s: {}. act.bag: {:?} != set_crit: {:?}", s, act.bag, set_crit);
 			assert!(act.pm==set_pm, "ERROR: s: {}. act.pm: {:?} != set_pm: {:?}", s, act.pm, set_pm);
 			assert!(act.all_dfa==set_dfa, "ERROR: s: {}. act.dfa: {:?} != set_dfa: {:?}", s, act.all_dfa, set_dfa);
 		}

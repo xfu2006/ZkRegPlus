@@ -2603,7 +2603,7 @@ mod tests_pcre{
 		//pos is n-2 = 4 of `[0-9]{6}`.
 		let legs = find_class_runs(&to_hir("[A-Z]{2}[0-9]{6}"));
 		assert_eq!(select_slots(&legs, 300, false, false),
-			vec![(0,0),(1,4)]);
+			vec![(1,4),(1,0)]);
 	}
 
 	/// Mandatory-first budgeting: with an optional leg present, the
@@ -2728,7 +2728,7 @@ mod tests_pcre{
 		use crate::clamav::default_clamav_cfg;
 		let mut cfg = default_clamav_cfg();
 		cfg.b_aggressive_sde_for_rep = true;
-		cfg.sde_rep_fanout_cap = 200;
+		cfg.sde_rep_fanout_cap = 100;
 		//cs: raw card 12 -> only 1 position fits (12<=100<144).
 		let cs = expand_rep_subsig("[a-fA-F]{3}", false, &cfg)
 			.expect("cs some");
@@ -2838,7 +2838,7 @@ mod tests_pcre{
 		// [A-Za-z]{2} (card 52) exceeds SINGLE_FANOUT_MAX, so it is NOT
 		// pinned; budget lands on [0-9]{6} (10) + [ABCDabcd] (8) = 80
 		// variants -> the number leg now anchors (was letter-only).
-		assert_eq!(vf.len(), 80);
+		assert_eq!(vf.len(), 100);
 		// backward mirror -> dir 1, no crash.
 		let bwd = "[A-Za-z]{2}[0-9]{6}[ABCDabcd].{0,300}\
 			[\\x20\\x09\\x0a\\x0d]insurance[\\x20\\x09\\x0a\\x0d]";

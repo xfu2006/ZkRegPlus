@@ -149,8 +149,10 @@ impl HexACDFA{
 		}
 		let new_patterns = patterns.iter().map(|s| hex_to_str(s))
 			.collect::<Vec<String>>();
-		let pats_in_bytes:Vec<Vec<u8>> = new_patterns.iter().map(|s| 
-			s.clone().into_bytes()).collect();
+		//T981: each char is one byte (u8 as char). into_bytes() would
+		//UTF-8-encode bytes >= 0x80 (0xaa -> c2 aa).
+		let pats_in_bytes:Vec<Vec<u8>> = new_patterns.iter().map(|s|
+			s.chars().map(|c| c as u8).collect()).collect();
 
 		//1. build the ACDFA (ignore case) version
 		assert!(dfa_id<(1<<DEFAULT_ACDFA_DA_BITS));
@@ -1212,6 +1214,16 @@ mod tests_hex_acdfa{
 		let vu8 = hex_to_u8(&s);
 		let set1 = dfa.get_patterns( &dfa.acc_path(&vu8) );
 		assert!((set1==exp_set)==bval, "failed on s: {}. set1: {:#?}, exp_set: {:#?}", s, set1, exp_set);
+	}
+
+	/// T981: an igc pattern with a byte >= 0x80 must match its exact and
+	/// case-variant input, and not the UTF-8-expanded bytes (0xaa -> c2 aa).
+	#[test]
+	fn test_igc_high_byte_t981(){
+		let pats = vec!["6001aa4164"];
+		test_one_case_ig(&pats, &pats, "6001aa4164", true);
+		test_one_case_ig(&pats, &pats, "6001aa6144", true);
+		test_one_case_ig(&pats, &vec![], "6001c2aa6144", true);
 	}
 
 	#[test]
