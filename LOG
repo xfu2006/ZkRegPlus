@@ -32180,6 +32180,9 @@ Goal 2. B2
 			in lexicalgraphic order.
 		T986: fix gap bounds for pm (byte class etc)
 		-> implemented and tested.
+		T989: DFA stage handling ::i and odd sequence -> depoyed
+		T990:siilar ::i handling in hex_hir_to_dfa
+		T991: (n,m) translation is (n, n+m)
 Goal 3. B3.
 	[a] T964: counting multiple subsigs err, checked same subsig now 
 Goal 4. Writing 
