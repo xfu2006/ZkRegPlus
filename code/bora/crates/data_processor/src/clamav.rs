@@ -2572,6 +2572,7 @@ impl ClamavSig{
 		let mut max_span_nibbles = 0usize;
 		let mut anchors = vec![-1i8; n];
 		for id in 0..n {
+			let sp;
 			if self.vec_pcre_info[id].b_pcre {
 				//name-driven direction; direction_from_name asserts the
 				//.fwd/.bwd convention. Non-PCRE sigs skip this entirely.
@@ -2581,12 +2582,15 @@ impl ClamavSig{
 				let info =
 					analyze_aggressive_shape(&to_hir(&body), Some(dir))?;
 				if let Some(d) = info.anchor { anchors[id] = d; }
-				max_span_nibbles =
-					max_span_nibbles.max(info.max_span_bytes * 2);
+				sp = info.max_span_bytes * 2;
 			} else {
-				let nlen = self.vec_subsigs[id].len();
-				max_span_nibbles = max_span_nibbles.max(nlen);
+				sp = self.vec_subsigs[id].len();
 			}
+			//T972: pm chain must fit the regex span (nibbles)
+			let pm = self.vec_subsig_pm_bounds.get(id)
+				.map_or(0, |v| crate::pcre::pm_span_nibbles(v));
+			if pm > sp { return Err(AggShapeErr::PmSpan(id, pm, sp)); }
+			max_span_nibbles = max_span_nibbles.max(sp);
 		}
 		Ok((max_span_nibbles, anchors))
 	}
@@ -4151,6 +4155,83 @@ mod tests_clamav{
 		assert_eq!(sig_off.vec_subsig_obj.len(), 1);
 		assert!(sig_off.vec_fanout_map.is_empty());
 		assert_eq!(sig_off.expr, "0");
+	}
+
+	//T972: aggressive cfg (cap, min pm word len) for the pm-span tests
+	fn t972_cfg(cap: usize, minpm: usize) -> ClamavApproxConfig {
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = cap;
+		cfg.min_pm_word_len = minpm;
+		cfg
+	}
+
+	//T972: build an aggressive sig with bag words + pm bounds
+	fn t972_sig(expr: &str, cfg: &ClamavApproxConfig) -> ClamavSig {
+		let mut s = gen_clamav_sig(expr, ClamSigType::General, cfg);
+		s.gen_approx_bagwords(cfg);
+		s.gen_approx_pm_bounds(cfg);
+		s
+	}
+
+	/// T972 green: pm span == regex span in nibbles, fwd/bwd and fan-out.
+	#[test]
+	fn test_t972_pm_span_tight() {
+		let minpm = default_clamav_cfg().min_pm_word_len;
+		for d in ["fwd", "bwd"] {
+			let s = t972_sig(&format!("T972.Tight.{};Engine:81-255,Target:0;0;\
+				/ABCD.{{0,100}}EFGH/", d), &t972_cfg(1, minpm));
+			let (m, _) = s.compute_aggressive_shape(&default_clamav_cfg())
+				.expect("tight sig passes");
+			assert_eq!(m, 216); // 2 * (4 + 100 + 4)
+			assert_eq!(crate::pcre::pm_span_nibbles(&s.vec_subsig_pm_bounds[0]), m);
+		}
+		// fan-out variants: own pm bounds, parent span 2*(3+4+8) = 30
+		let s = t972_sig("T972.Fan.bwd;Engine:81-255,Target:0;0;\
+			/[0-9][0-9][0-9].{0,4}SECRETKW/", &t972_cfg(1000, minpm));
+		let (m, _) = s.compute_aggressive_shape(&default_clamav_cfg()).expect("fan");
+		let mx = s.vec_subsig_pm_bounds.iter()
+			.map(|v| crate::pcre::pm_span_nibbles(v)).max().unwrap();
+		assert_eq!((m, mx), (30, 30));
+	}
+
+	/// T972 red: a longer gap, an unbounded gap, a longer last word, or a
+	/// hex `*` gap exceeds the regex span -> PmSpan error (no panic).
+	#[test]
+	fn test_t972_pm_span_violation() {
+		use crate::pcre::AggShapeErr::PmSpan;
+		let cfg = default_clamav_cfg();
+		let base = t972_sig("T972.Red.fwd;Engine:81-255,Target:0;0;\
+			/ABCD.{0,100}EFGH/", &t972_cfg(1, cfg.min_pm_word_len));
+		let bad = |f: &dyn Fn(&mut Vec<(String, (usize, usize))>)| {
+			let mut s = base.clone();
+			f(&mut s.vec_subsig_pm_bounds[0]);
+			s.compute_aggressive_shape(&cfg)
+		};
+		assert_eq!(bad(&|v| v[1].1.1 += 1), Err(PmSpan(0, 217, 216)));
+		assert_eq!(bad(&|v| v[1].1.1 = usize::MAX), Err(PmSpan(0, usize::MAX, 216)));
+		assert_eq!(bad(&|v| v[1].0.push_str("49")), Err(PmSpan(0, 218, 216)));
+		// hex `*`: base passed with M=22 for an unbounded pm chain
+		let c3 = t972_cfg(100, 3);
+		let s = t972_sig("T972.HexStar;Engine:81-255,Target:0;0;\
+			61626364*65666768", &c3);
+		assert_eq!(s.compute_aggressive_shape(&c3), Err(PmSpan(0, usize::MAX, 22)));
+	}
+
+	/// T972: the Dlp DB-max subsig (kw09.bwd) is tight, shape == max pm span.
+	#[test]
+	fn test_t972_dbmax_tight() {
+		let cfg = t972_cfg(100, 3);
+		let f = concat!(env!("CARGO_MANIFEST_DIR"), "/../../data/paper_data/\
+			dlp/cfg/regex_pat/main_data_dlp_internationl.dat");
+		let l = super::read_lines(f).into_iter().find(|l| l.split(';').next()
+			.unwrap_or("").ends_with("finland-european-health-insurance-number.kw09.bwd"))
+			.expect("kw09.bwd sig line");
+		let s = t972_sig(&l, &cfg);
+		let (m, _) = s.compute_aggressive_shape(&cfg).expect("DB-max sig passes");
+		let mx = s.vec_subsig_pm_bounds.iter()
+			.map(|v| crate::pcre::pm_span_nibbles(v)).max().unwrap();
+		assert_eq!(m, mx);
 	}
 
 	/// M1 gatekeeper: a conforming aggressive sig passes; each single-field

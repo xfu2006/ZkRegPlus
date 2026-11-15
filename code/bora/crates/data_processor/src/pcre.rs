@@ -588,7 +588,14 @@ fn collect_class_runs(hir: &Hir, in_optional: bool,
 /// gap (no finite halo); KwInMiddle = keyword interleaved with regex;
 /// NoAnchor = regex run with no keyword literal to anchor on.
 #[derive(Debug, Clone, PartialEq)]
-pub enum AggShapeErr { Unbounded, KwInMiddle, NoAnchor }
+pub enum AggShapeErr { Unbounded, KwInMiddle, NoAnchor,
+	PmSpan(usize, usize, usize) } //T972: (subsig, pm span, regex span)
+
+/// T972: pm chain span in nibbles (entry 0 range skipped; MAX = unbounded)
+pub fn pm_span_nibbles(pb: &[(String, (usize, usize))]) -> usize {
+	pb.split_first().map_or(0, |((w, _), rest)| rest.iter().fold(w.len(),
+		|s, (w, (_, b))| s.saturating_add(b.saturating_add(w.len()))))
+}
 
 /// Shape-guard result for one subsig body. `anchor`: Some(0)=keyword
 /// leftmost (forward), Some(1)=keyword rightmost (backward), None=no
