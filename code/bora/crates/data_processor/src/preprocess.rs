@@ -358,11 +358,11 @@ pub fn handle_location(s:&str)->String{
 	//2.5 format "num1,num2"
 	else if Regex::new(r"^[0-9]+,[0-9]+$").unwrap().is_match(loc){
 		let arr = loc.split(",").map(str::to_string).collect::<Vec<String>>();
-		let min = arr[0].parse::<usize>().unwrap();
-		let max = arr[1].parse::<usize>().unwrap();
-		let (min,max) = if min<max {(min,max)} else {(max,min)};
+		let n = arr[0].parse::<usize>().unwrap();
+		let m = arr[1].parse::<usize>().unwrap();
+		//T991: ClamAV `n,m` = start in [n, n+m] (MaxShift), not [n,m].
 		//BYTE units (ClamAV spec) -> ×2 for nibble stream, see above.
-		res = rng_str(min*2, max*2, true) + pattern + ".*";
+		res = rng_str(n*2, n.saturating_add(m).saturating_mul(2), true) + pattern + ".*";
 	}
 	//3. "*"
 	else if loc.contains("*"){
@@ -427,11 +427,11 @@ pub fn handle_location_for_pm(s:&str)->String{
 	//2.5 format "num1,num2"
 	else if Regex::new(r"^[0-9]+,[0-9]+$").unwrap().is_match(loc){
 		let arr = loc.split(",").map(str::to_string).collect::<Vec<String>>();
-		let min = arr[0].parse::<usize>().unwrap();
-		let max = arr[1].parse::<usize>().unwrap();
-		let (min,max) = if min<max {(min,max)} else {(max,min)};
+		let n = arr[0].parse::<usize>().unwrap();
+		let m = arr[1].parse::<usize>().unwrap();
+		//T991: ClamAV `n,m` = start in [n, n+m] (MaxShift), not [n,m].
 		//BYTE units (ClamAV spec) -> ×2 for nibble stream, see above.
-		res = rng_str(min*2, max*2, true) + pattern + ".*";
+		res = rng_str(n*2, n.saturating_add(m).saturating_mul(2), true) + pattern + ".*";
 	}
 	//3. "*"
 	else if loc.contains("*"){
@@ -582,3 +582,44 @@ pub fn preprocess_general_regex_without_rep(s: &str)->(String,bool){
 	(s, b_igc)
 }
 
+#[cfg(test)]
+mod tests_t991{
+	use super::{handle_location, handle_location_for_pm};
+	use crate::pcre::{clamav_genregex_to_dfa, collect_pm_reg_from_rustomaton_regex};
+	use rustomaton::automaton::Automata;
+
+	/// 64-byte NUL file with w at byte p, as nibbles
+	fn file(p: usize, w: &[u8]) -> Vec<char> {
+		let mut d = vec![0u8; 64]; d[p..p+w.len()].copy_from_slice(w);
+		d.iter().map(|b| format!("{:02x}", b)).collect::<String>().chars().collect()
+	}
+
+	/// T991: `n,m:` = start in [n, n+m]. FOUND/clean per clamscan 1.5.4.
+	/// Small windows keep the DFA build cheap (big ones: see _pm).
+	#[test]
+	fn test_t991_shift_dfa(){
+		assert_eq!(handle_location("64,128:aa"), ".{128,384}aa.*");
+		let cases: [(&str, &[usize], &[usize]); 4] = [("2,5", &[2,5,6,7], &[1,8]),
+			("5,2", &[5,7], &[4,8]), ("1,0", &[1], &[0,2]), ("10,20", &[10,21,30], &[9,31])];
+		for (loc, found, clean) in cases {
+			for igc in [false, true] {
+				let sig = format!("{}:41424344{}", loc, if igc {"::i"} else {""});
+				let w: &[u8] = if igc {b"aBcD"} else {b"ABCD"};
+				let d = clamav_genregex_to_dfa(&sig);
+				for &p in found { assert!(d.run(&file(p, w)), "false clean {} @{}", sig, p); }
+				for &p in clean { assert!(!d.run(&file(p, w)), "{} @{}", sig, p); }
+			}
+		}
+	}
+
+	/// T991: pm path keeps the same [n, n+m] start window (nibbles)
+	#[test]
+	fn test_t991_shift_pm(){
+		for (loc, lo, hi) in [("64,128", 128, 384), ("25,20", 50, 90),
+			("0,256", 0, 512), ("5,2", 10, 14)] {
+			let s = handle_location_for_pm(&format!("{}:616263", loc));
+			let r = collect_pm_reg_from_rustomaton_regex(&s, 2);
+			assert!(r.iter().any(|(t, b)| t=="616263" && *b==(lo, hi)), "{}: {:?}", loc, r);
+		}
+	}
+}
