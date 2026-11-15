@@ -130,7 +130,7 @@ pub mod tests_probe_t602 {
 					&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 					&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 					&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-					&db.sig_to_id, mw, mw);
+					&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 				(packed, fdr, rec)
 			}).collect();
 			let (mut words, mut vdata, mut infos) =

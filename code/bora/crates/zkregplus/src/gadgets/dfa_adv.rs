@@ -1395,7 +1395,7 @@ pub mod tests_dfa_adv_gadget{
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 			true, &cfg,
-			&db.sig_to_id, wlen, wlen
+			&db.sig_to_id, wlen, wlen, db.aggressive_max_span_nibbles
         ).1); //use optimize mode
 
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
@@ -1606,7 +1606,7 @@ pub mod tests_dfa_adv_gadget{
 			&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-			&db.sig_to_id, wlen, wlen).1;
+			&db.sig_to_id, wlen, wlen, db.aggressive_max_span_nibbles).1;
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
 			.expect("wea err");
 		let stmt_wea = adv_wea.stmt_container;
@@ -1733,7 +1733,7 @@ pub mod tests_dfa_adv_gadget{
 			&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-			&db.sig_to_id, wlen, wlen).1;
+			&db.sig_to_id, wlen, wlen, db.aggressive_max_span_nibbles).1;
 		// matching word: bytes 61 99 99 63 = "a..c" hits /a..c/
 		let nib: Vec<u8> = "2261999963111111".chars()
 			.map(|c| c.to_digit(16).unwrap() as u8).collect();

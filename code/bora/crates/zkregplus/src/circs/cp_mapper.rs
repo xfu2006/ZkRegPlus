@@ -221,6 +221,7 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 			vec_sig_id_no_crit_pat: &Vec<usize>, //the pats to include 
 					//in failed_sigs by default
 			job_id: usize,
+			halo: &Vec<F>, //T928: M halo nibbles (empty if M==0)
 		)->Result<Self, Error>{
 		//0. construct the capacity fields needed by sub-components
 		let mut t1 = Timer::new();
@@ -232,19 +233,23 @@ impl <F:PrimeField + ColEle> CpAdvice<F>{
 		let inp_state = inp_buf[0].clone();
 		let wd_extract_advice = WordExtractAdvice::<F>
 			::new(word_seg, actual_size)?;
-		let nibbles = wd_extract_advice.data[1..].to_vec();
+		let nibbles = [wd_extract_advice.data[1..].to_vec(), halo.clone()].concat();
 		let dfa_crit_advice = FsmAdvice::<F>
 			::new(&nibbles, dfa_crit, inp_state, fsm_id as u32)?;
 		if b_perf{ log_perf(job_id, LOG5, "CpMapper gen_adv step1", &mut t1); }
 
 
 		//2. build the packing final states gadget's advice
-		let vec_b_final = dfa_crit_advice.states.iter().map(|s|{
+		//T928 seam: with G6 off (test only) the halo states are not packed
+		let n_pk = dfa_crit_advice.states.len()
+			- if t928_g6_on() { 0 } else { halo.len() };
+		let pk_states = dfa_crit_advice.states[..n_pk].to_vec();
+		let vec_b_final = pk_states.iter().map(|s|{
 			let val_s = field_to_usize(s);
 			dfa_crit.is_final(val_s - 1)
 		}).collect::<Vec<bool>>();
 		let pack_res = PackFinalAdvice::<F>
-			::new(&dfa_crit_advice.states, &vec_b_final,
+			::new(&pk_states, &vec_b_final,
 				imm_buf_len, final_states_len, fsm_id as u32);
 		let packfinal_crit_advice = match pack_res{
 			Ok(adv) => Ok(adv),
@@ -349,6 +354,9 @@ pub struct CpComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>{
 	pub clamdb: Arc<ClamavDB<F>>,
 
 	pub job_id: usize,
+
+	/// T928: global range of the SED halo cells (set by the composer)
+	pub halo_ext: Option<(usize,usize)>,
 }
 
 impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
@@ -372,6 +380,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 				b_skip,
 				clamdb,
 				job_id: 0,
+				halo_ext: None,
 			};
 		}
 		//1. build the gadgets
@@ -383,8 +392,12 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 		let fsm_id = if b_igc {CRIT_IGC_INIT} else {CRIT_INIT};
 
 		let g_extract = WordExtractGadget::<F>::new(cp_capacity.max_word_len);
-		let dfa_crit = FsmGadget::<F>::new(nlen, fsm_id, state_bits); 
-		let pack_crit = PackFinalGadget::<F>::new(nlen+1, imm_buf_len,
+		//T928: aggressive CP also scans the M-nibble forward halo
+		//(SED fsm halo cells, shared 0 cs). M = 0 => unchanged.
+		let m_halo = clamdb.aggressive_max_span_nibbles;
+		let dfa_crit = FsmGadget::<F>::new(nlen + m_halo, fsm_id, state_bits); 
+		let pack_crit = PackFinalGadget::<F>::new(nlen+1
+			+ if t928_g6_on() { m_halo } else { 0 }, imm_buf_len,
 			final_states_len, fsm_id);
 
 		let sig_cap = SigGadgetCapacity{
@@ -420,6 +433,7 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 			b_skip,
 			clamdb,
 			job_id: 0,
+			halo_ext: None,
 		}
 	}
 
@@ -431,6 +445,8 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 	}
 
 	fn get_name(&self)->String{format!("CpMapper")}
+
+	fn set_halo_ext(&mut self, rg: Option<(usize,usize)>){ self.halo_ext = rg; }
 
 	fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
 		Arc::new( Clone::clone(&self.capacity) )
@@ -477,7 +493,8 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 
 		let inp_dfa= 1;
 		let oup_dfa= 1;
-		let data_dfa= 2*nlen-1; //NOTE: excluding the gadget's
+		let data_dfa= 2*nlen-1 //T928: + halo states and trans
+			+ 2*self.clamdb.aggressive_max_span_nibbles; //NOTE: excluding the gadget's
 									 // "shared" nibbles with w_extract
 		let data_pack= 2*mlen+flen; // the increased are unique_states, 
 									//final_staes, m_table
@@ -603,8 +620,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let inp_state = prev_adv.as_ref().map_or(init_state+one, |adv|{
 			let adv= adv.as_any().downcast_ref::<CpAdvice<F>>(); 
 			let dfa_crit_advice = &adv.unwrap().dfa_crit_advice;
+			//T928: carry the body-end state (skip the M halo states)
 			let last_oup_state = dfa_crit_advice.states[
-				dfa_crit_advice.states.len()-1];
+				dfa_crit_advice.states.len()-1
+				-self.clamdb.aggressive_max_span_nibbles];
 			last_oup_state
 		});
 		
@@ -646,6 +665,14 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			})
 		};
 		let inp_buf = vec![ vec![inp_state], inp_sigs].concat();
+		//T928: same halo stream as SED (successor nibbles, pad tail)
+		let m_halo = self.clamdb.aggressive_max_span_nibbles;
+		let mut halo_f: Vec<F> = _word_info.halo_nibbles.iter()
+			.take(m_halo).map(|b| F::from(*b as u32)).collect();
+		if halo_f.len() < m_halo {
+			let k = m_halo - halo_f.len();
+			halo_f.extend(utils::data::gen_pad_nibbles_fe::<F>(0, k));
+		}
 		let advice = CpAdvice::<F>::new(
 			&word_seg,
 			word.len(),
@@ -657,6 +684,7 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			fsm_id as usize,
 			&vec_sig_id_no_crit_pat,
 			_job_id,
+			&halo_f,
 		)?;
 
 
@@ -733,6 +761,27 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			(dfa_subtbl_trans_start, dfa_subtbl_trans_start
 				+dfa_subtbl_trans_len-1),
 			];
+		//T928: halo cells sit at the END of CP data / si_data. fsm trace =
+		//[inp, body mids, s_oup = states[nlen] (carry), halo mids, h_end].
+		let m = self.clamdb.aggressive_max_span_nibbles;
+		let (h_d, h_s) = (vec_alloc[3].1 + 1 - 2*m, vec_alloc[6].1 + 1 - 2*m);
+		let dfa_crit = if m == 0 { dfa_crit } else {
+			let hx = self.halo_ext.expect("T928: CP halo needs SED halo cells");
+			assert!(hx.1 + 1 - hx.0 == m);
+			vec![
+				(s_inp, s_inp), (h_d + m - 1, h_d + m - 1),
+				(s_data+1, s_data+nlen), hx,
+				(s_data+1+nlen, s_data+2*nlen-1), (s_oup, s_oup), (h_d, h_d+m-2),
+				(s_data+2*nlen, s_data+3*nlen-1), (h_d+m, h_d+2*m-1),
+				(dfa_subtbl_inp_start, dfa_subtbl_inp_start),
+				(dfa_subtbl_states_start,
+					dfa_subtbl_states_start+dfa_subtbl_states_len-1),
+				(dfa_subtbl_oup_start, dfa_subtbl_oup_start), (h_s, h_s+m-2),
+				(h_s+m-1, h_s+m-1),
+				(dfa_subtbl_trans_start, dfa_subtbl_trans_start
+					+dfa_subtbl_trans_len-1), (h_s+m, h_s+2*m-1),
+			].into_iter().filter(|(a, b)| b + 1 > *a).collect()
+		};
 		vec_res.push(dfa_crit);
 
 		//3. pack_crit gadget problem statement structure
@@ -757,6 +806,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 								//for final states
 
 		];
+		let mut pack_crit = pack_crit;
+		//T928: halo states MUST stay pack inputs (pack bound replaces RANGE2,
+		//guards the fsm packed eq). Soundness-critical.
+		if m > 0 && t928_g6_on() { pack_crit.insert(3, (h_d, h_d + m - 1)); }
 		vec_res.push(pack_crit);
 
 		//4. statement for sigs
@@ -849,6 +902,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			(1, true),
 
 		];
+		let mut vec_si_data_info = vec_si_data_info;
+		if m > 0 { //T928: halo states (const zero, no lookup), halo trans
+			vec_si_data_info.extend([(m, true), (m, true)]);
+		}
 		let total_si_info_size = vec_si_data_info.iter().map(|(s,_)| s)
 			.sum::<usize>();
 		let total_data_size = vec_alloc[3].1 - vec_alloc[3].0 + 1;
@@ -917,8 +974,10 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		//sig buffers are dropped (inv2 authenticates failed_sigs).
 		let b_aggr = read_global_config()
 			.clamav_cfg.b_aggressive_sde_for_rep;
+		let m = self.clamdb.aggressive_max_span_nibbles;
+		//T928: carry = body-end state states[nlen], not the halo end
 		let last_state = advice.dfa_crit_advice
-			.states[advice.dfa_crit_advice.states.len()-1];
+			.states[advice.dfa_crit_advice.states.len()-1-m];
 		let inp = if b_aggr { advice.inp_buf[0..1].to_vec() }
 			else { advice.inp_buf.clone() };
 		assert!(inp.len()==inp_len);
@@ -937,8 +996,8 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let wd_data = &advice.wd_extract_advice.data.clone();
 		assert!(wd_data[0]==F::from(actual_word_len as u32));
 		assert!(wd_data.len()==wlen*LEGS + 1);
-		assert!(advice.dfa_crit_advice.states.len()==nlen+1);
-		assert!(advice.dfa_crit_advice.trans.len()==nlen);
+		assert!(advice.dfa_crit_advice.states.len()==nlen+1+m);
+		assert!(advice.dfa_crit_advice.trans.len()==nlen+m);
 		assert!(advice.packfinal_crit_advice.unique_states.len()==mlen);
 		assert!(advice.packfinal_crit_advice.m_table.len()==mlen);
 		assert!(advice.packfinal_crit_advice.oup_states.len()==olen);
@@ -949,11 +1008,13 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 		let data = vec![
 			advice.wd_extract_advice.data.clone(),
 			advice.dfa_crit_advice.states[1..nlen].to_vec(),
-			advice.dfa_crit_advice.trans.clone(),
+			advice.dfa_crit_advice.trans[0..nlen].to_vec(),
 			advice.packfinal_crit_advice.unique_states.clone(),
 			advice.packfinal_crit_advice.m_table.clone(),
 			advice.packfinal_crit_advice.oup_states.clone(),
-			data_sigs
+			data_sigs,
+			advice.dfa_crit_advice.states[nlen+1..nlen+1+m].to_vec(), //T928
+			advice.dfa_crit_advice.trans[nlen..nlen+m].to_vec(),
 		].concat();
 		assert!(data.len()==data_len);
 
@@ -1004,6 +1065,9 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			advice.sigs_advice.gen_subtbl_id_for_data(), //it has
 				//excluded the final_states, which already in pack.rs
 		].concat();
+		//T928: halo states si = zero (pack bounds them), trans = crit trans
+		let subtbl_data = if m == 0 { subtbl_data } else { [subtbl_data,
+			vec![zero; m], vec![f_crit_trans; m]].concat() };
 		assert!(subtbl_data.len()==data.len());
 		assert!(subtbl_inp.len()==inp.len());
 		assert!(subtbl_oup.len()==oup.len());
@@ -1051,6 +1115,19 @@ where F: 'static,
 			gadgets: new_gadgets,
 			clamdb: self.clamdb.clone(),
 			job_id: self.job_id,
+			halo_ext: self.halo_ext,
 		}))
 	}
 }
+
+/// T928 seam (TEST ONLY): true = G6 removed (halo states not pack
+/// inputs), for the T1-neg statement test. Release builds: G6 always on.
+#[cfg(test)]
+pub(crate) static T928_NO_G6: std::sync::atomic::AtomicBool =
+	std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
+fn t928_g6_on() -> bool {
+	!T928_NO_G6.load(std::sync::atomic::Ordering::Relaxed) }
+#[cfg(not(test))]
+#[inline(always)]
+fn t928_g6_on() -> bool { true }

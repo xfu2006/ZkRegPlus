@@ -471,9 +471,9 @@ pub struct DatasetSpec {
 	/// build_circs_adv consumes them instead of running decreased_copy.
 	/// None = the legacy ratio descent, entirely unchanged.
 	pub(crate) rung0_scale: Option<Rung0Scale>,
-	/// Main-decider concurrency cap (inert while b_one_proof).
+	/// Main-decider concurrency cap (T952: n_par_snark_total = 1 serialises).
 	pub(crate) n_par_snark: usize,
-	/// CP-decider concurrency cap (inert while b_one_proof).
+	/// CP-decider concurrency cap (T952: n_par_snark_total = 1 serialises).
 	pub(crate) n_par_snark_cp: usize,
 	/// pass_all batch-claim semaphore width; every job reaches it, so
 	/// it is NOT inert (B101). DLP 1 (legacy default), DNA 8.
@@ -552,9 +552,8 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	b_check_lkup: true,
 	vec_decrease_level: &[],
 	rung0_scale: None,
-	// 1/1 = legacy full_dlp, which never sets these. Inert regardless:
-	// the snark semaphores are taken past driver.rs' b_one_proof and
-	// b_folding_only returns, so only one job ever contends.
+	// 1/1 = legacy full_dlp, which never sets these. T952: every job
+	// proves; apply_spec_config's n_par_snark_total = 1 serialises them.
 	n_par_snark: 1,
 	n_par_snark_cp: 1,
 	// legacy full_dlp never sets it -> the default 1 stands (B101).
@@ -879,10 +878,11 @@ fn cache_dir_for(spec: &DatasetSpec, part_id: usize) -> String {
 
 /// One part's role in a numa_num-way split.
 pub(crate) struct PartRole {
-	/// This part runs the decider (the LAST part proves).
-	pub(crate) b_proves: bool,
-	/// Wait on the snark start flag (only when a sibling part folds).
-	pub(crate) b_wait_snark: bool,
+	/// T952: every part proves, one part's deciders at a time. Part 0
+	/// waits on FOLD_DONE_FLAG, the last part on SNARK_WAIT_FLAG.
+	pub(crate) wait_flag: Option<&'static str>,
+	/// Touch FOLD_DONE_FLAG once this part folded (the last part).
+	pub(crate) b_fold_done: bool,
 	/// Half-open range of GLOBAL job indices this part folds.
 	pub(crate) jobs: Range<usize>,
 }
@@ -898,10 +898,12 @@ pub(crate) fn part_role(part_id: usize, numa_num: usize,
 		"bora_data_driver: num_jobs {} not a multiple of numa_num {}",
 		num_jobs, numa_num);
 	let per = num_jobs / numa_num;
-	let b_proves = part_id == numa_num - 1;
+	let b_last = numa_num > 1 && part_id == numa_num - 1;
 	PartRole {
-		b_proves,
-		b_wait_snark: b_proves && numa_num > 1,
+		wait_flag: if b_last { Some(SNARK_WAIT_FLAG) }
+			else if numa_num > 1 && part_id == 0 { Some(FOLD_DONE_FLAG) }
+			else { None },
+		b_fold_done: b_last,
 		jobs: part_id * per..(part_id + 1) * per,
 	}
 }
@@ -973,9 +975,11 @@ fn shrink_lone_sample(pd: &str, bins: Vec<Vec<String>>,
 	out
 }
 
-/// Snark-decider release gate. MUST match PAPER_DATA.py's FLAG
-/// (scripts/PAPER_DATA.py:201-202).
+/// Snark-decider release gate. MUST match PAPER_DATA.py's FLAG.
 const SNARK_WAIT_FLAG: &str = "/tmp/snark_start/flag";
+/// T952: the last part touches it once all its jobs folded; part 0's
+/// deciders wait for it. MUST match PAPER_DATA.py's FOLD_DONE.
+const FOLD_DONE_FLAG: &str = "/tmp/snark_start/fold_done";
 
 /// The ONE GlobalConfig writer for every neo run (full x3 and scale x2).
 /// neo is forced ON unconditionally; the part topology is COPIED from
@@ -1016,14 +1020,17 @@ fn apply_spec_config(spec: &DatasetSpec, b_dry_run: bool,
 	// b_one_proof / b_folding_only returns.
 	g.n_par_batch_claim = spec.n_par_batch_claim;
 	g.log_level = spec.log_level;
-	// legacy couples fold-only with the light decider (zkp_driver.rs
-	// :6768-6772): a non-proving part must never build heavy keys.
-	g.b_light_test = b_dry_run || !role.b_proves;
+	// T952: every job of every part proves (light keys on dry), one
+	// decider at a time. Fallback: PAPER_DATA.py --one_proof_per_half.
+	g.b_light_test = b_dry_run;
+	g.b_folding_only = false;
+	g.b_one_proof = std::env::var("ZKR_ONE_PROOF_PER_HALF")
+		.as_deref() == Ok("1");
+	g.n_par_snark_total = 1;
 	// part topology, copied from part_role -- one source of truth.
-	g.b_folding_only = !role.b_proves;
-	g.b_one_proof = role.b_proves;
-	g.snark_wait_flag =
-		role.b_wait_snark.then(|| SNARK_WAIT_FLAG.to_string());
+	g.snark_wait_flag = role.wait_flag.map(str::to_string);
+	g.fold_done_flag =
+		role.b_fold_done.then(|| FOLD_DONE_FLAG.to_string());
 	// the FOLD reloads the DB from cache (2x RAM avoidance); the build
 	// passes read=false as a build_or_load PARAM, so the two never
 	// conflict. Snark cache fully off under the reset rule.
@@ -1128,7 +1135,7 @@ fn discharge_word(db: &ClamavDB<Fr>, cfg: &ClamavApproxConfig,
 		&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 		&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 		&db.bundle_subsig_igc.vec_acdfa[0], true, cfg,
-		&db.sig_to_id, chunk_len, chunk_len);
+		&db.sig_to_id, chunk_len, chunk_len, db.aggressive_max_span_nibbles);
 	(packed, rec, fdr)
 }
 
@@ -3149,7 +3156,7 @@ fn effective_spec(spec: &DatasetSpec, b_dry_run: bool,
 
 /// The full-run pipeline shared by all three datasets. Every part
 /// runs it whole-corpus-identically in its own sandbox; the only
-/// cross-process file is the snark-start flag.
+/// cross-process files are the snark-start and fold_done flags.
 pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 	perc_samples: f64, num_circs: usize, num_jobs: usize,
 	numa_num: usize, part_id: usize, b_dry_run: bool,
@@ -3165,6 +3172,7 @@ pub fn run_neo(spec: &DatasetSpec, perc_db: f64,
 		// folded circuits keep production width -- the run measures
 		// fold cost, so its step circuits must be the real ones.
 		get_global_config().b_folding_only = true;
+		get_global_config().b_one_proof = true; // T952: keep early skip
 	}
 	// Read BEFORE reset_part_dir wipes the part dir, so the source can
 	// be that same directory's ladder.json from an earlier run.
@@ -3387,6 +3395,9 @@ pub fn collect_scale_data_neo(spec: &DatasetSpec, corpus_idx: usize,
 		// keep the fail-fast abort.
 		let mut g = get_global_config();
 		g.b_folding_only = true;         // scale never proves
+		// T952: HEAD values, so the scale config dump stays identical.
+		g.b_one_proof = true;
+		g.n_par_snark_total = 0;
 		g.b_scale_catch_caperr = true;
 	}
 	utils::consts::SCALE_DUMP_FWD
@@ -3740,7 +3751,7 @@ pub fn collect_assess_tier_data_adv(perc: usize, dest_path: &str) {
 					&db.map_crit_pat_igc, &db.dfa_crit,
 					&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 					&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-					&db.sig_to_id, *max_word_len, *max_word_len);
+					&db.sig_to_id, *max_word_len, *max_word_len, db.aggressive_max_span_nibbles);
 				fdr
 			}).collect();
 		report.push_str(&fmt_tier_block(
@@ -4586,13 +4597,15 @@ pub mod tests_bora_data_driver {
 	#[test]
 	fn test_a103_part_role() {
 		let r = part_role(0, 1, 8);
-		assert!(r.b_proves && !r.b_wait_snark);
+		assert!(r.wait_flag.is_none() && !r.b_fold_done);
 		assert_eq!(r.jobs, 0..8);
 		let r0 = part_role(0, 2, 8);
-		assert!(!r0.b_proves && !r0.b_wait_snark);
+		assert_eq!(r0.wait_flag, Some(FOLD_DONE_FLAG));
+		assert!(!r0.b_fold_done);
 		assert_eq!(r0.jobs, 0..4);
 		let r1 = part_role(1, 2, 8);
-		assert!(r1.b_proves && r1.b_wait_snark);
+		assert_eq!(r1.wait_flag, Some(SNARK_WAIT_FLAG));
+		assert!(r1.b_fold_done);
 		assert_eq!(r1.jobs, 4..8);
 		assert_eq!(part_role(0, 4, 8).jobs, 0..2);
 		assert_eq!(part_role(3, 4, 8).jobs, 6..8);
@@ -4696,6 +4709,10 @@ pub mod tests_bora_data_driver {
 			g.b_pin_lkup_share = true;      // the legacy pin
 			g.perc_lkup_share = 42;         // a stale ratchet value
 			g.snark_wait_flag = Some("/tmp/stale".to_string());
+			g.fold_done_flag = Some("/tmp/stale".to_string());
+			g.n_par_snark_total = 99;
+			g.b_folding_only = true;
+			g.b_one_proof = true;
 		}
 
 		// numa 1: the single part folds AND proves, and waits on nobody.
@@ -4726,7 +4743,9 @@ pub mod tests_bora_data_driver {
 		assert!(!c.b_light_test,
 			"prover part at b_light=false stays heavy");
 		assert!(!c.b_folding_only, "numa 1: the one part proves");
-		assert!(c.b_one_proof);
+		assert!(!c.b_one_proof, "T952: every job proves");
+		assert_eq!(c.n_par_snark_total, 1);
+		assert_eq!(c.fold_done_flag, None);
 		assert_eq!(c.snark_wait_flag, None, "nobody to wait for");
 		assert!(c.b_read_cache, "the fold reloads the DB from cache");
 		assert!(!c.b_read_snark_cache);
@@ -4738,15 +4757,15 @@ pub mod tests_bora_data_driver {
 		assert_eq!(c.perc_lkup_share, 1, "ratchet floor, not the stale 42");
 		drop(c);
 
-		// numa 2 part 0: folds only, does not wait (it IS the folder).
-		// b_light=false on purpose: the fold-only part must be FORCED
-		// light (legacy's ZKR_DLP_FOLD_ONLY coupling).
+		// numa 2 part 0: proves at full width after part 1 folded.
 		apply_spec_config(&DLP, false, &part_role(0, 2, 8));
 		let c = read_global_config();
-		assert!(c.b_light_test, "fold-only part is forced light");
-		assert!(c.b_folding_only);
-		assert!(!c.b_one_proof);
-		assert_eq!(c.snark_wait_flag, None);
+		assert!(!c.b_light_test, "T952: part 0 proves at full width");
+		assert!(!c.b_folding_only && !c.b_one_proof);
+		assert_eq!(c.snark_wait_flag,
+			Some("/tmp/snark_start/fold_done".to_string()),
+			"MUST match PAPER_DATA.py's FOLD_DONE");
+		assert_eq!(c.fold_done_flag, None);
 		drop(c);
 
 		// numa 2 part 1: proves, and gates on the flag Python touches.
@@ -4754,11 +4773,16 @@ pub mod tests_bora_data_driver {
 		let c = read_global_config();
 		assert!(!c.b_light_test, "the proving part stays heavy");
 		assert!(!c.b_folding_only);
-		assert!(c.b_one_proof);
+		assert!(!c.b_one_proof);
+		assert_eq!(c.fold_done_flag,
+			Some("/tmp/snark_start/fold_done".to_string()));
 		assert_eq!(c.snark_wait_flag,
 			Some("/tmp/snark_start/flag".to_string()),
 			"MUST match PAPER_DATA.py's FLAG");
 		drop(c);
+
+		apply_spec_config(&DLP, true, &part_role(0, 2, 8));
+		assert!(read_global_config().b_light_test, "dry stays light");
 
 		// DNA (M103): the non-aggr spec's distinct knobs all land;
 		// the DLP apply above is the poison for every one of them.
@@ -6702,7 +6726,7 @@ pub mod tests_bora_data_driver {
 	///     silently turn this into a folding-only run that emits no proof.
 	///
 	/// The three flags ARE the definition of this entry -- fold for real,
-	/// full decider, exactly one proof (Job 0 only).
+	/// full decider, four proofs, one at a time.
 	fn small_full_snark(b_check_lkup: bool) {
 		use crate::circs::cp_mapper::CpCapacity;
 		use crate::circs::dfa_mapper::DfaCapacity;
@@ -6716,7 +6740,10 @@ pub mod tests_bora_data_driver {
 		get_global_config().b_read_cache = false;
 		get_global_config().b_light_test = false;   // full decider
 		get_global_config().b_folding_only = false; // fold THEN prove
-		get_global_config().b_one_proof = true;     // only Job 0 proves
+		get_global_config().b_one_proof = false;    // T952: all 4 prove
+		get_global_config().n_par_snark_total = 1;  // one at a time
+		get_global_config().snark_wait_flag = None; // R3-b: no stale gate
+		get_global_config().fold_done_flag = None;
 		get_global_config().log_level = utils::logger::LOG3;
 
 		let b_write_cache = !read_global_config().b_read_cache;
@@ -6780,6 +6807,9 @@ pub mod tests_bora_data_driver {
 		// small_full_snark writes the process-wide GlobalConfig.
 		let _g = cfg_lock();
 		small_full_snark(false);
+		assert_eq!(utils::consts::get_verify_fails(), 0);
+		assert_eq!(utils::consts::get_proofs_ok(), 4,
+			"T952: every job proves");
 	}
 
 	// ---------------------------------------------------------------

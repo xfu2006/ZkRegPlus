@@ -274,6 +274,11 @@ CARGO_TEST = ["cargo", "test", "-p", "zkregplus", "--release", "--"]
 
 FLAG_DIR = "/tmp/snark_start"       # snark-decider release gate
 FLAG = os.path.join(FLAG_DIR, "flag")
+# T952 (Rust FOLD_DONE_FLAG): part_id 1 touches it after its fold
+# barrier; part_id 0's deciders wait on it.  Under FLAG_DIR, so the
+# two-half start rmtree clears it; --half pre-creates it.
+FOLD_DONE = os.path.join(FLAG_DIR, "fold_done")
+FOLD_WAIT_MARK = "waiting for snark-start flag " + FOLD_DONE
 
 PART2_DELAY = 900          # seconds part1 must run before part2 launches
 PART2_RAM_GB = 500.0       # ...or part1's tree RSS must drop below this
@@ -310,12 +315,31 @@ def run_rust_single(ctx, test_path, env):
     return p.returncode
 
 
-def _wait_stagger(p1):
+def _tail(path, n=1 << 16):
+    """Last n bytes of path as text; "" when it cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            f.seek(0, os.SEEK_END)
+            f.seek(max(0, f.tell() - n))
+            return f.read().decode("utf-8", "replace")
+    except OSError:
+        return ""
+
+
+def _wait_stagger(p1, log1=None):
     """Hold until part1 has run >= PART2_DELAY s AND its tree-RSS has
-    dropped below PART2_RAM_GB (or part1 exits)."""
+    dropped below PART2_RAM_GB (or part1 exits).  T952: also release
+    once log1 shows part1 waiting on FOLD_DONE -- it cannot shrink or
+    exit until part2 has folded, so holding would deadlock."""
     waited = 0
     while p1.poll() is None:
         if waited >= PART2_DELAY and tree_rss_gb(p1.pid) < PART2_RAM_GB:
+            break
+        # marker = part1's barrier opened (pool < jobs: before all folded)
+        if log1 and FOLD_WAIT_MARK in _tail(log1):
+            _summary_line("       NOTE: part1 waits on %s at tree RSS "
+                          "%.1f GB: part2 released"
+                          % (FOLD_DONE, tree_rss_gb(p1.pid)))
             break
         time.sleep(10)
         waited += 10
@@ -444,6 +468,14 @@ KILL_GRACE_S = 60          # SIGTERM -> SIGKILL, and the pump-join bound
 # they gate neo-side code and must survive the ZKR_* scrub below.
 NEO_ENV_PASS = ("ZKR_NEO_LOAD_LADDER", "ZKR_PROBE_DECLINE")
 
+# T952/T955 opt-in options, set once in main().  Defaults = a
+# reviewer's run (owner decision 4).  ONE_PROOF_ENV is NOT in
+# NEO_ENV_PASS: only --one_proof_per_half sets it.
+HALF = None                     # None = whole leaf; 0/1 = that part only
+HALF_LEAVES = {"dlp", "clam"}
+ONE_PROOF_PER_HALF = False
+ONE_PROOF_ENV = "ZKR_ONE_PROOF_PER_HALF"
+
 # mimalloc transparent huge pages, set by --thp (default on).  "on" =
 # mimalloc's own default (allow_thp=1), as in the paper's runs.  Same
 # command, same node, THP off vs on: fold 47.1 vs 30.3 s/step at equal
@@ -485,6 +517,8 @@ def neo_env(b_show_dropped=False):
          if not k.startswith("ZKR_") or k in NEO_ENV_PASS}
     e["RUSTFLAGS"] = RUSTFLAGS_NEO
     e["MIMALLOC_ALLOW_THP"] = thp_env_value()
+    if ONE_PROOF_PER_HALF:
+        e[ONE_PROOF_ENV] = "1"   # T952 DD9 L1 fallback, flag-only
     if b_show_dropped and dropped:
         log("neo_env: dropped %s" % " ".join(dropped))
     return e
@@ -575,7 +609,9 @@ def _abort_two_half(ctx, rc, when):
 def run_example_two_half(ctx, example_name, args, env, node_ranges):
     """Two-part neo launch: the spawns differ ONLY in the part_id argv
     token (PART_TOKEN -> "0"/"1"; role logic lives in Rust; Python
-    labels part1/part2 = part_id 0/1); part2 always proves.  Unlike
+    labels part1/part2 = part_id 0/1); both prove (T952): part2's
+    deciders wait for FLAG (part1's exit), part1's for FOLD_DONE
+    (part2's fold barrier); the start rmtree clears both.  Unlike
     run_rust_two_half, a dead part1 aborts instead of releasing part2's
     decider, and the finally signals BOTH halves before waiting."""
     assert args.count(PART_TOKEN) == 1, args
@@ -593,10 +629,12 @@ def run_example_two_half(ctx, example_name, args, env, node_ranges):
             numa_prefix(a) + example_cmd(example_name, argv(0)),
             env, log1, "part1")
         ctx.watch(p1, log1)
-        _wait_stagger(p1)
+        _wait_stagger(p1, log1)
         # part2 waits for part1's RAM, never for its data, so a clean
-        # early exit is fine -- a dry part1 exits well inside the 900 s
-        # stagger.  A dead part1 is not: the leaf is already lost.
+        # early exit is fine.  T952: part1 no longer exits inside the
+        # stagger (its deciders wait on part2's FOLD_DONE), so the
+        # stagger also releases on that wait.  A dead part1 is not
+        # fine: the leaf is already lost.
         rc1 = p1.poll()      # None = still folding, 0 = done early
         if rc1:              # crash / OOM / operator kill
             return _abort_two_half(ctx, rc1, "before part2 launch")
@@ -614,7 +652,18 @@ def run_example_two_half(ctx, example_name, args, env, node_ranges):
         # the stagger normally exits with part1 ALIVE (900 s + RSS
         # drop), so part1 usually dies HERE -- and the flag below would
         # release part2's Groth16 decider for a leaf already lost.
-        rc1 = p1.wait()
+        # T952: part1's deciders wait on part2's FOLD_DONE, so a part2
+        # that exits first would hang part1 for ever (its 10 s wait
+        # heartbeat keeps the watchdog quiet).  A healthy part2 never
+        # exits first: its deciders wait on FLAG, created below.
+        rc1 = None
+        while rc1 is None:
+            try:
+                rc1 = p1.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                if p2.poll() is not None:
+                    return _abort_leaf(ctx, "part2 rc=%s before part1 exit"
+                                       % p2.returncode, p2.returncode or 1)
         if rc1:
             return _abort_two_half(ctx, rc1, "mid-fold")
         if aborted():        # GATE 2 of 2
@@ -715,20 +764,23 @@ def pack_full_dump(base, run_logs, ts):
     log(s): 1 log -> plain single-member tgz (extract_tgz contract),
     2 logs -> one nested partN_<ts>.log.tgz each (_read_part_log
     contract). Stale <base>{,.part*}.tgz unlinked first --
-    resolve_server_dump prefers surviving parts. Returns dest paths."""
+    resolve_server_dump prefers surviving parts. Returns dest paths.
+    T955 --half: the one log is part<HALF+1>; <base>.tgz is still
+    unlinked, the other machine's part is kept."""
     assert len(run_logs) in (1, 2), run_logs
+    assert HALF is None or len(run_logs) == 1, run_logs
     dest_dir = os.path.dirname(raw_data_path(base + ".tgz"))
     os.makedirs(dest_dir, exist_ok=True)
     built = []                        # (dest_name, tmp_path)
     with tempfile.TemporaryDirectory() as td:
-        if len(run_logs) == 1:
+        if len(run_logs) == 1 and HALF is None:
             tmp = os.path.join(dest_dir, base + ".tgz.tmp")
             if os.path.exists(tmp):
                 os.unlink(tmp)
             _tgz_single(tmp, run_logs[0], "run_%s.log" % ts)
             built.append((base + ".tgz", tmp))
         else:
-            for i, lg in enumerate(run_logs, 1):
+            for i, lg in enumerate(run_logs, 1 if HALF is None else HALF + 1):
                 nested = os.path.join(td,
                                        "part%d_%s.log.tgz" % (i, ts))
                 _tgz_single(nested, lg, "part%d_%s.log" % (i, ts))
@@ -739,8 +791,9 @@ def pack_full_dump(base, run_logs, ts):
                 _tgz_single(tmp, nested, os.path.basename(nested))
                 built.append((name, tmp))
         for stale in ([os.path.join(dest_dir, base + ".tgz")]
-                       + sorted(glob.glob(os.path.join(
-                           dest_dir, base + ".part*.tgz")))):
+                       + (sorted(glob.glob(os.path.join(
+                           dest_dir, base + ".part*.tgz")))
+                          if HALF is None else [])):
             if os.path.exists(stale):
                 os.unlink(stale)
         dests = []
@@ -1712,12 +1765,13 @@ def dlp_argv(mode, numa_num, part):
             light, "0"]
 
 
-# The THREE per-job fold-completion markers the driver can emit
-# (foldpot/driver.rs:3216 skip-snark, :3247 fold-only, :3254 proving).
-# A two-half part_id 0 is non-proving (b_folding_only), so it reaches
-# ONLY the :3247 form -- omitting it scores a healthy 8-job run as 4
-# and silently skips pack_full_dump. The optional ":" is that form's
-# separator ("Job 0: b_folding_only set").
+# The THREE per-job fold-completion markers the driver can emit:
+# "Job N folding done; b_one_proof set" (a --one_proof_per_half
+# skipper), "Job N: b_folding_only set" (small_full_dlp, scale) and
+# "Job N generating SNARK proof" (every proving job; T952: every job
+# of a dlp/clam/dna run).  Omitting one scores a healthy run short and
+# silently skips pack_full_dump. The optional ":" is the fold-only
+# form's separator.
 FOLD_OK_RE = re.compile(
     r"Job (\d+):? (?:folding done|generating SNARK proof|"
     r"b_folding_only set)")
@@ -1805,10 +1859,17 @@ def leaf_proof_ok(ctx, logs):
     return False
 
 
+# T952: fold_with_self_cover (bora_data_driver.rs) prints this ONCE,
+# between its two attempts; markers before it belong to the failed one.
+SELF_COVER_MARK = "fold: dummy self-cover:"
+
+
 def dlp_missing_success(logs, num_jobs):
-    """Verdict for a one_proof neo run: no job logged a verification
-    failure, every job logged a completed fold, and exactly ONE
-    individual proof verified.  None when satisfied, else the reason."""
+    """Verdict for a neo run: no job logged a verification failure,
+    every job of the last attempt logged a completed fold, and one
+    individual proof per proving job (T952: num_jobs; one per part =
+    len(logs) under --one_proof_per_half).  None when satisfied, else
+    the reason."""
     done, n_ver = 0, 0
     for lg in logs:
         text = open(lg, errors="replace").read()
@@ -1820,25 +1881,38 @@ def dlp_missing_success(logs, num_jobs):
         # so a log could carry one without the other.
         if VERIFY_REJECT_RE.search(text):
             return "final verdict=REJECT in %s" % os.path.basename(lg)
+        last = text[max(text.rfind(SELF_COVER_MARK), 0):]
         # per-log distinct set: two-half parts number jobs locally
         done += len({int(m.group(1))
-                     for m in FOLD_OK_RE.finditer(text)})
-        n_ver += len(VERIFY_IND_RE.findall(text))
+                     for m in FOLD_OK_RE.finditer(last)})
+        n_ver += len(VERIFY_IND_RE.findall(last))
     if done != num_jobs:
         return "fold-done markers %d != num_jobs %d" % (done, num_jobs)
-    if n_ver != 1:
-        return "Verify Individual Proof count %d != 1" % n_ver
+    want = len(logs) if ONE_PROOF_PER_HALF else num_jobs
+    if n_ver != want:
+        return "Verify Individual Proof count %d != %d" % (n_ver, want)
     return None
 
 
 def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs,
                        b_fail_scan):
     """Shared full-run leaf body (DLP/Clamav): one process on a
-    1-socket box, two-half otherwise; verdict = rc + positive
-    markers; packs <base>{,.partN}.tgz."""
+    1-socket box, two-half otherwise, one part under --half; verdict
+    = rc + positive markers; packs <base>{,.partN}.tgz."""
     model = resolve_process_model()
     env = neo_env()
-    if model.n_parts == 1:
+    if HALF is not None:
+        # T955: ONLY part_id HALF, unpinned on this whole machine.  The
+        # other half runs on another machine, so both snark gates are
+        # released up front.
+        os.makedirs(FLAG_DIR, exist_ok=True)
+        for f in (FLAG, FOLD_DONE):
+            open(f, "w").close()
+        name = "part%d" % (HALF + 1)
+        rc = run_rust_example(ctx, "bora_cli", argv_fn(mode, 2, str(HALF)),
+                              env, log_name=name)
+        logs, num_jobs = [ctx.log_path(name)], num_jobs // 2
+    elif model.n_parts == 1:
         rc = run_rust_example(ctx, "bora_cli",
                                argv_fn(mode, 1, "0"), env)
         logs = [ctx.log_path("run")]
@@ -2204,6 +2278,9 @@ def final_pack_one(key):
     # Two-half runs write part1/part2; a single process writes run.log.
     names = ["part1", "part2"] \
         if os.path.isfile(os.path.join(run_dir, "part2.log")) else ["run"]
+    n_jobs = jobs_fn(mode)
+    if HALF is not None:      # T955: a --half run dir holds one part
+        names, n_jobs = ["part%d" % (HALF + 1)], n_jobs // 2
     logs = [ctx.log_path(x) for x in names]
     absent = [x for x in logs if not os.path.isfile(x)]
     if absent:
@@ -2212,7 +2289,7 @@ def final_pack_one(key):
     log("final_pack %s: %s (%s), logs %s"
         % (key, run_dir, mode, ", ".join(names)))
     rc = 0
-    missing = dlp_missing_success(logs, jobs_fn(mode))
+    missing = dlp_missing_success(logs, n_jobs)
     if missing:
         ctx.note("success markers missing: %s" % missing)
         rc = 6
@@ -2254,6 +2331,8 @@ def run_final_pack(items):
     record of the run it is repairing."""
     keys = _parse_items(items) if items else list(FINAL_PACK_LEAVES)
     keys = [k for k in keys if k in FINAL_PACK_LEAVES]
+    if HALF is not None:      # T955: dna has no halves
+        keys = [k for k in keys if k in HALF_LEAVES]
     if not keys:
         log("--final_pack: nothing to do; valid items are %s"
             % ", ".join(FINAL_PACK_LEAVES))
@@ -3528,7 +3607,33 @@ def build_argparser():
                           "~1.5x quicker proving at equal memory.  off "
                           "only on small boxes where systemd-oomd kills "
                           "stalled jobs")
+    ap.add_argument("--server", choices=("jet1tb", "cl2x7542"),
+                     default=SERVER,
+                     help="raw_data/<SERVER>/ folder for the server-"
+                          "specific dumps (default %s, the folder the "
+                          "figure scripts read)" % SERVER)
+    ap.add_argument("--half", type=int, choices=(0, 1),
+                     help="dlp/clam only: run ONLY part_id 0 or 1 of the "
+                          "two-half run, unpinned on this whole machine, "
+                          "its proofs not gated on the other half (which "
+                          "runs on another machine).  Places <base>."
+                          "part{1,2}.tgz as a two-half run does; copy the "
+                          "other machine's part beside it.  A --final_pack "
+                          "replay of such a run needs the same --half")
+    ap.add_argument("--one_proof_per_half", action="store_true",
+                     help="fallback: one SNARK proof per part instead of "
+                          "one per job (also reaches scale sweeps).  A "
+                          "--final_pack replay of such a run needs it too")
     return ap
+
+
+def half_refusal(plan):
+    """T955: --half fits only dry_run/full_run of the two-half leaves."""
+    if HALF is None or (plan.mode and plan.leaf_keys
+                        and set(plan.leaf_keys) <= HALF_LEAVES):
+        return None
+    return ("REFUSED: --half runs only --items %s under dry_run/full_run"
+            % ",".join(sorted(HALF_LEAVES)))
 
 
 def _show_menu():
@@ -3635,7 +3740,7 @@ def run_small():
 # that one cannot silently change this menu entry:
 #   b_light_test   = false  -- nothing in the decider circuit is elided
 #   b_folding_only = false  -- a proof IS produced after the folding
-#   b_one_proof    = true   -- every job folds, only Job 0 proves
+#   b_one_proof    = false  -- every job folds and proves (T952)
 # Selecting the Rust test that sets them is the same mechanism menu #1
 # uses for SMALL_TEST; neo_env() strips every ZKR_* knob, so nothing
 # from the operator's shell can override the three.
@@ -3647,15 +3752,15 @@ SMALL_SNARK_REPORT = os.path.join(REPO, "data", "small_data_set",
 
 def run_small_full_snark():
     """Menu item #2: one-process cargo test of the small_data_par
-    config that folds every job and then emits ONE complete SNARK
-    proof, with no light-test elision of the decider circuit.  The
+    config that folds every job and then emits one complete SNARK
+    proof per job (T952), with no light-test elision.  The
     caller has already daemonized, so this runs with stdio on
     /dev/null: the operator follows CURRENT_JOB.log (repointed by
     run_rust_single) and SUMMARY.log.  CURRENT_JOB.log gains a trailer
     carrying peak RSS and wall clock once the run finishes."""
     ctx = JobHandle("small_snark", "full_snark")
     ctx.note("mode=small_full_snark (single proc; b_light_test="
-             "false, b_folding_only=false, b_one_proof=true)")
+             "false, b_folding_only=false, b_one_proof=false)")
     ctx.reports.append(SMALL_SNARK_REPORT)
     run_log = ctx.log_path("run")
     rc = run_rust_single(ctx, SMALL_SNARK_TEST, neo_env())
@@ -4096,10 +4201,10 @@ def v101_pick(model, remain_s, log):
 def v101_argv(sub, perc_db, perc_samples, circs, jobs, numa, part,
                dry, ladder_only):
     """bora_cli's 8-arg tail.  numa_num=1/part_id=0 is load-bearing on
-    every tuner step: it makes role.b_proves TRUE, hence
-    b_light_test FALSE (bora_data_driver apply_spec_config), i.e.
-    production's PROVING part at full width.  Production's part 0 runs
-    light-test ON; a tuner baseline must not reproduce that."""
+    every tuner step: one process at full width, b_light_test FALSE
+    unless dry (bora_data_driver apply_spec_config), the shape of a
+    production proving part.  T952: every production part proves, so
+    no part runs light-test ON outside dry runs."""
     return [sub, str(perc_db), str(perc_samples), str(circs),
             str(jobs), str(numa), str(part), dry, ladder_only]
 
@@ -5696,6 +5801,12 @@ def main():
         _show_submenu("dry_run")
         return 0
 
+    # T952/T955 opt-in options (owner decision 4): with none given
+    # every global keeps its module default.
+    global SERVER, HALF, ONE_PROOF_PER_HALF
+    SERVER, HALF = args.server, args.half
+    ONE_PROOF_PER_HALF = args.one_proof_per_half
+
     if args.final_pack:
         # Takes the run lock -- a replay writes raw_data/ and
         # SUMMARY.log, which a live run owns -- but never resets
@@ -5729,6 +5840,13 @@ def main():
     log("resolved: python3 PAPER_DATA.py --run %s%s" % (
         plan.top,
         " --items %s" % ",".join(plan.leaf_keys) if plan.leaf_keys else ""))
+    if (SERVER, HALF, ONE_PROOF_PER_HALF) != ("jet1tb", None, False):
+        log("opt-in: --server %s --half %s --one_proof_per_half %s"
+            % (SERVER, HALF, ONE_PROOF_PER_HALF))
+    refusal = half_refusal(plan)
+    if refusal:
+        log(refusal)
+        return 2
 
     # Wipe SUMMARY.log HERE, not next to ensure_vma: this is the first
     # point where a run is actually committed.  Past the --list return
@@ -6196,6 +6314,14 @@ class _FakeProc:
         return self.returncode
 
 
+class _HangProc(_FakeProc):
+    """wait(timeout) times out while alive; a plain wait() returns."""
+    def wait(self, timeout=None):
+        if timeout is not None and self.returncode is None:
+            raise subprocess.TimeoutExpired("fake", timeout)
+        return super().wait()
+
+
 class CargoTestCmdTest(unittest.TestCase):
     def test_shape(self):
         self.assertEqual(
@@ -6355,6 +6481,12 @@ class NeoEnvTest(unittest.TestCase):
         with mock.patch.object(_MOD, "THP_MODE", "off"):
             self.assertEqual(neo_env()["MIMALLOC_ALLOW_THP"], "0")
 
+    def test_one_proof_fallback_is_flag_only(self):
+        with mock.patch.dict(os.environ, {ONE_PROOF_ENV: "1"}):
+            self.assertNotIn(ONE_PROOF_ENV, neo_env())
+        with mock.patch.object(_MOD, "ONE_PROOF_PER_HALF", True):
+            self.assertEqual(neo_env()[ONE_PROOF_ENV], "1")
+
 
 class CheckThpTest(unittest.TestCase):
     def _run(self, mode, sysfs):
@@ -6388,7 +6520,7 @@ class RunExampleTwoHalfTest(unittest.TestCase):
                   mock.patch.object(_MOD, "FLAG", self.flag),
                   _sandbox_aborted(),
                   mock.patch.object(_MOD, "_wait_stagger",
-                                     lambda p: None)):
+                                     lambda p, log1=None: None)):
             p.start()
             self.addCleanup(p.stop)
         # _FakeProc pids are 1/2 and os.getpgid(2) is 0 = our OWN
@@ -6403,11 +6535,13 @@ class RunExampleTwoHalfTest(unittest.TestCase):
     def test_argvs_differ_only_in_part_id(self):
         os.makedirs(self.flag_dir, exist_ok=True)
         open(self.flag, "w").close()          # stale from a prior run
+        fold = os.path.join(self.flag_dir, "fold_done")
+        open(fold, "w").close()               # T952 stale, cleared too
         p1, p2 = _FakeProc(pid=1, rc=0), _FakeProc(pid=2, rc=0)
         seen = []
 
         def fake_spawn(cmd, env, lp, label):
-            seen.append(os.path.exists(self.flag))
+            seen.append(os.path.exists(self.flag) or os.path.exists(fold))
             return (p1, None) if len(seen) == 1 else (p2, None)
 
         with mock.patch.object(_MOD, "spawn",
@@ -6518,6 +6652,58 @@ class RunExampleTwoHalfTest(unittest.TestCase):
             run_example_two_half(self.ctx, "bora_cli",
                                   ["full_dlp", "0"], {},
                                   ["0-3", "4-7"])
+
+    def test_part2_exit_before_part1_aborts_and_kills_part1(self):
+        """T952: part1's deciders wait on part2's FOLD_DONE, so a part2
+        that exits first must abort the leaf, not hang it."""
+        p1, p2 = _HangProc(pid=1, rc=0), _FakeProc(pid=2, rc=3)
+        p2.returncode = 3                      # part2 died mid-fold
+        with mock.patch.object(_MOD, "_summary_line") as sl, \
+             mock.patch.object(_MOD, "spawn",
+                                side_effect=[(p1, None), (p2, None)]):
+            rc = run_example_two_half(self.ctx, "bora_cli",
+                                       self.ARGS, {}, ["0-3", "4-7"])
+        self.assertEqual(rc, 3)
+        self.assertFalse(os.path.exists(self.flag))
+        self.assertEqual(self.kill.call_args_list[0], mock.call(p1))
+        self.assertTrue(any("part2 rc=3 before part1 exit" in c[0][0]
+                            for c in sl.call_args_list))
+
+
+class WaitStaggerTest(unittest.TestCase):
+    def _log(self, td, text):
+        p = os.path.join(td, "part1.log")
+        with open(p, "w") as f:
+            f.write(text)
+        return p
+
+    def test_fold_done_wait_releases_part2(self):
+        """T952: part1 waiting on FOLD_DONE cannot shrink or exit, so
+        the stagger releases on its marker even above PART2_RAM_GB."""
+        with tempfile.TemporaryDirectory() as td:
+            lg = self._log(td, "[job 0] Job 0: %s\n" % FOLD_WAIT_MARK)
+            with mock.patch.object(_MOD, "tree_rss_gb",
+                                    return_value=900.0), \
+                 mock.patch.object(_MOD, "_summary_line") as sl, \
+                 mock.patch.object(_MOD, "time") as tm:
+                _wait_stagger(_FakeProc(pid=1), lg)
+        tm.sleep.assert_not_called()
+        self.assertTrue(any("NOTE" in c[0][0] and "900.0" in c[0][0]
+                            for c in sl.call_args_list))
+
+    def test_flag_wait_alone_keeps_the_rss_rule(self):
+        """part2's own FLAG wait line is not the release marker."""
+        with tempfile.TemporaryDirectory() as td:
+            lg = self._log(td, "Job 0: waiting for snark-start flag "
+                               "/tmp/snark_start/flag\n")
+            with mock.patch.object(_MOD, "PART2_DELAY", 20), \
+                 mock.patch.object(_MOD, "tree_rss_gb",
+                                    return_value=10.0), \
+                 mock.patch.object(_MOD, "_summary_line") as sl, \
+                 mock.patch.object(_MOD, "time") as tm:
+                _wait_stagger(_FakeProc(pid=1), lg)
+        self.assertEqual(tm.sleep.call_count, 2)
+        sl.assert_not_called()
 
 
 class ReapTest(unittest.TestCase):
@@ -6692,6 +6878,22 @@ class PackFullDumpTest(unittest.TestCase):
         self.assertFalse(os.path.exists(
             os.path.join(dest_dir, "full_dlp.tgz.tmp")))
 
+    def test_half_keeps_the_other_machines_part(self):
+        """T955 --half 1: replaces only part2 and unlinks the single
+        tgz; machine A's part1 stays and both read back."""
+        a = self._log("a.log", "half A\n")
+        b = self._log("b.log", "half B\n")
+        d1, _ = pack_full_dump("full_dlp", [a, a], "20260810_010203")
+        single = os.path.join(os.path.dirname(d1), "full_dlp.tgz")
+        open(single, "w").close()
+        with mock.patch.object(_MOD, "HALF", 1):
+            dests = pack_full_dump("full_dlp", [b], "20260810_010203")
+        self.assertEqual([os.path.basename(x) for x in dests],
+                          ["full_dlp.part2.tgz"])
+        self.assertFalse(os.path.exists(single))
+        self.assertEqual(self.common._read_part_log(d1), "half A\n")
+        self.assertEqual(self.common._read_part_log(dests[0]), "half B\n")
+
 
 class SafePackDumpTest(unittest.TestCase):
     """R1's wrapper: never raises, so a crashed run keeps its bundle."""
@@ -6855,6 +7057,39 @@ class RunLeafDlpTest(unittest.TestCase):
                                     "20260810_000000")
         self.ctx.note.assert_called_once()
 
+    def test_half_wiring_unpinned_part_and_gates(self):
+        """T955 --half 1: only part_id 1, unpinned, both gates set
+        before the spawn, log part2, verdict over 4 jobs."""
+        fd = os.path.join(tempfile.mkdtemp(), "gate")
+        self.addCleanup(shutil.rmtree, os.path.dirname(fd), True)
+        fl, fo = os.path.join(fd, "flag"), os.path.join(fd, "fold_done")
+
+        def gated(*a, **k):
+            return 0 if os.path.isfile(fl) and os.path.isfile(fo) else 99
+
+        with mock.patch.object(_MOD, "HALF", 1), \
+             mock.patch.object(_MOD, "FLAG_DIR", fd), \
+             mock.patch.object(_MOD, "FLAG", fl), \
+             mock.patch.object(_MOD, "FOLD_DONE", fo), \
+             mock.patch.object(_MOD, "resolve_process_model",
+                                return_value=ProcessModel(2, ["0-3", "4-7"])), \
+             mock.patch.object(_MOD, "neo_env", return_value={"E": "1"}), \
+             mock.patch.object(_MOD, "run_example_two_half") as reth, \
+             mock.patch.object(_MOD, "run_rust_example",
+                                side_effect=gated) as rre, \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                                return_value=None) as dms, \
+             mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/p2"]) as pk:
+            self.assertEqual(run_leaf_dlp("full", self.ctx), 0)
+        reth.assert_not_called()
+        rre.assert_called_once_with(self.ctx, "bora_cli",
+                                    dlp_argv("full", 2, "1"), {"E": "1"},
+                                    log_name="part2")
+        dms.assert_called_once_with(["/lp/part2.log"], 4)
+        pk.assert_called_once_with("full_dlp", ["/lp/part2.log"],
+                                   "20260810_000000")
+
 
 class DlpMissingSuccessTest(unittest.TestCase):
     def setUp(self):
@@ -6870,8 +7105,9 @@ class DlpMissingSuccessTest(unittest.TestCase):
     def test_dry_shape_ok(self):
         lg = self._log("run.log",
                         "Job 0 generating SNARK proof\n"
-                        "Job 1 folding done; b_one_proof set\n"
-                        "FOLDPOT Step 13. Verify Individual Proof. 17 ms\n")
+                        "FOLDPOT Step 13. Verify Individual Proof. 17 ms\n"
+                        "Job 1 generating SNARK proof\n"
+                        "FOLDPOT Step 13. Verify Individual Proof. 18 ms\n")
         self.assertIsNone(dlp_missing_success([lg], 2))
 
     def test_missing_job_and_verify_counts(self):
@@ -6882,29 +7118,27 @@ class DlpMissingSuccessTest(unittest.TestCase):
         lg2 = self._log("b.log",
                         "Job 0 generating SNARK proof\n"
                         "Job 1 folding done\n")
-        self.assertIn("count 0 != 1", dlp_missing_success([lg2], 2))
+        self.assertIn("count 0 != 2", dlp_missing_success([lg2], 2))
 
     def test_two_half_local_numbering_sums(self):
-        """A NON-proving part emits the b_folding_only marker, never
-        "folding done"; both parts' local job 0s must still sum."""
-        l1 = self._log(
-            "p1.log", "Job 0: b_folding_only set, no snark generated\n")
+        """Both parts number their jobs locally from 0 (T952: both
+        prove); the two local job 0s must still sum."""
+        l1 = self._log("p1.log",
+                        "Job 0 generating SNARK proof\n"
+                        "Verify Individual Proof\n")
         l2 = self._log("p2.log",
                         "Job 0 generating SNARK proof\n"
                         "Verify Individual Proof\n")
         self.assertIsNone(dlp_missing_success([l1, l2], 2))
 
     def test_two_half_production_shape_counts_all_8(self):
-        """The real 8-job/2-part shape: part0 folds only, part1 proves
-        one job. All 8 must count, else the dump is never packed."""
-        l1 = self._log("prod1.log", "".join(
-            "Job %d: b_folding_only set, no snark generated\n" % i
-            for i in range(4)))
-        l2 = self._log("prod2.log",
-                        "Job 0 generating SNARK proof\n"
-                        + "".join("Job %d folding done; b_one_proof\n" % i
-                                   for i in range(1, 4))
-                        + "Verify Individual Proof\n")
+        """The real 8-job/2-part shape (T952): every job of both parts
+        proves.  All 8 folds and 8 proofs must count."""
+        part = "".join("Job %d generating SNARK proof\n"
+                       "FOLDPOT Step 13. Verify Individual Proof. 9 ms\n" % i
+                       for i in range(4))
+        l1 = self._log("prod1.log", part)
+        l2 = self._log("prod2.log", part)
         self.assertIsNone(dlp_missing_success([l1, l2], 8))
 
     def test_individual_verify_failure_is_caught(self):
@@ -6941,6 +7175,49 @@ class DlpMissingSuccessTest(unittest.TestCase):
                         "Job 0 BATCH PROOF VERIFICATION FAILED\n")
         self.assertIn("PROOF VERIFICATION FAILED",
                        dlp_missing_success([lg], 8))
+
+    def test_fold_only_marker_counts_as_done(self):
+        """b_folding_only (small_full_dlp, scale) still counts as a
+        fold: the verdict gets past the fold check to the proof one."""
+        l1 = self._log("fo1.log",
+                        "Job 0: b_folding_only set, no snark generated\n")
+        l2 = self._log("fo2.log", "Job 0 generating SNARK proof\n"
+                                  "Verify Individual Proof\n")
+        self.assertIn("count 1 != 2", dlp_missing_success([l1, l2], 2))
+
+    def test_head_one_proof_shape_now_fails(self):
+        """T952: the old 8-job run with ONE proof is a short run now."""
+        l1 = self._log("o1.log", "".join(
+            "Job %d: b_folding_only set, no snark generated\n" % i
+            for i in range(4)))
+        l2 = self._log("o2.log", "Job 0 generating SNARK proof\n"
+                       + "".join("Job %d folding done; b_one_proof\n" % i
+                                 for i in range(1, 4))
+                       + "Verify Individual Proof\n")
+        self.assertIn("count 1 != 8", dlp_missing_success([l1, l2], 8))
+
+    def test_one_proof_per_half_wants_one_per_log(self):
+        """DD9 L1 fallback: one proof per part log, whatever num_jobs."""
+        half = ("Job 0 generating SNARK proof\n"
+                + "".join("Job %d folding done; b_one_proof set\n" % i
+                          for i in (1, 2, 3))
+                + "Verify Individual Proof\n")
+        l1, l2 = self._log("f1.log", half), self._log("f2.log", half)
+        every = self._log("f3.log", "".join(
+            "Job %d generating SNARK proof\nVerify Individual Proof\n" % i
+            for i in range(4)))
+        with mock.patch.object(_MOD, "ONE_PROOF_PER_HALF", True):
+            self.assertIsNone(dlp_missing_success([l1, l2], 8))
+            self.assertIn("count 4 != 1", dlp_missing_success([every], 4))
+
+    def test_counts_only_the_last_self_cover_attempt(self):
+        """T952: markers before the self-cover bump belong to the failed
+        first attempt and must not inflate the proof count."""
+        att = "".join("Job %d generating SNARK proof\n"
+                      "Verify Individual Proof\n" % i for i in range(2))
+        lg = self._log("sc.log", att + "[dlp] fold: dummy self-cover: "
+                       "share 3 -> 5\n" + att)
+        self.assertIsNone(dlp_missing_success([lg], 2))
 
 
 class RunLeafDnaTest(unittest.TestCase):
@@ -8539,19 +8816,20 @@ class FinalPackTest(unittest.TestCase):
     def _run_dir(self, key="clam", mode="full", ts=None, logs=("run",),
                   n_jobs=8):
         """A finished clam run dir: n_jobs fold-done markers split
-        across the parts, the single decider block in the LAST part,
-        and the CapErr noise every real clam log carries."""
+        across the parts, one "Verify Individual Proof" per job (T952),
+        the ind[final] PASS in the LAST part, and the CapErr noise every
+        real clam log carries."""
         d = os.path.join(self.tmp.name, "jobs",
                           "%s_%s_%s" % (key, mode, ts or self.TS))
         os.makedirs(d, exist_ok=True)
         per = n_jobs // len(logs)
         for i, nm in enumerate(logs):
-            body = "".join("Job %d folding done\n" % j
+            body = "".join("Job %d folding done\n"
+                           "FOLDPOT Step 13. Verify Individual Proof.\n" % j
                             for j in range(i * per, (i + 1) * per))
             body += "CapErr: expected routing noise\n"
             if i == len(logs) - 1:
-                body += ("FOLDPOT Step 13. Verify Individual Proof.\n"
-                         "[job 0] LOG1:  VERIFY-FLAGS ind[final] i=0: "
+                body += ("[job 0] LOG1:  VERIFY-FLAGS ind[final] i=0: "
                          "idx=1 veval=1 vcom=1 keval=1 kzg=1 "
                          "verdict=PASS\n")
             with open(os.path.join(d, "%s.log" % nm), "w") as f:
@@ -8690,6 +8968,24 @@ class FinalPackTest(unittest.TestCase):
             run_final_pack(None)
         self.assertEqual([c[0][0] for c in f1.call_args_list],
                           ["dlp", "dna", "clam"])
+
+    def test_final_pack_half_replays_one_part(self):
+        """T955: a --half 1 run dir holds only part2.log (4 jobs)."""
+        d = self._run_dir(logs=("part2",), n_jobs=4)
+        with mock.patch.object(_MOD, "HALF", 1), \
+             mock.patch.object(_MOD, "pack_full_dump",
+                                return_value=["/d/p2"]) as pk:
+            self.assertEqual(final_pack_one("clam"), 0)
+        pk.assert_called_once_with(
+            "full_clam", [os.path.join(d, "part2.log")], self.TS)
+
+    def test_run_final_pack_half_drops_dna(self):
+        with mock.patch.object(_MOD, "HALF", 0), \
+             mock.patch.object(_MOD, "final_pack_one",
+                                return_value=0) as f1:
+            run_final_pack(None)
+        self.assertEqual([c[0][0] for c in f1.call_args_list],
+                          ["dlp", "clam"])
 
 
 class BundleCarriesDumpTest(unittest.TestCase):
@@ -10153,6 +10449,62 @@ class BuildArgparserTest(unittest.TestCase):
     def test_dry_run_flag_maps_to_plan_only(self):
         args = build_argparser().parse_args(["--dry-run", "--run", "small"])
         self.assertTrue(args.plan_only)
+
+
+class OptInOptionsTest(unittest.TestCase):
+    def test_defaults_are_a_reviewers_run(self):
+        a = build_argparser().parse_args([])
+        self.assertEqual((a.server, a.half, a.one_proof_per_half),
+                          ("jet1tb", None, False))
+        self.assertEqual((SERVER, HALF, ONE_PROOF_PER_HALF),
+                          ("jet1tb", None, False))
+        self.assertEqual(os.path.dirname(FOLD_DONE), FLAG_DIR)
+
+    def test_server_names_closed(self):
+        with mock.patch("sys.stderr"):
+            self.assertRaises(SystemExit, build_argparser().parse_args,
+                              ["--server", "../x"])
+        with mock.patch.object(_MOD, "SERVER", "cl2x7542"):
+            self.assertIn(os.path.join("raw_data", "cl2x7542",
+                                       "full_clam.tgz"),
+                          raw_data_path("full_clam.tgz"))
+
+    def test_half_refusal(self):
+        ok = ResolvedPlan(top="full_run", mode="full",
+                          leaf_keys=["dlp", "clam"])
+        self.assertIsNone(half_refusal(ok))
+        with mock.patch.object(_MOD, "HALF", 0):
+            self.assertIsNone(half_refusal(ok))
+            for bad in (ResolvedPlan(top="full_run", mode="full",
+                                     leaf_keys=list(_LEAF_KEYS)),
+                        ResolvedPlan(top="full_run", mode="full",
+                                     leaf_keys=["dna"]),
+                        ResolvedPlan(top="small", mode=None,
+                                     leaf_keys=[])):
+                self.assertIn("REFUSED", half_refusal(bad))
+
+
+class FlagLiteralsTest(unittest.TestCase):
+    """X-1: gate paths and log markers are shared with the Rust side."""
+
+    def _src(self, *rel):
+        with open(os.path.join(REPO, *rel)) as f:
+            return f.read()
+
+    def test_bora_data_driver_literals(self):
+        src = self._src("crates", "zkregplus", "src", "bora_data_driver.rs")
+
+        def const(name):
+            m = re.search(r'const %s: &str = "([^"]+)";' % name, src)
+            return m and m.group(1)
+        self.assertEqual(const("SNARK_WAIT_FLAG"), FLAG)
+        self.assertEqual(const("FOLD_DONE_FLAG"), FOLD_DONE)
+        self.assertIn(SELF_COVER_MARK, src)
+
+    def test_driver_wait_marker(self):
+        src = self._src("vendor", "sonobe_mod", "folding-schemes", "src",
+                        "folding", "foldpot", "driver.rs")
+        self.assertIn('"Job {}: waiting for snark-start flag {}"', src)
 
 
 class InteractiveSelectTest(unittest.TestCase):

@@ -3224,7 +3224,8 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	dfa_crit_igc: &HexACDFA, dfa_bag_igc: &HexACDFA,
 	_b_optimize_pm: bool, _cfg: &ClamavApproxConfig,
 	sig_to_id: &HashMap<String,usize>,
-	max_word_len: usize, seg_word_len: usize)
+	max_word_len: usize, seg_word_len: usize,
+	m_halo: usize) //T928: CP forward halo M (db.aggressive_max_span_nibbles)
 ->(FailDischargeRecord, WordInfo){
 	// max_word_len drives the F-level pad (classification, kept at the
 	// baseline). seg_word_len drives only the per-chunk segmentation
@@ -3339,7 +3340,10 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	for pres in &pm_res{
 		let (res, name, info, wit_len, _) = pres;
 		total_pm_witness_len += wit_len;
-		if *res==TriVal::Maybe || *res==TriVal::True{
+		let b_pm = *res==TriVal::Maybe || *res==TriVal::True;
+		#[cfg(feature = "t928_seam")] // T928 seam (test only): cheating prover drops a pm verdict
+		let b_pm = b_pm && !t928_seam::drops_pm(name);
+		if b_pm{
 			set_sigs_pm.insert( name.clone() );
 		}else{//for discharged ones, push info
 			vec_sed_sigs_info.push(info.clone().unwrap());
@@ -3683,10 +3687,14 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 					.map(|i| (i.sig_name.clone(), i.clone())).collect();
 			let no_crit_names: Vec<String> = vec_sigs_no_crit_pat
 				.iter().map(|s| s.name.clone()).collect();
+			//T928: CP scans body + M halo; the last chunk's halo = pad(0, M)
+			//T928: M = 0 => no halo, the CP scans the body only
+			let mut padded_ext = padded_nibbles.clone();
+			padded_ext.extend(gen_pad_nibbles(0, m_halo));
 			build_failed_c_per_seg(
-				&dfa_crit.acc_path(&padded_nibbles),
-				&dfa_crit_igc.acc_path(&padded_nibbles),
-				seg_nib, dfa_crit, dfa_crit_igc,
+				&dfa_crit.acc_path(&padded_ext),
+				&dfa_crit_igc.acc_path(&padded_ext),
+				seg_nib, m_halo, padded_nibbles.len(), dfa_crit, dfa_crit_igc,
 				map_crit_pat, map_crit_pat_igc,
 				&no_crit_names, &set_sigs_pm, sig_to_id, &info_by_name)
 		} else { (vec![], vec![]) };
@@ -3712,6 +3720,8 @@ fn build_failed_c_per_seg(
 	crit_acc_path_full: &Vec<usize>,
 	crit_acc_path_full_igc: &Vec<usize>,
 	seg_nib: usize,
+	m_halo: usize, //T928: CP halo width (paths include the M-nibble tail)
+	n_body: usize, //T928: padded body length in nibbles (D1)
 	dfa_crit: &HexACDFA, dfa_crit_igc: &HexACDFA,
 	map_crit_pat: &HashMap<String, Vec<String>>,
 	map_crit_pat_igc: &HashMap<String, Vec<String>>,
@@ -3721,7 +3731,9 @@ fn build_failed_c_per_seg(
 	info_by_name: &HashMap<String, DischargeSigInfo>,
 ) -> (Vec<Vec<usize>>, Vec<Vec<DischargeSigInfo>>) {
 	if seg_nib == 0 { return (vec![], vec![]); }
-	let num_segs = (crit_acc_path_full.len() + seg_nib - 1) / seg_nib;
+	//T928 D1: one segment per chunk (the n+1-state path made one extra)
+	assert!(n_body % seg_nib == 0, "T928: body {} not chunk aligned", n_body);
+	let num_segs = n_body / seg_nib;
 	let mut ids_per_seg = Vec::with_capacity(num_segs);
 	let mut info_per_seg = Vec::with_capacity(num_segs);
 	for si in 0..num_segs {
@@ -3735,8 +3747,11 @@ fn build_failed_c_per_seg(
 		// per-chunk failed_subset_of_discharged check panics ("failed
 		// b_correct"). The boundary state is shared with the next segment
 		// (whose lo == this hi-1), matching cp_mapper's double-detection.
-		let hi = ((si + 1) * seg_nib + 1).min(crit_acc_path_full.len());
-		let hi_ig = ((si + 1) * seg_nib + 1).min(crit_acc_path_full_igc.len());
+		//T928: + the M halo states (CP scans halo(t) = next chunk's head)
+		let hi = ((si + 1) * seg_nib + 1 + m_halo)
+			.min(crit_acc_path_full.len());
+		let hi_ig = ((si + 1) * seg_nib + 1 + m_halo)
+			.min(crit_acc_path_full_igc.len());
 		let lo_ig = lo.min(crit_acc_path_full_igc.len());
 		let mut names = HashSet::<String>::new();
 		for &st in &crit_acc_path_full[lo..hi] {
@@ -3789,14 +3804,15 @@ pub fn quick_discharge_file_by_crit_bag_pm(
 	b_optimize_pm: bool,
 	cfg: &ClamavApproxConfig,
 	sig_to_id: &HashMap<String,usize>,
-	max_word_len: usize, seg_word_len: usize)
+	max_word_len: usize, seg_word_len: usize,
+	m_halo: usize) //T928: CP forward halo M (db.aggressive_max_span_nibbles)
 ->(FailDischargeRecord,WordInfo){
 	quick_discharge_file_by_crit_bag_pm_new(
 		fname,
 		nibbles, v_sigs, vec_sigs_no_crit_pat,
 		map_crit_pat, map_crit_pat_igc,
 		dfa_crit, dfa_bag, dfa_crit_igc, dfa_bag_igc,
-		b_optimize_pm, cfg, sig_to_id, max_word_len, seg_word_len)
+		b_optimize_pm, cfg, sig_to_id, max_word_len, seg_word_len, m_halo)
 }
 
 /// This one works by cp -> sed -> dfa and return the WordInfo
@@ -3986,6 +4002,28 @@ pub fn default_clamav_cfg()->ClamavApproxConfig{
 //endregion: utility functions 
 //-----------------------------------------
 
+// T928 seam (test only, feature t928_seam): a cheating prover's pm view.
+// Process-wide and keyed by sig name (the discharge runs on rayon threads).
+#[cfg(feature = "t928_seam")]
+pub mod t928_seam {
+	use std::sync::Mutex;
+	static DROP_PM: Mutex<Vec<String>> = Mutex::new(Vec::new());
+	/// true = the pm verdict of sig `name` is dropped (sig kept discharged)
+	pub fn drops_pm(name: &str) -> bool {
+		DROP_PM.lock().unwrap().iter().any(|n| n == name)
+	}
+	/// drops the pm verdict of `name` until the guard drops
+	pub struct DropPmGuard(String);
+	impl DropPmGuard {
+		pub fn new(name: &str) -> Self {
+			DROP_PM.lock().unwrap().push(name.to_string());
+			DropPmGuard(name.to_string())
+		}
+	}
+	impl Drop for DropPmGuard {
+		fn drop(&mut self) { DROP_PM.lock().unwrap().retain(|n| *n != self.0); }
+	}
+}
 
 #[cfg(test)]
 mod tests_clamav{
@@ -5143,7 +5181,7 @@ mod tests_clamav{
 				&map_crit_pat, &map_crit_pat_igc,
 					&dfa_crit, &dfa_bag, &dfa_crit_igc,
 					&dfa_bag_igc, false, &cfg,
-					&sig_to_id, 1, 1).0;
+					&sig_to_id, 1, 1, 0).0;
 			assert!(act.crit==set_crit, "ERROR: s: {}. act.crit: {:?} != set_crit: {:?}", s, act.crit, set_crit);
 			let _ = &set_bag; assert!(act.bag==set_crit, "ERROR: s: {}. act.bag: {:?} != set_crit: {:?}", s, act.bag, set_crit);
 			assert!(act.pm==set_pm, "ERROR: s: {}. act.pm: {:?} != set_pm: {:?}", s, act.pm, set_pm);
@@ -5498,13 +5536,15 @@ mod tests_clamav{
 		let empty: Vec<String> = vec![];
 
 		// (1) per-segment vs (2) single-segment (file-level) partition.
+		let nb = nibbles.len(); //T928: M = 0 here, n_body = 2 chunks
 		let (ids, inf) = build_failed_c_per_seg(&path, &path_igc, seg_nib,
-			&dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm, &sig_to_id,
-			&info);
-		let (full, _) = build_failed_c_per_seg(&path, &path_igc, path.len(),
-			&dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm, &sig_to_id,
-			&info);
-		assert_eq!(ids.len(), (path.len()+seg_nib-1)/seg_nib);
+			0, nb, &dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm,
+			&sig_to_id, &info);
+		let (full, _) = build_failed_c_per_seg(&path, &path_igc, nb,
+			0, nb, &dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm,
+			&sig_to_id, &info);
+		assert_eq!(full.len(), 1);
+		assert_eq!(ids.len(), nb/seg_nib); //T928 D1: no extra segment
 		assert!(ids.len() >= 2, "ab and cd must fall in distinct chunks");
 		for s in 0..ids.len(){ assert_eq!(ids[s].len(), inf[s].len()); }
 		// set preserved across chunking
@@ -5520,16 +5560,34 @@ mod tests_clamav{
 		let mut pm = HashSet::<String>::new();
 		pm.insert("S2".to_string());
 		let (ids2, _) = build_failed_c_per_seg(&path, &path_igc, seg_nib,
-			&dfa, &dfa_igc, &map, &map_igc, &empty, &pm, &sig_to_id, &info);
+			0, nb, &dfa, &dfa_igc, &map, &map_igc, &empty, &pm, &sig_to_id,
+			&info);
 		let u2: HashSet<usize> = ids2.iter().flatten().cloned().collect();
 		assert!(!u2.contains(&2) && u2.contains(&1));
 
 		// (4) no_crit union: S3 appears in EVERY segment.
 		let no_crit = vec!["S3".to_string()];
 		let (ids3, _) = build_failed_c_per_seg(&path, &path_igc, seg_nib,
-			&dfa, &dfa_igc, &map, &map_igc, &no_crit, &no_pm, &sig_to_id,
-			&info);
+			0, nb, &dfa, &dfa_igc, &map, &map_igc, &no_crit, &no_pm,
+			&sig_to_id, &info);
 		for s in 0..ids3.len(){ assert!(ids3[s].contains(&3)); }
+
+		// (5) T928 halo: "cd" lies at nibbles 8-9 (chunk 1 head). With
+		// M = 2 the paths cover body ++ 2 tail nibbles, and chunk 0 also
+		// flags S2 (its halo = chunk 1's first M nibbles). M = 1 does not
+		// reach the accept state at nibble 9 (state index 10 > hi 8+1+1).
+		let ext = [nibbles.clone(), vec![0u8; 2]].concat();
+		let (pe, pe_igc) = (dfa.acc_path(&ext), dfa_igc.acc_path(&ext));
+		let (ih, _) = build_failed_c_per_seg(&pe, &pe_igc, seg_nib,
+			2, nb, &dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm,
+			&sig_to_id, &info);
+		assert_eq!(ih.len(), 2);
+		assert!(ih[0].contains(&1) && ih[0].contains(&2), "{:?}", ih);
+		assert!(ih[1].contains(&2) && !ih[1].contains(&1), "{:?}", ih);
+		let (ih1, _) = build_failed_c_per_seg(&pe, &pe_igc, seg_nib,
+			1, nb, &dfa, &dfa_igc, &map, &map_igc, &empty, &no_pm,
+			&sig_to_id, &info);
+		assert!(!ih1[0].contains(&2), "{:?}", ih1);
 		println!("=== test_build_failed_c_per_seg OK ===");
 	}
 
@@ -5563,7 +5621,7 @@ mod tests_clamav{
 		let ids = HashMap::from([(sig.name.clone(), 1)]);
 		for f in ["00786162636400", "00784142434400"] {
 			let act = quick_discharge_file_by_crit_bag_pm("tc", &hex_to_u8(f), &v_sigs, &v_no,
-				&mc, &mi, &dc, &db, &dci, &dbi, false, &cfg, &ids, 1, 1).0;
+				&mc, &mi, &dc, &db, &dci, &dbi, false, &cfg, &ids, 1, 1, 0).0;
 			assert!(act.crit.contains(&sig.name) && act.pm.contains(&sig.name),
 				"false clean on {}", f);
 		}

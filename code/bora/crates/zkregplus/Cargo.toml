@@ -66,6 +66,8 @@ parallel = [
 
 
 [dev-dependencies]
+# T928: test-only seam in data_processor (cheating-prover pm view)
+data_processor = {path="../data_processor", features=["t928_seam"]}
 ark-pallas = {version="0.4.0", features=["r1cs"]}
 ark-vesta = {version="0.4.0", features=["r1cs"]}
 ark-bn254 = {version="0.4.0", features=["r1cs"]}

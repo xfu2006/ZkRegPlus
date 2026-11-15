@@ -13991,7 +13991,7 @@ mod tests_neo_nonaggr_h {
 			&db.map_crit_pat_igc, &db.dfa_crit,
 			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-			&db.sig_to_id, wlen, wlen).1;
+			&db.sig_to_id, wlen, wlen, db.aggressive_max_span_nibbles).1;
 		let infos = wi.vec_sed_sigs_info.iter()
 			.filter(|i| i.sig_name == sig_to_discharge)
 			.cloned().collect::<Vec<_>>();
@@ -14348,7 +14348,7 @@ and an SP row: {} {} {} (cycles {}, DB pairs {})", n_trk, n_c_fz0,
 			&db.map_crit_pat_igc, &db.dfa_crit,
 			&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-			&db.sig_to_id, wlen, wlen).1;
+			&db.sig_to_id, wlen, wlen, db.aggressive_max_span_nibbles).1;
 		let infos = wi.vec_sed_sigs_info.iter()
 			.filter(|i| i.sig_name == sig_to_discharge)
 			.cloned().collect::<Vec<_>>();

@@ -1321,6 +1321,9 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					) as u128);
 			let res = map.get(&subsig_id)
 				.expect(&format!("cannot find subsig_id: {}", &subsig_id));
+			#[cfg(test)] // T928 seam (test only): forced red disarms this native check
+			let res = if tests_compute_sig_adv::T928_FORCE
+				.load(std::sync::atomic::Ordering::Relaxed) { &f_false } else { res };
 			assert!(*res == f_false, "ERROR: subsig_id: {}, res: {} is not false", subsig_id, res);
 			v_computed_subsig[i] = subsig_id;
 		}
@@ -2574,6 +2577,11 @@ use utils::consts::{read_global_config, get_global_config};
 		WordInfo, DischargeSigInfo};
 	use folding_schemes::folding::foldpot::container_config::ContainerConfig;
 
+	/// T928 seam (TEST ONLY): true = the "is not false" native check is
+	/// disarmed. Process-wide (compute-sig runs on worker threads).
+	pub(crate) static T928_FORCE: std::sync::atomic::AtomicBool =
+		std::sync::atomic::AtomicBool::new(false);
+
 	// ---- T965 seams M4 + S2 (TEST ONLY) ----
 	// M4: ComputeSigAdvAdvice::new passes each combo container and its
 	// result vector (raw eval / subsig res / empty for Sig) through
@@ -3081,7 +3089,7 @@ use utils::consts::{read_global_config, get_global_config};
 			&db.dfa_crit_igc,
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 			true, cfg,
-			&db.sig_to_id, test_wlen, test_wlen
+			&db.sig_to_id, test_wlen, test_wlen, db.aggressive_max_span_nibbles
         ).1; //use optimize mode
 
 		//1.2 verify the sig_to_discharge is in the word info.

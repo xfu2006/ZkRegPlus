@@ -192,7 +192,7 @@ fn load_files<F:PrimeField + ColEle>(job_id: usize, list_file_path: &str, db: &C
 				&db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 				true, cfg,
-				&db.sig_to_id, max_word_len, max_word_len);//optimize
+				&db.sig_to_id, max_word_len, max_word_len, db.aggressive_max_span_nibbles);//optimize
 			if !rec.is_success(){
 				println!("FAILED discharging file: {} on sigs: {:?}",
 					fail_info.fname,
@@ -2154,7 +2154,7 @@ where
 				&db.map_crit_pat_igc, &db.dfa_crit,
 				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, chunk_len, chunk_len);
+				&db.sig_to_id, chunk_len, chunk_len, db.aggressive_max_span_nibbles);
 			vdata.push(fdr); infos.push(rec);
 		}
 		let est = estimate_config_aggr::<CF1<C1>>(&vdata, &db, &[100],
@@ -2737,6 +2737,146 @@ pub mod tests_zkp_driver{
 	#[test]
 	pub fn test_neo_hard_aggr(){
 		neo_hard_aggr::<Fr>();
+	}
+
+	/// T928 (H6-a): .bwd sig /[ab][ab].{0,4}HELLO/ with `pre` = the last
+	/// 2 bytes of chunk 0 and HELLO = the first 5 bytes of chunk 1 (inside
+	/// halo(0)). b_attack: the prover drops the sig's pm verdict, so it
+	/// enters the per-chunk SDE universes (seam t928_seam). b_force: also
+	/// disarms the native "is not false" check, so the circuit must
+	/// reject. Returns the number of failed self-verifications.
+	fn t928_bwd_halo<F:PrimeField>(b_attack: bool, pre: &[u8], b_force: bool)
+		-> usize {
+		use data_processor::clam_db::ClamavDB;
+		use data_processor::clamav::{default_clamav_cfg, t928_seam};
+		use std::sync::atomic::Ordering;
+		use crate::gadgets::compute_sig_adv::tests_compute_sig_adv::T928_FORCE;
+		//T928 tests share the seams and the global config: run serially
+		static T928_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+		let _lk = T928_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+		//T928: an earlier prover run installs the abort hook; red runs must unwind
+		std::env::set_var("ZKR_NO_FAIL_FAST", "1");
+		let _ = std::panic::take_hook();
+		struct Unforce;
+		impl Drop for Unforce {
+			fn drop(&mut self){ T928_FORCE.store(false, Ordering::Relaxed); }
+		}
+		let _uf = Unforce;
+		T928_FORCE.store(b_force, Ordering::Relaxed);
+		let _drop = if b_attack {
+			Some(t928_seam::DropPmGuard::new("aggbwd.bwd")) } else { None };
+		get_global_config().clamav_cfg.b_use_discharge_neo = true;
+		get_global_config().clamav_cfg.b_aggressive_sde_for_rep = true;
+		get_global_config().aggr_needs_subsigs = 0;
+		get_global_config().snark_cache_dir = "t928_red".to_string();
+		get_global_config().b_read_snark_cache = false;
+		get_global_config().b_write_snark_cache = false;
+		get_global_config().b_light_test = true;
+		get_global_config().range2_bit = 14;
+		get_global_config().b_read_cache = false;
+		get_global_config().basis_failed_subsigs = 10000;
+		get_global_config().log_level = utils::logger::LOG3;
+		let b_write_cache = !read_global_config().b_read_cache;
+		let dir = if b_attack {"debug/t928_red_attack"} else if pre == b"ab"
+			{"debug/t928_red_ctrl"} else {"debug/t928_green"};
+		let mut cfg = default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let src_sigs = vec![
+			"aggbwd.bwd;Engine:51-255,Target:1;0;/[ab][ab].{0,4}HELLO/"
+				.to_string()];
+		let base = format!("{}/data/{}", utils::os::proj_root(), dir);
+		std::fs::create_dir_all(&base).unwrap();
+		ClamavDB::<F>::build_test_db(&cfg, dir, &src_sigs, &vec![],
+			&vec![], &vec![]).expect("aggr db");
+		let max_word = 8; //chunk = 8*31 = 248 bytes = 496 nibbles
+		let mut scan: Vec<u8> = vec![b'_'; 600];
+		scan[246..248].copy_from_slice(pre);
+		scan[248..253].copy_from_slice(b"HELLO");
+		let scan_path = format!("{}/scan.bin", base);
+		std::fs::write(&scan_path, &scan).unwrap();
+		utils::os::write_to_file(&format!("{}/binexec.dat", base),
+			&scan_path);
+		let sigs_n = 2; let subsigs = 8; let avg_pats_per_subsig = 6;
+		let avg_active_pats_per_subsig = 16;
+		let perc_comp_subsigs = 26;
+		let basis_unique_states = 4000;
+		let basis_acc_states = 2000;
+		let basis_pats_in_trace = 4000;
+		get_global_config().res_small_cost = 20;
+		let perc_pats_expansion_rate = 45;
+		let init_cp_cap = CpCapacity{ max_word_len: max_word,
+			basis_unique_states, subsigs, avg_pats_per_subsig };
+		let init_sed_cap = SedCapacity::new(max_word,
+			read_global_config().range2_bit, subsigs,
+			avg_pats_per_subsig, avg_active_pats_per_subsig,
+			basis_pats_in_trace, perc_pats_expansion_rate,
+			sigs_n, perc_comp_subsigs, basis_unique_states,
+			basis_acc_states);
+		let init_dfa_cap = DfaCapacity::new(max_word, sigs_n, subsigs);
+		let n0 = utils::consts::get_verify_fails();
+		zkp_driver::<Bn254,PairingVar,C2G2,C1,GC1,C2,GC2,CS1,CS2,CS1E,S>(
+			0,
+			&format!("{}/sigs.db", base),
+			&format!("{}/binexec.dat", base),
+			&format!("{}/report.dat", base),
+			b_write_cache,
+			"t928_red",
+			&format!("{}/needs_dfa.txt", base),
+			&format!("{}/needs_ised.txt", base),
+			&format!("{}/needs_ised_igc.txt", base),
+			max_word,
+			&init_cp_cap,
+			&init_sed_cap,
+			&init_dfa_cap,
+			&vec![],
+			1,
+			true
+		);
+		utils::consts::get_verify_fails() - n0
+	}
+
+	/// T928: true = the CP halo fix is in (a red test flips when false).
+	const FIXED_T928: bool = true;
+
+	/// T928 red: the cheating prover hides the match in chunk 1's
+	/// universe. FIXED: chunk 0 flags the sig, native compute-sig refuses.
+	/// Unfixed: the run completes and verifies (the hole).
+	#[test]
+	pub fn test_t928_red_bwd_halo_attack(){
+		let r = std::panic::catch_unwind(||
+			t928_bwd_halo::<Fr>(true, b"ab", false));
+		let b_refused = match &r {
+			Err(e) => e.downcast_ref::<String>().map_or(false,
+				|m| m.contains("is not false")),
+			Ok(_) => false };
+		assert_eq!(b_refused, FIXED_T928, "T928 red attack: {:?}",
+			r.as_ref().map(|n| *n).map_err(|_| "panic"));
+		if !FIXED_T928 { assert_eq!(r.unwrap(), 0, "unfixed run must verify"); }
+	}
+
+	/// T928 forced red (D6): the native check is also disarmed, so the
+	/// circuit itself must reject the chunk-0 discharge (verdict REJECT).
+	#[test]
+	pub fn test_t928_red_bwd_halo_forced(){
+		let n_fail = t928_bwd_halo::<Fr>(true, b"ab", true);
+		assert_eq!(n_fail > 0, FIXED_T928,
+			"T928 forced red: {} failed self-verifications", n_fail);
+	}
+
+	/// T928 control: honest prover on a matching file, native refuses.
+	#[test]
+	#[should_panic(expected = "rec.is_success()")]
+	pub fn test_t928_ctrl_bwd_halo_honest(){
+		t928_bwd_halo::<Fr>(false, b"ab", false);
+	}
+
+	/// T928 green: no match ("xy"), HELLO still in halo(0). Chunk 0
+	/// flags and discharges it, and the proof verifies.
+	#[test]
+	pub fn test_t928_green_bwd_halo_nomatch(){
+		assert_eq!(t928_bwd_halo::<Fr>(false, b"xy", false), 0);
 	}
 
 	/// Env knob for the New8 P4 comparative sweep, so density and
@@ -6482,7 +6622,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, mw, mw);
+				&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 			vdata.push(fdr);
 			infos.push(rec);
 		}
@@ -6687,7 +6827,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 						&db.map_crit_pat_igc, &db.dfa_crit,
 						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-						&db.sig_to_id, mw, mw);
+						&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 					vdata.push(fdr);
 					infos.push(rec);
 				}
@@ -6985,7 +7125,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 						&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-						&db.sig_to_id, mw, mw);
+						&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 					(packed, fdr, rec)
 				}).collect();
 				let (mut w, mut v, mut i) = (vec![], vec![], vec![]);
@@ -7210,7 +7350,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 						&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-						&db.sig_to_id, mw, mw);
+						&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 					(packed, fdr, rec)
 				}).collect();
 				let (mut w, mut v, mut i) = (vec![], vec![], vec![]);
@@ -7419,7 +7559,7 @@ clean_email_list_email_regex_zombie_international.txt", //515K list
 					&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 					&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 					&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-					&db.sig_to_id, max_word_len, max_word_len);
+					&db.sig_to_id, max_word_len, max_word_len, db.aggressive_max_span_nibbles);
 			fdr
 		}).collect();
 		(recs, total_sigs)
@@ -7949,7 +8089,7 @@ fail: {} ({:.4}%)",
 						&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-						&db.sig_to_id, mw, mw);
+						&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 				vdata.push(fdr); infos.push(rec);
 			}
 
@@ -7971,7 +8111,7 @@ fail: {} ({:.4}%)",
 						&db.map_crit_pat_igc, &db.dfa_crit,
 						&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 						&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-						&db.sig_to_id, mw, mw);
+						&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 				vdata.push(fdr); infos.push(rec);
 			}
 
@@ -8126,7 +8266,7 @@ fail: {} ({:.4}%)",
 				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, mw, mw);
+				&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 			let fold = rec.is_success() && !fi.is_fail();
 			let a64 = !quick_discharge_file(f, &db, &cfg, 1, mw).is_fail();
 			let abig = !quick_discharge_file(f, &db, &cfg, 1, big).is_fail();
@@ -8462,7 +8602,7 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, mw, mw);
+				&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 			let n = fdr.chunk_peaks.max_needs_subsigs;
 			if n > peak { peak = n; }
 			println!("DEBUG USE 62060.1: NEEDS={} nchunks={} {}",
@@ -8573,7 +8713,7 @@ failed={} high={} final={}", raw_n, n_stage1, passed.len(),
 				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, mw, mw);
+				&db.sig_to_id, mw, mw, db.aggressive_max_span_nibbles);
 			utils::logger::log(0, utils::logger::LOG1, &format!(
 				"[exp] seed {} NEEDS={}", rel,
 				fdr.chunk_peaks.max_needs_subsigs));
@@ -9025,7 +9165,7 @@ range2_bit={}", ds, b, nu, rb);
 				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, max_word, max_word);
+				&db.sig_to_id, max_word, max_word, db.aggressive_max_span_nibbles);
 			vdata.push(fdr);
 			infos.push(rec);
 		}
@@ -9080,7 +9220,7 @@ range2_bit={}", ds, b, nu, rb);
 				&db.map_crit_pat, &db.map_crit_pat_igc, &db.dfa_crit,
 				&db.bundle_subsig.vec_acdfa[0], &db.dfa_crit_igc,
 				&db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-				&db.sig_to_id, max_word, max_word);
+				&db.sig_to_id, max_word, max_word, db.aggressive_max_span_nibbles);
 			if fdr.chunk_peaks.max_cp_unique_states != 0 { all_zero = false; }
 		}
 		println!("[{}] flag-off max_cp_unique_states all zero: {}",
@@ -9219,6 +9359,14 @@ range2_bit={}", ds, b, nu, rb);
 	fn t938_env(db: data_processor::clam_db::ClamavDB<Fr>, fw: &str,
 		chunk: usize, cp: &CpCapacity, sed: &SedCapacity, dfa: &DfaCapacity)
 		-> (T938Fc, Vec<Vec<T938Stmt>>){
+		t938_env_h(db, fw, chunk, cp, sed, dfa, None)
+	}
+
+	/// t938_env, with `halo` (T928) as the word info's halo nibbles
+	/// (None = empty, so CP and SED both pad the halo).
+	fn t938_env_h(db: data_processor::clam_db::ClamavDB<Fr>, fw: &str,
+		chunk: usize, cp: &CpCapacity, sed: &SedCapacity, dfa: &DfaCapacity,
+		halo: Option<Vec<u8>>) -> (T938Fc, Vec<Vec<T938Stmt>>){
 		use folding_schemes::folding::foldpot::sigma_ir1cs::{GadgetMapper,
 			SigmaIR1CS, StatementExtraInfo, LookupTableTwoCol};
 		use ark_std::{Zero, One};
@@ -9230,7 +9378,9 @@ range2_bit={}", ds, b, nu, rb);
 			&db.vec_sigs, &db.vec_sigs_no_critical_pat, &db.map_crit_pat,
 			&db.map_crit_pat_igc, &db.dfa_crit, &db.bundle_subsig.vec_acdfa[0],
 			&db.dfa_crit_igc, &db.bundle_subsig_igc.vec_acdfa[0], true, &cfg,
-			&db.sig_to_id, chunk, chunk);
+			&db.sig_to_id, chunk, chunk, db.aggressive_max_span_nibbles);
+		let mut wi = wi;
+		if let Some(h) = halo { wi.halo_nibbles = h; }
 		let words = vec![utils::data::pad_word_to_multiple(&utils::data::pack_nibbles(
 			&nib.iter().map(|x| Fr::from(*x as u32)).collect()), chunk)];
 		let infos = vec![wi];
@@ -9550,6 +9700,272 @@ range2_bit={}", ds, b, nu, rb);
 		let r = t938_step(&mut circ, &t938_z0(), &s, true);
 		let _ = std::fs::remove_file(&fw);
 		assert!(r==Ok(false), "CP discharged slot covered a failed sig: {:?}", r);
+	}
+
+	// ---------------------------------------------------------------
+	// T928 statement tests (CP forward halo, aggressive arm). One real
+	// step circuit via t938_env_h. Cells are found through the CP gadget
+	// stmt maps (gadget 1 = crit fsm, gadget 2 = pack). R1CS: t938_step.
+	// Lookups: checked natively, every (si, value) of inp/oup/data with
+	// si != 0 must be a table row (the global LogUp sum holds iff so).
+	// ---------------------------------------------------------------
+	struct T928Fx{ circ: T938Fc, st: T938Stmt, fsm: Vec<usize>,
+		cfg: folding_schemes::folding::foldpot::sigma_ir1cs::StatementConfig,
+		pk: Vec<Vec<usize>>, //pack [inputs, unique, m_table, unique tags]
+		nlen: usize, n: usize, sbits: usize, hn: Vec<u8>,
+		lk: std::collections::HashSet<(Fr,Fr)> }
+
+	impl T928Fx{
+		/// fsm state p, nibble k, trans k and its tag (global indices)
+		fn st_at(&self, p: usize) -> usize { if p==0 { self.fsm[0] }
+			else if p==self.n { self.fsm[1] } else { self.fsm[1+self.n+p] } }
+		fn nib_at(&self, k: usize) -> usize { self.fsm[2+k] }
+		fn tr_at(&self, k: usize) -> usize { self.fsm[1+2*self.n+k] }
+		fn tr_tag(&self, k: usize) -> usize { self.fsm[4*self.n+2+k] }
+		fn lk_ok(&self, st: &T938Stmt) -> bool {
+			use ark_std::Zero;
+			let v = [st.inp_buf.clone(), st.oup_buf.clone(), st.data.clone()]
+				.concat();
+			assert_eq!(v.len(), st.subtable_id.len());
+			v.iter().zip(st.subtable_id.iter()).all(|(x, si)| si.is_zero()
+				|| self.lk.contains(&(*si, *x)))
+		}
+		/// native pack multiset: inputs == unique states with m copies
+		fn pack_ok(&self, v: &[Fr]) -> bool {
+			let mut c = std::collections::HashMap::<Fr, i64>::new();
+			for i in &self.pk[0] { *c.entry(v[*i]).or_default() += 1; }
+			for (u, m) in self.pk[1].iter().zip(self.pk[2].iter()){
+				*c.entry(v[*u]).or_default() -= t928_u(&v[*m]) as i64; }
+			c.values().all(|x| *x==0)
+		}
+		/// sum of m over FINAL-tagged unique slots (crit hits)
+		fn finals(&self, v: &[Fr]) -> usize {
+			let f = Fr::from(data_processor::clam_db::CRIT_INIT + 2);
+			(0..self.pk[1].len()).filter(|j| v[self.pk[3][*j]]==f)
+				.map(|j| t928_u(&v[self.pk[2][j]])).sum() }
+		fn sat(&mut self, st: &T938Stmt, forged: bool) -> Result<bool, String>{
+			t938_step(&mut self.circ, &t938_z0(), st, forged) }
+		fn stmt(&self, v: &Vec<Fr>) -> T938Stmt { T938Stmt::from_vec(&self.cfg, v) }
+	}
+
+	fn t928_u(x: &Fr) -> usize {
+		folding_schemes::folding::foldpot::circuits_super::field_to_usize(x) }
+
+	/// t938_g's aggressive DB and capacities (chunk 8 F = 496 nibbles),
+	/// one-segment `word`. `halo` (bytes, '_' padded to M nibbles) is the
+	/// word info halo; None = the pad halo of a last segment.
+	fn t928_fx(word: &[u8], halo: Option<&[u8]>) -> T928Fx{
+		use folding_schemes::folding::foldpot::sigma_ir1cs::{GadgetMapper,
+			SigmaIR1CS};
+		{
+			let mut c = get_global_config();
+			c.clamav_cfg.b_aggressive_sde_for_rep = true;
+			c.clamav_cfg.b_use_discharge_neo = false;
+			c.aggr_needs_subsigs = 0;
+			c.range2_bit = 14;
+			c.b_read_cache = false;
+			c.basis_failed_subsigs = 10000;
+			c.res_small_cost = 20;
+		}
+		let mut cfg = data_processor::clamav::default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let dir = "debug/t928/stmt";
+		std::fs::create_dir_all(format!("{}/data/{}", utils::os::proj_root(),
+			dir)).unwrap();
+		let db = data_processor::clam_db::ClamavDB::<Fr>::build_test_db(&cfg,
+			dir, &vec!["aggneo.fwd;Engine:51-255,Target:1;0;/HELLO.{0,4}[ab][ab]/"
+			.to_string()], &vec![], &vec![], &vec![]).expect("aggr db");
+		let m = db.aggressive_max_span_nibbles;
+		let sbits = db.dfa_crit.state_part_bits;
+		let lk = db.lkup.vals.iter().cloned().collect();
+		let (w, sigs, subsigs, apps) = (8, 2, 8, 6);
+		let cp = CpCapacity{max_word_len: w, basis_unique_states: 4000,
+			subsigs, avg_pats_per_subsig: apps};
+		let sed = SedCapacity::new(w, 14, subsigs, apps, 16, 4000, 200, sigs,
+			26, 4000, 2000);
+		let hn = halo.map(|h|{ let mut b = h.to_vec(); b.resize(m, b'_');
+			b.iter().flat_map(|x| [x/16, x%16]).take(m).collect::<Vec<u8>>() });
+		let fw = t938_word("t928_stmt", word);
+		let (circ, stmts) = t938_env_h(db, &fw, w, &cp, &sed,
+			&DfaCapacity::new(w, sigs, subsigs), hn.clone());
+		let _ = std::fs::remove_file(&fw);
+		assert!(stmts[0].len()==1, "fixture: one segment");
+		let share = circ.get_lkup_share_size();
+		let (_, scfg, maps, _, _) = circ.get_mapper().lock().unwrap()
+			.gen_statement_structure(share);
+		let fl = |rs: &[(usize,usize)]| rs.iter().flat_map(|(a,b)| *a..*b+1)
+			.collect::<Vec<usize>>();
+		let fsm = fl(&maps[1]);
+		let (n, nlen) = ((fsm.len()-2)/5, w*62);
+		assert!(fsm.len()==5*n+2 && m>0 && n==nlen+m,
+			"fixture: fsm n {} nlen {} m {}", n, nlen, m);
+		let k = maps[2].len();
+		let pk = vec![fl(&maps[2][..k-6]), fl(&maps[2][k-6..k-5]),
+			fl(&maps[2][k-5..k-4]), fl(&maps[2][k-3..k-2])];
+		let v = stmts[0][0].to_vec();
+		assert!(T938Stmt::from_vec(&scfg, &v).to_vec()==v, "fixture: from_vec");
+		T928Fx{circ, st: stmts[0][0].clone(), fsm, cfg: scfg, pk, nlen, n,
+			sbits, hn: hn.unwrap_or_default(), lk}
+	}
+
+	/// A mid-group halo state p (position 1 of a packed 4-group, outside
+	/// the n%4 tail). b_pack: its unique slot is NON_FINAL with m >= 2.
+	fn t928_pick(fx: &T928Fx, v: &[Fr], b_pack: bool) -> (usize, Option<usize>){
+		let nf = Fr::from(data_processor::clam_db::CRIT_INIT + 1);
+		for p in fx.nlen+1..fx.n {
+			if p%4 != 1 || (p-1)/4 >= fx.n/4 { continue; }
+			if !b_pack { return (p, None); }
+			assert_eq!(fx.pk[0][p], fx.st_at(p), "pack input p is not state p");
+			let xh = v[fx.st_at(p)];
+			if let Some(j) = (0..fx.pk[1].len()).find(|j| v[fx.pk[1][*j]]==xh){
+				if v[fx.pk[3][j]]==nf && t928_u(&v[fx.pk[2][j]]) >= 2 {
+					return (p, Some(j)); }
+			}
+		}
+		panic!("fixture: no mid-group halo state");
+	}
+
+	/// T1 / T1-neg forged witness: halo state p := X, solved from the one
+	/// packed fsm eq after t_{p-1} := another valid CRIT_TRANSITIONS
+	/// entry. With G6, X also takes a spare NON_FINAL unique slot (m 1)
+	/// and X_h loses one copy, so the pack R1CS holds. Returns (R1CS sat,
+	/// lookups ok) of the forged statement.
+	fn t928_t1(g6: bool) -> (Result<bool, String>, bool){
+		use ark_ff::Field;
+		use ark_std::{One, Zero};
+		use crate::circs::cp_mapper::T928_NO_G6;
+		use std::sync::atomic::Ordering::Relaxed;
+		let _cfg = t938_cfg_guard();
+		struct G6Reset;
+		impl Drop for G6Reset{ fn drop(&mut self){ T928_NO_G6.store(false, Relaxed); } }
+		let _g = G6Reset;
+		T928_NO_G6.store(!g6, Relaxed);
+		let mut fx = t928_fx(b"__xyz_HELL_ab__", None);
+		let h = fx.st.clone();
+		assert_eq!(fx.pk[0].len(), if g6 { fx.n+1 } else { fx.nlen+1 });
+		assert_eq!(fx.sat(&h, false), Ok(true), "honest statement rejected");
+		assert!(fx.lk_ok(&h), "honest statement fails a lookup");
+		let mut v = h.to_vec();
+		let (p, kh) = t928_pick(&fx, &v, g6);
+		let pows = crate::gadgets::commons::build_pows_56_val::<Fr>();
+		let (unit, hex) = (Fr::from(1u64 << (fx.sbits+4)), Fr::from(16u64));
+		let (it, xh) = (fx.tr_at(p-1), v[fx.st_at(p)]);
+		let (tag, t) = (v[fx.tr_tag(p-1)], v[it]);
+		let t2 = fx.lk.iter().filter(|(a, b)| *a==tag && *b!=t).map(|x| x.1)
+			.min().expect("fixture: no other trans row");
+		let x = xh + pows[0] * (t2 - t)
+			* (hex*pows[1] + unit*pows[0]).inverse().unwrap();
+		assert!(!fx.lk.iter().any(|(_, b)| *b==x), "X is a table value");
+		v[fx.st_at(p)] = x;
+		v[it] = t2;
+		let mut slot = None;
+		if let Some(j) = kh {
+			v[fx.pk[2][j]] -= Fr::one();
+			let s = (0..fx.pk[1].len()).rev().find(|s| v[fx.pk[1][*s]].is_zero()
+				&& v[fx.pk[2][*s]].is_zero()).expect("fixture: no spare slot");
+			v[fx.pk[1][s]] = x;
+			v[fx.pk[2][s]] = Fr::one();
+			v[fx.pk[3][s]] = Fr::from(data_processor::clam_db::CRIT_INIT + 1);
+			slot = Some(s);
+		}
+		assert!(fx.pack_ok(&v), "forged pack multiset broken");
+		//non-vacuity: X + 1 (pack kept consistent) breaks the fsm eq
+		let mut vb = v.clone();
+		vb[fx.st_at(p)] += Fr::one();
+		if let Some(s) = slot { vb[fx.pk[1][s]] += Fr::one(); }
+		let fb = fx.stmt(&vb);
+		assert_eq!(fx.sat(&fb, true), Ok(false), "fsm eq does not bind X");
+		let f = fx.stmt(&v);
+		(fx.sat(&f, true), fx.lk_ok(&f))
+	}
+
+	/// T928 T1: a forged non-state X mid-halo passes every gadget block
+	/// (R1CS sat), but (NON_FINAL, X) is no table row: the global lookup
+	/// sum fails, so the statement is UNSAT.
+	#[test]
+	fn test_t928_t1_halo_forged_state(){
+		let (r, lk) = t928_t1(true);
+		assert_eq!(r, Ok(true), "T1: a gadget block rejects the forge");
+		assert!(!lk, "T1: forged halo state X passes the lookups");
+	}
+
+	/// T928 T1-neg: the same forge with G6 removed (halo states not pack
+	/// inputs, halo si const 0) is SAT on R1CS and lookups. G6 is
+	/// load-bearing.
+	#[test]
+	fn test_t928_t1neg_no_g6_sat(){
+		let (r, lk) = t928_t1(false);
+		assert_eq!(r, Ok(true), "T1-neg: R1CS rejects without G6");
+		assert!(lk, "T1-neg: lookups reject without G6");
+	}
+
+	/// T928 T2: halo state p := 0 with honest trans. The pack is
+	/// satisfied (0 counts in a dummy unique slot), lookups hold, and the
+	/// fsm packed eq fails: UNSAT.
+	#[test]
+	fn test_t928_t2_halo_state_zero(){
+		use ark_std::{One, Zero};
+		let _cfg = t938_cfg_guard();
+		let mut fx = t928_fx(b"__xyz_HELL_ab__", None);
+		let mut v = fx.st.to_vec();
+		let (p, kh) = t928_pick(&fx, &v, true);
+		v[fx.st_at(p)] = Fr::zero();
+		v[fx.pk[2][kh.unwrap()]] -= Fr::one();
+		//a dummy unique slot (state 0); its (tag, 0) query is honest already
+		let z = (0..fx.pk[1].len()).find(|s| v[fx.pk[1][*s]].is_zero())
+			.expect("fixture: no dummy slot");
+		v[fx.pk[2][z]] += Fr::one();
+		assert!(fx.pack_ok(&v), "T2: pack multiset broken");
+		let f = fx.stmt(&v);
+		assert!(fx.lk_ok(&f), "T2: a lookup rejects (expected the fsm eq)");
+		assert_eq!(fx.sat(&f, true), Ok(false), "T2: halo state 0 accepted");
+	}
+
+	/// T928 T7: flip one SED halo nibble of chunk 0 (the cell CP's halo
+	/// scan shares). Lookups hold (still a nibble), the halo trans eqs
+	/// (SED fa:1633-1634 and the CP fsm eq) fail: UNSAT.
+	#[test]
+	fn test_t928_t7_sed_halo_nibble_flip(){
+		let _cfg = t938_cfg_guard();
+		let mut fx = t928_fx(b"__xyz_HELL_ab__", None);
+		let mut v = fx.st.to_vec();
+		let i = fx.nib_at(fx.nlen);
+		assert!(i >= fx.cfg.idx_oup && i < fx.cfg.idx_oup + fx.cfg.output_size,
+			"T7: CP halo nibble is not a shared SED OUP cell");
+		v[i] = Fr::from(((t928_u(&v[i]) + 1) % 16) as u64);
+		let f = fx.stmt(&v);
+		assert!(fx.lk_ok(&f), "T7: a lookup rejects (expected the trans eqs)");
+		assert_eq!(fx.sat(&f, true), Ok(false), "T7: flipped halo nibble accepted");
+	}
+
+	/// T928 T8 (D3-mono): last segment, real match in its body. The free
+	/// halo is forged with an extra match (extra crit and pm hits). The
+	/// verdict stays REJECT, also when the cheating prover zeroes the
+	/// undischarged failed sigs.
+	#[test]
+	fn test_t928_t8_d3_mono(){
+		let _cfg = t938_cfg_guard();
+		let rej = |r: &Result<bool, String>| *r==Ok(false)
+			|| r.as_ref().is_err_and(|m| m.contains("b_correct"));
+		let word = b"__HELLOab__";
+		let mut f0 = t928_fx(word, None);
+		let (v0, s0) = (f0.st.to_vec(), f0.st.clone());
+		let r0 = f0.sat(&s0, false);
+		assert!(rej(&r0), "T8 base: true match accepted: {:?}", r0);
+		let mut f1 = t928_fx(word, Some(b"HELLOab"));
+		let (v1, s1) = (f1.st.to_vec(), f1.st.clone());
+		for h in 0..f1.n - f1.nlen {
+			assert_eq!(t928_u(&v1[f1.nib_at(f1.nlen + h)]), f1.hn[h] as usize,
+				"T8: halo nibble {} not forged", h); }
+		assert!(f1.finals(&v1) > f0.finals(&v0), "T8: no extra crit hit ({} vs {})",
+			f1.finals(&v1), f0.finals(&v0));
+		assert!(f1.lk_ok(&s1), "T8: forged-halo witness fails a lookup");
+		let r1 = f1.sat(&s1, false);
+		assert!(rej(&r1), "T8: extra halo hits turned REJECT into ACCEPT: {:?}", r1);
+		let r2 = f1.sat(&t938_zero_failed(&s1), true);
+		assert_eq!(r2, Ok(false), "T8: zeroed failed sigs accepted");
 	}
 
 	/// T936 S6. Sig DFAs start at 0, and the DFA component pins every

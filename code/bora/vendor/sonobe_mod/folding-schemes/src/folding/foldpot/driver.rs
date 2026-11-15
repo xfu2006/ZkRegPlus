@@ -2,7 +2,7 @@ use std::any::Any;
 use ark_bn254::Bn254;
 use ark_serialize::{CanonicalSerialize, CanonicalDeserialize};
 use std::{sync::{Arc, Mutex, Condvar, RwLock,
-    atomic::{AtomicUsize, Ordering}}, fmt::{Debug,Formatter}};
+    atomic::{AtomicBool, AtomicUsize, Ordering}}, fmt::{Debug,Formatter}};
 /* 
 	Created 08/27/2024 
 	Modified 12/25/2024: added snark_rand_input structure
@@ -2860,6 +2860,17 @@ fn preflight_check_map_count(n_jobs: usize, max_job_fields: usize)
 	Ok(())
 }
 
+/// T952: one count per job leaving fold + commit (Ok, Err or panic), so
+/// the decider barrier never waits on a dead peer. A drop without `ok`
+/// raises `failed` so peers skip deciders of an attempt that will retry.
+struct FoldTok<'a> { done: &'a AtomicUsize, failed: &'a AtomicBool, ok: bool }
+impl Drop for FoldTok<'_> {
+	fn drop(&mut self) {
+		if !self.ok { self.failed.store(true, Ordering::SeqCst); }
+		self.done.fetch_add(1, Ordering::SeqCst);
+	}
+}
+
 /// Inputs: lkup which encodes the regex automata,
 /// jobs: a collection of jobs where each job has:
 /// (1) vec_words: the vector of words to process,
@@ -3441,6 +3452,11 @@ where
 	// 2026-05-21 (Lever 2+3): captured before into_par_iter consumes jobs.
 	// Used by last-finisher logic for main_key and cp_key drops.
 	let n_jobs_total = jobs.len();
+	// T952 decider barrier, bounded by the pool: a pool smaller than the
+	// part cannot hold every job at once, so it keeps today's order.
+	let folds_done = AtomicUsize::new(0);
+	let fold_failed = AtomicBool::new(false);
+	let n_fold_wait = n_jobs_total.min(rayon::current_num_threads());
 
 	// SCALE-MODE (get_global_config().b_scale_catch_caperr, e.g.
 	// collect_scale_data_dlp): stash a job CapErr here instead of process::exit,
@@ -3455,7 +3471,8 @@ where
 		// allocations to node (job_id % n_nodes). No-op unless multi-node + flag.
 		super::numa::bind_thread_to_node(job_id);
 		let res = (|| -> Result<(), Error> {
-                        let (pk_cp_owned, vk_cp_owned);
+		let mut fold_tok = FoldTok{done: &folds_done,
+			failed: &fold_failed, ok: false};
 		//0. retrieve the words and word_info
 	  	log(job_id, log_level, &format!("--- Job {} starts ---", job_id));
 	  	let mut gt1_0 = GTimer::new();
@@ -3545,6 +3562,7 @@ where
 	  		drop(per_job_circuits);
 	  		let Some((batch_prf, ind_prf)) = batch_ind_prfs.map(|x| (x.0, x.1))
 	  			else {return Err(Error::Other("batch proof is none!".to_string()));};
+	  		fold_tok.ok = true; // T952: fold succeeded
 			let mb_speed = get_speed(max_total_n, &mut gt_prove_steps);
 	  		// SPEED + folding time come from gt_prove_steps (already
 	  		// stopped by get_speed); gt1's tail here is meaningless, so
@@ -3591,6 +3609,7 @@ where
 	  		drop(prf_qa_nizk);
 	  		drop(U_i1);
 	  		drop(qa_pp_d1_guard);
+	  		drop(fold_tok); // T952: fold + commit done
 
 	  		if read_global_config().b_folding_only {
 	  			log(job_id, log_level, &format!(
@@ -3599,13 +3618,31 @@ where
 	  			return Ok(());
 	  		}
 
+	  		// T952: no decider until every job of this part folded and committed; waits stay out of gt1.
+	  		gt1.stop();
+	  		while folds_done.load(Ordering::SeqCst) < n_fold_wait {
+	  			std::thread::sleep(std::time::Duration::from_secs(10));
+	  		}
+	  		log(job_id, log_level, &format!("Job {} T952 barrier {}",
+	  			job_id, get_rss_usage()));
+	  		if fold_failed.load(Ordering::SeqCst) {
+	  			log(job_id, log_level, &format!(
+	  				"Job {}: a sibling fold failed; skip SNARK", job_id));
+	  			return Ok(());
+	  		}
+	  		if let Some(f) = read_global_config().fold_done_flag.clone() {
+	  			let p = std::path::Path::new(&f);
+	  			let _ = std::fs::create_dir_all(p.parent().unwrap());
+	  			std::fs::File::create(p).expect("T952: fold_done flag");
+	  		}
+
 	  		// Past the one_proof + fold_only gates: this job emits a SNARK
 	  		// proof (the selected job under one_proof, else every job).
 	  		log(job_id, log_level, &format!(
 	  			"Job {} generating SNARK proof", job_id));
 
-	  		// full_clam part-2 gate: wait until the driver frees the
-	  		// fold-only half's RAM (flag file appears) before the decider.
+	  		// decider gate (T952): part 0 waits for the last part's fold_done,
+	  		// the last part for part 0's exit (snark-start flag).
 	  		if let Some(flag) = read_global_config().snark_wait_flag.clone() {
 	  			while !std::path::Path::new(&flag).exists() {
 	  				log(job_id, log_level, &format!(
@@ -3642,6 +3679,7 @@ where
 				*count -= 1;
 				SemaphoreGuard { lock: semaphore.clone() }
 			};
+			gt1.start(); // T952: resume after the waits
 
 	  		//6. now bulid the main circuit, which execues
 	  		//the main logic: verifies the ZkregPlus relation
@@ -3836,6 +3874,8 @@ set; exit(0) before Phase 2.");
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1,
 	};
 	let (snark_proof_cp, g16_vk_cp, nova2_prf_kzg) = {
+		// T952: a cp pk set up here drops at block end, as pk_main does.
+		let (pk_cp_owned, vk_cp_owned);
 		// ------------- The following is the CRITICAL SECTION -------
 		let _guard_cp = {
 			let (lock, cvar) = &*semaphore_cp;
@@ -4011,9 +4051,10 @@ set; exit(0) before Phase 2.");
 	}
 	log_perf(job_id, log_level, &format!("FOLDPOT Step 13. Verify Individual Proof."),
 		&mut gt1);
+	if ok_batch && ok_ind { utils::consts::record_proof_ok(); }
 	// Report the proof structure + byte sizes once (this job holds a
-	// complete batch+individual proof; under b_one_proof only Job 0
-	// reaches here).
+	// complete batch+individual proof; every job reaches here, or only
+	// the selected one under b_one_proof).
 	batch_prf.print_size();
 	ind_prf.print_size();
 	log_perf(job_id, log_level, &format!("**** Job {} Complete ***** MEM: {} GB.", job_id, get_mem_usage()), &mut gt1_0);
@@ -4577,6 +4618,21 @@ pub mod tests_driver{
 		let r = std::panic::catch_unwind(|| read_g16_meta_header(&path));
 		let _ = std::fs::remove_dir_all(&d);
 		assert!(r.is_err(), "version-3 g16 meta loaded");
+	}
+
+	#[test]
+	fn test_t952_fold_tok() {
+		let (d, f) = (AtomicUsize::new(0), AtomicBool::new(false));
+		{ let mut t = FoldTok{done: &d, failed: &f, ok: false}; t.ok = true; }
+		assert_eq!((d.load(Ordering::SeqCst), f.load(Ordering::SeqCst)),
+			(1, false));
+		let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+			let _t = FoldTok{done: &d, failed: &f, ok: false};
+			panic!("fold");
+		}));
+		assert!(r.is_err());
+		assert_eq!((d.load(Ordering::SeqCst), f.load(Ordering::SeqCst)),
+			(2, true), "a panicking fold still releases the barrier");
 	}
 }
 

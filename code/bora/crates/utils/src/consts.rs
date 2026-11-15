@@ -72,6 +72,10 @@ pub static VERIFY_FAILS: AtomicUsize = AtomicUsize::new(0);
 pub fn record_verify_fail() {
     VERIFY_FAILS.fetch_add(1, Ordering::Relaxed);
 }
+/// T952: jobs whose batch + individual proofs both self-verified.
+pub static PROOFS_OK: AtomicUsize = AtomicUsize::new(0);
+pub fn record_proof_ok() { PROOFS_OK.fetch_add(1, Ordering::Relaxed); }
+pub fn get_proofs_ok() -> usize { PROOFS_OK.load(Ordering::Relaxed) }
 pub fn get_verify_fails() -> usize {
     VERIFY_FAILS.load(Ordering::Relaxed)
 }
@@ -82,6 +86,7 @@ pub fn reset_sat() {
     //runs at the top of each tuner retry, so the count a test reads
     //belongs to the FINAL fold -- the only one whose proof matters.
     VERIFY_FAILS.store(0, Ordering::Relaxed);
+    PROOFS_OK.store(0, Ordering::Relaxed);
     for g in QM_SAT.iter().chain(QC_SAT.iter())
         .chain(QM_WRAP_SAT.iter()).chain(QM_REAL_SAT.iter())
         .chain(QM_SUB_SAT.iter()).chain(FWD_SAT.iter()) { g.reset(); }
@@ -458,9 +463,13 @@ pub struct GlobalConfig {
 	/// whole list -> every other caller is unchanged.
 	pub clam_read_mode: ClamReadMode,
 	pub clam_read_pct: usize,
-	/// full_clam part-2 gate: Some(path) = foldpot_main 10s-polls until
-	/// that flag file exists before the decider. None = no wait (default).
+	/// Decider gate: Some(path) = foldpot_main 10s-polls until that flag
+	/// file exists before the decider (T952: part 0 waits on fold_done,
+	/// the last part on the snark-start flag). None = no wait (default).
 	pub snark_wait_flag: Option<String>,
+	/// T952: Some(path) = touch it once every job of this part folded
+	/// and committed (the last part of a split). None = no touch.
+	pub fold_done_flag: Option<String>,
 }
 
 impl Default for GlobalConfig {
@@ -524,6 +533,7 @@ impl Default for GlobalConfig {
 			clam_read_mode: ClamReadMode::Full,
 			clam_read_pct: 100,
 			snark_wait_flag: None,
+			fold_done_flag: None,
         }
     }
 }
@@ -587,6 +597,7 @@ static GLOBAL_CONFIG: RwLock<GlobalConfig> = RwLock::new(GlobalConfig {
 	clam_read_mode: ClamReadMode::Full,
 	clam_read_pct: 100,
 	snark_wait_flag: None,
+	fold_done_flag: None,
 });
 
 pub fn read_global_config() -> RwLockReadGuard<'static, GlobalConfig> {

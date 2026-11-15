@@ -117,6 +117,15 @@ pub trait ComponentMapper<F:PrimeField + ColEle, LK: LookupTableTwoCol<F>>:
 	fn get_const_pins(&self, _i: usize, _stmt_cfg: &StatementConfig,
 		_comp_cfgs: &Vec<Vec<usize>>)->Vec<(usize, StmtPin<F>)>{ vec![] }
 
+	/// T928: global range of this component's forward-halo cells
+	/// (SED fsm cs halo_nibbles, IDX_OUP), given its 9-range alloc.
+	fn export_halo_range(&self, _alloc: &Vec<(usize,usize)>)
+		->Option<(usize,usize)>{ None }
+
+	/// T928: receive that range before get_gadgets_stmt_map (CP maps
+	/// its halo nibbles onto those cells, 0 cs). Default: ignore.
+	fn set_halo_ext(&mut self, _rg: Option<(usize,usize)>){}
+
 	/// Also responsible for generating nd_advice with its own capacity.
 	/// seg_id is for debugging purpose only.
 	fn gen_nd_advice(&self, word: &Vec<F>, word_info: &WordInfo,
@@ -901,7 +910,7 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 		let mut probe_rows: Vec<(String, Vec<(usize,bool)>,
 			Vec<(usize,bool)>, Vec<(usize,bool)>,
 			Vec<(String,usize,usize,bool)>)> = vec![];
-		for i in 0..self.vec_components.len(){
+		let alloc_of = |i: usize| -> Vec<(usize,usize)> {
 			//NOTE: ranges are including both ends
 			// e.g., (1,1) has one element, (2, 3) has 2 elements
 			// for empty sections, it looks like (2, 1)
@@ -930,6 +939,17 @@ impl <F:PrimeField+ColEle,LK:LookupTableTwoCol<F>> GadgetMapper<F,LK> for Compos
 				rg_subtbl_id_inp, rg_subtbl_id_oup, rg_subtbl_id_data,
 				rg_failed_sigs, rg_discharged_sigs,
 			];
+			cur_alloc
+		};
+		//T928: CP maps its halo nibbles onto SED's halo cells (0 cs)
+		let halo_exts: Vec<(usize,usize)> = (0..self.vec_components.len())
+			.filter_map(|i| self.vec_components[i].lock().unwrap()
+				.export_halo_range(&alloc_of(i))).collect();
+		assert!(halo_exts.len() <= 1, "T928: {} halo exporters", halo_exts.len());
+		let halo_ext = halo_exts.first().copied();
+		for i in 0..self.vec_components.len(){
+			let cur_alloc = alloc_of(i);
+			self.vec_components[i].lock().unwrap().set_halo_ext(halo_ext);
 			let (mut comp_maps, mut new_si_data_info, mut new_si_inp_info,
 				mut new_si_oup_info) = self.vec_components[i].lock().unwrap()
 				.get_gadgets_stmt_map(&cur_alloc);

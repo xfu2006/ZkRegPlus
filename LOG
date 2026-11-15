@@ -32196,7 +32196,7 @@ Goal 1. B2 -> COMPLETED
 		cp capacity raises 13%,
 		prover cost 1 to 5%.
 
-Goal 2. B3.
+Goal 2. B3. -> COMPLETED
 	[a] T964: done
 	[b] T927: done
 		N2: discharge_adv_neo can publish sig as free var
@@ -32207,10 +32207,16 @@ Goal 2. B3.
 	[d] T962: compute_sig_adv, soudness err like missing
 		middle rows. and padding handling.
 	[e] T960: enforce compute_sig_adv submited subsig in order.
-	[f] T994: 
+	[f] T994: assert that comes subsig be bloe map, 
+		lookup key K below bound.
+	[g] SUMMARY: almost no change on cs and prove cost.
+
+Goal 3. B3_2
+	[a] T952
+	[b] T928 
 	
 
-Goal 3. Writing
+Goal 4. Writing
 	[a] minor changes: soften words such as complete.
 	
 

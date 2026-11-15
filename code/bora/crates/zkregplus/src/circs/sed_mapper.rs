@@ -1123,6 +1123,31 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 
 	fn get_name(&self)->String {format!("SedMapper")}
 
+	/// T928: global range of the cs fsm halo_nibbles cells (IDX_OUP),
+	/// shared with the CP halo scan (0 cs). None when M == 0.
+	fn export_halo_range(&self, alloc: &Vec<(usize,usize)>)
+		->Option<(usize,usize)>{
+		let m = self.capacity.cs.faa_capacity().halo_nibbles;
+		if m == 0 { return None; }
+		fn find(c: &folding_schemes::folding::foldpot::container_config::ContainerConfig,
+			out: &mut Vec<(usize,usize,usize)>) {
+			use folding_schemes::folding::foldpot::container_config::ContainerConfig as CC;
+			match c {
+				CC::Column(loc, n, _, _) if n == "halo_nibbles" =>
+					out.push((loc.src.1, loc.src.2, loc.src.3)),
+				CC::Complex(v, _, _) => v.iter().for_each(|x| find(x, out)),
+				_ => (),
+			}
+		}
+		//gadgets[1] = the cs fsm_adv gadget (see the gadget list in new)
+		let mut hits = vec![];
+		find(&self.gadgets[1].lock().unwrap().get_container_config(), &mut hits);
+		assert!(hits.len() == 1, "T928: {} cs halo_nibbles columns", hits.len());
+		let (seg, st, len) = hits[0];
+		assert!(seg == crate::gadgets::traits::IDX_OUP && len == m, "T928: halo seg {} len {} m {}", seg, len, m);
+		Some((alloc[seg].0 + st, alloc[seg].0 + st + len - 1))
+	}
+
 	fn get_capacity(&self)->Arc<dyn Capacity + Send + Sync>{
 		Arc::new( Clone::clone(&self.capacity) )
 	}
