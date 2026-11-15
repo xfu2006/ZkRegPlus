@@ -39,7 +39,8 @@ use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
 		encode_cols, encode_cols_var,
 		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
-		check_prod_zero, better_select, verify_encode_cols_in_range},
+		check_prod_zero, check_prod_eq, better_select,
+		verify_encode_cols_in_range},
 	db::{assert_logup,
 		//verify_encoded_table, assert_well_formed_sorted
 	},
@@ -2011,7 +2012,6 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		eval_res_combo_igc: &Container<FpVar<F>>, 
 		synthesis_res_combo: &Container<FpVar<F>>, 
 		r1: FpVar<F>,
-		r2: FpVar<F>,
 		cs: ConstraintSystemRef<F>
 	) ->Result<(), SynthesisError>{
 		//0. retrieve data from combo
@@ -2247,12 +2247,12 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//-- 3.1.2 check the validity of sid_comp_count
 		// count is computed from comp_subsit_encode and comp_subsig (which
 		// already have range prf).
-		// verify count increase by 1 if subsig is the same and 
-		// starts from 1 for a new_subsig in the sequence, and 
-		// ends with max. This guarantees
-		// that the vec_comp are FULLY coverd in scc_prf
+		// verify count increase by 1 if subsig is the same and
+		// starts from 1 for a new_subsig in the sequence. With the
+		// DB-bound max row (vec_cnt = k+1) this guarantees that a
+		// block read by 3.5 covers ALL of vec_comp.
 		//
-		// COST: 15*n2
+		// COST: 10*(n2-1) + 1
 		let fa_var = new_const_var(&cs, F::from(1u32 << read_global_config().range2_bit));
 		let vec_cnt = col2d[1].iter().zip(col2d[2].iter()).map(|(c1,c2)|{
 			c1 - &(c2 * &fa_var)
@@ -2262,18 +2262,17 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let row0_null = row0_null
 			|| !tests_compute_sig_adv::t965_native_guard("scc_prf_row0");
 		assert!(row0_null, "scc_prf too small, need 1st entry to be null entry. adjust perc_comp_subsigs in Config!");
+		//T964 NH2: the chain below starts at row 1, so pin row 0 to a pad
+		check_eq(&col2d[0][0], &zero, "scc_prf row 0 is the null entry")?;
 		let tri_true:FpVar<F> = 
 			new_const_var(&cs, F::from(TriVal::True as u8)).into();
 		let tri_maybe:FpVar<F> = 
 			new_const_var(&cs, F::from(TriVal::Maybe as u8)).into();
 		let tri_false:FpVar<F> = 
 			new_const_var(&cs, F::from(TriVal::False as u8)).into();
-		let r3 = &r1 * &r1; //it's ok treat the random combination like
-							//using r1 as var in a poly.
 		for i in 1..n2{
 			let subsig = &col2d[0][i];
 			let prev_subsig = &col2d[0][i-1];
-			let diff = &vec_cnt[i]-&vec_cnt[i-1];
 			let diff_sid = subsig-prev_subsig;
 			//let same_subsig:FpVar<F> = diff_sid.is_zero()?.into(); //1 or 0
 			let same_subsig:FpVar<F> = is_zero_better(&diff_sid, &cs)?; //1 or 0
@@ -2283,39 +2282,23 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			//let is_raw_maybe:FpVar<F> = col2d[4][i].is_eq(&tri_maybe)?.into();
 			let is_raw_maybe:FpVar<F> = is_zero_better(
 				&(&col2d[4][i]-&tri_maybe), &cs)?;
-			//(1) if same_sid needs to enforce diff is one, otherwise don't care
-			//(2) requires count to start from 1, if it's not the same_id
-			//(3) requires that vec_comp is MAX when it's the last row
-			//(4) if last_row, requires cnt_true be set to is_raw_true
-			//      and cnt_maybe be set is_raw_maybe
-			let eq = 
-				&(&same_subsig * &(
-					//eq1 part
-					&(subsig * &(&diff-&one))  + 
-					//eq4 part: it's the prev one + is_raw_true (maye)
-					&(&r1*( &col2d[5][i] - &is_raw_true - &col2d[5][i-1])) + 
-					&(&r2*( &col2d[6][i] - &is_raw_maybe - &col2d[6][i-1]))
-				)) + 
-				&(&(&one-&same_subsig) * 
-					&(prev_subsig *
-					   &(//eq2 part
-							&(&vec_cnt[i]-&one) +
-						//eq 3 part: last row has max in scc_prf_comp_subsig 
-						//row 0 should be automatically ok as we checked
-						//it's dummy entry subsig #0, which has all 0's.
-							&r1*(&(&col2d[2][i-1]-&max)) + 
-						//eq 4 part
-							&r2*(&(&col2d[5][i]-&is_raw_true))+
-							&r3*(&(&col2d[6][i]-&is_raw_maybe))
-						)
-					) 
-				);
-			check_eq(&eq, &zero, "failed on count (2 cases: inc by 1 and start from 1), or the check of cnt_true/cnt_maybe ")?;
+			//T964 H2': a block starts on ANY row whose subsig differs
+			//from the previous one (pad or not), so every real block
+			//starts at vec_cnt 1 with cnt = is_raw:
+			//(1) real row: vec_cnt = 1 + same*vec_cnt[i-1]
+			//(2) every row: cnt = is_raw + same*cnt[i-1] (honest pads
+			//    are all 0 and come first, so no gate is needed)
+			//No "block ends at max" check: a comp==max row (the only
+			//3.5 dst rows) is DB-bound to vec_cnt = k+1, so the block
+			//before it is exactly the k components of vec_comp.
+			let same_cnt = &same_subsig * &vec_cnt[i-1];
+			check_prod_zero(subsig, &(&vec_cnt[i] - &one - &same_cnt),
+				LinearCombination::zero(), "scc vec_cnt: +1 or start from 1")?;
+			check_prod_eq(&same_subsig, &col2d[5][i-1],
+				&(&col2d[5][i] - &is_raw_true), "scc cnt_true chain")?;
+			check_prod_eq(&same_subsig, &col2d[6][i-1],
+				&(&col2d[6][i] - &is_raw_maybe), "scc cnt_maybe chain")?;
 		}
-		//does need to check the very last row for vec_comp is max (well formed)
-		//note: guard with with subsig value (if it's 0 - pass check)
-		check_eq(&(&col2d[0][n2-1]*&(&col2d[2][n2-1]- &max)), 
-			&zero, "check last row on max")?;
 
 		//3.2 lookup (comp_subsig, raw_res) in the gen_regex_res
 		// to prove the validity of raw_res for the comp_subsig
@@ -2332,11 +2315,12 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			&vec![0,1],
 			&f_unit
 		);
-		let src_sel = col2d[2].iter().map(|s|{//comp_subsig
-			//let b_eq = s.is_eq(&max).unwrap();
-			let b_eq = is_zero_better(&(s-&max), &cs).unwrap();
-			&one - &b_eq
-		}).collect::<Vec<FpVar<F>>>();
+		//is_max: comp_subsig == max (the block's last row), shared with 3.5
+		let is_max = col2d[2].iter().map(|c|
+			is_zero_better(&(c-&max), &cs).unwrap()
+		).collect::<Vec<FpVar<F>>>();
+		let src_sel = is_max.iter().map(|b_eq| &one - b_eq)
+			.collect::<Vec<FpVar<F>>>();
 		let src_s_r = src_s_r.iter().zip(src_sel.iter()).map(|(a,b)|
 			a * b).collect::<Vec<FpVar<F>>>();
 		let dest_s_r = encode_cols_var_adv_better(
@@ -2416,7 +2400,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 
 		//3.5 check the validity of vec_scc_res, leveraging vec_type	
 		//COST: n: subsigs, n2: scc_table (which is usually up to 20% of n)
-		//  6n + 5*n2
+		//  6n + 3*n2 (is_max shared with 3.2)
 		let vec_scc_res= synthesis_res_combo.get_container("vec_scc_res")
 			.unwrap().lock().unwrap().to_vec();
 		let mtbl_find_scc_res= synthesis_res_combo
@@ -2443,11 +2427,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			&vec![0,1],
 			&f_unit
 		);
-		let dst_sel = col2d[2].iter().map(|c|   
-			//c.is_eq(&max).unwrap().into() //if comp_subsig eq to max
-			is_zero_better(&(c-&max), &cs).unwrap()
-		).collect::<Vec<FpVar<F>>>();
-		let dst = dst.iter().zip(dst_sel.iter()).map(|(a,b)|
+		let dst = dst.iter().zip(is_max.iter()).map(|(a,b)| //comp == max
 			a * b).collect::<Vec<FpVar<F>>>();
 
 		assert_logup(cs.clone(), &src, &dst, &mtbl_find_scc_res, &r1)?;
@@ -2784,7 +2764,7 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 			&eval_res_combo_cs.lock().unwrap(),
 			&eval_res_combo_igc.lock().unwrap(),
 			&synthesis_res_combo.lock().unwrap(), 
-			r1.clone(), r2.clone(), cs.clone()
+			r1.clone(), cs.clone()
 		)?;
 
 		//4. now evaluate all sigs and generate the list of sigs
@@ -3548,8 +3528,8 @@ use utils::consts::{read_global_config, get_global_config};
 	const FIXED_F3: bool = false;
 	const FIXED_H1U: bool = false;
 	const FIXED_NH1: bool = false;
-	const FIXED_H2P: bool = false;
-	const FIXED_NH2: bool = false;
+	const FIXED_H2P: bool = true;
+	const FIXED_NH2: bool = true;
 
 	/// T965 M0: red-test verdict switch (SAT while the hole is open).
 	pub(crate) fn assert_hole(tag: &str, sat: bool, fixed: bool) {
@@ -3735,7 +3715,10 @@ use utils::consts::{read_global_config, get_global_config};
 		assert!(sat);
 		//T961: 2939 - (2*50 + 6) = 2833, the union-proof verify dropped
 		//(2n inverses + 6, n = k_cs + k_igc = 25 + 25)
-		assert_eq!(nc, 2833, "csa sig5 constraint count moved");
+		//T964: 2833 - 76 = 2757, scc chain 16 -> 10 per row (n2 = 10:
+		//-6*9), last-row max check (2) -> row-0 pin (1), r3 gone (1),
+		//is_zero(comp - max) shared by 3.2 and 3.5 (-2*n2)
+		assert_eq!(nc, 2757, "csa sig5 constraint count moved");
 	}
 
 	/// BREAK1: rotate the (fully matched, steps 0..2) block of s in step
@@ -4083,7 +4066,7 @@ use utils::consts::{read_global_config, get_global_config};
 		assert_hole("NH1", sat, FIXED_NH1);
 	}
 
-	/// T965 H2' (B1): the SCC block's start terms are gated by
+	/// T965 H2' (B1), pre-T964: the SCC block's start terms are gated by
 	/// prev_subsig, so the block right after the pads can be the single
 	/// max row (encode (k+1) + max*unit, cnt 0/0): (s, False) without
 	/// any component row.
@@ -4107,7 +4090,7 @@ use utils::consts::{read_global_config, get_global_config};
 		assert_hole("H2'", sat, FIXED_H2P);
 	}
 
-	/// T965 NH2: row 0 of scc_prf is pinned null only by a native assert
+	/// T965 NH2, pre-T964: row 0 of scc_prf is pinned null only by a native assert
 	/// (disarmed by seam S2): the SCC block moves to row 0 as its single
 	/// max row (cnt 0/0, False); row 1 (pad, comp = max, vec_cnt 1)
 	/// meets the start terms the chain applies after a real row.
@@ -4413,7 +4396,8 @@ use utils::consts::{read_global_config, get_global_config};
 		assert!(r.sat);
 		//T961: 1616 + (25 + 1) = 1642, F1 chain check_eq (n+1, k_cs = 25,
 		//b_skip_igc; its RANGE2 cells are outer-lookup cost, not in nc)
-		assert_eq!(r.nc, 1642, "csa aggr constraint count moved");
+		//T964: 1642 - 76 = 1566 (scc chain + shared is_max, as nonaggr)
+		assert_eq!(r.nc, 1566, "csa aggr constraint count moved");
 	}
 
 	/// T965 N2 / ST: the matched s is never seeded (dan demand without s,
