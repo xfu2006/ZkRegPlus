@@ -156,6 +156,33 @@ pub fn check_pad_ratio<F:PrimeField>(col: &Vec<F>, param: &str){
 }
 
 
+/// FU2 cap on rb, the loc width of the dan q_c pack loc + enc*2^rb
+/// (rb = range2_bit). dan asserts rb <= FU2_RB_MAX where it builds the
+/// pack, so the key bound below holds for every rb the circuit accepts.
+pub const FU2_RB_MAX: usize = 31;
+
+/// FU2 (T960 U3(ii), 0 cs). The csa V carry tag pin's no-alias argument
+/// needs every outer-lookup key K (col 1) below p/2^(rb+1). Checked as a
+/// bit length against the cap, so the rb in force at DB time does not
+/// matter. With m = MODULUS_BIT_SIZE, 2^(m-1) <= p, so K < 2^(m-R-2)
+/// gives K*2^(R+1) < p for every rb <= R = FU2_RB_MAX. BN254: 221 bits.
+/// The widest honest key is the step-store tag, 5*rb + 62 bits (197 at
+/// rb 27, 217 at rb 31). O(n): one into_bigint per row, parallel.
+/// Called on every table that enters a ClamavDB (build_db and load).
+pub fn assert_lkup_key_bound<F:PrimeField>(lk: &LookupTableTwoCol_Inst<F>){
+	use ark_ff::BigInteger;
+	let m = F::MODULUS_BIT_SIZE as usize;
+	assert!(FU2_RB_MAX + 2 < m, "FU2 field: modulus too small");
+	let lim = (m - FU2_RB_MAX - 2) as u32;
+	let bad = lk.vals.par_iter()
+		.position_any(|(k, _)| k.into_bigint().num_bits() > lim);
+	if let Some(i) = bad {
+		panic!("FU2 key: lkup row {} key has {} bits, limit {} \
+			(K < p/2^(rb+1) for rb <= {})", i,
+			lk.vals[i].0.into_bigint().num_bits(), lim, FU2_RB_MAX);
+	}
+}
+
 /// database of ClamAV signatures
 #[derive(Clone)]
 pub struct ClamavDB<F: PrimeField>{
@@ -1149,6 +1176,23 @@ impl SubsigInfoStore{
 		self.subsig_ids.sort();
 	}
 
+	/// FU1 (T964 SCC chain premise, 0 cs): every component c_j < max and
+	/// k <= max (so j < f). Then only the max entry of tag(s, COMP) gives
+	/// the csa chain a vc in [1, n2] (see FU_design). Called by
+	/// add_store_to_lkup and on cache load.
+	pub fn assert_fu1_wf(&self, max_val: usize){
+		for rec in self.subsig_to_rec.values(){
+			let k = rec.component_subsigs.len();
+			assert!(k <= max_val, "FU1 k: subsig {} has {} components, \
+				positions must stay below 2^range2_bit", rec.subsig_id, k);
+			for (i, c) in rec.component_subsigs.iter().enumerate(){
+				assert!(*c < max_val, "FU1 comp: subsig {} component {} \
+					= {} hits the SCC end sentinel max {}", rec.subsig_id,
+					i, c, max_val);
+			}
+		}
+	}
+
 	/// NOTE that this is a static function. It generates the table id
 	/// given the acdfa_id and piece id (such as subsig_type, comp_op, ...).
 	/// It generates a 128-bit table_id which is unique for each subsig.
@@ -1198,6 +1242,7 @@ impl SubsigInfoStore{
 
 		assert!(!self.subsig_ids.contains(&0), 
 				"StoreInfoStore.subsig_id should not contain subsig 0");
+		self.assert_fu1_wf(max_val);
 		let subsig_ids = [&[0usize][..], &self.subsig_ids[..]].concat();
 		let mut tuples = subsig_ids.par_iter().map(|subsig_id|{
 			let rec = if *subsig_id==0{
@@ -2472,6 +2517,7 @@ impl <F:PrimeField> ClamavDB<F>{
 			&sig_to_id);
 		mark(lkup.vals.len(), &mut lkup_dist, &mut prev, "sig_no_crit_pat");
 		lkup.vals.sort();
+		assert_lkup_key_bound(&lkup);
 		if b_perf {flog_perf(0, log_level, &format!("Build_DB: Step 7: ADD all to lkup. Lkup size: {}", lkup.vals.len()), &mut timer, vlog);}
 
 		//9. build the object
@@ -2681,6 +2727,7 @@ impl <F:PrimeField> ClamavDB<F>{
 		let s_lkup = format!("{}/lkup.txt", sdir);
 		let lkup = LookupTableTwoCol_Inst::deserialize_from(&s_lkup)
 				.expect("Convert dfa_patterns_igc fails");
+		assert_lkup_key_bound(&lkup);
 
 		let bundle_subsig= serde_json::from_reader(
 			std::io::BufReader::with_capacity(1<<22,
@@ -2720,6 +2767,23 @@ impl <F:PrimeField> ClamavDB<F>{
 			aggressive_max_span_nibbles,
 			lkup_dist: Vec::new(),
 		};
+		// FU1 on cache load: the cached info stores bypass add_store_to_lkup.
+		// The cache dir is not keyed by rb, so first pin the build rb
+		// (HexACDFA state_part_bits = range2_bit at build, entry 0 always
+		// exists: add_bundle_subsig_to_lkup reads it) to the live one.
+		let rb = read_global_config().range2_bit;
+		let max_val: usize = (1 << rb) - 1;
+		for bd in [&res.bundle_subsig, &res.bundle_subsig_igc]{
+			let rb_b = bd.vec_acdfa.first()
+				.expect("FU1 rb: cached bundle has no ACDFA").state_part_bits;
+			assert_eq!(rb_b, rb, "FU1 rb: cache built under range2_bit {}, \
+				live {}", rb_b, rb);
+		}
+		for bd in [&res.bundle_subsig, &res.bundle_subsig_igc]{
+			for st in bd.vec_subsig_info_stores.iter(){
+				st.assert_fu1_wf(max_val);
+			}
+		}
 
 		res
 	}
@@ -3173,6 +3237,82 @@ mod tests_clam_db{
 			assert_eq!(lk.vals.contains(t), b_neo,
 				"fz tuple in lookup iff neo flag ({})", b_neo);
 		}
+	}
+
+	/// FU1 fixture: an SCC info store, subsig 5 with the given components.
+	fn fu1_scc_rows(comps: Vec<usize>) -> Vec<(Fr, Fr)> {
+		let mut st = crate::clam_db::SubsigInfoStore::new();
+		st.add(&crate::type_def::SubsigInfoStoreItem{subsig_id: 5,
+			subsig_type: crate::type_def::SubSigType::SubsigCountConstraint
+				as u8,
+			comp_op: 0, comp_num: 0, min_required: 1,
+			component_subsigs: comps});
+		st.finalize();
+		let mut lk = LookupTableTwoCol_Inst::<Fr>{ vals: vec![] };
+		st.add_store_to_lkup(&mut lk, 0, 0, false);
+		lk.vals
+	}
+
+	/// FU1 green: components below max pass. Subsig 0 and 5 each emit
+	/// 4 info rows plus k + 2 component rows.
+	#[test]
+	fn test_fu1_comp_below_max(){
+		let max_val = (1usize << read_global_config().range2_bit) - 1;
+		assert_eq!(fu1_scc_rows(vec![3, max_val - 1]).len(), 6 + 8);
+	}
+
+	/// FU1 red: a component equal to the max sentinel would give a fake
+	/// max row with vc = j. The DB build must refuse it.
+	#[test] #[should_panic(expected = "FU1 comp: subsig 5 component 1")]
+	fn test_fu1_comp_eq_max_refused(){
+		let max_val = (1usize << read_global_config().range2_bit) - 1;
+		fu1_scc_rows(vec![3, max_val]);
+	}
+
+	/// FU1 red: max + 1 components (each below max) would put position
+	/// j = f in the first limb. Small cap 3, so no global rb is read.
+	#[test] #[should_panic(expected = "FU1 k: subsig 5 has 4")]
+	fn test_fu1_k_above_max_refused(){
+		let mut st = crate::clam_db::SubsigInfoStore::new();
+		st.add(&crate::type_def::SubsigInfoStoreItem{subsig_id: 5,
+			subsig_type: crate::type_def::SubSigType::SubsigCountConstraint
+				as u8,
+			comp_op: 0, comp_num: 0, min_required: 1,
+			component_subsigs: vec![1; 4]});
+		st.assert_fu1_wf(3);
+	}
+
+	/// FU2 green: a key of exactly m - FU2_RB_MAX - 2 bits passes, and so
+	/// does the widest honest key (step-store tag, 5*rb + 62 bits).
+	#[test]
+	fn test_fu2_key_bound_green(){
+		use ark_ff::{BigInteger, One};
+		let rb = read_global_config().range2_bit;
+		let lim = Fr::MODULUS_BIT_SIZE as usize
+			- crate::clam_db::FU2_RB_MAX - 2;
+		let mut top = Fr::one();
+		for _ in 0..lim { top = top + top; }
+		let f5 = (0..5).fold(Fr::one(), |a, _| a * Fr::from(1u64 << rb));
+		let wide = SubsigStepStore::gen_step_tbl_id(f5 - Fr::one(),
+			ID_ENCODED_FZ);
+		assert_eq!(wide.into_bigint().num_bits() as usize, 5 * rb + 62);
+		let lk = LookupTableTwoCol_Inst::<Fr>{ vals: vec![
+			(Fr::zero(), Fr::zero()), (wide, Fr::one()),
+			(top - Fr::one(), Fr::one())] };
+		crate::clam_db::assert_lkup_key_bound(&lk);
+	}
+
+	/// FU2 red: a key of 2^(m - FU2_RB_MAX - 2) (one bit over) is refused.
+	#[test] #[should_panic(expected = "FU2 key: lkup row 1")]
+	fn test_fu2_key_bound_refused(){
+		use ark_ff::One;
+		let lim = Fr::MODULUS_BIT_SIZE as usize
+			- crate::clam_db::FU2_RB_MAX - 2;
+		let mut top = Fr::one();
+		for _ in 0..lim { top = top + top; }
+		let lk = LookupTableTwoCol_Inst::<Fr>{ vals: vec![
+			(Fr::zero(), Fr::zero()), (top, Fr::zero())] };
+		crate::clam_db::assert_lkup_key_bound(&lk);
 	}
 
 	/// Heavy on-demand budget guard: rebuild the full ClamAV DB fresh

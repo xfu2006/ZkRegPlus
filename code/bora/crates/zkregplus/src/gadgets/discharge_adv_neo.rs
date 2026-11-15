@@ -59,7 +59,8 @@ use data_processor::type_def::SubsigStepStore;
 use data_processor::clam_db::{reverse_pm_bounds, RANGE2,
 	ID_ENCODED_NORMAL_STEP, ID_ENCODED_LAST_STEP, ID_ENCODED_SUBSIG,
 	ID_ENCODED_PAT, ID_ENCODED_RG_START, ID_ENCODED_RG_END,
-	ID_ENCODED_PREV_ENCODED, ID_ENCODED_FZ, ID_SUBSIG_IS_BACKWARD};
+	ID_ENCODED_PREV_ENCODED, ID_ENCODED_FZ, ID_SUBSIG_IS_BACKWARD,
+	FU2_RB_MAX};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -5737,6 +5738,10 @@ wf_cs_per_row={:.2} mem_cs={} mem_cs_per_row={:.2}",
 		let n0 = cs.num_constraints();
 		let n = qm.enc.len();
 		let rb = read_global_config().range2_bit;
+		// FU2 (native, 0 cs): the DB key bound (clam_db
+		// assert_lkup_key_bound) is checked for rb <= FU2_RB_MAX.
+		assert!(rb <= FU2_RB_MAX, "FU2 rb: range2_bit {} > {}", rb,
+			FU2_RB_MAX);
 		let c_one = new_const_var(&cs, F::one());
 		let c_base = new_const_var(&cs, F::from(1u64 << rb));
 		// T925 anchor-ban advice inv = sel_pred / prev_loc1, 0 on a

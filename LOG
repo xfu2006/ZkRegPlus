@@ -32190,7 +32190,7 @@ Goal 4. Writing
 	[b] finish minior tasks today (macro defs etc.)
 	
 Sunday 11/15/2026
-Goal 1. B2
+Goal 1. B2 -> COMPLETED
 	[a] T991: fixed
 	SUMMARY: minor reduction on CS, but
 		cp capacity raises 13%,
@@ -32206,6 +32206,9 @@ Goal 2. B3.
 	[c] T972: titen aggr omde ban wildcard *.
 	[d] T962: compute_sig_adv, soudness err like missing
 		middle rows. and padding handling.
+	[e] T960: enforce compute_sig_adv submited subsig in order.
+	[f] T994: 
+	
 
 Goal 3. Writing
 	[a] minor changes: soften words such as complete.
