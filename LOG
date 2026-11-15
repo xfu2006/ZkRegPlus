@@ -32203,6 +32203,9 @@ Goal 2. B3.
 			where ocmpute_sig_adv read. remove that
 				table replace by checked disadv_neo_core.subsigs
 				statement. minor cs reduction
+	[c] T972: titen aggr omde ban wildcard *.
+	[d] T962: compute_sig_adv, soudness err like missing
+		middle rows. and padding handling.
 
 Goal 3. Writing
 	[a] minor changes: soften words such as complete.

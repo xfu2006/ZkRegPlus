@@ -39,7 +39,7 @@ use crate::gadgets::{
 	commons::{encode_cols_better, gen_m_table, encode_cols_var_adv_better,
 		encode_cols, encode_cols_var,
 		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
-		check_prod_zero, check_prod_eq, better_select,
+		check_prod_zero, check_prod_eq, better_select, better_select_check,
 		verify_encode_cols_in_range},
 	db::{assert_logup,
 		//verify_encoded_table, assert_well_formed_sorted
@@ -1080,13 +1080,13 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					
 
 				scc_prf_raw.push(raw_res);
-				sid_scc_prf_raw.push(zero); //don't care as it will be looked up
+				sid_scc_prf_raw.push(frg); //T962 NH1: RANGE2 (3.2 pack injective)
 				scc_prf_cnt_true.push(F::from(cnt_true as u64));
 				sid_scc_prf_cnt_true.push(zero); //don't care as it is computed
 				scc_prf_cnt_maybe.push(F::from(cnt_maybe as u64));
 				sid_scc_prf_cnt_maybe.push(zero); //don't care as it is computed
 				scc_prf_row_res.push(res);
-				sid_scc_prf_row_res.push(zero); //don't care as it is computed
+				sid_scc_prf_row_res.push(frg); //T962 H1u: RANGE2 (pad max row < unit)
 
 				scc_prf_abs_diff1.push(F::from(abs_diff1 as u64));
 				sid_scc_prf_abs_diff1.push(frg);
@@ -1140,13 +1140,13 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 
 		sid_scc_prf_min_req = [&pad_min_req[..], &sid_scc_prf_min_req[..]].concat();
 			//non const
-		sid_scc_prf_raw = [&pad[..], &sid_scc_prf_raw[..]].concat(); //const 0
+		sid_scc_prf_raw = [&pad2[..], &sid_scc_prf_raw[..]].concat(); //const rg2 (T962 NH1)
 		sid_scc_prf_cnt_true = [&pad[..], &sid_scc_prf_cnt_true[..]].concat();
 			//const 0
 		sid_scc_prf_cnt_maybe = [&pad[..], &sid_scc_prf_cnt_maybe[..]].concat();
 			//const 0
-		sid_scc_prf_row_res = [&pad[..], &sid_scc_prf_row_res[..]].concat();
-			//const 0
+		sid_scc_prf_row_res = [&pad2[..], &sid_scc_prf_row_res[..]].concat();
+			//const rg2 (T962 H1u)
 		sid_scc_prf_abs_diff1= [&pad2[..], &sid_scc_prf_abs_diff1[..]].concat();
 			//const rg2
 		sid_scc_prf_abs_diff2= [&pad2[..], &sid_scc_prf_abs_diff2[..]].concat();
@@ -1428,8 +1428,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 				(eval_dnf_id, F::from(i as u64), eval_count, *ssid, sig_id)
 			).collect::<Vec<(F,F,F,F,F)>>()
 		}).flatten().collect::<Vec<(F,F,F,F,F)>>();
-		if n<info_ts.len(){
-			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs"), info_ts.len())]));
+		if n<=info_ts.len(){ //T962 NEW-2: keep one leading pad row
+			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs"), info_ts.len()+1)]));
 		}
 		let pad = vec![(zero,zero,zero,zero,zero); n-info_ts.len()];
 		let info_ts = [&pad[..], &info_ts[..]].concat();
@@ -2457,7 +2457,7 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//4. VERIFY the final table. idea is simple: we
 		// use conditional selection to determine based on type
 		//
-		// COST: 7n 
+		// COST: 4n (per slot: is_reg 2, select 1, select_check 1; T962)
 		let var_regular = new_const_var(&cs,
 			F::from(SubSigType::GeneralRegex as u8)); // 0
 		let is_reg = vec_type.iter().map(|t|
@@ -2470,20 +2470,12 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let vec_subsig_final_res = synthesis_res_combo
 			.get_container("vec_subsig_final_res").unwrap().lock().unwrap().to_vec();
 		for i in 0..n{//since it's small about 1k entries, just single thread
-			let subsig = &inp_subsigs[i];
-			//let res = is_scc[i].select(&vec_scc_res[i],
-			//	&is_reg[i].select(&gen_regex_res[i],
-			//		&vec_counter_res[i]).unwrap()
-			//).unwrap();
-			let res = better_select(&is_scc[i], &vec_scc_res[i],
-				&better_select(
-					&is_reg[i], &gen_regex_res[i], &vec_counter_res[i]
-				)
-			);
-			//check_eq(&(subsig*&(&res-&vec_subsig_final_res[i])),
-			//	&zero, "fail final subsig")?;
-			check_prod_zero(&subsig, &(&res-&vec_subsig_final_res[i]),
-				lb_zero.clone(), "fail final subsig")?;
+			//T962 H1u: ungated (pads too): a pad slot's final_res is its
+			//RANGE2 raw (pad type GeneralRegex), so its dst_2.2 < unit
+			let inner = better_select(&is_reg[i], &gen_regex_res[i],
+				&vec_counter_res[i]);
+			better_select_check(&is_scc[i], &vec_scc_res[i], &inner,
+				&vec_subsig_final_res[i])?;
 		}
 
 
@@ -2576,10 +2568,12 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		// NOTE that the validity of v_dnf_step, ... columns are proved
 		// already via v_sid columns in step 1.
 		//
-		// COST: 6n + 3
+		// COST: 9n - 7 (row: is_neq 3 + 5 mul + 1 eq; pin 1; T962 F3 1)
 		check_eq(&v_sigs[0], &zero, "we require one dummy entry at begin")?;
 		for i in 1..n{
-			let b_new_row = v_sigs[i].is_neq(&v_sigs[i-1])?;
+			//T962 F2 (W3): block = one (sig, dnf) clause; both RANGE2
+			let b_new_row = (&v_sigs[i]*&factor + &v_dnf_id[i])
+				.is_neq(&(&v_sigs[i-1]*&factor + &v_dnf_id[i-1]))?;
 			let i_new_row: FpVar<F> = b_new_row.into();
 			let res = (&i_new_row-&one) * &(//if this is NOT new row then:
 				//(a) id_increase by one
@@ -2596,6 +2590,9 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 
 			check_eq(&res, &zero, "fails well-formed check")?;
 		}
+		//T962 F3 (W2): close the last block too (pads are in front)
+		check_prod_zero(&(&v_dnf_step[n-1] + &one - &v_dnf_count[n-1]),
+			&v_sigs[n-1], LinearCombination::zero(), "last block closes")?;
 
 
 		//2.2 build subsigs from (sig_id, real_subsig) and lookup
@@ -3543,10 +3540,10 @@ use utils::consts::{read_global_config, get_global_config};
 	const FIXED_F1: bool = true;
 	const FIXED_F1_NA: bool = false;
 	const FIXED_NH3: bool = true;
-	const FIXED_F2: bool = false;
-	const FIXED_F3: bool = false;
-	const FIXED_H1U: bool = false;
-	const FIXED_NH1: bool = false;
+	const FIXED_F2: bool = true;
+	const FIXED_F3: bool = true;
+	const FIXED_H1U: bool = true;
+	const FIXED_NH1: bool = true;
 	const FIXED_H2P: bool = true;
 	const FIXED_NH2: bool = true;
 
@@ -3737,7 +3734,8 @@ use utils::consts::{read_global_config, get_global_config};
 		//T964: 2833 - 76 = 2757, scc chain 16 -> 10 per row (n2 = 10:
 		//-6*9), last-row max check (2) -> row-0 pin (1), r3 gone (1),
 		//is_zero(comp - max) shared by 3.2 and 3.5 (-2*n2)
-		assert_eq!(nc, 2757, "csa sig5 constraint count moved");
+		//T962: 2757 - 50 + 1 = 2708, H1u ungated select (-n), F3 (+1)
+		assert_eq!(nc, 2708, "csa sig5 constraint count moved");
 	}
 
 	/// BREAK1: rotate the (fully matched, steps 0..2) block of s in step
@@ -4421,7 +4419,8 @@ use utils::consts::{read_global_config, get_global_config};
 		//T961: 1616 + (25 + 1) = 1642, F1 chain check_eq (n+1, k_cs = 25,
 		//b_skip_igc; its RANGE2 cells are outer-lookup cost, not in nc)
 		//T964: 1642 - 76 = 1566 (scc chain + shared is_max, as nonaggr)
-		assert_eq!(r.nc, 1566, "csa aggr constraint count moved");
+		//T962: 1566 - 25 + 1 = 1542, H1u ungated select (-n), F3 (+1)
+		assert_eq!(r.nc, 1542, "csa aggr constraint count moved");
 	}
 
 	/// T965 N2 / ST: the matched s is never seeded (dan demand without s,

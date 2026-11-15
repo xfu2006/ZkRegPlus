@@ -47,3 +47,5 @@ watson_seg5/
 # t965/<name>/ are WRITE targets of the T965 tests (create_dir_all +
 # build_test_db), like t602_probe_scratch_*.
 t965/
+# t962/<name>/ is the WRITE target of the T962 DFA tests (dfa_adv.rs).
+t962/

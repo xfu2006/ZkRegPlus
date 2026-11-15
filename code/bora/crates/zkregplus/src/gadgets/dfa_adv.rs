@@ -47,6 +47,7 @@ use data_processor::{
 use utils::{data::{u8_to_hex}};
 use crate::gadgets::{
 	commons::{mix_vec,new_const_var, check_eq,encode_cols_better,gen_m_table,
+		check_prod_zero,
 		encode_cols_var_adv_better , packcheck_vec, build_pows_31_val,
 		build_pows_56_val, var_to_lb},
 	traits::{Container,
@@ -1059,10 +1060,12 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 		// NOTE that the validity of v_dnf_step, ... columns are proved
 		// already via v_sid columns in step 1.
 		//
-		// COST: 6n + 3
+		// COST: 9n - 7 (row: is_neq 3 + 5 mul + 1 eq; pin 1; T962 F3 1)
 		check_eq(&v_sigs[0], &zero, "we require one dummy entry at begin")?;
 		for i in 1..n{
-			let b_new_row = v_sigs[i].is_neq(&v_sigs[i-1])?;
+			//T962 F2 (W3): block = one (sig, dnf) clause; both RANGE2
+			let b_new_row = (&v_sigs[i]*&factor + &v_dnf_id[i])
+				.is_neq(&(&v_sigs[i-1]*&factor + &v_dnf_id[i-1]))?;
 			let i_new_row: FpVar<F> = b_new_row.into();
 			// Ported from compute_sig_adv.rs (the SED twin of this gadget),
 			// which carries the correct form. The DFA copy had the two
@@ -1083,6 +1086,9 @@ impl <F:PrimeField + ColEle> DfaAdvGadget<F>{
 			);
 			check_eq(&res, &zero, "fails well-formed check")?;
 		}
+		//T962 F3 (W2): close the last block too (pads are in front)
+		check_prod_zero(&(&v_dnf_step[n-1] + &one - &v_dnf_count[n-1]),
+			&v_sigs[n-1], LinearCombination::zero(), "last block closes")?;
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_discharge_sig step 2.1", &mut gt);
 		}
@@ -1317,7 +1323,7 @@ pub mod tests_dfa_adv_gadget{
 	use crate::gadgets::{
 		word_extract::{
 			LEGS,
-			tests_word_extract_gadget::{test_gadget_adv},
+			tests_word_extract_gadget::{test_gadget_adv, outer_lkup_ok},
 		},
 		dfa_adv::{DfaAdvGadget,DfaAdvAdvice,DfaAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
@@ -1328,7 +1334,7 @@ pub mod tests_dfa_adv_gadget{
 
 	};
 	use folding_schemes::folding::foldpot::{
-		sigma_ir1cs::{SigmaGadget,WordInfo},
+		sigma_ir1cs::{SigmaGadget,WordInfo,DischargeSigInfo},
 		container_config::ContainerConfig,
 		circuits_super::field_to_usize,
 	};
@@ -1339,6 +1345,19 @@ pub mod tests_dfa_adv_gadget{
 	use data_processor::type_def::TriVal;
 
 	fn dfa_adv_case(tamper: &dyn Fn(&Arc<Mutex<Container<Fr>>>, &DFA<char>, Fr)) -> bool{
+		let db = ClamavDB::<Fr>::build_db_from_dir("debug/dfa/simple")
+			.expect("db err");
+		dfa_adv_run(&db, "sig1", None, 2, tamper, &|_, _| {})
+	}
+
+	/// dfa_adv_case on sig `name` of `db` over word2.txt (T962). ks =
+	/// Some((dnf, slot subsig idxs)) sets the discharge info by hand, else
+	/// native info, slots vec_disjunc[0]. dis(mul_fsm_acc, sig_res_combo)
+	/// tampers the discharge table.
+	fn dfa_adv_run(db: &ClamavDB<Fr>, name: &str,
+		ks: Option<(usize, Vec<usize>)>, subsigs: usize,
+		tamper: &dyn Fn(&Arc<Mutex<Container<Fr>>>, &DFA<char>, Fr),
+		dis: &dyn Fn(&Container<Fr>, &Container<Fr>)) -> bool{
 		//1. load the clamdb instance. It has the following sigs
 		//sig1: a....c|c....a
 		//word: 22a9999d111111 (it's expect c with a gap of 4 from a, but
@@ -1346,7 +1365,6 @@ pub mod tests_dfa_adv_gadget{
 		//DFA discharges it. The Critical pattern and SED fail because
 		// pattern "a" and "c" too short.
 		let path= "debug/dfa/simple";
-		let db = ClamavDB::<Fr>::build_db_from_dir(path).expect("db err");
 
 		//2. create advice for word_extract_adv and dfa_adv
 		// both advices are needed for producing related container_config
@@ -1364,7 +1382,8 @@ pub mod tests_dfa_adv_gadget{
 			&pack_nibbles(&f_nibbles), wlen);
 		let act_size = word.len();
 		let cfg = default_clamav_cfg();
-		let wi: WordInfo = quick_discharge_file_by_crit_bag_pm(
+		let wi: Option<WordInfo> = ks.is_none().then(||
+			quick_discharge_file_by_crit_bag_pm(
 			"word2.txt",
 			&nibbles_raw,
 			&db.vec_sigs,
@@ -1377,7 +1396,7 @@ pub mod tests_dfa_adv_gadget{
 			&db.bundle_subsig_igc.vec_acdfa[0], //dfa_patterns_igc,
 			true, &cfg,
 			&db.sig_to_id, wlen, wlen
-        ).1; //use optimize mode
+        ).1); //use optimize mode
 
 		let adv_wea = WordExtractAdvAdvice::new(&word, act_size, false)
 			.expect("word_extract_adv err");
@@ -1385,35 +1404,41 @@ pub mod tests_dfa_adv_gadget{
 		let cfg_wea = stmt_wea.lock().unwrap().get_cfg(); 
 
 		//2.2 the dfa_adv 
-		let sig = &db.vec_sigs.iter().filter(|sig| sig.name=="sig1")
+		let sig = &db.vec_sigs.iter().filter(|sig| sig.name==name)
 			.map(|sig| sig.clone()).collect::<Vec<Arc<ClamavSig>>>()[0];
 		let v_sigs = vec![sig.clone()];
 		let sig_id = db.sig_to_id.get(&sig.name).unwrap();
-		let info = &wi.vec_dfa_sigs_info[0];
-		assert!(info.sig_name=="sig1"); 
+		let info = &match &ks {
+			Some((d, _)) => DischargeSigInfo{sig_name: name.to_string(),
+				b_success: true, min_cost: 0, min_dnf_id: *d,
+				subsig_ids: vec![0], subsig_igc: vec![false]},
+			None => wi.unwrap().vec_dfa_sigs_info[0].clone(),
+		};
+		assert!(info.sig_name==name);
+		let b_lk = ks.is_some(); //T962: red tests also check outer lookups
+		let slots = ks.map(|k| k.1)
+			.unwrap_or(sig.eval_dnf.vec_disjunc[0].clone());
 
 		let discharge_infos = vec![info.clone()]; //only one sig to discharge
 		let inp_sigs: Vec<Fr> = vec![Fr::from(*sig_id as u64)];
 		// here we just take the first dnf, in practice it
 		// will be decided by the DischargeInfo advice which dnf to discharge
-		let inp_subsigs = v_sigs.iter().map(|sig| sig.
-			eval_dnf.vec_disjunc[0].iter().map(|i|
+		let inp_subsigs = v_sigs.iter().map(|_| slots.iter().map(|i|
 				Fr::from(HexACDFA::gen_subsig_id_worker(*sig_id, *i+1) as u32)
 			).collect::<Vec<Fr>>()
 		).collect::<Vec<Vec<Fr>>>();
-		let inp_raw_subsigs = v_sigs.iter().map(|sig| sig.
-			eval_dnf.vec_disjunc[0].iter().map(|i| Fr::from(*i as u64))
+		let inp_raw_subsigs = v_sigs.iter().map(|_| slots.iter()
+			.map(|i| Fr::from(*i as u64))
 			.collect::<Vec<Fr>>()
 		).collect::<Vec<Vec<Fr>>>();
-		let v_dfa= v_sigs.iter().map(|sig| sig.
-			eval_dnf.vec_disjunc[0].iter().map(|i| 
+		let v_dfa= v_sigs.iter().map(|sig| slots.iter().map(|i| 
 				sig.vec_subsig_automaton[*i].clone()) //clone of Arc low cost
 			.collect::<Vec<Arc<DFA<char>>>>()
 		).collect::<Vec<Vec<Arc<DFA<char>>>>>();
 
-		assert!(&v_sigs[0].name=="sig1");
+		assert!(&v_sigs[0].name==name);
 		let nibble_len = wlen*LEGS;
-		let cap = DfaAdvCapacity{max_nibble_len: nibble_len, subsigs: 2,
+		let cap = DfaAdvCapacity{max_nibble_len: nibble_len, subsigs,
 			sigs: 1};
 
 		let nibbles = stmt_wea.lock().unwrap().get_container("nibbles").unwrap()
@@ -1476,6 +1501,10 @@ pub mod tests_dfa_adv_gadget{
 
 		{ let fsm = stmt_faa.lock().unwrap().get_container("mul_fsm_acc").unwrap();
 		  tamper(&fsm, &v_dfa[0], v_fsm_id[0]); }
+		{ let st = stmt_faa.lock().unwrap();
+		  let (fsm, dc) = (st.get_container("mul_fsm_acc").unwrap(),
+			st.get_container("sig_res_combo").unwrap());
+		  dis(&fsm.lock().unwrap(), &dc.lock().unwrap()); }
 		//2.3 given cfgs, set up the positions
 		let mut vec_cfg = vec![cfg_wea.clone(), cfg_faa];
 		ContainerConfig::adjust_locations(&mut vec_cfg); //resolve
@@ -1508,7 +1537,7 @@ pub mod tests_dfa_adv_gadget{
 			false, //not legacy mode
 			Some(vec_cfg),
 		);
-		})).is_ok()
+		})).is_ok() && (!b_lk || outer_lkup_ok(&cps, &db.lkup))
 		//todo!("manually verify two cases if DFA hits accept state or not for two different test cases");
 	}
 
@@ -1786,5 +1815,101 @@ pub mod tests_dfa_adv_gadget{
 		});
 		println!("DEBUG USE 69369.1: relabelled oup copy sat = {}", sat);
 		assert!(!sat);
+	}
+
+	// ---- T962 W2/W3 red tests: the DFA twin of csa F2/F3. A red test
+	// asserts sat == !FIXED_<id>; revert the fix and flip it to see SAT. ----
+	const FIXED_W2: bool = true;
+	const FIXED_W3: bool = true;
+	/// S = (0|1)&(2|3): negated clauses d0 = {0,1}, d1 = {2,3}, each count
+	/// 2. No subsig hits word2 (no b/c/e/f nibble run); slots run all 4.
+	const T962_SIG: &str = "sigM;Engine:51-255,Target:0;(0|1)&(2|3);\
+		/bbbbeeee/;/eeeebbbb/;/ffffcccc/;/ccccffff/";
+
+	/// T962: honest discharge of sigM by d0 ([pad, pad, (d0,0), (d0,1)]),
+	/// table tamper `dis`, then sid tags + m-tables re-derived.
+	fn t962_dfa_run(name: &str, dis: &dyn Fn(&Container<Fr>)) -> bool{
+		use crate::gadgets::commons::{gen_m_table, encode_cols_better};
+		let dir = format!("debug/t962/{}", name);
+		std::fs::create_dir_all(format!("{}/data/{}", proj_root(), dir))
+			.unwrap();
+		let v = vec!["sigM".to_string()];
+		let db = ClamavDB::<Fr>::build_test_db(&default_clamav_cfg(), &dir,
+			&vec![T962_SIG.to_string()], &v, &v, &v).expect("db");
+		dfa_adv_run(&db, "sigM", Some((0, vec![0, 1, 2, 3])), 4,
+			&|_, _, _| {}, &|fsm, c| {
+			let g = |c: &Container<Fr>, n: &str| c.get_col(n).unwrap()
+				.lock().unwrap().data.clone();
+			let set = |n: &str, v: Vec<Fr>| c.get_col(n).unwrap()
+				.lock().unwrap().data = v;
+			let f_false = Fr::from(TriVal::False as u8);
+			assert!(g(fsm, "subsig_res")[..4].iter().all(|r| *r == f_false),
+				"fixture: all 4 slots False");
+			dis(c);
+			let (sig, dnf, step, real) = (g(c, "v_sigs"), g(c, "v_dnf_id"),
+				g(c, "v_dnf_step"), g(c, "v_real_subsigs"));
+			let n = sig.len();
+			let fac = Fr::from(1u64 << 32);
+			let tag = |id: u32, i: usize| Fr::from(id) * fac * fac * fac
+				+ sig[i] * fac * fac + dnf[i] * fac;
+			set("sid_v_dnf_count", (0..n).map(|i| tag(0x98882405, i)).collect());
+			set("sid_v_real_subsigs", (0..n).map(|i| tag(0x99992405, i)
+				+ step[i]).collect());
+			let fac2 = Fr::from(1u64 << utils::consts::current_bit_parts().1);
+			let comp: Vec<Fr> = (0..n).map(|i| sig[i] * fac2 + real[i]).collect();
+			let pad_inp = [&g(fsm, "v_subsig")[..], &[Fr::zero()]].concat();
+			let pad_res = [&g(fsm, "subsig_res")[..], &[f_false]].concat();
+			set("mtbl_lk_res", gen_m_table(
+				&encode_cols_better(vec![&comp[..], &vec![f_false; n][..]],
+					vec![0,1]),
+				&encode_cols_better(vec![&pad_inp[..], &pad_res[..]], vec![0,1])));
+			set("mtbl_sigs", gen_m_table(&g(c, "discharged_sigs"), &sig));
+		})
+	}
+	fn t962_set1(c: &Container<Fr>, name: &str, i: usize, x: Fr){
+		c.get_col(name).unwrap().lock().unwrap().data[i] = x;
+	}
+	fn t962_col(c: &Container<Fr>, name: &str) -> Vec<Fr>{
+		c.get_col(name).unwrap().lock().unwrap().data.clone()
+	}
+
+	/// T962 W3 (F2): the last row (d0, step 1, subsig 1) is re-labeled
+	/// d1 step 1 (subsig 3, False). Each row is DB-valid; the boundary
+	/// looks at v_sigs only, so the mixed "clause" {0, 3} closes with
+	/// count 2. Control: the honest table (same re-derive) is SAT.
+	#[test]
+	fn test_t962_dfa_w3_clause_mix(){
+		assert!(t962_dfa_run("w3", &|_| {}), "control: honest SAT");
+		let sat = t962_dfa_run("w3", &|c| {
+			let n = t962_col(c, "v_sigs").len();
+			assert!(t962_col(c, "v_dnf_id")[n-1].is_zero()
+				&& t962_col(c, "v_dnf_step")[n-1] == Fr::from(1u32)
+				&& t962_col(c, "v_dnf_count")[n-1] == Fr::from(2u32),
+				"precondition: (d0, 1) last");
+			t962_set1(c, "v_dnf_id", n-1, Fr::from(1u32));
+			t962_set1(c, "v_real_subsigs", n-1, Fr::from(4u32)); //subsig 3
+		});
+		assert_eq!(sat, !FIXED_W3, "T962 W3: sat = {}", sat);
+	}
+
+	/// T962 W2 (F3): drop the last row (d0, step 1) and prepend a pad;
+	/// the block (d0, step 0) of count 2 ends the table, never closed.
+	#[test]
+	fn test_t962_dfa_w2_last_block_trunc(){
+		assert!(t962_dfa_run("w2", &|_| {}), "control: honest SAT");
+		let sat = t962_dfa_run("w2", &|c| {
+			let n = t962_col(c, "v_sigs").len();
+			assert!(t962_col(c, "v_sigs")[0].is_zero()
+				&& t962_col(c, "v_dnf_count")[n-1] == Fr::from(2u32),
+				"precondition");
+			for nm in ["v_sigs", "v_dnf_id", "v_dnf_step", "v_dnf_count",
+				"v_real_subsigs", "sid_v_sigs", "sid_v_dnf_id",
+				"sid_v_dnf_step", "sid_v_dnf_count", "sid_v_real_subsigs"] {
+				let v = t962_col(c, nm);
+				c.get_col(nm).unwrap().lock().unwrap().data =
+					[&v[..1], &v[..n-1]].concat();
+			}
+		});
+		assert_eq!(sat, !FIXED_W2, "T962 W2: sat = {}", sat);
 	}
 }
