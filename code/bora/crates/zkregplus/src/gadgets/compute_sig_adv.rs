@@ -246,7 +246,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		sq_res_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // the steps_queue from the DischargeAdv
 		sq_res_igc: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // the steps_queue from the DischargeAdv
-		sq_inp_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // forward seed (aggr seed tie)
+		sq_inp_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // aggr seed tie source (neo: dan neo_core, legacy: sq_inp)
 		sq_inp_igc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info_cs: &SubsigStepStore,
@@ -389,7 +389,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		offset_discharge: i32,
 		inp_subsigs: &Vec<F>, //this is either one of inp_subsigs_cs or igc
 		sq_res: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //already sorted on subsig_step
-		sq_inp: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //forward seed (aggr)
+		sq_inp: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //aggr seed tie source (neo_core / legacy sq_inp)
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info: &SubsigStepStore,
 	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
@@ -641,34 +641,44 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			.filter(|f| !f.is_zero())
 			.map(|f| f.into_bigint().to_bytes_le()).collect();
 
-		// M7: external-ref the forward seed (sq_inp.encoded) and pin
-		// inp_subsig to it via encode(inp_subsig) subset-of seed. This
-		// replaces the QUICK cert: a subsig with a False verdict must have
-		// been seeded (else its encoded value is absent from the seed and
-		// the logup fails). encode_cols matches the seed's step-0 encoding
-		// (subsig at high pos, step/pat/rgs/rge = 0).
-		// neo non-aggr: the carried-in queue q_i stands in for the
-		// legacy forward seed sq_inp.
-		// 8_A: this fn is aggressive-only, so neo here means aggr-neo,
-		// which publishes fwd_seed (universe seed encs) in place of the
-		// legacy forward seed. non-aggr-neo never reaches gen_by_acc.
-		let seed_path = if read_global_config()
-			.clamav_cfg.b_use_discharge_neo {
-			format!("{} fwd_seed", sname)
+		// 8_A: this fn is aggressive-only, so neo here means aggr-neo.
+		// non-aggr-neo never reaches gen_by_acc.
+		// M7 seed tie: pin inp_subsig to the seeded set. This replaces
+		// the QUICK cert: a subsig with a False verdict must have been
+		// seeded (else it is absent from the table and the logup fails).
+		// Legacy (non-neo): ext-ref the forward seed sq_inp.encoded,
+		// query encode(inp_subsig) (the seed's step-0 encoding).
+		// T927 ST (aggr-neo): sq_inp is dan's neo_core. Ext-ref only
+		// its "subsigs" (+ si) column: the K anchored seed slots
+		// (dan assert_seed_anchors). Table = [0] ++ subsigs, plain ids
+		// (the 0 absorbs the dummy-0 queries). Legacy keeps sq_inp.
+		let b_st = read_global_config().clamav_cfg.b_use_discharge_neo;
+		let (seed_ext, qry, tbl) = if b_st {
+			let ext = Container::<F>::new("seed_ref");
+			for c in ["subsigs", "si_subsigs"] {
+				let col = sq_inp.lock().unwrap().get_container(c).unwrap();
+				let d = col.lock().unwrap().duplicate_as_external(
+					offset_discharge, Some(format!("{} neo_core {}",
+					sname, c)));
+				ext.lock().unwrap().add_container(Arc::new(Mutex::new(d)));
+			}
+			let mut tbl = vec![zero];
+			tbl.extend(ext.lock().unwrap().get_container("subsigs")
+				.unwrap().lock().unwrap().to_vec());
+			(ext, inp_subsigs.clone(), tbl)
 		} else {
-			format!("{} fwd_steps_queue sq_inp", sname)
+			let ext = sq_inp.lock().unwrap().duplicate_as_external_adv(
+				offset_discharge,
+				Some(format!("{} fwd_steps_queue sq_inp", sname)),
+				Some("seed_ref".to_string()));
+			let tbl = ext.get_container("encoded").unwrap()
+				.lock().unwrap().to_vec();
+			let zc = vec![zero; n];
+			(Arc::new(Mutex::new(ext)), encode_cols(&vec![
+				inp_subsigs.clone(), zc.clone(), zc.clone(), zc.clone(),
+				zc], &vec![0,1,2,3,4]), tbl)
 		};
-		let seed_ext = sq_inp.lock().unwrap().duplicate_as_external_adv(
-			offset_discharge,
-			Some(seed_path),
-			Some("seed_ref".to_string()));
-		let seed_enc: Vec<F> = seed_ext.get_container("encoded").unwrap()
-			.lock().unwrap().to_vec();
-		let zc = vec![zero; n];
-		let enc_inp = encode_cols(&vec![inp_subsigs.clone(),
-			zc.clone(), zc.clone(), zc.clone(), zc.clone()],
-			&vec![0,1,2,3,4]);
-		let mtbl_seed = gen_m_table(&enc_inp, &seed_enc);
+		let mtbl_seed = gen_m_table(&qry, &tbl);
 		let nm2 = mtbl_seed.len();
 
 		//2. per inp_subsig: LAST_STEP encoded key + its 4 encode sub-fields
@@ -764,7 +774,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		res.lock().unwrap().add_col(Col::new_const(vec![zero;nm],
 			"sid_mtbl_membership", IDX_SI_DATA));
 		// M7 seed tie: external-ref seed + the subset-of m-table.
-		res.lock().unwrap().add_container(Arc::new(Mutex::new(seed_ext)));
+		res.lock().unwrap().add_container(seed_ext);
 		res.lock().unwrap().add_col(Col::new(mtbl_seed, "mtbl_seed",
 			IDX_DATA));
 		res.lock().unwrap().add_col(Col::new_const(vec![zero;nm2],
@@ -1657,33 +1667,32 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			 sq_res_obj_igc.to_container("sq_res2_igc ", false, true, true,
 				true, &store_steps_igc).expect("sq_res_igc err"))
 		};
-		// AGGRESSIVE seed tie: dummy sq_inp (forward seed) sized like the
+		// AGGRESSIVE seed tie: dummy seed-tie source sized like the
 		// real one so compute_sig's mtbl_seed column matches in the cfg.
-		// 8_A neo-aggr: the real seed is fwd_seed (encoded + si_encoded),
-		// so the dummy must MIRROR it -- else the external ref to a
-		// StepQueue "locs" child fails to resolve against fwd_seed.
+		// T927 ST neo-aggr: the real source is dan's neo_core, of which
+		// gen_eval_subsig_by_acc ext-refs only "subsigs" + "si_subsigs"
+		// (si 0 on aggr), so the dummy mirrors those two columns.
 		let b_neo_aggr = read_global_config().clamav_cfg
 			.b_use_discharge_neo && capacity.b_aggressive;
-		let mk_fwd_seed = |n: usize| {
-			let c = Container::<F>::new("sq_inp");
+		let mk_neo_subsigs = |n: usize| {
+			let c = Container::<F>::new("neo_core");
 			c.lock().unwrap().add_col(Col::new(vec![zero; n],
-				"encoded", IDX_DATA));
+				"subsigs", IDX_DATA));
 			c.lock().unwrap().add_col(Col::new_const(vec![zero; n],
-				"si_encoded", IDX_SI_DATA));
+				"si_subsigs", IDX_SI_DATA));
 			c
 		};
 		let (dummy_sq_inp_cs, dummy_sq_inp_igc) = if b_neo_aggr {
-			// length MUST equal the real fwd_seed that new_aggr emits:
-			// K seed slots (subsig_nat is resized to k_slots =
-			// capacity.subsigs) PLUS the leading 0 entry, i.e. K+1.
-			// compute_sig's mtbl_seed column length = seed_enc length,
-			// so a dummy/real size mismatch here makes the main
-			// decider snark fail to verify. Sizing this from the DB
-			// subsig universe instead made the dummy ~11000x the real
-			// column on DLP (2308943 vs 202) -- 92.8% of the neo
-			// statement.
-			(mk_fwd_seed(dis_cap_cs.subsigs + 1),
-			 mk_fwd_seed(dis_cap_igc.subsigs + 1))
+			// length MUST equal the real neo_core "subsigs": K slots
+			// (subsig_nat is resized to k_slots = capacity.subsigs).
+			// compute_sig's mtbl_seed column has K+1 entries (the
+			// const 0 first), so a dummy/real size mismatch here makes
+			// the main decider snark fail to verify. Sizing this from
+			// the DB subsig universe instead made the dummy ~11000x
+			// the real column on DLP (2308943 vs 202) -- 92.8% of the
+			// neo statement.
+			(mk_neo_subsigs(dis_cap_cs.subsigs),
+			 mk_neo_subsigs(dis_cap_igc.subsigs))
 		} else {
 			let sq_inp_size_cs = StepQueue::<F>::vec_size(
 				&StepQueueType::ResSmall, &dis_cap_cs).0;
@@ -1834,20 +1843,33 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//3. SOUNDNESS logup: acc_out subset-of maybe_masked
 		assert_logup(cs.clone(), &acc_out, &maybe_masked, &mtbl, &r1)?;
 
-		//4. M7 SEED TIE: encode(inp_subsig) subset-of sq_inp.encoded, so
-		//every verdict-universe subsig was actually seeded into the forward
-		//(replaces QUICK; blocks a False-by-omission verdict). encode_cols_var
-		//matches the seed's step-0 encoding (subsig high, rest 0).
-		let seed_enc = eval_res_combo.get_container("seed_ref").unwrap()
-			.lock().unwrap().get_container("encoded").unwrap()
-			.lock().unwrap().to_vec();
+		//4. M7 SEED TIE: every verdict-universe subsig was seeded
+		//(replaces QUICK; blocks a False-by-omission verdict).
+		//T927 ST (neo): inp_subsig subset-of [0] ++ seed_ref.subsigs,
+		//plain ids. seed_ref.subsigs IS dan's neo_core "subsigs" (ext
+		//ref, dest None: the same dan statement vars, not in csa's
+		//statement, 0 cs), whose every nonzero slot
+		//dan anchors to a seeded run (assert_seed_anchors). The const 0
+		//absorbs the dummy-0 slots and keeps the table at K+1.
+		//EXAMPLE: dan seeds {a}, csa lists [0, a, s] -> s not in
+		//  [0, a, 0..] -> UNSAT. Legacy: encode(inp) subset-of sq_inp.
+		let seed_ref = eval_res_combo.get_container("seed_ref").unwrap();
+		let seed_col = |nm: &str| seed_ref.lock().unwrap()
+			.get_container(nm).unwrap().lock().unwrap().to_vec();
 		let mtbl_seed = get("mtbl_seed");
-		let zc: Vec<FpVar<F>> = (0..n)
-			.map(|_| new_const_var(&cs, F::zero())).collect();
-		let enc_inp = encode_cols_var(&vec![inp_subsig.clone(),
-			zc.clone(), zc.clone(), zc.clone(), zc.clone()],
-			&vec![0,1,2,3,4]);
-		assert_logup(cs.clone(), &enc_inp, &seed_enc, &mtbl_seed, &r1)?;
+		let (qry, tbl) = if read_global_config().clamav_cfg
+			.b_use_discharge_neo {
+			let mut tbl = vec![FpVar::Constant(F::zero())];
+			tbl.extend(seed_col("subsigs"));
+			(inp_subsig.clone(), tbl)
+		} else {
+			let zc: Vec<FpVar<F>> = (0..n)
+				.map(|_| new_const_var(&cs, F::zero())).collect();
+			(encode_cols_var(&vec![inp_subsig.clone(), zc.clone(),
+				zc.clone(), zc.clone(), zc], &vec![0,1,2,3,4]),
+			 seed_col("encoded"))
+		};
+		assert_logup(cs.clone(), &qry, &tbl, &mtbl_seed, &r1)?;
 		Ok(())
 	}
 
@@ -3438,7 +3460,6 @@ use utils::consts::{read_global_config, get_global_config};
 		T965Stage::EvalCs | T965Stage::EvalIgc if matches!(c,
 			Container::Complex(_, m, _, _) if m.contains_key("acc_ref")) => {
 			//aggr (by_acc layout)
-			use crate::gadgets::commons::encode_cols;
 			let g = |n: &str| t965_col(c, n);
 			let sub = |k: &str, n: &str| t965_col(&c.get_container(k).unwrap()
 				.lock().unwrap(), n);
@@ -3448,11 +3469,9 @@ use utils::consts::{read_global_config, get_global_config};
 				.collect();
 			t965_set(c, "mtbl_membership", gen_m_table(
 				&sub("acc_ref", "acc_encoded"), &maybe));
-			let z = vec![zero; inp.len()];
-			let enc_inp = encode_cols(&vec![inp.clone(), z.clone(), z.clone(),
-				z.clone(), z], &vec![0,1,2,3,4]);
-			t965_set(c, "mtbl_seed", gen_m_table(&enc_inp,
-				&sub("seed_ref", "encoded")));
+			//T927 ST: seed table [0] ++ seed_ref.subsigs, plain ids
+			let tbl = [&[zero][..], &sub("seed_ref", "subsigs")[..]].concat();
+			t965_set(c, "mtbl_seed", gen_m_table(&inp, &tbl));
 			t965_fix_chain(c);
 			ctx.inp.extend(inp);
 			ctx.raw.extend(raw);
@@ -4123,7 +4142,7 @@ use utils::consts::{read_global_config, get_global_config};
 	}
 
 	// ---- T965 M5: neo discharge + csa harness (aggr and non-aggr) ----
-	const FIXED_ST: bool = false;
+	const FIXED_ST: bool = true;
 	const FIXED_E2: bool = true;
 
 	/// M5 knobs (all default off = honest).
@@ -4141,13 +4160,15 @@ use utils::consts::{read_global_config, get_global_config};
 	/// M5 verdict: sat = dan AND csa gadget SAT AND M1 (outer lookup);
 	/// nc = csa constraints; panicked = a native assert fired (advice or
 	/// either gadget); err = the
-	/// csa advice error; inp = the csa cs list.
+	/// csa advice error; inp = the csa cs list; parts = (dan SAT, csa
+	/// SAT, M1) of a run that reached the gadgets, else all false.
 	pub(crate) struct T965Neo { pub sat: bool, pub nc: usize,
-		pub panicked: bool, pub err: Option<String>, pub inp: Vec<Fr> }
+		pub panicked: bool, pub err: Option<String>, pub inp: Vec<Fr>,
+		pub parts: (bool, bool, bool) }
 
 	/// T965 M5: one single-cycle word_extract -> fsm_adv -> neo discharge
 	/// (cs arm) -> compute_sig run, routed as sed_mapper (b_skip_igc;
-	/// aggr: failed_acc + fwd_seed and the needs() list, non-aggr: q_c +
+	/// aggr: failed_acc + neo_core and the needs() list, non-aggr: q_c +
 	/// q_i and the full demand), both gadgets checked.
 	pub(crate) fn run_neo_csa_case(db: &ClamavDB<Fr>, cfg: &ClamavApproxConfig,
 		dir: &str, tc: &Tcase, b_aggr: bool, o: T965NeoOpt) -> T965Neo {
@@ -4161,7 +4182,7 @@ use utils::consts::{read_global_config, get_global_config};
 		get_global_config().clamav_cfg.b_use_discharge_neo = neo0;
 		get_global_config().basis_failed_subsigs = bf0;
 		r.unwrap_or(T965Neo{ sat: false, nc: 0, panicked: true, err: None,
-			inp: vec![] })
+			inp: vec![], parts: (false, false, false) })
 	}
 
 	fn neo_csa_inner(db: &ClamavDB<Fr>, cfg: &ClamavApproxConfig, dir: &str,
@@ -4243,7 +4264,7 @@ use utils::consts::{read_global_config, get_global_config};
 		if let Some(f) = o.pre { f(&stmt_disc.lock().unwrap()); }
 		//3. csa, routed as sed_mapper
 		let (p_res, p_inp) = if b_aggr {("failed_acc_combo failed_acc",
-			"fwd_seed")} else {("q_c", "q_i")};
+			"neo_core")} else {("q_c", "q_i")};
 		let find = |p: &str| stmt_disc.lock().unwrap().search_container(
 			&format!("discharge_adv_stmt_cs {}", p)).unwrap();
 		let guard = o.seam.map(t965_wrap).map(T965SeamGuard::on);
@@ -4257,7 +4278,8 @@ use utils::consts::{read_global_config, get_global_config};
 		let stmt_sig = match adv_sig {
 			Ok(a) => a.stmt_container,
 			Err(e) => return T965Neo{ sat: false, nc: 0, panicked: false,
-				err: Some(format!("{:?}", e)), inp: cs_list },
+				err: Some(format!("{:?}", e)), inp: cs_list,
+				parts: (false, false, false) },
 		};
 		//4. each gadget over the statement up to itself (as its own
 		//harness: run_neo_h_case / csa_case), + M1 on all 4 components
@@ -4290,8 +4312,10 @@ use utils::consts::{read_global_config, get_global_config};
 			fsm_id_igc, &cap_sig, &prev[..3].to_vec(), store,
 			&bundle_igc.vec_subsig_step_stores[0], &bundle.vec_subsig_info_stores[0],
 			&bundle_igc.vec_subsig_info_stores[0]), &word, vc, &cps);
-		T965Neo{ sat: sat_da && sat_csa && outer_lkup_ok(&cps, &db.lkup), nc,
-			panicked: p_da || p_csa, err: None, inp: cs_list }
+		let m1 = outer_lkup_ok(&cps, &db.lkup);
+		T965Neo{ sat: sat_da && sat_csa && m1, nc,
+			panicked: p_da || p_csa, err: None, inp: cs_list,
+			parts: (sat_da, sat_csa, m1) }
 	}
 
 	/// aggr fixture (DLP shape): build_fwd_db. DOC0 never completes the
@@ -4402,38 +4426,64 @@ use utils::consts::{read_global_config, get_global_config};
 
 	/// T965 N2 / ST: the matched s is never seeded (dan demand without s,
 	/// an honest smaller run), yet the csa lists s: by_acc reads False.
-	/// The seed tie only needs enc(s,0) in fwd_seed, a free dan cell:
-	/// write it to a dummy-0 slot. The seam writes s's raw False itself,
-	/// so after the fix only a circuit rejecter makes it UNSAT.
+	/// HEAD: the seed tie only needed enc(s,0) in fwd_seed, a free dan
+	/// cell. T927 ST: the table is [0] ++ dan's neo_core "subsigs", so
+	/// the forger has two cells left. (a) the csa copy seed_ref.subsigs:
+	/// an ext ref, the circuit reads dan's vars, so UNSAT at the seed
+	/// tie. (b) a dummy-0 slot of dan's subsigs: the seed tie passes,
+	/// dan's seed anchor rejects. The seam writes s's raw False itself,
+	/// so only a circuit rejecter makes it UNSAT.
 	#[test]
 	fn test_t965_n2_seed_unbound(){
 		let s = t965_matched(&|seam| t965_neo_aggr("n2", T965_FWD_DOC,
 			T965NeoOpt{ seam: Some(seam), ..Default::default() }));
+		//(b) the dan cell the seed tie now reads
 		let pre = move |d: &Container<Fr>| {
-			let fs = d.search_container("discharge_adv_stmt_cs fwd_seed").unwrap();
-			let fs = fs.lock().unwrap();
-			let mut e = t965_col(&fs, "encoded");
-			assert!(!e.contains(&t965_enc0(s)), "precondition: s not seeded");
-			let k = e.iter().rposition(|x| x.is_zero()).unwrap();
-			assert!(k > 0, "need a dummy-0 seed slot");
-			e[k] = t965_enc0(s);
-			t965_set(&fs, "encoded", e);
+			let nc = d.search_container("discharge_adv_stmt_cs neo_core").unwrap();
+			let nc = nc.lock().unwrap();
+			let mut t = t965_col(&nc, "subsigs");
+			assert!(!t.contains(&s), "precondition: s not seeded");
+			let k = t.iter().rposition(|x| x.is_zero())
+				.expect("need a dummy-0 seed slot");
+			t[k] = s;
+			t965_set(&nc, "subsigs", t);
 		};
-		let mk = || -> T965SeamFn { Box::new(move |st, c, v| if st == T965Stage::EvalCs {
+		//fake = (a): s also written into the csa copy (M4b pays mtbl_seed)
+		let mk = |fake: bool| -> T965SeamFn { Box::new(move |st, c, v|
+			if st == T965Stage::EvalCs {
 			let i = t965_pos(&t965_col(c, "inp_subsig"), s);
 			t965_set_res(c, v, &["subsig_raw_eval"], i, Fr::from(T965_FALSE));
+			let sr = c.get_container("seed_ref").unwrap();
+			let sr = sr.lock().unwrap();
+			let mut t = t965_col(&sr, "subsigs");
+			//ST shape: K slots (= the csa list), table K+1
+			assert!(t.len() == t965_col(c, "inp_subsig").len()
+				&& t965_col(c, "mtbl_seed").len() == t.len() + 1, "ST shape");
+			if fake {
+				let k = t.iter().rposition(|x| x.is_zero()).unwrap();
+				t[k] = s;
+				t965_set(&sr, "subsigs", t);
+			}
 		})};
-		//control: without the fwd_seed cell the seed tie rejects
+		//control: s absent from the table -> the seed tie rejects
 		let drop = move |v: &[Fr]| -> Vec<Fr> { v.iter().filter(|x| **x != s)
 			.cloned().collect() };
 		let r0 = t965_neo_aggr("n2", T965_FWD_DOC, T965NeoOpt{ dan_inp: Some(&drop),
-			seam: Some(mk()), ..Default::default() });
+			seam: Some(mk(false)), ..Default::default() });
 		assert!(!r0.sat && !r0.panicked && r0.err.is_none(),
 			"control: seed tie must reject ({:?})", r0.err);
+		assert!(r0.parts == (true, false, true), "control: csa side only");
+		let ra = t965_neo_aggr("n2", T965_FWD_DOC, T965NeoOpt{ dan_inp: Some(&drop),
+			seam: Some(mk(true)), ..Default::default() });
+		assert!(!ra.sat && !ra.panicked && ra.err.is_none(),
+			"N2 (a): csa copy of the table must not count ({:?})", ra.err);
+		assert!(ra.parts == (true, false, true), "N2 (a): csa side only");
 		let r = t965_neo_aggr("n2", T965_FWD_DOC, T965NeoOpt{ dan_inp: Some(&drop),
-			pre: Some(&pre), seam: Some(mk()), ..Default::default() });
+			pre: Some(&pre), seam: Some(mk(false)), ..Default::default() });
 		assert!(!r.panicked && r.err.is_none(), "N2: panicked / {:?}", r.err);
 		assert_hole("N2/ST", r.sat, FIXED_ST);
+		//(b): the seed tie passes, dan's seed anchor is the rejecter
+		assert!(r.parts == (false, true, true), "N2 (b): dan side only");
 	}
 
 	/// T965 F1 (W1 = N3) aggr: the matched s is listed twice. The last pad

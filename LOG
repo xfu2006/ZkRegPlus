@@ -32198,9 +32198,14 @@ Goal 1. B2
 
 Goal 2. B3.
 	[a] T964: done
-	[b]
+	[b] T927: done
+		N2: discharge_adv_neo can publish sig as free var
+			where ocmpute_sig_adv read. remove that
+				table replace by checked disadv_neo_core.subsigs
+				statement. minor cs reduction
 
 Goal 3. Writing
+	[a] minor changes: soften words such as complete.
 	
 
 

@@ -7659,33 +7659,14 @@ impl<F: PrimeField + ColEle> DischargeAdvNeoAdvice<F> {
 		let carried = StepQueueNeo::from_stepqueue(seed);
 		let gen = carried.gen_shared_core_advice(job_id, pat_loc,
 			subsig_store_info, last_loc + F::one())?;
-		let (core, combo, nat) = gen.gen_core_stmt(pat_loc,
+		let (core, combo, _nat) = gen.gen_core_stmt(pat_loc,
 			subsig_store_info)?;
 		stmt_container.lock().unwrap().add_container(core);
 		stmt_container.lock().unwrap().add_container(combo);
 		stmt_container.lock().unwrap().add_container(
 			Self::ext_pat_loc(b_igc, offset_fsm, pat_loc));
-		// Publish seed encodings (subsig*2^4rb per SEEDED NEEDS
-		// subsig; K+1 slots after the K-pad of subsig_nat) so
-		// compute_sig's aggressive seed-pin reads a uniform source.
-		// A leading 0 entry is REQUIRED: compute_sig pads inp_subsigs
-		// with dummy-0s (enc 0), so the seed table must contain 0 to
-		// absorb those zero queries (else the seed-pin logup is
-		// unsat); dummy-0 slots just duplicate it (harmless).
-		let mut seed_enc: Vec<F> = vec![F::zero()];
-		seed_enc.extend(nat.subsig_nat.iter().map(|s|
-			encode_cols(&vec![vec![*s], vec![F::zero()],
-				vec![F::zero()], vec![F::zero()], vec![F::zero()]],
-				&vec![0, 1, 2, 3, 4])[0]));
-		let n_seed = seed_enc.len();
-		let fwd_seed = Container::<F>::new("fwd_seed");
-		fwd_seed.lock().unwrap().add_col(Col::new(seed_enc,
-			"encoded", IDX_DATA));
-		// companion si col (no outer lookup) keeps data/subtbl_id
-		// balanced in the statement assembly (fix/prf pattern).
-		fwd_seed.lock().unwrap().add_col(Col::new_const(
-			vec![F::zero(); n_seed], "si_encoded", IDX_SI_DATA));
-		stmt_container.lock().unwrap().add_container(fwd_seed);
+		// T927 ST: no fwd_seed. compute_sig's seed tie reads
+		// [0] ++ neo_core "subsigs" (the anchored slots) directly.
 		Ok(Self { capacity: capacity.clone(), fsm_id,
 			stmt_container, b_igc, offset_fsm })
 	}

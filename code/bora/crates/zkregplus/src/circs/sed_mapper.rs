@@ -819,15 +819,15 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		};
 		// Aggressive seed tie: the forward seed sq_inp (exists in non-aggr
 		// too; only the aggr compute_sig acc path reads it). Neo carries
-		// the carried-in queue q_i in that slot.
+		// the carried-in queue q_i in that slot. T927 ST: aggr-neo hands
+		// over neo_core, whose "subsigs" column is the seed-tie table.
 		let sq_inp_cs = if use_neo && !b_aggr {
 			stmt_disc_cs.lock().unwrap().search_container(
 				"discharge_adv_stmt_cs q_i").expect("neo q_i cs err")
 		} else if use_neo && b_aggr {
-			// aggr-neo publishes fwd_seed (NEEDS seed encs, 8_C)
 			stmt_disc_cs.lock().unwrap().search_container(
-				"discharge_adv_stmt_cs fwd_seed")
-				.expect("neo fwd_seed cs err")
+				"discharge_adv_stmt_cs neo_core")
+				.expect("neo_core cs err")
 		} else {
 			stmt_disc_cs.lock().unwrap().search_container(
 				"discharge_adv_stmt_cs fwd_steps_queue sq_inp")
@@ -843,8 +843,8 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 					"discharge_adv_stmt_igc q_i").expect("neo q_i igc err")
 			} else if use_neo && b_aggr {
 				stmt_disc_igc.lock().unwrap().search_container(
-					"discharge_adv_stmt_igc fwd_seed")
-					.expect("neo fwd_seed igc err")
+					"discharge_adv_stmt_igc neo_core")
+					.expect("neo_core igc err")
 			} else {
 				stmt_disc_igc.lock().unwrap().search_container(
 					"discharge_adv_stmt_igc fwd_steps_queue sq_inp")
