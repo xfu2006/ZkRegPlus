@@ -25,7 +25,7 @@ use utils::consts::{read_global_config, B_DEBUG};
 use folding_schemes::folding::foldpot::container_config::ColEle;
 use rayon::iter::{
 	IntoParallelRefIterator,
-	ParallelIterator,IntoParallelIterator
+	ParallelIterator
 //	, IndexedParallelIterator
 };
 use std::{sync::{Arc, Mutex},
@@ -41,7 +41,7 @@ use crate::gadgets::{
 		new_const_var, check_eq, new_var, is_zero_better, var_to_lb,
 		check_prod_zero, check_prod_eq, better_select, better_select_check,
 		verify_encode_cols_in_range},
-	db::{assert_logup,
+	db::{assert_logup, assert_logup_cond,
 		//verify_encoded_table, assert_well_formed_sorted
 	},
 	traits::{
@@ -233,6 +233,15 @@ impl <F: PrimeField + ColEle> ComponentAdvice<F> for ComputeSigAdvAdvice<F>{
 	}
 }
 
+/// T960 V: the encs of the LAST-tagged rows of a discharge carry
+/// (si = gen_step_tbl_id(enc, LAST)); pads (enc 0) included.
+pub(crate) fn last_tagged_encs<F: PrimeField>(enc: &[F], si: &[F]) -> Vec<F> {
+	enc.iter().zip(si.iter())
+		.filter(|(e, t)| **t == SubsigStepStore::gen_step_tbl_id(**e,
+			ID_ENCODED_LAST_STEP))
+		.map(|(e, _)| *e).collect()
+}
+
 impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 	/// Given the StepQueue (result of bwd_prf) from the DischargeAdvGadget
 	/// Generate the list of signatures that are discharged.
@@ -246,7 +255,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 					//extracting the dnf to the concat of inp_subsigs
 		sq_res_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // the steps_queue from the DischargeAdv
 		sq_res_igc: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // the steps_queue from the DischargeAdv
-		sq_inp_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // aggr seed tie source (neo: dan neo_core, legacy: sq_inp)
+		sq_inp_cs: &std::sync::Arc<std::sync::Mutex<Container<F>>>, // seed tie source (neo: dan neo_core, legacy aggr: sq_inp)
 		sq_inp_igc: &std::sync::Arc<std::sync::Mutex<Container<F>>>,
 		capacity: &ComputeSigAdvCapacity,
 		subsig_store_info_cs: &SubsigStepStore,
@@ -306,7 +315,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		}
 		let inp_sigs = [&pad2[..], &inp_sigs[..]].concat();
 		let (eval_res_combo_cs, raw_res_cs) =
-			Self::gen_eval_subsig_by_sq_combo(false, off_cs, //case sensitive
+			Self::gen_eval_subsig_by_acc(false, off_cs, //case sensitive
 			&inp_subsigs_cs, sq_res_cs, sq_inp_cs, &capacity,
 			subsig_store_info_cs)?;
 		#[cfg(test)] // T965 seam M4 (test only)
@@ -326,7 +335,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			let inp_subsigs_igc =
 				[&pad_igc[..], &inp_subsigs_igc[..]].concat();
 			let (eval_res_combo_igc, raw_res_igc) =
-				Self::gen_eval_subsig_by_sq_combo(true, -1, //ignore case
+				Self::gen_eval_subsig_by_acc(true, -1, //ignore case
 				&inp_subsigs_igc, sq_res_igc, sq_inp_igc, &capacity,
 				subsig_store_info_igc)?;
 			#[cfg(test)] // T965 seam M4 (test only)
@@ -376,234 +385,17 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		Ok( Self{capacity: Clone::clone(capacity), stmt_container} )
 	}
 
-	/// generate the evaluation results for atomic subsigs using
-	/// step queue. The basic idea is to examin the last step reached
-	/// for a subsig. If it is the max step as defined (and there are
-	/// valid locations), the result is Maybe, otherwise the result is
-	/// False.
-	/// Return (res_combo, raw_eval_result)
-	/// -- see the paper definition or approx_eval_pm_ bounds_subsig in clamav.rs.
-	/// Might throw CapErr: subsigs.
-	fn gen_eval_subsig_by_sq_combo(
-		b_igc: bool,
-		offset_discharge: i32,
-		inp_subsigs: &Vec<F>, //this is either one of inp_subsigs_cs or igc
-		sq_res: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //already sorted on subsig_step
-		sq_inp: &std::sync::Arc<std::sync::Mutex<Container<F>>>, //aggr seed tie source (neo_core / legacy sq_inp)
-		capacity: &ComputeSigAdvCapacity,
-		subsig_store_info: &SubsigStepStore,
-	)->Result<(std::sync::Arc<std::sync::Mutex<Container<F>>>,Vec<F>), Error>{
-		//AGGRESSIVE: derive the verdict by MEMBERSHIP in the failed_subsigs
-		//accumulator (sq_res is acc_out) instead of from the sq_res2 last-step.
-		if capacity.b_aggressive{
-			return Self::gen_eval_subsig_by_acc(b_igc, offset_discharge,
-				inp_subsigs, sq_res, sq_inp, capacity, subsig_store_info);
-		}
-		//0. init data
-		let b_debug = B_DEBUG;
-		let (zero,one) = (F::zero(), F::one());
-		let tname = if b_igc {"eval_res_combo_igc"} 
-			else {"eval_res_combo_cs"};
-		let res = Container::<F>::new(tname);
-		// inp_subsigs is the CS vector when !b_igc (padded to subsigs_cs at the
-		// call site) and the IGC vector when b_igc (padded to subsigs_igc), so
-		// the cap MUST match the same branch -- the two were swapped, which only
-		// surfaced once subsigs_cs and subsigs_igc diverged (e.g. the scale
-		// sweep bumps subsigs_cs alone), tripping the exact-equality assert.
-		let cap_subsigs = if b_igc {capacity.subsigs_igc} else
-			{capacity.subsigs_cs};
-		assert!(inp_subsigs.len()==cap_subsigs,
-			"inp_subsigs.len {} != cap_subsigs {} (b_igc={})",
-			inp_subsigs.len(), cap_subsigs, b_igc);
-		let sname = if b_igc {"discharge_adv_stmt_igc"}
-			else {"discharge_adv_stmt_cs"};
-		// neo non-aggr: the discharge output is the carry q_c (added
-		// directly under the stmt), not the legacy bwd_steps_queue.
-		let use_neo = read_global_config()
-			.clamav_cfg.b_use_discharge_neo;
-		let sq_res_path = if use_neo {
-			format!("{} q_c", sname)
-		} else {
-			format!("{} bwd_steps_queue sq_res2", sname)
-		};
-		let sq_res = sq_res.lock().unwrap().duplicate_as_external_adv(
-			offset_discharge,
-			Some(sq_res_path),
-			Some("sq_res".to_string())); //so later we do not have to create copy
-										 //in validate.
-
-		//1. extract subsig, and its last step from sq_res
-		let vec_subsig = sq_res.get_container("subsig").unwrap()
-			.lock().unwrap().to_vec();
-		let vec_step = sq_res.get_container("step").unwrap()
-			.lock().unwrap().to_vec();
-		let vec_encoded= sq_res.get_container("encoded").unwrap()
-			.lock().unwrap().to_vec();
-		let vec_sid_step= sq_res.get_container("si_step")
-			.unwrap().lock().unwrap().to_vec();
-		assert!(vec_subsig.len()==vec_step.len());
-		assert!(inp_subsigs.len()==cap_subsigs);
-	
-		//the following loop are based on the assumption that
-		//sq_res is already sorted on (subsig-step), and
-		//its subsig is exactly the inp_subsigs
-		let (n,n2) = (inp_subsigs.len(), vec_subsig.len());
-		// Slots the walk below needs: it steps cur_idx (from n-2) down once
-		// per run boundary in vec_subsig, so one slot per run plus the dummy
-		// 0 entry. Reported when the walk runs out of slots (see cur_idx).
-		let n_runs = 1 + (1..n2).filter(|&v|
-			vec_subsig[v] != vec_subsig[v-1]).count();
-		let mut vec_last_step= vec![zero;n];
-		let mut inp_subsig_encoded = vec![zero;n]; //corresponds to inp_subsig 
-		vec_last_step[n-1] = vec_step[n2-1];
-		assert!(inp_subsigs[n-1]==vec_subsig[n2-1]);
-		inp_subsig_encoded[n-1]=vec_encoded[n2-1];
-		if !inp_subsigs.contains(&zero){
-			// _cs/_igc, not {true,false}: apply_caperr_bumps detects the igc
-			// arm by the "subsigs_igc" marker, so "subsigs_true" fell through
-			// to the generic subsigs branch and bumped the CS field.
-			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_{}",
-				if b_igc {"igc"} else {"cs"}), inp_subsigs.len()+1)]));
-		}
-		assert!(inp_subsigs.contains(&zero), 
-			"inp_subigs needs one dummy 0 entry");
-		// n==1 leaves only the dummy 0 slot, so `n-2` below wraps to usize::MAX
-		// and indexes out of bounds. Reachable once a tuner seeds subsigs from
-		// a zero obligation demand; report it as a bumpable cap like the
-		// out-of-slots case in the walk rather than panicking unparseably.
-		if n < 2 {
-			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_{}",
-				if b_igc {"igc"} else {"cs"}), n_runs + 1)]));
-		}
-		let mut cur_idx = n-2;
-		let mut v_idx = n2-1;
-		for j in 1..n2{//from last to first
-			v_idx = n2-j;
-			if vec_subsig[v_idx]!=vec_subsig[v_idx-1]{
-				// out of slots: cur_idx would wrap past 0 to usize::MAX and
-				// index out of bounds below. Only reachable when it STARTS
-				// at 0 (n==2) -- for n>=3 the cur_idx==0 break catches it --
-				// but guard the decrement itself so the cap is bumpable
-				// instead of panicking unparseably past determine_config.
-				if cur_idx == 0 {
-					return Err(Error::CapErr(vec![(
-						format!("comp_sig::subsigs_{}",
-							if b_igc {"igc"} else {"cs"}), n_runs + 1)]));
-				}
-				assert!(inp_subsigs[cur_idx]==vec_subsig[v_idx-1]);
-				vec_last_step[cur_idx]=vec_step[v_idx-1];
-				inp_subsig_encoded[cur_idx]=vec_encoded[v_idx-1];
-				cur_idx -=1;
-			}
-			if cur_idx==0 {break;}
-		}
-		for j in 0..v_idx{//verify the rest are zero
-			assert!(vec_subsig[j].is_zero() || vec_subsig[j]==inp_subsigs[cur_idx+1]);	
-		}
-		//now set the zero entries
-		while cur_idx>0{
-			assert!(inp_subsigs[cur_idx]==zero);
-			inp_subsig_encoded[cur_idx]=vec_encoded[0];
-			cur_idx-=1;
-		}
-
-		//2. extract the max_step for subsig
-		let v_false = F::from(TriVal::False as u8);
-		let v_maybe = F::from(TriVal::Maybe as u8);
-		let mut vec_res = vec![v_false; n];
-		let mut sid_last_step= vec![
-				//for dummy subsig 0, last step is 0 (see discharge_adv)
-				//built of vec_sid_step
-				SubsigStepStore::gen_step_tbl_id(F::zero(),ID_ENCODED_LAST_STEP); n
-		];
-		for i in 0..n{
-			if inp_subsigs[i]==zero{
-				//vec_res[i] = F::from(TriVal::False as u8);
-				vec_res[i] = F::zero();
-			}else{
-				let info = subsig_store_info.subsig_to_steps
-					.get(&field_to_usize(&inp_subsigs[i])).expect(
-					&format!("cannot find info for subsig: {}", inp_subsigs[i]));
-				let max_step = F::from(info.vec_pm_bounds.len() as u64);
-				assert!(max_step>=vec_last_step[i]);
-				let b_last_step = max_step==vec_last_step[i];
-				vec_res[i] = if b_last_step {v_maybe} else {v_false};
-				let tag = if b_last_step {ID_ENCODED_LAST_STEP} else
-					{ID_ENCODED_NORMAL_STEP};
-				let sid = SubsigStepStore::gen_step_tbl_id(
-					inp_subsig_encoded[i], tag);
-	
-				sid_last_step[i] = sid;
-			}
-		}
-
-		//3. proof step1: assert that (encoded,subsig, last_step,sid_last_step) 
-		// is the valid
-		//from sq_res. only need one-direction lookup, since if there
-		//are subsigs missed from sq_res, they won't show up in the
-		//final evaluation result anyway (and cannot be discharged).
-		//it's the loss of prover,and cannot affect soundness (but likley
-		//raise false alarm). So it's ok to do 1-direction lookup.
-		//We actually do tuple (inp_subsig_encoded, inp_subsig, last_step)
-		//to futher bind inp_subsig with inp_subsig_encoded.
-		if vec_subsig[0]!=zero{
-			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs"), 
-				vec_subsig.len()+1)]));
-		}
-		assert!(vec_subsig[0]==zero, "need to have at least one dummy");
-		let src= encode_cols_better( vec![&inp_subsig_encoded[..],
-			&inp_subsigs[..], &vec_last_step[..], &sid_last_step[..]],
-			vec![0,1,2,3]);
-		let dst_sel = (0..n2).into_par_iter().map(|i|{
-			if i==n2-1{one} else{
-				if vec_subsig[i]==vec_subsig[i+1] {zero} else {one}
-			}
-		}).collect::<Vec<F>>();
-		let dst_combined = encode_cols_better(vec![&vec_encoded[..],
-			&vec_subsig[..], &vec_step[..], &vec_sid_step[..]], vec![0,1,2,3]);
-		let dst = dst_combined.iter().zip(dst_sel.iter()).map(|(a,b)|
-			*a * *b).collect::<Vec<F>>();
-		let mtbl_last_step = gen_m_table(&src, &dst);
-		let sid_m_tbl_last_step = vec![zero; mtbl_last_step.len()];
-
-		//4. proof step2: assert that res is correct regarding that
-		//sid_last_step == sid_max_step. This does not need any proof
-		//generated. on the validator side, use encoded info to do the
-		//verification.
-
-		//5. add the columns (last_step, res)
-		assert!(vec_res.len()==n);
-		let frg = F::from(RANGE2);
-		res.lock().unwrap().add_container(Arc::new(Mutex::new(sq_res)));
-		res.lock().unwrap().add_col(Col::new(inp_subsigs.clone(), 
-			"inp_subsig", IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(vec![frg;n], "sid_inp_subsig", 
-			IDX_SI_DATA));
-		res.lock().unwrap().add_col(Col::new(inp_subsig_encoded, 
-			"inp_subsig_encoded", IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(vec![zero;n], 
-			"sid_inp_subsig_encoded", IDX_SI_DATA));
-		res.lock().unwrap().add_col(Col::new(vec_last_step, "last_step", IDX_DATA));
-		res.lock().unwrap().add_col(Col::new(sid_last_step, "sid_last_step", 
-			IDX_SI_DATA)); //can't be const
-		res.lock().unwrap().add_col(Col::new(vec_res.clone(), 
-			"subsig_raw_eval", IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(vec![frg;n], 
-			"sid_subsig_raw_eval", IDX_SI_DATA));
-		res.lock().unwrap().add_col(Col::new(mtbl_last_step, "mtbl_last_step", 
-			IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(sid_m_tbl_last_step,
-			"sid_mtbl_last_step", IDX_SI_DATA)); //it's zero
-		Ok( (res, vec_res) )
-	}
-
-	/// AGGRESSIVE-ONLY. Eval each subsig by MEMBERSHIP in the failed_subsigs
-	/// accumulator (acc_out, passed as `acc_ct`): Maybe iff the subsig's
-	/// LAST_STEP `encoded` key is in acc_out, else False. The key is
-	/// re-derived via StepQueueItem::from_subsig_store_item so it matches
-	/// the keys C5 puts into acc_out byte-for-byte. Emits the 4 encode
-	/// sub-fields (range-checked via si=RANGE2) so validate can bind the
-	/// key to inp_subsig. Returns (combo, vec_res) like the sq_res path.
+	/// Eval each subsig by MEMBERSHIP of its LAST_STEP `encoded` key in
+	/// the accumulated set `acc` (both arms, T960 V): Maybe iff the key
+	/// is in acc, else False.
+	///  - aggr: acc = dan's failed_subsigs accumulator acc_out (acc_ct).
+	///  - nonaggr: acc_ct is the discharge carry (neo q_c, legacy
+	///    sq_res2) and acc = its LAST-tagged rows (si_step = tag(enc,
+	///    LAST)). Row order and the carry's subsig column are not read.
+	/// The key is re-derived via StepQueueItem::from_subsig_store_item
+	/// so it matches the discharge keys byte-for-byte. Emits the 4
+	/// encode sub-fields (range-checked via si=RANGE2) so validate can
+	/// bind the key to inp_subsig. Returns (combo, vec_res).
 	fn gen_eval_subsig_by_acc(
 		b_igc: bool,
 		offset_discharge: i32,
@@ -618,42 +410,65 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		let res = Container::<F>::new(tname);
 		let sname = if b_igc {"discharge_adv_stmt_igc"}
 			else {"discharge_adv_stmt_cs"};
+		let b_aggr = capacity.b_aggressive;
+		let use_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
 		// CS-only aggressive mode allows subsigs_igc < subsigs_cs; when
-		// symmetric this is identical. The non-aggr gen() is left as-is.
+		// symmetric this is identical.
 		let cap_subsigs = if b_igc {capacity.subsigs_igc}
 			else {capacity.subsigs_cs};
 		assert!(inp_subsigs.len()==cap_subsigs);
 		let n = inp_subsigs.len();
 		assert!(n >= 1, "by_acc: empty subsig list (cap {}, b_igc={})",
 			cap_subsigs, b_igc);
+		// nonaggr: the carry's pad rows (enc 0, LAST) query 0, which
+		// only a dummy-0 slot provides (E2 guard of the deleted by_sq
+		// walk, kept for both lists; cs is also caught in new()).
+		if !b_aggr && !inp_subsigs.contains(&zero) {
+			return Err(Error::CapErr(vec![(format!("comp_sig::subsigs_{}",
+				if b_igc {"igc"} else {"cs"}), inp_subsigs.len()+1)]));
+		}
 
-		//1. external ref to acc_out (committed; no extra space)
-		let acc_ext = acc_ct.lock().unwrap().duplicate_as_external_adv(
-			offset_discharge,
-			Some(format!("{} failed_acc_combo failed_acc", sname)),
-			Some("acc_ref".to_string())); //distinct name (avoid collision
-				//with the source container also named "failed_acc")
-		let acc_set: Vec<F> = acc_ext.get_container("acc_encoded").unwrap()
-			.lock().unwrap().to_vec();
+		//1. external ref to the acc source (committed; no extra space)
+		let (acc_ext, acc_set) = if b_aggr {
+			let ext = acc_ct.lock().unwrap().duplicate_as_external_adv(
+				offset_discharge,
+				Some(format!("{} failed_acc_combo failed_acc", sname)),
+				Some("acc_ref".to_string())); //distinct name (avoid
+					//collision with the source also named "failed_acc")
+			let set: Vec<F> = ext.get_container("acc_encoded").unwrap()
+				.lock().unwrap().to_vec();
+			(ext, set)
+		} else {
+			// T960 V: the carry the discharge hands over, named "sq_res"
+			let path = if use_neo { format!("{} q_c", sname) }
+				else { format!("{} bwd_steps_queue sq_res2", sname) };
+			let ext = acc_ct.lock().unwrap().duplicate_as_external_adv(
+				offset_discharge, Some(path), Some("sq_res".to_string()));
+			let enc = ext.get_container("encoded").unwrap()
+				.lock().unwrap().to_vec();
+			let si = ext.get_container("si_step").unwrap()
+				.lock().unwrap().to_vec();
+			// the selected queries of validate's selector logup
+			(ext, last_tagged_encs(&enc, &si))
+		};
 		//keys are full-width encoded values; key the membership set by the
 		//byte repr (field_to_usize only handles 32-bit values).
 		let acc_lookup: HashSet<Vec<u8>> = acc_set.iter()
 			.filter(|f| !f.is_zero())
 			.map(|f| f.into_bigint().to_bytes_le()).collect();
 
-		// 8_A: this fn is aggressive-only, so neo here means aggr-neo.
-		// non-aggr-neo never reaches gen_by_acc.
 		// M7 seed tie: pin inp_subsig to the seeded set. This replaces
 		// the QUICK cert: a subsig with a False verdict must have been
 		// seeded (else it is absent from the table and the logup fails).
-		// Legacy (non-neo): ext-ref the forward seed sq_inp.encoded,
+		// T927 ST (neo, T960: both arms): sq_inp is dan's neo_core.
+		// Ext-ref only its "subsigs" (+ si) column: the K anchored seed
+		// slots (dan assert_seed_anchors). Table = [0] ++ subsigs, plain
+		// ids (the 0 absorbs the dummy-0 queries).
+		// Legacy (non-neo) aggr: ext-ref the forward seed sq_inp.encoded,
 		// query encode(inp_subsig) (the seed's step-0 encoding).
-		// T927 ST (aggr-neo): sq_inp is dan's neo_core. Ext-ref only
-		// its "subsigs" (+ si) column: the K anchored seed slots
-		// (dan assert_seed_anchors). Table = [0] ++ subsigs, plain ids
-		// (the 0 absorbs the dummy-0 queries). Legacy keeps sq_inp.
-		let b_st = read_global_config().clamav_cfg.b_use_discharge_neo;
-		let (seed_ext, qry, tbl) = if b_st {
+		// Legacy nonaggr (test-only arm, production is neo): no tie,
+		// so N10 stays open there (T960 D2).
+		let seed = if use_neo {
 			let ext = Container::<F>::new("seed_ref");
 			for c in ["subsigs", "si_subsigs"] {
 				let col = sq_inp.lock().unwrap().get_container(c).unwrap();
@@ -665,8 +480,8 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			let mut tbl = vec![zero];
 			tbl.extend(ext.lock().unwrap().get_container("subsigs")
 				.unwrap().lock().unwrap().to_vec());
-			(ext, inp_subsigs.clone(), tbl)
-		} else {
+			Some((ext, inp_subsigs.clone(), tbl))
+		} else if b_aggr {
 			let ext = sq_inp.lock().unwrap().duplicate_as_external_adv(
 				offset_discharge,
 				Some(format!("{} fwd_steps_queue sq_inp", sname)),
@@ -674,12 +489,11 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			let tbl = ext.get_container("encoded").unwrap()
 				.lock().unwrap().to_vec();
 			let zc = vec![zero; n];
-			(Arc::new(Mutex::new(ext)), encode_cols(&vec![
+			Some((Arc::new(Mutex::new(ext)), encode_cols(&vec![
 				inp_subsigs.clone(), zc.clone(), zc.clone(), zc.clone(),
-				zc], &vec![0,1,2,3,4]), tbl)
-		};
-		let mtbl_seed = gen_m_table(&qry, &tbl);
-		let nm2 = mtbl_seed.len();
+				zc], &vec![0,1,2,3,4]), tbl))
+		} else { None };
+		let seed = seed.map(|(ext, qry, tbl)| (ext, gen_m_table(&qry, &tbl)));
 
 		//2. per inp_subsig: LAST_STEP encoded key + its 4 encode sub-fields
 		//   (step, pat, rg_start, rg_end) + the membership verdict.
@@ -695,23 +509,32 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 			let item = subsig_store_info.subsig_to_steps.get(&su)
 				.expect(&format!("no store item for subsig {}", su));
 			let num = item.vec_pm_bounds.len();
-			//CU10 (M4): backward subsigs are discharged over the REVERSED,
-			//keyword-first chain (CU2), so the accumulator stores the reversed
-			//last-step key. Derive the membership key from the same reversed
-			//chain here, else a matched backward subsig is not found in the
-			//accumulator. Forward subsigs (flag-off) take the stored chain
-			//verbatim -> byte-identical.
-			let max_val:usize = (1<<read_global_config().range2_bit) - 1;
-			let rev_item;
-			let use_item = if item.is_backward {
-				rev_item = SubsigStepStoreItem{ subsig_id: item.subsig_id,
-					igc: item.igc, is_backward: item.is_backward,
-					vec_pm_bounds: reverse_pm_bounds(
-						&item.vec_pm_bounds, (0, max_val)) };
-				&rev_item
-			} else { item };
-			let sqi = StepQueueItem::from_subsig_store_item(use_item, num,
-				inp_subsigs[i], vec![]);
+			let sqi = if num == 0 {
+				//V-EC (T960, nonaggr): an empty chain's LAST row is its
+				//seed, key enc(s,0,0,0,0). Aggr never lists one (neo:
+				//sm needs(); legacy: HEAD panicked here), keep that.
+				assert!(!b_aggr, "aggr: empty-chain subsig {} listed", su);
+				StepQueueItem::new(inp_subsigs[i], zero, zero, zero, zero,
+					vec![])
+			} else {
+				//CU10 (M4): backward subsigs are discharged over the REVERSED,
+				//keyword-first chain (CU2), so the accumulator stores the reversed
+				//last-step key. Derive the membership key from the same reversed
+				//chain here, else a matched backward subsig is not found in the
+				//accumulator. Forward subsigs (flag-off) take the stored chain
+				//verbatim -> byte-identical.
+				let max_val:usize = (1<<read_global_config().range2_bit) - 1;
+				let rev_item;
+				let use_item = if item.is_backward {
+					rev_item = SubsigStepStoreItem{ subsig_id: item.subsig_id,
+						igc: item.igc, is_backward: item.is_backward,
+						vec_pm_bounds: reverse_pm_bounds(
+							&item.vec_pm_bounds, (0, max_val)) };
+					&rev_item
+				} else { item };
+				StepQueueItem::from_subsig_store_item(use_item, num,
+					inp_subsigs[i], vec![])
+			};
 			encoded_last[i] = sqi.encoded;
 			f_step[i] = sqi.step; f_pat[i] = sqi.pat;
 			f_rgs[i] = sqi.rg_start; f_rge[i] = sqi.rg_end;
@@ -719,7 +542,7 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 				&sqi.encoded.into_bigint().to_bytes_le())
 				{v_maybe} else {v_false};
 		}
-		//3. maybe_masked: the key iff Maybe (else 0); logup acc_out ⊆ this
+		//3. maybe_masked: the key iff Maybe (else 0); logup acc ⊆ this
 		let maybe_masked: Vec<F> = (0..n).map(|i|
 			if vec_res[i]==v_maybe {encoded_last[i]} else {zero}).collect();
 		let mtbl = gen_m_table(&acc_set, &maybe_masked);
@@ -774,11 +597,14 @@ impl <F: PrimeField + ColEle> ComputeSigAdvAdvice<F>{
 		res.lock().unwrap().add_col(Col::new_const(vec![zero;nm],
 			"sid_mtbl_membership", IDX_SI_DATA));
 		// M7 seed tie: external-ref seed + the subset-of m-table.
-		res.lock().unwrap().add_container(seed_ext);
-		res.lock().unwrap().add_col(Col::new(mtbl_seed, "mtbl_seed",
-			IDX_DATA));
-		res.lock().unwrap().add_col(Col::new_const(vec![zero;nm2],
-			"sid_mtbl_seed", IDX_SI_DATA));
+		if let Some((seed_ext, mtbl_seed)) = seed {
+			let nm2 = mtbl_seed.len();
+			res.lock().unwrap().add_container(seed_ext);
+			res.lock().unwrap().add_col(Col::new(mtbl_seed, "mtbl_seed",
+				IDX_DATA));
+			res.lock().unwrap().add_col(Col::new_const(vec![zero;nm2],
+				"sid_mtbl_seed", IDX_SI_DATA));
+		}
 		Ok( (res, vec_res) )
 	}
 
@@ -1667,22 +1493,23 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 			 sq_res_obj_igc.to_container("sq_res2_igc ", false, true, true,
 				true, &store_steps_igc).expect("sq_res_igc err"))
 		};
-		// AGGRESSIVE seed tie: dummy seed-tie source sized like the
-		// real one so compute_sig's mtbl_seed column matches in the cfg.
-		// T927 ST neo-aggr: the real source is dan's neo_core, of which
-		// gen_eval_subsig_by_acc ext-refs only "subsigs" + "si_subsigs"
-		// (si 0 on aggr), so the dummy mirrors those two columns.
-		let b_neo_aggr = read_global_config().clamav_cfg
-			.b_use_discharge_neo && capacity.b_aggressive;
+		// Seed tie: dummy seed-tie source sized like the real one so
+		// compute_sig's mtbl_seed column matches in the cfg.
+		// T927 ST (neo; both arms since T960): the real source is dan's
+		// neo_core, of which gen_eval_subsig_by_acc ext-refs only
+		// "subsigs" + "si_subsigs" (si 0 on aggr, RANGE2 on nonaggr per
+		// T929), so the dummy mirrors those two columns.
+		let b_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
+		let si_neo = if capacity.b_aggressive {zero} else {F::from(RANGE2)};
 		let mk_neo_subsigs = |n: usize| {
 			let c = Container::<F>::new("neo_core");
 			c.lock().unwrap().add_col(Col::new(vec![zero; n],
 				"subsigs", IDX_DATA));
-			c.lock().unwrap().add_col(Col::new_const(vec![zero; n],
+			c.lock().unwrap().add_col(Col::new_const(vec![si_neo; n],
 				"si_subsigs", IDX_SI_DATA));
 			c
 		};
-		let (dummy_sq_inp_cs, dummy_sq_inp_igc) = if b_neo_aggr {
+		let (dummy_sq_inp_cs, dummy_sq_inp_igc) = if b_neo {
 			// length MUST equal the real neo_core "subsigs": K slots
 			// (subsig_nat is resized to k_slots = capacity.subsigs).
 			// compute_sig's mtbl_seed column has K+1 entries (the
@@ -1762,22 +1589,20 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		}
 	}
 
-	/// validate raw_eval result based on step queue is correct for
-	/// each subsig.
-	/// n2 is the StepQueue::vec_size() - max of subsig * avg_active_pat_subsig
-	///     and basis_pats_in_trace/10000 * perc_pats_expansion_rate/100 * nlen (see validate_forward_step_queue for
-	///     real data for n1)
-	/// COST: 6n1 + 5n2 (n1: num of subsigs, n2: sq_res len which
-	///    is determined by discharge_adv::StepQueue::vec_size 
-	/// (perc_pat_in_trace * perc_pats_expansion_rate / 100)
-	/// AGGRESSIVE-ONLY. Validate the membership verdict:
+	/// Validate the membership verdict (both arms, T960 V):
 	/// (a) BIND each encoded_last key to inp_subsig via the encode
 	///     weighted-sum (sub-fields range-checked via si=RANGE2) so the key
 	///     canonically decodes to inp_subsig;
 	/// (b) subsig_raw_eval ∈ {False=1, Maybe=3} (dummy subsig=0 exempt);
-	/// (c) SOUNDNESS logup: acc_out ⊆ {encoded_last[i] : Maybe} — every
-	///     accumulated failed key MUST be marked Maybe, else a real match is
+	/// (c) SOUNDNESS logup: acc ⊆ {encoded_last[i] : Maybe} — every
+	///     accumulated key MUST be marked Maybe, else a real match is
 	///     wrongly discharged. (Over-marking Maybe is harmless.)
+	///     aggr: acc = acc_out. nonaggr: acc = the LAST-tagged rows of
+	///     the carry, the tag pinned to the row's own enc;
+	/// (d) F1 strict ascent of inp_subsig; (e) the seed tie.
+	/// COST per list (k slots, |acc| = m rows): 9k + 1 + logup(acc)
+	/// (k + m + 3 + 2 per 64-block); nonaggr adds m (tag pin), neo adds
+	/// the seed logup (k + K+1 + 3 + 2 per 64-block), K = k.
 	fn validate_eval_subsig_by_acc(&self,
 		eval_res_combo: &Container<FpVar<F>>,
 		r1: FpVar<F>,
@@ -1797,8 +1622,12 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		let f_rge = get("enc_rge");
 		let subsig_raw_eval = get("subsig_raw_eval");
 		let mtbl = get("mtbl_membership");
-		let acc_out = eval_res_combo.get_container("acc_ref").unwrap()
-			.lock().unwrap().get_container("acc_encoded").unwrap()
+		let b_aggr = self.capacity.b_aggressive;
+		let use_neo = read_global_config().clamav_cfg.b_use_discharge_neo;
+		let (src, src_col) = if b_aggr {("acc_ref", "acc_encoded")}
+			else {("sq_res", "encoded")};
+		let src = eval_res_combo.get_container(src).unwrap();
+		let acc_out = src.lock().unwrap().get_container(src_col).unwrap()
 			.lock().unwrap().to_vec();
 		let n = inp_subsig.len();
 
@@ -1840,12 +1669,47 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		}
 		check_eq(&inp_subsig[n-1], &d[n], "F1 chain end")?;
 
-		//3. SOUNDNESS logup: acc_out subset-of maybe_masked
-		assert_logup(cs.clone(), &acc_out, &maybe_masked, &mtbl, &r1)?;
+		//3. SOUNDNESS logup: acc subset-of maybe_masked
+		if b_aggr {
+			assert_logup(cs.clone(), &acc_out, &maybe_masked, &mtbl, &r1)?;
+		} else {
+			//T960 V: carry row j = (enc_j, si_j); (si_j, step_j) is a DB
+			//pair (outer lookup). Pin si_j = enc_j + c_n or enc_j + c_l
+			//(c = gen_step_tbl_id minus its enc term), so l_j = (si_j -
+			//enc_j - c_n)/(c_l - c_n) is a boolean LC and l_j = 1 iff
+			//enc_j is a DB LAST key. acc = {enc_j : l_j = 1} via the
+			//selector logup (no product). Pads: enc 0, LAST: hit a 0
+			//entry (dummy slot). Row order, q_c "subsig" not read.
+			//EXAMPLE: s matched, slot s claims False -> enc(s,last) is
+			//  selected but masked out of the table -> UNSAT.
+			//NO ALIAS: si_j = tag(e, P) of a DB row forces e = enc_j and
+			//P in {N, L} only if enc_j, e < f^5 (Q_m limbs; q_c enc has
+			//si 0 and the carry packs loc + enc*2^rb) AND every DB key
+			//is < p/2^(rb+1). clam_db keys are ~2^192 [other tables U].
+			let si = src.lock().unwrap().get_container("si_step").unwrap()
+				.lock().unwrap().to_vec();
+			let tag = |id: u32| SubsigStepStore::gen_step_tbl_id(F::zero(), id);
+			let c_n = tag(ID_ENCODED_NORMAL_STEP);
+			let dl = tag(ID_ENCODED_LAST_STEP) - c_n;
+			let (c_n, inv_dl, dl) = (FpVar::Constant(c_n),
+				FpVar::Constant(ark_ff::Field::inverse(&dl).unwrap()),
+				FpVar::Constant(dl));
+			let mut sel = Vec::with_capacity(acc_out.len());
+			for j in 0..acc_out.len(){
+				let a = &si[j] - &acc_out[j] - &c_n;
+				check_prod_zero(&a, &(&a - &dl), lb_zero.clone(),
+					"V carry tag pin")?;
+				sel.push(&a * &inv_dl);
+			}
+			let ones = vec![FpVar::Constant(F::one()); n];
+			assert_logup_cond(cs.clone(), &acc_out, &sel, &maybe_masked,
+				&ones, &mtbl, &r1)?;
+		}
 
 		//4. M7 SEED TIE: every verdict-universe subsig was seeded
 		//(replaces QUICK; blocks a False-by-omission verdict).
-		//T927 ST (neo): inp_subsig subset-of [0] ++ seed_ref.subsigs,
+		//T927 ST (neo; nonaggr too since T960, closes N10):
+		//inp_subsig subset-of [0] ++ seed_ref.subsigs,
 		//plain ids. seed_ref.subsigs IS dan's neo_core "subsigs" (ext
 		//ref, dest None: the same dan statement vars, not in csa's
 		//statement, 0 cs), whose every nonzero slot
@@ -1853,12 +1717,13 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		//absorbs the dummy-0 slots and keeps the table at K+1.
 		//EXAMPLE: dan seeds {a}, csa lists [0, a, s] -> s not in
 		//  [0, a, 0..] -> UNSAT. Legacy: encode(inp) subset-of sq_inp.
+		//Legacy nonaggr (test-only arm): no seed tie (see gen).
+		if !use_neo && !b_aggr { return Ok(()); }
 		let seed_ref = eval_res_combo.get_container("seed_ref").unwrap();
 		let seed_col = |nm: &str| seed_ref.lock().unwrap()
 			.get_container(nm).unwrap().lock().unwrap().to_vec();
 		let mtbl_seed = get("mtbl_seed");
-		let (qry, tbl) = if read_global_config().clamav_cfg
-			.b_use_discharge_neo {
+		let (qry, tbl) = if use_neo {
 			let mut tbl = vec![FpVar::Constant(F::zero())];
 			tbl.extend(seed_col("subsigs"));
 			(inp_subsig.clone(), tbl)
@@ -1871,155 +1736,6 @@ impl <F:PrimeField + ColEle> ComputeSigAdvGadget<F>{
 		};
 		assert_logup(cs.clone(), &qry, &tbl, &mtbl_seed, &r1)?;
 		Ok(())
-	}
-
-	fn validate_eval_subsig_by_sq_combo(&self,
-		eval_res_combo: &Container<FpVar<F>>,
-		r1: FpVar<F>,
-		_r2: FpVar<F>,
-		cs: ConstraintSystemRef<F>
-	) ->Result<(), SynthesisError>{
-		//AGGRESSIVE: verdict comes from accumulator membership, not sq_res.
-		if self.capacity.b_aggressive{
-			return self.validate_eval_subsig_by_acc(eval_res_combo, r1, cs);
-		}
-		//0. retrieve data from combo
-		let b_perf = false;
-		let nc = cs.num_constraints();
-		let (_zero,one)=(new_const_var(&cs,F::zero()),new_const_var(&cs,F::one()));
-		let names = ["inp_subsig", "last_step", "subsig_raw_eval", 
-			"inp_subsig_encoded"];
-		let cols = names.iter().map(|n|
-			eval_res_combo.get_container(n).unwrap().lock().unwrap().to_vec()
-		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (inp_subsig, last_step, subsig_raw_eval, inp_subsig_encoded) = 
-			(&cols[0],&cols[1],&cols[2], &cols[3]);
-		let sid_cols = names.iter().map(|n|
-			eval_res_combo.get_container(&format!("sid_{}",n))
-				.unwrap().lock().unwrap().to_vec()
-		).collect::<Vec<Vec<FpVar<F>>>>();
-		let sid_last_step = &sid_cols[1]; //only need to check this
-			
-		//1. extract subsig, last_step from sq_res 
-		let sq_res=eval_res_combo.get_container("sq_res")
-			.expect("err get sq_res"); //it's actually 
-						//externally refered copy (do not take space)
-		let names = ["subsig", "step", "encoded"];
-		let cols = names.iter().map(|n| 
-			sq_res.lock().unwrap().get_container(n).unwrap().lock().unwrap().to_vec()
-		).collect::<Vec<Vec<FpVar<F>>>>();
-		let (sq_subsig, sq_step, sq_encoded) = (&cols[0], &cols[1], &cols[2]);
-		let sq_sid_step = sq_res.lock().unwrap().get_container("si_step")
-			.unwrap().lock().unwrap().to_vec();
-		let n2 = cols[0].len();
-
-		//2. proof step1: assert that (encoded, subsig, last_step, sid_last_step) 
-		// is the valid
-		//from sq_res. only need one-direction lookup, since if there
-		//are subsigs missed from sq_res, they won't show up in the
-		//final evaluation result anyway (and cannot be discharged).
-		//it's the loss of prover,and cannot affect soundness (but likley
-		//raise false alarm). So it's ok to do 1-direction lookup
-		// COST: 5n1 + 8n2 (where n1 is subsigs, n2 is sq_res length) [old]
-		// --> cost improved by using f_unit (we didn't change formula here)
-		//TODO: can be improved by calling combined_logup function
-		// and just add padding zero.
-		let f_unit = FpVar::<F>::constant(F::from(1u32<<read_global_config().range2_bit));
-		let src= encode_cols_var_adv_better(&vec![&inp_subsig_encoded[..],
-			&inp_subsig[..], &last_step[..], &sid_last_step], &vec![0,1,2,3], 
-				&f_unit);
-		let dst_sel = (0..n2).into_iter().map(|i|{
-			if i==n2-1{one.clone()} else{ 
-				//sq_subsig[i].is_neq(&sq_subsig[i+1]).unwrap().into() 
-				&one- is_zero_better(&(&sq_subsig[i]-&sq_subsig[i+1]),
-					&cs).unwrap()
-			}
-		}).collect::<Vec<FpVar<F>>>();
-		let dst_combined = encode_cols_var_adv_better(
-			&vec![&sq_encoded[..], &sq_subsig[..], &sq_step[..], 
-				&sq_sid_step[..]], &vec![0,1,2,3], &f_unit);
-		let dst = dst_combined.iter().zip(dst_sel.iter()).map(|(a,b)|
-			a * b).collect::<Vec<FpVar<F>>>();
-		let mtbl_last_step = eval_res_combo.get_container("mtbl_last_step")
-			.unwrap().lock().unwrap().to_vec();
-		assert_logup(cs.clone(), &src, &dst, &mtbl_last_step, &r1)?;
-
-		//3. proof step2: verify that eval_res is correct.
-		//to save cost: assert eval_res is boolean (either 1 or 0)
-		//and then use it to enforce sid_last_step == sid for MAX_STEP
-		//COST: 5n1  where n1 is the number of subsigs
-		let info_id= F::from(0x23001101u32); //tag to avoid collision
-		let f1 = F::from(1u64<<read_global_config().range2_bit);
-        let factor1 = f1*f1*f1*f1*f1; //models encoded
-        let factor2 = F::from(1u64<<32); //32-bit
-		let part1 = info_id*factor1*factor2 + 
-			F::from(ID_ENCODED_NORMAL_STEP)*factor1;
-		let part1_alt = info_id*factor1*factor2 + 
-			F::from(ID_ENCODED_LAST_STEP)*factor1;
-		let part1_normal_var = new_const_var(&cs, part1);
-		let part1_last_var = new_const_var(&cs, part1_alt);
-		if B_DEBUG { assert!(TriVal::False as u8==1u8 && TriVal::Maybe as u8==3);}
-
-		let lb_zero= LinearCombination::from((F::zero(),Variable::One));
-		for i in 0..subsig_raw_eval.len(){
-			//3.1 NOTE eval has two possible values:
-			// subsig_raw_val is ALREADY PROVED to be either ONE of
-			// TriVal::False (1), or Trival::Maybe (3)
-			// b_last_step should be true when v is 3 (Maybe) and false if v=1.
-			//let b_last_step = subsig_raw_eval[i].is_neq(&one)?;
-			let b_last_step = &one - is_zero_better(&(&subsig_raw_eval[i]-&one),&cs).unwrap();
-
-			//3.3 retrieve existing tag (note that we've already proved
-			//that it is projected from sq_res, and also sq_res has already
-			//proved the validity of sid_step - thus it's the VALID step ID
-			//already proved).
-			let valid_sid = &sid_last_step[i];
-
-			//3.2 build the ACTUAL sid_tag  from subsig_raw_eval
-			//as a nondeterministic advice. We'll verify its correctness
-			//let part1 = b_last_step.select(&part1_last_var, &part1_normal_var)?;
-			let part1_val = if b_last_step.value()?==F::one(){
-				part1_last_var.value()?
-			}else{
-				part1_normal_var.value()?
-			};
-			let part1 = new_var(&cs, part1_val);
-			// we assert b_last * (part1-last_var) + (1-b_last)*(part1-normal)=0
-			// i.e. b_last * (last_var -normal)  = part1 - normal 
-			let lb_last_step = var_to_lb(&b_last_step, F::one());
-			let lb_neg_normal = var_to_lb(&part1_normal_var, -F::one());
-			let lb_part1 = var_to_lb(&part1, F::one());
-			let lb_last_var = var_to_lb(&part1_last_var, F::one());
-			cs.enforce_constraint(
-				lb_last_step,
-				lb_last_var + lb_neg_normal.clone(),
-				lb_part1 + lb_neg_normal
-			)?;
-
-			let sid_act = &part1 + &inp_subsig_encoded[i];
-			//let diff = &inp_subsig[i]*&(&sid_act - valid_sid);
-			//check_eq(&diff, &zero, "sid check failed")?; //only required for 
-													//non-zero "real" entries
-			let lb_sid_act = var_to_lb(&sid_act, F::one());
-			let lb_neg_valid_sid = var_to_lb(&valid_sid, -F::one());
-			let lb_inp_subsig = var_to_lb(&inp_subsig[i], F::one());
-			if B_DEBUG {
-				assert!(inp_subsig[i].value()? * (sid_act.value()?-
-					valid_sid.value()?)==F::zero());
-			}
-			
-			cs.enforce_constraint(
-				lb_inp_subsig,
-				lb_sid_act + lb_neg_valid_sid,
-				lb_zero.clone()
-			)?;
-		}
-
-		if b_perf{
-			println!(" ### validate_eval_subsig_by_sq_combo: subsigs: {}, sq_res.len: {}, cost: {}", inp_subsig.len(), sq_encoded.len(), cs.num_constraints()-nc); 
-		}
-
-		Ok( () )
 	}
 
 	/// validate syntesis of subsig is correct.
@@ -2755,16 +2471,16 @@ impl <F:PrimeField + ColEle> SigmaGadget<F> for ComputeSigAdvGadget<F>{
 		//2. validate the eval of subsig based on step queue result
 		//two instances (cs and igc)
 		let eval_res_combo_cs = stmt.get_container("eval_res_combo_cs")?;
-		self.validate_eval_subsig_by_sq_combo(&eval_res_combo_cs.lock().unwrap(),
-			r1.clone(), r2.clone(), cs.clone())?;
+		self.validate_eval_subsig_by_acc(&eval_res_combo_cs.lock().unwrap(),
+			r1.clone(), cs.clone())?;
 		//skip mode: no igc eval container exists; empty placeholder
 		//(the validators below gate their igc reads on b_skip_igc)
 		let eval_res_combo_igc = if self.capacity.b_skip_igc {
 			Container::<FpVar<F>>::new("eval_res_combo_igc")
 		} else {
 			let c = stmt.get_container("eval_res_combo_igc")?;
-			self.validate_eval_subsig_by_sq_combo(&c.lock().unwrap(),
-				r1.clone(), r2.clone(), cs.clone())?;
+			self.validate_eval_subsig_by_acc(&c.lock().unwrap(),
+				r1.clone(), cs.clone())?;
 			c
 		};
 
@@ -3439,8 +3155,8 @@ use utils::consts::{read_global_config, get_global_config};
 		})
 	}
 
-	/// T965 M4b (non-aggr; aggr Eval = mtbl_membership + mtbl_seed + the
-	/// T961 F1 chain via t965_fix_chain): recompute the logup m-tables
+	/// T965 M4b (Eval, both arms since T960 = mtbl_membership + mtbl_seed
+	/// + the T961 F1 chain via t965_fix_chain): recompute the logup m-tables
 	/// (and the chain) of stage `st` from its possibly tampered columns,
 	/// as the advice does, so a tamper is judged by the constraints, not
 	/// by a stale m-table. Identity on honest input. Records the cs ++ igc
@@ -3454,9 +3170,12 @@ use utils::consts::{read_global_config, get_global_config};
 				.map(|(x, s)| *x * s).collect()
 		};
 		match st {
-		T965Stage::EvalCs | T965Stage::EvalIgc if matches!(c,
-			Container::Complex(_, m, _, _) if m.contains_key("acc_ref")) => {
-			//aggr (by_acc layout)
+		T965Stage::EvalCs | T965Stage::EvalIgc => {
+			//by_acc layout, both arms (T960). acc: aggr acc_ref, nonaggr
+			//the LAST-tagged rows of the csa copy "sq_res" of the carry.
+			let has = |k: &str| matches!(&*c, Container::Complex(_, m, _, _)
+				if m.contains_key(k));
+			let (b_aggr, b_seed) = (has("acc_ref"), has("seed_ref"));
 			let g = |n: &str| t965_col(c, n);
 			let sub = |k: &str, n: &str| t965_col(&c.get_container(k).unwrap()
 				.lock().unwrap(), n);
@@ -3464,34 +3183,17 @@ use utils::consts::{read_global_config, get_global_config};
 			let maybe: Vec<Fr> = g("inp_subsig_encoded").iter().zip(&raw)
 				.map(|(e, r)| if *r == Fr::from(T965_MAYBE) {*e} else {zero})
 				.collect();
-			t965_set(c, "mtbl_membership", gen_m_table(
-				&sub("acc_ref", "acc_encoded"), &maybe));
-			//T927 ST: seed table [0] ++ seed_ref.subsigs, plain ids
-			let tbl = [&[zero][..], &sub("seed_ref", "subsigs")[..]].concat();
-			t965_set(c, "mtbl_seed", gen_m_table(&inp, &tbl));
+			let acc: Vec<Fr> = if b_aggr { sub("acc_ref", "acc_encoded") }
+				else { super::last_tagged_encs(&sub("sq_res", "encoded"),
+					&sub("sq_res", "si_step")) };
+			t965_set(c, "mtbl_membership", gen_m_table(&acc, &maybe));
+			if b_seed { //T927 ST: seed table [0] ++ seed_ref.subsigs
+				let tbl = [&[zero][..], &sub("seed_ref", "subsigs")[..]].concat();
+				t965_set(c, "mtbl_seed", gen_m_table(&inp, &tbl));
+			}
 			t965_fix_chain(c);
 			ctx.inp.extend(inp);
 			ctx.raw.extend(raw);
-		},
-		T965Stage::EvalCs | T965Stage::EvalIgc => {
-			let g = |n: &str| t965_col(c, n);
-			let sq = c.get_container("sq_res").unwrap();
-			let sq = sq.lock().unwrap();
-			let q = |n: &str| sq.get_container(n).unwrap().lock().unwrap()
-				.to_vec();
-			let (sub, n2) = (q("subsig"), q("subsig").len());
-			let sel: Vec<Fr> = (0..n2).map(|i| if i == n2-1
-				|| sub[i] != sub[i+1] {one} else {zero}).collect();
-			let src = encode_cols_better(vec![&g("inp_subsig_encoded")[..],
-				&g("inp_subsig")[..], &g("last_step")[..],
-				&g("sid_last_step")[..]], vec![0,1,2,3]);
-			let dst: Vec<Fr> = encode_cols_better(vec![&q("encoded")[..],
-				&sub[..], &q("step")[..], &q("si_step")[..]], vec![0,1,2,3])
-				.iter().zip(&sel).map(|(x, s)| *x * s).collect();
-			drop(sq);
-			t965_set(c, "mtbl_last_step", gen_m_table(&src, &dst));
-			ctx.inp.extend(g("inp_subsig"));
-			ctx.raw.extend(g("subsig_raw_eval"));
 		},
 		T965Stage::Synth => {
 			let g = |n: &str| t965_col(c, n);
@@ -3534,11 +3236,11 @@ use utils::consts::{read_global_config, get_global_config};
 	// ---- T965 B0 red/green tests, non-aggr csa (sig5 SCC fixture and a
 	// 2x2-clause fixture). A red test is SAT at HEAD and ends with
 	// assert_hole(tag, sat, FIXED_<id>); the fix commit flips its const. ----
-	const FIXED_V: bool = false;
-	/// F1 aggr (T961). Non-aggr W1 needs BREAK1 and is closed by T960
-	/// (shared by_acc core), which flips FIXED_F1_NA.
+	const FIXED_V: bool = true;
+	/// F1 aggr (T961). Non-aggr W1 is closed by T960 (the shared by_acc
+	/// core carries the F1 chain into nonaggr).
 	const FIXED_F1: bool = true;
-	const FIXED_F1_NA: bool = false;
+	const FIXED_F1_NA: bool = true;
 	const FIXED_NH3: bool = true;
 	const FIXED_F2: bool = true;
 	const FIXED_F3: bool = true;
@@ -3601,9 +3303,16 @@ use utils::consts::{read_global_config, get_global_config};
 		c.get_col(name).unwrap().lock().unwrap().data[i] = x;
 	}
 
-	/// per-slot columns of the eval / synthesis combos (non-aggr).
-	const T965_EVAL_COLS: [&str; 5] = ["inp_subsig", "inp_subsig_encoded",
-		"last_step", "sid_last_step", "subsig_raw_eval"];
+	/// per-slot columns of the eval (by_acc layout, both arms since T960)
+	/// and synthesis combos.
+	const T965_EVAL_COLS: [&str; 7] = ["inp_subsig", "inp_subsig_encoded",
+		"enc_step", "enc_pat", "enc_rgs", "enc_rge", "subsig_raw_eval"];
+	/// slot i of eval combo c := the seed key enc(s,0,0,0,0) of inp[i].
+	fn t965_seed_key(c: &Container<Fr>, i: usize) {
+		for n in &T965_EVAL_COLS[2..6] { t965_set1(c, n, i, Fr::zero()); }
+		let s = t965_col(c, "inp_subsig")[i];
+		t965_set1(c, "inp_subsig_encoded", i, t965_enc0(s));
+	}
 	const T965_SYN_COLS: [&str; 12] = ["vec_op", "sid_op", "vec_num",
 		"sid_num", "vec_counter_res", "sid_counter_res", "vec_type",
 		"vec_sid_type", "vec_scc_res", "vec_sid_scc_res",
@@ -3734,8 +3443,12 @@ use utils::consts::{read_global_config, get_global_config};
 		//T964: 2833 - 76 = 2757, scc chain 16 -> 10 per row (n2 = 10:
 		//-6*9), last-row max check (2) -> row-0 pin (1), r3 gone (1),
 		//is_zero(comp - max) shared by 3.2 and 3.5 (-2*n2)
-		//T962: 2757 - 50 + 1 = 2708, H1u ungated select (-n), F3 (+1)
-		assert_eq!(nc, 2708, "csa sig5 constraint count moved");
+		//T960: 2757 + 2*29 = 2815. Per list (k = 25 slots, m = 50 carry
+		//rows, legacy: no seed tie) by_acc 10k + 2m + 4 = 354 vs by_sq
+		//5k + 4m = 325: +bind k, +F1 chain k+1, per slot 7 vs 4,
+		//tag pin m vs dst_sel 3(m-1), logup k+m+3 both.
+		//T962: -50 + 1 = -49 (H1u ungated select -n, F3 +1): 2766
+		assert_eq!(nc, 2766, "csa sig5 constraint count moved");
 	}
 
 	/// BREAK1: rotate the (fully matched, steps 0..2) block of s in step
@@ -3752,8 +3465,10 @@ use utils::consts::{read_global_config, get_global_config};
 	}
 
 	/// T965 BREAK1 / V: q_c is multiset-bound only, so rotating the
-	/// matched subsig's block to end at its step-0 row makes the walk
-	/// read step 0 (NORMAL tag): raw False on a matching document.
+	/// matched subsig's block to end at its step-0 row made the HEAD
+	/// walk read step 0 (NORMAL tag): raw False on a matching document.
+	/// T960: the verdict reads no order (LAST-tagged rows), so the seam
+	/// writes s's raw False itself; the acc logup must reject it.
 	#[test]
 	fn test_t965_v_break1_reorder(){
 		let s = t965_ss(1, 1);
@@ -3762,14 +3477,18 @@ use utils::consts::{read_global_config, get_global_config};
 		};
 		let ran = T965Ran::default();
 		let rn = ran.clone();
-		let seam: T965SeamFn = Box::new(move |st, c, _v| {
+		let seam: T965SeamFn = Box::new(move |st, c, v| {
 			if st == T965Stage::EvalCs {
 				let i = t965_pos(&t965_col(c, "inp_subsig"), s);
-				assert_eq!(t965_col(c, "subsig_raw_eval")[i],
-					Fr::from(T965_FALSE), "reorder must flip s to False");
+				t965_set_res(c, v, &["subsig_raw_eval"], i, Fr::from(T965_FALSE));
 				rn.set(true);
 			}
 		});
+		if FIXED_V { //control: the verdict reads no order
+			let (sat0, _, p0) = t965_run("v_break1", T965_SIG5, T965_DOC5,
+				false, Some(&pre), None);
+			assert!(sat0 && !p0, "V control: rotation alone must be SAT");
+		}
 		let (sat, _, p) = t965_run("v_break1", T965_SIG5, T965_DOC5, false,
 			Some(&pre), Some(seam));
 		t965_ok("V/BREAK1", &ran, p);
@@ -3797,72 +3516,62 @@ use utils::consts::{read_global_config, get_global_config};
 		assert_hole("V/N9", sat, FIXED_V);
 	}
 
-	/// F1: move s's step-0 row of step queue q to its end.
-	fn t965_step0_to_end(q: &Container<Fr>, s: Fr) {
-		let (nm, mut rows) = t965_q_get(q);
-		let (ks, kt) = (t965_k(&nm, "subsig"), t965_k(&nm, "step"));
-		let i0 = (0..rows.len()).find(|&i| rows[i][ks] == s
-			&& rows[i][kt].is_zero()).expect("precondition: s's step-0 row");
-		let r0 = rows.remove(i0);
-		rows.push(r0);
-		t965_q_put(q, &nm, &rows);
-	}
 	/// F1 non-aggr seam: s is listed twice, in the pad cs slot a-1 and
-	/// s's slot a. The forged slot f gets s's step-0 q_c key, raw False
-	/// and final False; the other one s's honest eval and synthesis.
-	/// f = a-1, or with `late` f = a (the native sig check reads the
-	/// last (s, res) pair: needed when the sig reads s directly).
-	/// `reorder` first applies t965_step0_to_end to the csa copy of
-	/// q_c. Records a in `slot`.
+	/// s's slot a. The forged slot f gets s's seed key enc(s,0), raw
+	/// False and final False; the other one s's honest eval and
+	/// synthesis. f = a-1, or with `late` f = a (the native sig check
+	/// reads the last (s, res) pair: needed when the sig reads s
+	/// directly). (HEAD also needed s's step-0 row moved to the end of
+	/// q_c; T960 reads no row order.) `si_off` zeroes the F1 chain's
+	/// RANGE2 si (control). Records a in `slot`.
 	fn t965_f1_na_seam(s: Fr, slot: std::rc::Rc<std::cell::Cell<usize>>,
-		reorder: bool, late: bool) -> T965SeamFn {
+		late: bool, si_off: bool) -> T965SeamFn {
 		Box::new(move |st, c, v| match st {
 			T965Stage::EvalCs => {
-				let q = c.get_container("sq_res").unwrap();
-				let q = q.lock().unwrap();
-				if reorder { t965_step0_to_end(&q, s); }
-				let (nm, rows) = t965_q_get(&q);
-				let (ks, kt) = (t965_k(&nm, "subsig"), t965_k(&nm, "step"));
-				let r0 = rows.iter().find(|r| r[ks] == s && r[kt].is_zero())
-					.unwrap();
+				if si_off {
+					let m = t965_col(c, "sid_inp_subsig_chain").len();
+					t965_set(c, "sid_inp_subsig_chain", vec![Fr::zero(); m]);
+				}
 				let a = t965_pos(&t965_col(c, "inp_subsig"), s);
 				assert!(t965_col(c, "inp_subsig")[a - 1].is_zero(), "need a pad slot");
 				t965_copy_slot(c, v, &T965_EVAL_COLS, a - 1, a);
 				let f = if late {a} else {a - 1};
-				for (n, x) in [("inp_subsig_encoded", r0[t965_k(&nm, "encoded")]),
-					("last_step", Fr::zero()),
-					("sid_last_step", r0[t965_k(&nm, "si_step")])] {
-					t965_set1(c, n, f, x);
-				}
+				t965_seed_key(c, f);
 				t965_set_res(c, v, &["subsig_raw_eval"], f, Fr::from(T965_FALSE));
 				slot.set(a);
 			},
 			T965Stage::Synth => {
+				//the native synthesis ran on the forged raw of slot a when
+				//`late`, so the honest twin h gets s's Maybe back (s is a
+				//plain regex: counter = final = raw)
 				let a = slot.get();
+				let (f, h) = if late {(a, a - 1)} else {(a - 1, a)};
 				t965_copy_slot(c, v, &T965_SYN_COLS, a - 1, a);
-				t965_set_res(c, v, &["vec_counter_res", "vec_subsig_final_res"],
-					if late {a} else {a - 1}, Fr::from(T965_FALSE));
+				let res = ["vec_counter_res", "vec_subsig_final_res"];
+				t965_set_res(c, v, &res, f, Fr::from(T965_FALSE));
+				t965_set_res(c, v, &res, h, Fr::from(T965_MAYBE));
 			},
 			_ => {},
 		})
 	}
 
 	/// T965 F1 (W1) non-aggr: a pad cs slot b re-lists the matched subsig
-	/// s with raw False. At HEAD this needs the BREAK1 reorder: s's
-	/// step-0 row moves to the end of q_c, a run boundary with the
-	/// NORMAL tag, while s's real slot keeps its LAST boundary row.
+	/// s with raw False. At HEAD this needed the BREAK1 reorder: s's
+	/// step-0 row moved to the end of q_c, a run boundary with the
+	/// NORMAL tag, while s's real slot kept its LAST boundary row.
+	/// T960: the F1 chain (shared by_acc core) rejects the dup slot;
+	/// control: with the chain's RANGE2 si off the same forge is SAT.
 	#[test]
 	fn test_t965_f1_dup_slot_nonaggr(){
 		let s = t965_ss(1, 1);
 		let slot = std::rc::Rc::new(std::cell::Cell::new(0usize));
-		//control: without the reorder s's step-0 row is no run boundary
-		let (sat0, _, p0) = t965_run("f1_dup_na", T965_SIG5, T965_DOC5, false,
-			None, Some(t965_f1_na_seam(s, slot.clone(), false, false)));
-		assert!(slot.get() > 0 && !p0 && !sat0,
-			"control: dup slot alone must be UNSAT");
+		let (sat0, _, p0) = t965_run("f1_dup_na", T965_SIG5, T965_DOC5,
+			false, None, Some(t965_f1_na_seam(s, slot.clone(), false, true)));
+		assert!(slot.get() > 0 && !p0 && sat0,
+			"F1/nonaggr control: chain range off must be SAT");
 		slot.set(0);
 		let (sat, _, p) = t965_run("f1_dup_na", T965_SIG5, T965_DOC5, false,
-			None, Some(t965_f1_na_seam(s, slot.clone(), true, false)));
+			None, Some(t965_f1_na_seam(s, slot.clone(), false, false)));
 		assert!(slot.get() > 0 && !p, "seam did not run / panicked");
 		assert_hole("F1/nonaggr", sat, FIXED_F1_NA);
 	}
@@ -3900,12 +3609,8 @@ use utils::consts::{read_global_config, get_global_config};
 				let j = t965_col(c, "inp_subsig").len() - 1; //last igc slot
 				assert!(t965_col(c, "inp_subsig")[j - 1].is_zero());
 				t965_copy_slot(c, v, &T965_EVAL_COLS, j - 1, j);
-				for (n, x) in [("inp_subsig", s),
-					("inp_subsig_encoded", g.0[t965_k(&nm, "encoded")]),
-					("last_step", Fr::zero()),
-					("sid_last_step", g.0[t965_k(&nm, "si_step")])] {
-					t965_set1(c, n, j, x);
-				}
+				t965_set1(c, "inp_subsig", j, s);
+				t965_seed_key(c, j);
 				t965_set_res(c, v, &["subsig_raw_eval"], j, Fr::from(T965_FALSE));
 				g.3 = j;
 			},
@@ -4261,8 +3966,9 @@ use utils::consts::{read_global_config, get_global_config};
 		}).expect("neo adv").stmt_container;
 		if let Some(f) = o.pre { f(&stmt_disc.lock().unwrap()); }
 		//3. csa, routed as sed_mapper
+		//T960: the seed tie reads neo_core on both arms
 		let (p_res, p_inp) = if b_aggr {("failed_acc_combo failed_acc",
-			"neo_core")} else {("q_c", "q_i")};
+			"neo_core")} else {("q_c", "neo_core")};
 		let find = |p: &str| stmt_disc.lock().unwrap().search_container(
 			&format!("discharge_adv_stmt_cs {}", p)).unwrap();
 		let guard = o.seam.map(t965_wrap).map(T965SeamGuard::on);
@@ -4568,6 +4274,8 @@ use utils::consts::{read_global_config, get_global_config};
 	/// subsig := s: s's slot reads t's step-0 key (NORMAL tag, a DB
 	/// pair), i.e. False, and the matched sigN discharges. The seam
 	/// writes s's raw False itself (only a circuit rejecter may flip it).
+	/// T960: the subsig label is not read; the ST seed tie rejects s
+	/// (not in [0] ++ dan's neo_core subsigs = [0, t, 0..]).
 	#[test]
 	fn test_t965_v_n10_omission(){
 		let (s, t) = (t965_ss(1, 0), t965_ss(2, 0));
@@ -4606,53 +4314,113 @@ use utils::consts::{read_global_config, get_global_config};
 	/// T965 BREAK1 / V, M5 twin of v_break1_reorder: the rotation is
 	/// made on the neo dan's q_c, so the dan gadget judges it too. sigN
 	/// alone: s reads False and the matched sigN discharges. The seam
-	/// writes s's raw False; control: without the rotation it is UNSAT.
+	/// writes s's raw False. T960 control: the same rotation on sigG
+	/// (sig5's SCC shape, dischargeable with s Maybe), no raw flip, is
+	/// SAT: the verdict reads no row order.
 	#[test]
 	fn test_t965_v_break1_reorder_neo(){
+		let rot = |s: Fr| move |d: &Container<Fr>| t965_rotate_blk(
+			&t965_neo_qc(d).lock().unwrap(), s);
+		if FIXED_V {
+			let r0 = t965_neo_na("v_break1_neo_g", &[T965_SIGG], T965_DOC5,
+				T965NeoOpt{ pre: Some(&rot(t965_ss(1, 1))), ..Default::default() });
+			assert!(r0.sat && !r0.panicked, "V control: rotation alone must be \
+				SAT ({:?}, {:?})", r0.err, r0.parts);
+		}
 		let s = t965_ss(1, 0);
-		let pre = move |d: &Container<Fr>| t965_rotate_blk(&t965_neo_qc(d)
-			.lock().unwrap(), s);
 		let ran = T965Ran::default();
-		let mk = || -> T965SeamFn { let rn = ran.clone();
-			Box::new(move |st, c, v| if st == T965Stage::EvalCs {
+		let rn = ran.clone();
+		let seam: T965SeamFn = Box::new(move |st, c, v| if st == T965Stage::EvalCs {
 			let i = t965_pos(&t965_col(c, "inp_subsig"), s);
 			t965_set_res(c, v, &["subsig_raw_eval"], i, Fr::from(T965_FALSE));
 			rn.set(true);
-		})};
-		let r0 = t965_neo_na("v_break1_neo", &[T965_SIGN], T965_DOC5,
-			T965NeoOpt{ seam: Some(mk()), ..Default::default() });
-		assert!(ran.get() && !r0.sat && !r0.panicked && r0.err.is_none(),
-			"control: s False without the reorder must be UNSAT ({:?})", r0.err);
-		ran.set(false);
+		});
 		let r = t965_neo_na("v_break1_neo", &[T965_SIGN], T965_DOC5,
-			T965NeoOpt{ pre: Some(&pre), seam: Some(mk()), ..Default::default() });
+			T965NeoOpt{ pre: Some(&rot(s)), seam: Some(seam), ..Default::default() });
 		assert!(ran.get() && !r.panicked && r.err.is_none(),
 			"V/BREAK1/neo: seam ran = {}, panicked / {:?}", ran.get(), r.err);
 		assert_hole("V/BREAK1/neo", r.sat, FIXED_V);
 	}
 
-	/// T965 F1 (W1) non-aggr, M5 twin of f1_dup_slot_nonaggr: s's step-0
-	/// row moves to the end of the neo dan's q_c (dan gadget checked),
-	/// then the same dup-slot seam, forged slot late (sigN reads s
-	/// directly; sig5 reads it through its SCC composite).
+	/// T965 F1 (W1) non-aggr, M5 twin of f1_dup_slot_nonaggr: the same
+	/// dup-slot seam on the neo route (dan gadget checked), forged slot
+	/// late (sigN reads s directly; sig5 reads it through its SCC
+	/// composite). Control: with the F1 chain's RANGE2 si off it is SAT;
+	/// the red differs only in that si, so its rejecter is the chain's
+	/// outer range cell (parts: dan, csa R1CS SAT, M1 false).
 	#[test]
 	fn test_t965_f1_dup_slot_nonaggr_neo(){
 		let s = t965_ss(1, 0);
 		let slot = std::rc::Rc::new(std::cell::Cell::new(0usize));
-		let pre = move |d: &Container<Fr>| t965_step0_to_end(&t965_neo_qc(d)
-			.lock().unwrap(), s);
 		let r0 = t965_neo_na("f1_dup_na_neo", &[T965_SIGN], T965_DOC5,
-			T965NeoOpt{ seam: Some(t965_f1_na_seam(s, slot.clone(), false, true)),
+			T965NeoOpt{ seam: Some(t965_f1_na_seam(s, slot.clone(), true, true)),
 			..Default::default() });
-		assert!(slot.get() > 0 && !r0.sat && !r0.panicked && r0.err.is_none(),
-			"control: dup slot alone must be UNSAT ({:?})", r0.err);
+		assert!(slot.get() > 0 && r0.sat && !r0.panicked,
+			"F1/nonaggr/neo control: chain range off must be SAT ({:?})", r0.err);
 		slot.set(0);
 		let r = t965_neo_na("f1_dup_na_neo", &[T965_SIGN], T965_DOC5,
-			T965NeoOpt{ pre: Some(&pre), seam: Some(t965_f1_na_seam(s,
-			slot.clone(), false, true)), ..Default::default() });
+			T965NeoOpt{ seam: Some(t965_f1_na_seam(s, slot.clone(), true, false)),
+			..Default::default() });
 		assert!(slot.get() > 0 && !r.panicked && r.err.is_none(),
 			"F1/nonaggr/neo: panicked / {:?}", r.err);
 		assert_hole("F1/nonaggr/neo", r.sat, FIXED_F1_NA);
+		assert!(r.parts == (true, true, false),
+			"F1/nonaggr/neo: only the chain range cell rejects ({:?})", r.parts);
+	}
+
+	/// T960 V pin, neo q_c: the matched s's terminal row (step 2) gets
+	/// si := f(enc), optionally step := 0. No csa seam: the csa reads it.
+	fn t960_tamper_term(d: &Container<Fr>, s: Fr, f: &dyn Fn(Fr) -> Fr,
+		step0: bool) {
+		let q = t965_neo_qc(d);
+		let q = q.lock().unwrap();
+		let (nm, mut rows) = t965_q_get(&q);
+		let (ks, kt) = (t965_k(&nm, "subsig"), t965_k(&nm, "step"));
+		let (ke, ki) = (t965_k(&nm, "encoded"), t965_k(&nm, "si_step"));
+		let i = rows.iter().position(|r| r[ks] == s && r[kt] == Fr::from(2u32))
+			.expect("precondition: s's terminal row (step 2)");
+		rows[i][ki] = f(rows[i][ke]);
+		if step0 { rows[i][kt] = Fr::zero(); }
+		t965_q_put(&q, &nm, &rows);
+	}
+
+	/// T960 V (A5): the terminal row of the matched s claims NORMAL, si
+	/// := tag(enc, NORMAL). Then l = 0, acc misses it, s reads False and
+	/// sigN discharges. Rejecter: the outer DB lookup (no (tag(enc_last,
+	/// NORMAL), 2) row). Control: the csa R1CS alone accepts.
+	#[test]
+	fn test_t960_v_tag_normal_neo(){
+		use data_processor::{type_def::SubsigStepStore,
+			clam_db::ID_ENCODED_NORMAL_STEP};
+		let s = t965_ss(1, 0);
+		let pre = move |d: &Container<Fr>| t960_tamper_term(d, s, &|e|
+			SubsigStepStore::gen_step_tbl_id(e, ID_ENCODED_NORMAL_STEP), false);
+		let r = t965_neo_na("v_tag_n", &[T965_SIGN], T965_DOC5,
+			T965NeoOpt{ pre: Some(&pre), ..Default::default() });
+		assert!(!r.panicked && r.err.is_none(), "V/tag-N: {:?}", r.err);
+		assert!(!r.sat && r.parts.1 && !r.parts.2,
+			"V/tag-N: csa R1CS SAT, DB lookup rejects ({:?})", r.parts);
+	}
+
+	/// T960 V (A6): the terminal row takes a FOREIGN LAST tag, the pad
+	/// pair (tag(0, LAST), 0), which the DB holds. Then l = 1 - enc/D:
+	/// the tag pin (si - enc - c_n)(si - enc - c_l) = 0 fails, and so
+	/// does the selector logup (that weight is unpaid). Claim: the DB
+	/// accepts, the csa R1CS rejects. No single-row fixture isolates the
+	/// pin (review v2 A, I1).
+	#[test]
+	fn test_t960_v_tag_foreign_neo(){
+		use data_processor::{type_def::SubsigStepStore,
+			clam_db::ID_ENCODED_LAST_STEP};
+		let s = t965_ss(1, 0);
+		let pre = move |d: &Container<Fr>| t960_tamper_term(d, s, &|_|
+			SubsigStepStore::gen_step_tbl_id(Fr::zero(), ID_ENCODED_LAST_STEP),
+			true);
+		let r = t965_neo_na("v_tag_f", &[T965_SIGN], T965_DOC5,
+			T965NeoOpt{ pre: Some(&pre), ..Default::default() });
+		assert!(!r.panicked && r.err.is_none(), "V/tag-F: {:?}", r.err);
+		assert!(!r.sat && !r.parts.1 && r.parts.2,
+			"V/tag-F: csa R1CS rejects, DB lookup accepts ({:?})", r.parts);
 	}
 
 	/// T965 G6 (V-EC guard): honest neo + csa non-aggr with an

@@ -817,14 +817,10 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 			};
 			c
 		};
-		// Aggressive seed tie: the forward seed sq_inp (exists in non-aggr
-		// too; only the aggr compute_sig acc path reads it). Neo carries
-		// the carried-in queue q_i in that slot. T927 ST: aggr-neo hands
-		// over neo_core, whose "subsigs" column is the seed-tie table.
-		let sq_inp_cs = if use_neo && !b_aggr {
-			stmt_disc_cs.lock().unwrap().search_container(
-				"discharge_adv_stmt_cs q_i").expect("neo q_i cs err")
-		} else if use_neo && b_aggr {
+		// Seed tie source. T927 ST (neo; both arms since T960): dan's
+		// neo_core, whose "subsigs" column is the seed-tie table.
+		// Legacy: the forward seed sq_inp (read by the aggr tie only).
+		let sq_inp_cs = if use_neo {
 			stmt_disc_cs.lock().unwrap().search_container(
 				"discharge_adv_stmt_cs neo_core")
 				.expect("neo_core cs err")
@@ -838,10 +834,7 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		} else {
 			let stmt_disc_igc = discharge_adv_advice_igc.as_ref()
 				.expect("igc da advice").stmt_container();
-			let c = if use_neo && !b_aggr {
-				stmt_disc_igc.lock().unwrap().search_container(
-					"discharge_adv_stmt_igc q_i").expect("neo q_i igc err")
-			} else if use_neo && b_aggr {
+			let c = if use_neo {
 				stmt_disc_igc.lock().unwrap().search_container(
 					"discharge_adv_stmt_igc neo_core")
 					.expect("neo_core igc err")
@@ -855,9 +848,9 @@ impl <F:PrimeField+ColEle> SedAdvice<F>{
 		// Neo AGGRESSIVE ONLY: compute_sig evaluates the SDE
 		// obligation set = inp filtered to non-empty-chain.
 		//exclude empty-chain subsigs: on that arm they are never in
-		//failed_acc, and gen_eval_subsig_by_acc's
-		//from_subsig_store_item underflows on num==0. Both facts are
-		//aggressive-only (compute_sig_adv.rs:375, :576, :678).
+		//failed_acc, and dan's aggr seed set (is_uni) drops them too,
+		//so the seed tie needs the same filter. (T960: the csa gen
+		//no longer underflows on num==0, V-EC keys it enc(s,0).)
 		//NON-AGGRESSIVE and legacy take the full demand: there the
 		//verdict flows through q_c, an empty chain IS LAST_STEP at
 		//step 0, and the DNF walk needs every subsig of a covered sig.
