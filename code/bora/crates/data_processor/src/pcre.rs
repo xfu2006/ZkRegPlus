@@ -414,7 +414,7 @@ pub fn pcre_to_dfa(s: &str, combination_limit: usize, repeat_limit: usize)->DFA<
 	let (beg, end) = anchors(&to_hir(&s), flags.contains("m"), t.contains(":"));
 	let s = anchor_str(beg, false).to_string() + "(?:" + &s + ")" + anchor_str(end, false);
 	let hir  = to_hir(&s);
-	let dfa = hex_hir_to_dfa(&s, &hir, b_ignore_case, true);
+	let dfa = hex_hir_to_dfa(&s, &hir, b_ignore_case, true, Some(0));
 
 	dfa
 }
@@ -432,12 +432,13 @@ pub fn clamav_genregex_to_dfa(s: &str) -> DFA<char>{
 	s = s.replace("?", ".");
 	s = handle_range_without_approx(&s, true); //no unrolling
 	let b_ignore_case = !b_case_sensitive;
+	let p0 = if s.starts_with("ep+") {None} else {Some(0)}; //T990: ep+ dots count nibbles
 	s = handle_location(&s);
 	s = handle_negation(&s);
 
 	//2. conversion
 	let hir  = to_hir(&s);
-	let dfa = hex_hir_to_dfa(&s, &hir, b_ignore_case, false);
+	let dfa = hex_hir_to_dfa(&s, &hir, b_ignore_case, false, p0);
 	dfa
 }
 
@@ -1145,7 +1146,10 @@ fn render_variants(hir: &Hir, legs: &[Leg],
 /// encoded string is in hex,
 /// b_process_literal is set then convert every char e.g., 'a' to '61'
 /// IT IS USED when in hex mode
-fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bool) -> DFA<char>{
+/// p: nibble parity where this node starts (T990, hex igc only)
+fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bool,
+	p: Option<usize>) -> DFA<char>{
+	let igc_hex = b_ignore_case && !b_process_literal; //T990: igc hex mode
 	//zero-width (Look, Empty, x{0}, ...) = {eps}; build_dfa("") is the
 	//EMPTY language (T974 B3)
 	if hir.properties().maximum_len()==Some(0){
@@ -1159,11 +1163,15 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 			//have to take out dfa_res from v[0] first.
 			let dummy_fa = build_dfa("", false);
 			let mut b_initialized = false;
+			let mut q = p; //T990: parity at item i
 			for i in 0..v.len(){
 				let x = &v[i];
 				//eps item: skip, as HEAD did for Look/Empty (T974 B3)
 				if x.properties().maximum_len()==Some(0) {continue;}
-				let cur_dfa = hex_hir_to_dfa("",x, b_ignore_case, b_process_literal);
+				let cur_dfa = hex_hir_to_dfa("",x, b_ignore_case, b_process_literal, q);
+				if igc_hex {
+					q = q.and_then(|a| nib_par(x).map(|b| (a + b) % 2));
+				}
 				let cur_dfa = cur_dfa.minimize();
 				if !b_initialized && (cur_dfa.transitions.len()>1
 					|| cur_dfa != dummy_fa){ 
@@ -1188,7 +1196,9 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 			}else{
 				String::from_utf8(x.0.to_vec()).expect("failed u8_to_s")
 			};
-			let sx = if b_ignore_case {to_ignore_case(&sx)} else {sx};
+			//T990: igc hex folds by byte cut p
+			let sx = if !b_ignore_case {sx} else if b_process_literal {to_ignore_case(&sx)}
+				else {fold_nibs(&sx, p)};
 			build_dfa(&sx, false)
 		},
 		HirKind::Repetition(v) =>{
@@ -1196,7 +1206,9 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 			if max==Some(999777979){ max = None;}  //deal with preproces logic
 			//1. deal with the [0, min] case
 			let empty_dfa = build_dfa("", false);
-			let unit_dfa = hex_hir_to_dfa("",&v.sub, b_ignore_case, b_process_literal);
+			//T990: each pass starts at p only if the unit is whole bytes
+			let sp = if igc_hex && nib_par(&v.sub) != Some(0) {None} else {p};
+			let unit_dfa = hex_hir_to_dfa("",&v.sub, b_ignore_case, b_process_literal, sp);
 			let dfa_res = if max.is_none(){ unit_dfa.at_least(min) }
 			else{ unit_dfa.repeat( min..(max.unwrap() as usize + 1) ) };
 			//somehow cannot handle .* well, union with empty dfa if
@@ -1229,9 +1241,7 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 				  }else{
 				  	assert!(vbytes.len()<=16, "CANNOT handle cases OTHER than full 0x0-0xf case.");
 					let v_str = vbytes.iter().map(|x| format!("{}", (*x as char))).collect::<Vec<String>>();
-					let v_str = v_str.into_iter().map(|s| 
-						if b_ignore_case {to_ignore_case(&s)} else {s}
-					).collect::<Vec<String>>();
+					//T990: a member is one nibble, exact under igc (raw ClamAV)
 
 					let rust_reg = join_vs(&v_str);
 					let dfa = build_dfa(&rust_reg, false);
@@ -1254,7 +1264,7 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 			let mut b_initialized = false;
 			for i in 0..v.len(){
 				let x = &v[i];
-				let cur_dfa = hex_hir_to_dfa("",x, b_ignore_case, b_process_literal);
+				let cur_dfa = hex_hir_to_dfa("",x, b_ignore_case, b_process_literal, p);
 				if !b_initialized && (cur_dfa.transitions.len()>1
 					|| cur_dfa != dummy_fa){ 
 					//if never initialized and cur_dfa is NOT empty
@@ -1269,7 +1279,7 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 			}
 			dfa_res
 		},
-		HirKind::Capture(v) => hex_hir_to_dfa("", &v.sub, b_ignore_case, b_process_literal) 
+		HirKind::Capture(v) => hex_hir_to_dfa("", &v.sub, b_ignore_case, b_process_literal, p)
 	};
 
 	let min_bar = 256;
@@ -1279,6 +1289,18 @@ fn hex_hir_to_dfa(s: &str, hir: &Hir, b_ignore_case: bool, b_process_literal: bo
 	res
 }
 
+
+/// T990: igc fold of nibbles s at parity p (None = both cuts), lone nibbles exact
+fn fold_nibs(s: &str, p: Option<usize>) -> String {
+	match p {
+		None => format!("({}|{})", fold_nibs(s, Some(0)), fold_nibs(s, Some(1))),
+		Some(p) => {
+			let i = p.min(s.len());
+			let j = s.len() - (s.len() - i) % 2;
+			s[..i].to_string() + &to_ignore_case(&s[i..j]) + &s[j..]
+		},
+	}
+}
 
 /// begin/end anchor of a converted PCRE (T974 B3)
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -1618,12 +1640,14 @@ pub fn collect_bag_words_from_rustomaton_regex(s: &str, min_bag_len: usize, comb
 }
 
 /// T989: igc bags, each word cut to whole bytes (the igc ACDFA reads bytes)
-pub fn collect_bag_words_byte_aligned(s: &str, min_bag_len: usize, combination_limit: usize) -> HashSet<Vec<String>>{
+/// p0: nibble parity at the start, None = unknown (T990)
+pub fn collect_bag_words_byte_aligned(s: &str, min_bag_len: usize, combination_limit: usize,
+	p0: Option<usize>) -> HashSet<Vec<String>>{
 	let hir = rustomaton_to_hir(s);
 	let mut limit = combination_limit;
 	let (hs, b) = collect_bag_words_from_rustomaton_regex_worker(&hir,
-		&mut limit, min_bag_len, Some(Some(0)));
-	if b {byte_align_bags(hs, Some(0))} else {hs}
+		&mut limit, min_bag_len, Some(p0));
+	if b {byte_align_bags(hs, p0)} else {hs}
 }
 
 /// T989: nibble parity of a node's match len (None = varies; var `.` run = byte gap, as T986)
@@ -3350,9 +3374,13 @@ mod tests_t986 {
 /// T989. igc bag words sit on bytes; first_appear tie index.
 #[cfg(test)]
 mod tests_t989 {
-	use super::{collect_bag_words_byte_aligned as igc,
+	use super::{collect_bag_words_byte_aligned,
 		collect_bag_words_from_rustomaton_regex as cs, filter_bag_of_words, first_appear};
 	use std::collections::HashSet;
+
+	fn igc(s: &str, n: usize, lim: usize) -> HashSet<Vec<String>> {
+		collect_bag_words_byte_aligned(s, n, lim, Some(0))
+	}
 
 	fn set(v: &[&[&str]]) -> HashSet<Vec<String>> {
 		v.iter().map(|b| b.iter().map(|s| s.to_string()).collect()).collect()
@@ -3400,5 +3428,109 @@ mod tests_t989 {
 	fn test_t989_first_appear_tie() {
 		let v = vec!["abcdef".to_string(), "abcdefgh".to_string()];
 		assert_eq!(first_appear(&v, "zzzzabcdefgh"), "abcdefgh");
+	}
+}
+
+/// T990. igc hex literals fold on whole bytes; a nibble `?` shifts them.
+#[cfg(test)]
+mod tests_t990 {
+	use super::{clamav_genregex_to_dfa as g, hex_hir_to_dfa, to_hir, fold_nibs, build_dfa};
+	use crate::preprocess::to_ignore_case;
+	use rustomaton::automaton::Automata;
+	fn nib(b: &[u8]) -> Vec<char> { hex::encode(b).chars().collect() }
+
+	/// bytes 41 ?2 43 44 45 4?: clamscan 1.5.4 FOUND on `ArcdeO`
+	#[test]
+	fn test_t990_odd_literal_folds_bytes() {
+		let d = g("41?24344454?::i");
+		assert!(d.run(&nib(b"ArcdeO")), "false clean");
+		assert!(d.run(&nib(b"ArCDEO")) && !d.run(&nib(b"ArcdfO")));
+	}
+
+	/// odd-length literal `3` after `?`: HEAD panicked in to_ignore_case
+	#[test]
+	fn test_t990_odd_len_literal_no_panic() {
+		let d = g("4142?3::i");
+		assert!(d.run(&nib(b"ab3")) && d.run(&nib(b"AB#")) && !d.run(&nib(b"ab4")));
+	}
+
+	/// raw `6?::i` needs hi(b)==6 (clamscan: `abcA` not FOUND). HEAD panicked.
+	#[test]
+	fn test_t990_lone_high_exact() {
+		let d = g("4142436?::i");
+		assert!(d.run(&nib(b"ABCo")) && d.run(&nib(b"abca")));
+		assert!(!d.run(&nib(b"abcA")) && !d.run(&nib(b"ABC0")));
+	}
+
+	/// unknown parity takes both cuts; even parity 0 == to_ignore_case
+	#[test]
+	fn test_t990_fold_nibs_parity() {
+		assert_eq!(fold_nibs("61626364", Some(0)), to_ignore_case("61626364"));
+		let d = build_dfa(&fold_nibs("24344454", None), false);
+		for w in ["24344454", "24346454", "24344474", "26344454"] {
+			assert!(d.run(&w.chars().collect::<Vec<char>>()), "{}", w);
+		}
+		assert!(!d.run(&"24344456".chars().collect::<Vec<char>>()), "lone hi 4 is exact");
+	}
+
+	/// ep+ dots count nibbles: `abcd` at EP+1 (clamscan FOUND) must pass
+	#[test]
+	fn test_t990_pin_ep_odd() {
+		assert!(g("EP+1:41424344::i").run(&nib(b"xabcd")), "false clean");
+		for sig in ["EP+1:41424344::i", "EP+3:41424344::i", "EP+1,4:41424344::i"] {
+			let d = g(sig);
+			for w in [&b"wxyzabcd"[..], b"wxyzaBcD", b"wxyzABCD"] {
+				assert!(d.run(&nib(w)), "{} {:?}", sig, w);
+			}
+		}
+	}
+
+	/// a lone low nibble starts the sig: HEAD panicked
+	#[test]
+	fn test_t990_start_low() {
+		let d = g("?1424344::i");
+		assert!(d.run(&nib(b"ABCD")) && d.run(&nib(b"qbcd")) && !d.run(&nib(b"qbce")));
+	}
+
+	/// `(43?4|43?5)` lifts to `43.[45]`: a low nibble class. HEAD panicked.
+	#[test]
+	fn test_t990_nib_class() {
+		let d = g("4142(43?4|43?5)4647::i");
+		assert!(d.run(&nib(b"abcDfg")) && d.run(&nib(b"ABCefg")) && d.run(&nib(b"abc\x14fg")));
+		assert!(!d.run(&nib(b"abcFfg")));
+	}
+
+	/// `4?`/`5?` in an alt keep their high nibble exact
+	#[test]
+	fn test_t990_alt_nibbles() {
+		let d = g("4142(4?|5?)4344::i");
+		assert!(d.run(&nib(b"abQcd")) && d.run(&nib(b"AB@CD")));
+		assert!(!d.run(&nib(b"abacd")) && !d.run(&nib(b"abqcd")));
+	}
+
+	/// a byte gap keeps the parity
+	#[test]
+	fn test_t990_pin_gap_keeps_p() {
+		let d = g("4142{1-2}4344::i");
+		assert!(d.run(&nib(b"ab.cd")) && d.run(&nib(b"AB..CD")) && !d.run(&nib(b"ab...cd")));
+	}
+
+	/// unequal alt branches, both whole bytes: the alt passes p on
+	#[test]
+	fn test_t990_pin_alt_unequal() {
+		let d = g("4142(43|4445)46474849::i");
+		assert!(d.run(&nib(b"abcfghi")) && d.run(&nib(b"ABDEFGHI")) && !d.run(&nib(b"abdfghi")));
+	}
+
+	/// cs pin: p is never read without igc, so cs DFAs are as on HEAD
+	#[test]
+	fn test_t990_pin_cs_ignores_p() {
+		for s in [".*.41424344.*", ".*41.24344454..*", ".*4142.3.*", ".*41.{2,4}4243.*"] {
+			let h = to_hir(s);
+			let d0 = hex_hir_to_dfa(s, &h, false, false, Some(0));
+			for p in [Some(1), None] {
+				assert!(d0 == hex_hir_to_dfa(s, &h, false, false, p), "{}", s);
+			}
+		}
 	}
 }

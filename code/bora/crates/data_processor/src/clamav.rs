@@ -846,6 +846,7 @@ impl ClamavSig{
 		// turned an abstract class into concrete SED anchors.
 		let assert_fanout = cfg.b_aggressive_sde_for_rep
 			&& std::env::var("ZKR_ASSERT_FANOUT_PM").is_ok();
+		let igc_ep = self.b_igc_ep();
 		self.vec_subsig_pm_bounds = self.vec_subsig_obj.iter().map(|s|{
 			let vec = match s.subsig_type{
 				SubSigType::GeneralRegex => 
@@ -923,7 +924,9 @@ impl ClamavSig{
 					s.value, vec);
 			}
 			//T986: the igc ACDFA reads bytes, so align igc words
-			if s.b_ignore_case {crate::pcre::byte_align_pm_igc(&new_vec)}
+			//T990: igc ep+ words have no known parity, drop them (Maybe)
+			if s.b_ignore_case && igc_ep {vec![]}
+			else if s.b_ignore_case {crate::pcre::byte_align_pm_igc(&new_vec)}
 			else {new_vec}
 		}).collect::<Vec<Vec<(String, (usize, usize) )>>>();
 	}
@@ -1785,6 +1788,12 @@ impl ClamavSig{
 		res3
 	}
 
+	/// T990: a non-PCRE igc subsig sits at ep+ (dot_str counts nibbles)
+	fn b_igc_ep(&self) -> bool {
+		self.vec_pcre_info.iter().zip(&self.vec_bcase_sensitive).any(|(x, c)|
+			!c && !x.b_pcre && x.original_str.to_lowercase().starts_with("ep+"))
+	}
+
 	/// generate the bag of words patterns for a given signature
 	pub fn gen_approx_patterns_for_sig(s: &str, cfg: &ClamavApproxConfig) -> HashSet<Vec<String>>{
 		//let res = Self::gen_approx_patterns_for_sig_old(s);
@@ -1803,6 +1812,7 @@ impl ClamavSig{
 	/// satisfy it but "abab" would not because none of `[12, 34]` appears.
 	pub fn gen_approx_bagwords(&mut self, cfg: &ClamavApproxConfig){
 		let b_debug = read_global_config().log_level >= LOG6;
+		let p0 = if self.b_igc_ep() {None} else {Some(0)}; //T990: unknown start parity
 
 		for obj in self.vec_subsig_obj.iter(){
 			//0. if obj is not general regex or counter constraint ignore.
@@ -1819,7 +1829,7 @@ impl ClamavSig{
 			//T989: igc bag words cut to whole bytes (igc ACDFA reads bytes)
 			let bags_both = if obj.b_ignore_case {filter_bag_of_words(
 				&collect_bag_words_byte_aligned(s, cfg.min_bag_len,
-				cfg.combination_limit), cfg.min_bag_len)}
+				cfg.combination_limit, p0), cfg.min_bag_len)}
 				else {Self::gen_approx_patterns_for_sig(s, cfg)};
 			//T989: guard, igc bag words must be whole bytes
 			assert!(!obj.b_ignore_case || bags_both.iter().flatten()
@@ -5442,5 +5452,40 @@ mod tests_clamav{
 		println!("=== test_build_failed_c_per_seg OK ===");
 	}
 
+	/// T990: igc EP+1 bag and pm words were cut at nibble 1, a false clean
+	#[test]
+	fn test_t990_ep_odd_bag_no_false_clean(){
+		let cfg = default_clamav_cfg();
+		let mut sig = gen_clamav_sig("T990.EP1;Engine:81-255,Target:0;0;EP+1:41424344::i",
+			ClamSigType::General, &cfg);
+		sig.gen_approx_bagwords(&cfg);
+		assert!(!sig.vec_subsig_bagwords.iter().flatten().flatten().any(|w| w == "142434"),
+			"misaligned bag: {:?}", sig.vec_subsig_bagwords);
+		sig.gen_approx_pm_bounds(&cfg);
+		assert!(!sig.vec_subsig_pm_bounds.iter().flatten().any(|w| w.0 == "142434"),
+			"misaligned pm word: {:?}", sig.vec_subsig_pm_bounds);
+		let (mut mc, mut mi) = (HashMap::new(), HashMap::new());
+		sig.b_no_crit_pat = !sig.add_critical_pattern(&mut mc, &mut mi);
+		let sig = Arc::new(sig);
+		let v_sigs = vec![sig.clone()];
+		let v_no = if sig.b_no_crit_pat {vec![sig.clone()]} else {vec![]};
+		//all 16 hex digits, as HexACDFA needs; never in the files below
+		let fill = "0123456789abcdef".to_string();
+		let keys = |m: &HashMap<String, Vec<String>>|
+			m.keys().cloned().chain([fill.clone()]).collect::<Vec<String>>();
+		let (dc, dci) = (HexACDFA::new(0, &keys(&mc)), HexACDFA::new_adv(0, &keys(&mi), true));
+		let pats: Vec<String> = sig.collect_all_bagwords(false).into_iter()
+			.chain([fill.clone()]).collect();
+		let pats_igc: Vec<String> = sig.collect_all_bagwords(true).into_iter()
+			.chain([fill.clone()]).collect();
+		let (db, dbi) = (HexACDFA::new(0, &pats), HexACDFA::new_adv(0, &pats_igc, true));
+		let ids = HashMap::from([(sig.name.clone(), 1)]);
+		for f in ["00786162636400", "00784142434400"] {
+			let act = quick_discharge_file_by_crit_bag_pm("tc", &hex_to_u8(f), &v_sigs, &v_no,
+				&mc, &mi, &dc, &db, &dci, &dbi, false, &cfg, &ids, 1, 1).0;
+			assert!(act.crit.contains(&sig.name) && act.pm.contains(&sig.name),
+				"false clean on {}", f);
+		}
+	}
 }
 
