@@ -1254,6 +1254,8 @@ struct UnitVec {
 	active: usize,
 	/// Pooled T_qm need per arm [cs, igc], from the P_max walk.
 	qm: [usize; 2],
+	/// T995: SED halo M nibbles (db.aggressive_max_span_nibbles; 0 = none).
+	halo: usize,
 }
 
 impl UnitVec {
@@ -1269,6 +1271,7 @@ impl UnitVec {
 		self.active = self.active.max(o.active);
 		self.qm[0] = self.qm[0].max(o.qm[0]);
 		self.qm[1] = self.qm[1].max(o.qm[1]);
+		self.halo = self.halo.max(o.halo);
 	}
 }
 
@@ -1354,13 +1357,19 @@ fn rung_params_from_env(env: &UnitVec, p_max: &CapParams,
 		.clamp(mn, pm.max(mn));
 	c.basis_pats_in_trace =
 		bas(env.pats, p_max.basis_pats_in_trace, mn_pats);
+	//T995: M > 0 => fsm_adv sizes acc/uniq as (nlen+M)*basis/10000 rows and
+	//needs count + 1 rows, so basis = ceil((count+1)*10000/(nlen+M))
+	let bas_sed = |cnt: usize, pm: usize, mn: usize| if env.halo == 0 {
+		bas(cnt, pm, mn) } else { cdiv((cnt + 1) * 10000, nlen + env.halo)
+		.clamp(mn, pm.max(mn)) };
 	c.basis_unique_states =
-		bas(env.uniq, p_max.basis_unique_states, mn_uniq);
+		bas_sed(env.uniq, p_max.basis_unique_states, mn_uniq);
 	c.basis_acc_states =
-		bas(env.acc, p_max.basis_acc_states, mn_acc)
+		bas_sed(env.acc, p_max.basis_acc_states, mn_acc)
 		.max(c.basis_pats_in_trace / 10 + 1); // fsm_adv floor (:568)
-	c.cp_basis_unique_states =
-		bas(env.cpu, p_max.cp_basis_unique_states, 2);
+	c.cp_basis_unique_states = //T996: pack needs distinct + 1 slots
+		crate::determine_config::cp_basis_for_distinct(env.cpu, nlen)
+		.clamp(2, p_max.cp_basis_unique_states.max(2));
 	// forward queue: exact measured demand (no +10%, no 5/4 -- an
 	// under-count promotes the seg via the per-seg router).
 	if b_aggr {
@@ -1476,6 +1485,7 @@ fn quant_unit(u: &UnitVec, bits: u32) -> UnitVec {
 		live: quant_up(u.live, bits),
 		active: quant_up(u.active, bits),
 		qm: [quant_up(u.qm[0], bits), quant_up(u.qm[1], bits)],
+		halo: u.halo,
 	}
 }
 
@@ -1773,6 +1783,7 @@ fn harvest_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 			live: cp.max_carried_live_per_chunk,
 			active: cp.max_active_steps_per_chunk,
 			qm: [0, 0],
+			halo: db.aggressive_max_span_nibbles,
 		}
 	}).collect();
 	let need_walk: Vec<usize> = (0..units.len())
@@ -4276,6 +4287,41 @@ pub mod tests_bora_data_driver {
 		}
 	}
 
+	/// T996: a CP basis from the v5 rung and from cp_basis_for_distinct
+	/// gives imm_buf_len (cp_mapper get_old_stats) >= distinct + 1 slots,
+	/// with equality when nlen < 10000; the old to_basis(distinct) fell short.
+	#[test]
+	fn test_t996_cp_cap_holds_distinct_plus_one() {
+		use crate::circs::cp_mapper::CpCapacity;
+		use crate::determine_config::cp_basis_for_distinct;
+		let imm = |mw: usize, b: usize| CpCapacity { max_word_len: mw,
+			basis_unique_states: b, subsigs: 1, avg_pats_per_subsig: 1 }
+			.get_old_stats().3;
+		let p_max = big_pmax_fixture();
+		let (mut n_eq, mut n_old_short) = (0usize, 0usize);
+		for mw in [1usize, 64, 4096] {
+			let nlen = mw * LEGS;
+			for d in (0..3000usize).chain([nlen - 2, nlen, 5 * nlen + 7]) {
+				let cap = imm(mw, cp_basis_for_distinct(d, nlen));
+				assert!(cap >= d + 1, "mw {} d {} cap {}", mw, d, cap);
+				if cap == d + 1 { n_eq += 1; }
+				if imm(mw, to_basis(d, nlen)) < d + 1 { n_old_short += 1; }
+				if mw == 64 {
+					assert_eq!(cap, d + 1, "nlen < 10000 is exact");
+					if d + 1 <= imm(64, p_max.cp_basis_unique_states) {
+						let env = UnitVec { cpu: d, ..Default::default() };
+						for b_aggr in [true, false] {
+							let c = rung_params_from_env(&env, &p_max, b_aggr);
+							assert!(imm(64, c.cp_basis_unique_states) >= d + 1);
+						}
+					}
+				}
+			}
+		}
+		assert!(n_eq > 0 && n_old_short > 0, "eq {} short {}", n_eq,
+			n_old_short);
+	}
+
 	fn fresh_tmp_dir(tag: &str) -> PathBuf {
 		let n = COUNTER.fetch_add(1, Ordering::SeqCst);
 		let dir = std::env::temp_dir()
@@ -6598,6 +6644,33 @@ pub mod tests_bora_data_driver {
 		assert_eq!(b, vec![5, 6]);
 	}
 
+	/// T995: with M > 0 the rung's SED uniq/acc rows, as fsm_adv derives
+	/// them from the basis ((nlen+M)*basis/10000, acc floored at 2), hold
+	/// count + 1 rows with no slack; M = 0 keeps the per-nlen ceiling.
+	#[test]
+	fn test_t995_v5_sed_caps_exact_over_halo() {
+		let p_max = big_pmax_fixture();
+		let nlen = p_max.max_word_len * LEGS;
+		let (m, mut n_eq) = (702usize, 0usize);
+		let w = nlen + m;
+		for cnt in 0..2000usize {
+			let env = UnitVec { uniq: cnt, acc: cnt, halo: m,
+				..Default::default() };
+			let c = rung_params_from_env(&env, &p_max, true);
+			assert!(c.basis_unique_states < p_max.basis_unique_states);
+			let ulen = w * c.basis_unique_states / 10000; //fsm_adv.rs:1251
+			let alen = (w * c.basis_acc_states / 10000).max(2); //:752-753
+			assert!(ulen >= cnt + 1 && alen >= cnt + 1, "cnt {}", cnt);
+			if ulen == cnt + 1 && alen == (cnt + 1).max(2) { n_eq += 1; }
+			let c0 = rung_params_from_env(&UnitVec { halo: 0, ..env },
+				&p_max, true);
+			assert_eq!(c0.basis_unique_states, to_basis(cnt, nlen).max(2));
+			assert_eq!(c0.basis_acc_states, to_basis(cnt, nlen).max(2)
+				.max(c0.basis_pats_in_trace / 10 + 1));
+		}
+		assert!(n_eq > 0, "no exact case");
+	}
+
 	/// Ceiling inversion: derived container >= count, exact at the
 	/// boundary; plus the acc/pats structural floor and the qm floor.
 	#[test]
@@ -6605,7 +6678,7 @@ pub mod tests_bora_data_driver {
 		let p_max = big_pmax_fixture();   // subsigs 2001, rates 9999
 		let env = UnitVec { univ: 200, pats: 1991, uniq: 633,
 			acc: 1263, cpu: 317, fwd: 3550, live: 100, active: 400,
-			qm: [1700, 0] };
+			qm: [1700, 0], halo: 0 };
 		let c = rung_params_from_env(&env, &p_max, true);
 		let nlen = p_max.max_word_len * LEGS;
 		assert!(nlen * c.basis_pats_in_trace / 10000 >= env.pats);
@@ -6647,7 +6720,7 @@ pub mod tests_bora_data_driver {
 			let r = |k: usize| (s >> k) % 1000;
 			units.push(UnitVec { univ: r(3) % 50, pats: r(5),
 				uniq: r(7), acc: r(9), cpu: r(11), fwd: r(13),
-				live: r(15), active: r(17), qm: [r(19), 0] });
+				live: r(15), active: r(17), qm: [r(19), 0], halo: 0 });
 		}
 		let p_max = big_pmax_fixture();
 		let k = 4usize;

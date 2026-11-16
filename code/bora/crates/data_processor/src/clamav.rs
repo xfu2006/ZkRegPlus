@@ -3415,14 +3415,21 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		dfa_bag.get_chunk_peaks(&dfa_acc_path, seg_size);
 	let (u_ig, a_ig, p_ig, np_ig, sc_ig) =
 		dfa_bag_igc.get_chunk_peaks(&dfa_acc_path_igc, seg_size);
+	//T995 halo: with M > 0 the SED caps are checked over states_final =
+	//states 1..=nlen + M halo states (fsm_adv), so size them on that window
+	let sed_win = (m_halo > 0 && seg_size > 0).then(|| (
+		sed_window_peaks_per_chunk(dfa_bag, &dfa_acc_path, seg_size, m_halo),
+		sed_window_peaks_per_chunk(dfa_bag_igc, &dfa_acc_path_igc,
+			seg_size, m_halo)));
 	// M11 per-rung: per-chunk FSM peaks (cs/igc element-wise max).
 	// Estimator-pass only; empty otherwise. Sizes per-rung basis caps.
 	let (unique_acc_pats_per_chunk, acc_states_per_chunk,
 		pats_in_trace_per_chunk) = if read_global_config().b_estimate_caps {
-		let (uc, ac, pc) = dfa_bag
-			.get_chunk_peaks_per_chunk(&dfa_acc_path, seg_size);
-		let (ui, ai, pi) = dfa_bag_igc
-			.get_chunk_peaks_per_chunk(&dfa_acc_path_igc, seg_size);
+		let ((uc, ac, pc), (ui, ai, pi)) = match &sed_win {
+			Some(w) => w.clone(),
+			None => (dfa_bag.get_chunk_peaks_per_chunk(&dfa_acc_path, seg_size),
+				dfa_bag_igc.get_chunk_peaks_per_chunk(&dfa_acc_path_igc, seg_size)),
+		};
 		let emax = |a: Vec<usize>, b: Vec<usize>| -> Vec<usize> {
 			let n = a.len().max(b.len());
 			(0..n).map(|c| a.get(c).copied().unwrap_or(0)
@@ -3603,8 +3610,9 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	// CP cap demand: distinct crit-DFA states per chunk (cs/igc max). Sizes
 	// cp_basis_unique_states (CP pack imm_buf). Estimator-pass only.
 	let (max_cp_unique_states, cp_unique_states_per_chunk) =
-		if read_global_config().b_estimate_caps && m_halo > 0 && seg_size > 0 {
+		if read_global_config().b_estimate_caps && seg_size > 0 {
 		//T928 halo: count the CP pack window, states[lo..=lo+nlen+M]
+		//T996: also M = 0, so the stat holds the end state the pack holds
 		cp_window_distinct_per_chunk(dfa_crit, dfa_crit_igc,
 			&padded_nibbles, seg_size, m_halo)
 	} else if read_global_config().b_estimate_caps {
@@ -3619,6 +3627,13 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 			.max(vi.get(c).copied().unwrap_or(0))).collect();
 		(m, v)
 	} else { (0, vec![]) };
+	let (u_cs, a_cs, p_cs, u_ig, a_ig, p_ig) = match &sed_win { //T995
+		Some(((uc, ac, pc), (ui, ai, pi))) => {
+			let vmax = |v: &Vec<usize>| v.iter().copied().max().unwrap_or(0);
+			(vmax(uc), vmax(ac), vmax(pc), vmax(ui), vmax(ai), vmax(pi))
+		},
+		None => (u_cs, a_cs, p_cs, u_ig, a_ig, p_ig),
+	};
 	let chunk_peaks = ChunkPeaks{
 		seg_size,
 		max_unique_states: u_cs.max(u_ig),
@@ -3727,6 +3742,31 @@ fn cp_window_distinct_per_chunk(dfa_crit: &HexACDFA, dfa_crit_igc: &HexACDFA,
 	let v: Vec<usize> = (0..(padded_nibbles.len() + seg_size - 1) / seg_size)
 		.map(|c| win(&cp_cs, c).max(win(&cp_ig, c))).collect();
 	(v.iter().copied().max().unwrap_or(0), v)
+}
+
+/// T995 halo: SED cap demand per body chunk c = (uniq_acc_pats, acc_states,
+/// pats_in_trace) over fsm_adv's states_final window, states[c*seg+1 ..=
+/// (c+1)*seg + M] (no inp state; last halo pad(0, M)). path = body acc_path.
+fn sed_window_peaks_per_chunk(dfa: &HexACDFA, path: &Vec<usize>,
+	seg_size: usize, m_halo: usize) -> (Vec<usize>, Vec<usize>, Vec<usize>) {
+	let mut ext = path.clone();
+	let mut s = *path.last().expect("acc_path has the init state");
+	for ch in gen_pad_nibbles(0, m_halo) {
+		s = dfa.trans[&s][ch as usize];
+		ext.push(s);
+	}
+	let npat = |st: &usize| dfa.outputs.get(st).map_or(0, |v| v.len());
+	let (mut vu, mut va, mut vp) = (vec![], vec![], vec![]);
+	for c in 0..(path.len() - 1 + seg_size - 1) / seg_size {
+		let w = &ext[c * seg_size + 1
+			..((c + 1) * seg_size + 1 + m_halo).min(ext.len())];
+		let acc: Vec<&usize> = w.iter().filter(|st| dfa.is_accept(**st)).collect();
+		vu.push(acc.iter().copied().collect::<HashSet<_>>().iter()
+			.map(|st| npat(st)).sum());
+		va.push(acc.len());
+		vp.push(acc.iter().map(|st| npat(st)).sum());
+	}
+	(vu, va, vp)
 }
 
 /// AGGRESSIVE: per-segment CP failed_c (discharged sig ids + 1-1 info),
@@ -5654,7 +5694,7 @@ mod tests_clamav{
 		let mut n_strict = 0;
 		for nib in &docs {
 			assert_eq!(nib.len() % seg, 0);
-			for m in [2usize, 5, 70, 130] { //70, 130 > seg
+			for m in [0usize, 2, 5, 70, 130] { //T996 0 = non-aggr; 70, 130 > seg
 				let (mx, v) = cp_window_distinct_per_chunk(&dfa, &dfa_igc,
 					nib, seg, m);
 				let (pc, pi) = (pack(&dfa, nib, m), pack(&dfa_igc, nib, m));
@@ -5679,9 +5719,81 @@ mod tests_clamav{
 		let b0 = dfa.distinct_states_per_chunk(&dfa.acc_path(&a), seg)[0].max(
 			dfa_igc.distinct_states_per_chunk(&dfa_igc.acc_path(&a), seg)[0]);
 		assert!(b0 < v[0], "body-only {} !< window {}", b0, v[0]);
+		//T996 M = 0: "ab" ends exactly at the chunk end; the pack holds that
+		//end state, the old chunks(seg) stat did not
+		let mut e = vec![0u8; 2 * seg];
+		e[seg - 2] = 10; e[seg - 1] = 11;
+		let (_, v0) = cp_window_distinct_per_chunk(&dfa, &dfa_igc, &e, seg, 0);
+		let e0 = dfa.distinct_states_per_chunk(&dfa.acc_path(&e), seg)[0].max(
+			dfa_igc.distinct_states_per_chunk(&dfa_igc.acc_path(&e), seg)[0]);
+		let p0 = pack(&dfa, &e, 0)[0].max(pack(&dfa_igc, &e, 0)[0]);
+		assert!(e0 < v0[0] && v0[0] == p0, "M=0 old {} new {} pack {}", e0, v0[0], p0);
 		assert!(n_strict > 0);
 		println!("=== test_t928_cp_window_stat_covers_pack OK ({} strict) ===",
 			n_strict);
+	}
+
+	/// T995 halo: per chunk, the SED cap stats (uniq, acc, pats) equal the
+	/// fsm_adv states_final window (carried body-end state, states 1..=nlen
+	/// plus M halo states, pad(0, k) tail), on both arms; a halo can raise them.
+	#[test]
+	fn test_t995_sed_window_stats_match_circuit(){
+		use super::sed_window_peaks_per_chunk;
+		use utils::data::gen_pad_nibbles;
+		let fill = "0123456789abcdef".to_string();
+		let dfa = HexACDFA::new(0,
+			&vec!["ab".to_string(), "cd".to_string(), fill.clone()]);
+		let dfa_igc = HexACDFA::new(1, &vec!["ce".to_string(), fill.clone()]);
+		let seg = 62usize; //one word per chunk
+		// circuit-style states_final per chunk (gen_fsm_acc_combo)
+		let circ = |d: &HexACDFA, nib: &[u8], m: usize|
+			-> (Vec<usize>, Vec<usize>, Vec<usize>) {
+			let npat = |st: &usize| d.outputs.get(st).map_or(0, |v| v.len());
+			let (mut st, mut out) = (d.init_state, (vec![], vec![], vec![]));
+			for c in 0..nib.len() / seg {
+				let mut halo: Vec<u8> =
+					nib[(c + 1) * seg..].iter().take(m).copied().collect();
+				halo.extend(gen_pad_nibbles(0, m - halo.len()));
+				let (mut s, mut fin) = (st, vec![]);
+				for (j, &ch) in nib[c * seg..(c + 1) * seg].iter()
+					.chain(halo.iter()).enumerate(){
+					s = d.trans[&s][ch as usize];
+					if d.is_final(s) { fin.push(s); }
+					if j + 1 == seg { st = s; } //carry raw_states[nlen]
+				}
+				let uniq: HashSet<usize> = fin.iter().copied().collect();
+				out.0.push(uniq.iter().map(|x| npat(x)).sum());
+				out.1.push(fin.len());
+				out.2.push(fin.iter().map(|x| npat(x)).sum());
+			}
+			out
+		};
+		let pad62 = |raw: Vec<u8>| -> Vec<u8> {
+			let m1 = (62 - raw.len() % 62) % 62;
+			[raw, gen_pad_nibbles(0, m1)].concat()
+		};
+		let mut a = vec![0u8; 2 * seg];
+		a[0] = 10; a[1] = 11; a[seg] = 12; a[seg + 1] = 13;
+		let docs = vec![a.clone(), pad62(vec![12, 14, 3]),
+			pad62((0..70u8).map(|i| i % 16).collect())];
+		for nib in &docs {
+			for m in [2usize, 5, 70, 130] { //70, 130 > seg
+				for d in [&dfa, &dfa_igc] {
+					let got = sed_window_peaks_per_chunk(d, &d.acc_path(nib),
+						seg, m);
+					assert_eq!(got, circ(d, nib, m), "m {} dfa {}", m, d.id);
+					assert_eq!(got.1.len(), nib.len() / seg);
+				}
+			}
+		}
+		// non-vacuity: doc a, chunk 0, M = 2 completes "cd" only in its halo
+		let (wu, wa, wp) = sed_window_peaks_per_chunk(&dfa, &dfa.acc_path(&a),
+			seg, 2);
+		let (bu, ba, bp) = dfa.get_chunk_peaks_per_chunk(&dfa.acc_path(&a), seg);
+		assert!(bu[0] < wu[0] && ba[0] < wa[0] && bp[0] < wp[0],
+			"body ({} {} {}) window ({} {} {})", bu[0], ba[0], bp[0],
+			wu[0], wa[0], wp[0]);
+		println!("=== test_t995_sed_window_stats_match_circuit OK ===");
 	}
 
 	/// T990: igc EP+1 bag and pm words were cut at nibble 1, a false clean

@@ -342,6 +342,14 @@ pub fn apply_caperr_bumps(p: &mut CapParams, b_aggr: bool,
 
 /// Build the aggressive CP+SED capacities from the scalar params (rebuild,
 /// not field-poke, since SedCapacity::new derives internal comp_capacities).
+/// T996: CP basis for a chunk with `distinct` pack states. The pack needs
+/// distinct + 1 imm slots and imm = nlen * basis / 10000, so this is
+/// ceil((distinct + 1) * 10000 / nlen), the least basis that fits.
+pub(crate) fn cp_basis_for_distinct(distinct: usize, nlen: usize) -> usize {
+    let n = nlen.max(1);
+    ((distinct + 1) * 10000 + n - 1) / n
+}
+
 /// Returns (cp_cs, sed_cs, cp_igc, sed_igc). The igc CP runs the real igc
 /// crit-pattern DFA, so it shares the tunable cp_basis_unique_states; the SED
 /// igc is a subsigs=1 sentinel tuned via the _igc params (clamped to floors so

@@ -564,14 +564,19 @@ where C: CurveGroup<ScalarField=F>,
 			// nibbles, not the file (was *num_segs: caps num_segs x too small).
 			let wn = cp.seg_size.max(1);
 			let rate = |v: usize| v * 10000 / wn;
-			uniq.push(rate(cp.unique_acc_pats_per_chunk.get(s)
-				.copied().unwrap_or(0)));
-			acc.push(rate(cp.acc_states_per_chunk.get(s).copied()
-				.unwrap_or(0)));
+			//T995: M > 0 => SED acc/uniq caps are (nlen+M)*basis/10000 rows
+			//holding count + 1, so ceil((count+1)*10000/(nlen+M))
+			let m = db.aggressive_max_span_nibbles;
+			let rate_sed = |v: usize| if m == 0 { rate(v) }
+				else { ((v + 1) * 10000 + wn + m - 1) / (wn + m) };
+			uniq.push(cp.unique_acc_pats_per_chunk.get(s) //T995 0 = no data
+				.map_or(0, |&v| rate_sed(v)));
+			acc.push(cp.acc_states_per_chunk.get(s)
+				.map_or(0, |&v| rate_sed(v)));
 			pats.push(rate(cp.pats_in_trace_per_chunk.get(s).copied()
 				.unwrap_or(0)));
-			cpu.push(rate(cp.cp_unique_states_per_chunk.get(s).copied()
-				.unwrap_or(0)));
+			cpu.push(cp.cp_unique_states_per_chunk.get(s).map_or(0, //T996 +1
+				|&d| crate::determine_config::cp_basis_for_distinct(d, wn)));
 			nseg_dbg.push(wi.failed_c_all_segs.len());
 		}
 	}
