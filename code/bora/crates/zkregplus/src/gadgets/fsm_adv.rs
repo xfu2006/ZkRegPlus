@@ -866,7 +866,8 @@ impl <F: PrimeField + ColEle> FsmAdvAdvice<F>{
 			"si_states_final", IDX_SI_DATA);
 		let col_locs_final = Col::<F>::new(locs_final,
 			"locs_final", IDX_DATA);
-		let col_si_locs_final = Col::<F>::new(si_locs_final,
+		//T993: const RANGE2 sid, so the prover cannot pick another table
+		let col_si_locs_final = Col::<F>::new_const(si_locs_final,
 			"si_locs_final", IDX_SI_DATA);
 		res.lock().unwrap().add_col(col_states_final);
 		res.lock().unwrap().add_col(col_si_states_final);
@@ -1701,15 +1702,13 @@ impl <F:PrimeField + ColEle> FsmAdvGadget<F>{
 		//formally:
 		// i.e., sid_states_final[i] = vec_not_dummy[i] * fid_final
 		// this costs one constraint
-		// similarly: for sid_locs_final[i]:
-		// sid_locs_final = vec_dummy[i] * f_range2
+		// sid_locs_final needs no check: const RANGE2 (T993)
 		// COST: alen
 		//let lb_minus_final = var_to_lb(&f_id_final, -F::one());
 		for i in 0..alen{
 			better_select_check(&vec_not_dummy[i], &f_id_final, &f_range,
 				&si_states_final[i])?;
-			//check_eq(&si_locs_final[i], &(&vec_not_dummy[i] * &f_range),
-			// NO Need as locs are computed correctly always
+			//T993: si_locs_final is const RANGE2, no select check needed
 		}
 		if b_perf{
 			log_perf(self.job_id, log_level, "validate_fsm_acc_container step 6", &mut gt);
@@ -2433,7 +2432,7 @@ pub mod tests_fsm_adv_gadget{
 		fsm_adv::{FsmAdvGadget,FsmAdvAdvice,FsmAdvCapacity},
 		word_extract_adv::{WordExtractAdvAdvice},
 	};
-	use data_processor::{clam_db::{ClamavDB}};
+	use data_processor::{clam_db::{ClamavDB, RANGE2}};
 	use folding_schemes::folding::foldpot::sigma_ir1cs::SigmaGadget;
 	use folding_schemes::folding::foldpot::container_config::ContainerConfig;
 
@@ -2609,6 +2608,17 @@ pub mod tests_fsm_adv_gadget{
 			},
 			_ => panic!("T979: encoded sid is not a column"),
 		};
+		//T993: si_locs_final must be CONST RANGE2 (no prover-chosen sid)
+		let c = stmt_faa.lock().unwrap().search_container(
+			"fsm_adv_stmt_cs fsm_acc si_locs_final").unwrap();
+		match &*c.lock().unwrap() {
+			crate::gadgets::traits::Container::Single(col) => {
+				let g = col.lock().unwrap();
+				assert!(g.b_const && g.data.iter().all(|x|
+					*x == Fr::from(RANGE2)), "T993: si_locs_final sid");
+			},
+			_ => panic!("T993: si_locs_final is not a column"),
+		};
 		if shift != 0 {
 			let c = stmt_faa.lock().unwrap().search_container(
 				"fsm_adv_stmt_cs fsm_acc locs oup_loc").unwrap();
@@ -2666,6 +2676,15 @@ pub mod tests_fsm_adv_gadget{
 		assert_eq!(locs0[1], Fr::from(63u32));
 		assert!(locs_final0.iter().all(|x| *x <= Fr::from(63u32)),
 			"without halo, no accepting loc may exceed the boundary");
+	}
+
+	/// T993: the harness pins si_locs_final to CONST RANGE2 (red on
+	/// e57a2df5, where the sid is a dynamic witness column).
+	#[test]
+	fn test_t993_si_locs_final_const(){
+		let halo = [Fr::from(6u32), Fr::from(3u32), Fr::zero(), Fr::zero()];
+		let _ = build_fsm_halo_locs(&[], 0, 0);
+		let _ = build_fsm_halo_locs(&halo, 4, 0);
 	}
 
 	/// T975 (NEW-5): oup_loc is the next chunk's inp_loc (fold link)

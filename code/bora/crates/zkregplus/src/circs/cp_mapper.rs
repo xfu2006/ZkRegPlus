@@ -368,6 +368,15 @@ impl <F:PrimeField + ColEle,LK:LookupTableTwoCol<F>> CpComponentMapper<F,LK>{
 		clamdb: Arc<ClamavDB<F>>,
 		b_igc: bool //whether it's for ignore case ACDFA
 	) ->Self{
+		//T992: pack bound on mid states needs N < 2^min(rb,52-rb), cached DB too
+		for d in [&clamdb.dfa_crit, &clamdb.dfa_crit_igc] {
+			let (rb, n) = (d.state_part_bits, d.num_states);
+			assert!(rb <= 27 && n < 1usize << rb.min(52 - rb),
+				"T992: CP state bound, rb={} N={}", rb, n);
+		}
+		//T992: state_bits below is the cs value, used for the igc arm too
+		assert_eq!(clamdb.dfa_crit_igc.state_part_bits,
+			clamdb.dfa_crit.state_part_bits, "T992: igc/cs state_part_bits");
 		//0. igc arm with an empty igc universe: no gadgets at all
 		let b_skip = b_igc && b_skip_igc_arm(clamdb.as_ref());
 		if b_skip {
@@ -877,7 +886,7 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			(1, true), // vec![zero], //act_wrd_len
 			// -- the fsm gadget generated data
 			(nlen, true), // vec![f_char; nlen], //the extracted word
-			(nlen-1, true), //vec![f_crit_states; nlen-1], //the states
+			(nlen-1, true), //the states (T992: const zero, pack bounds them)
 			(nlen, true), // vec![f_crit_trans; nlen], //the transitions
 			// -- the pack gadget generated data
 			(mlen, false), //unique_states (dynamically generated)
@@ -1054,9 +1063,8 @@ impl <F:PrimeField + ColEle + 'static, LK: LookupTableTwoCol<F> + Send + Sync + 
 			vec![zero], //act_wrd_len
 			// -- the fsm gadget generated data
 			vec![f_char; nlen], //the extracted word
-			//vec![f_crit_states; nlen-1], //the states
-			vec![f_range2; nlen-1], //ONLY need to bind it to rg2
-									//transition sid will ENFORCE the state
+			//T992: mid states si = zero (no lookup). PackFinal bounds them.
+			vec![zero; nlen-1],
 			vec![f_crit_trans; nlen], //the transitions
 			// -- the pack gadget generated data
 			advice.packfinal_crit_advice

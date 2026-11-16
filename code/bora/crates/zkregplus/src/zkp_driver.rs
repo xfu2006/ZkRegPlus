@@ -9901,6 +9901,139 @@ range2_bit={}", ds, b, nu, rb);
 		assert!(lk, "T1-neg: lookups reject without G6");
 	}
 
+	/// T992 forge: BODY mid state p (1 <= p < nlen, mid 4-group) := X,
+	/// solved from the packed fsm eq after t_{p-1} := another valid
+	/// CRIT_TRANSITIONS row (as T928 T1). b_slot: X also takes a spare
+	/// NON_FINAL unique slot and X_h loses one copy (pack R1CS holds).
+	/// Returns (R1CS sat, failing (si, val) lookups, (NON_FINAL, X)).
+	fn t992_body(b_slot: bool) -> (Result<bool, String>, Vec<(Fr,Fr)>, (Fr,Fr)){
+		use ark_ff::Field;
+		use ark_std::{One, Zero};
+		let _cfg = t938_cfg_guard();
+		let mut fx = t928_fx(b"__xyz_HELL_ab__", None);
+		let h = fx.st.clone();
+		assert_eq!(fx.sat(&h, false), Ok(true), "honest statement rejected");
+		assert!(fx.lk_ok(&h), "honest statement fails a lookup");
+		let mut v = h.to_vec();
+		let nf = Fr::from(data_processor::clam_db::CRIT_INIT + 1);
+		let (p, kh) = (1..fx.nlen).filter(|p| p%4==1).find_map(|p|{
+			assert_eq!(fx.pk[0][p], fx.st_at(p), "pack input p is not state p");
+			let xh = v[fx.st_at(p)];
+			(0..fx.pk[1].len()).find(|j| v[fx.pk[1][*j]]==xh
+				&& v[fx.pk[3][*j]]==nf && t928_u(&v[fx.pk[2][*j]]) >= 2)
+				.map(|j| (p, j))
+		}).expect("fixture: no body mid state with m >= 2");
+		let pows = crate::gadgets::commons::build_pows_56_val::<Fr>();
+		let (unit, hex) = (Fr::from(1u64 << (fx.sbits+4)), Fr::from(16u64));
+		let (it, xh) = (fx.tr_at(p-1), v[fx.st_at(p)]);
+		let (tag, t) = (v[fx.tr_tag(p-1)], v[it]);
+		let t2 = fx.lk.iter().filter(|(a, b)| *a==tag && *b!=t).map(|x| x.1)
+			.min().expect("fixture: no other trans row");
+		let x = xh + pows[0] * (t2 - t)
+			* (hex*pows[1] + unit*pows[0]).inverse().unwrap();
+		assert!(!fx.lk.iter().any(|(_, b)| *b==x), "X is a table value");
+		v[fx.st_at(p)] = x;
+		v[it] = t2;
+		if b_slot {
+			v[fx.pk[2][kh]] -= Fr::one();
+			let s = (0..fx.pk[1].len()).rev().find(|s| v[fx.pk[1][*s]].is_zero()
+				&& v[fx.pk[2][*s]].is_zero()).expect("fixture: no spare slot");
+			v[fx.pk[1][s]] = x;
+			v[fx.pk[2][s]] = Fr::one();
+			v[fx.pk[3][s]] = nf;
+			assert!(fx.pack_ok(&v), "forged pack multiset broken");
+		} else { assert!(!fx.pack_ok(&v), "pack multiset not broken"); }
+		let f = fx.stmt(&v);
+		let cells = [f.inp_buf.clone(), f.oup_buf.clone(), f.data.clone()]
+			.concat();
+		let bad = cells.iter().zip(f.subtable_id.iter())
+			.filter(|(c, si)| !si.is_zero() && !fx.lk.contains(&(**si, **c)))
+			.map(|(c, si)| (*si, *c)).collect::<Vec<(Fr,Fr)>>();
+		(fx.sat(&f, true), bad, (nf, x))
+	}
+
+	/// T992 C1: forged non-state X in a body mid cell, pack slot added.
+	/// Every gadget block holds (R1CS sat). The body cell has si 0 (no
+	/// RANGE2 lookup); the ONLY failing lookup is (NON_FINAL, X) on the
+	/// pack unique slot: UNSAT.
+	#[test]
+	fn test_t992_c1_body_forged_state(){
+		let (r, bad, nx) = t992_body(true);
+		assert_eq!(r, Ok(true), "C1: a gadget block rejects the forge");
+		assert_eq!(bad, vec![nx], "C1: failing lookups are not [(NON_FINAL, X)]");
+	}
+
+	/// T992 C2: the same forge without the pack slot. The pack logup
+	/// (inputs subset of unique states) fails: R1CS UNSAT.
+	#[test]
+	fn test_t992_c2_body_forged_no_slot(){
+		let (r, bad, _) = t992_body(false);
+		assert_eq!(r, Ok(false), "C2: pack logup accepts a non-member");
+		assert!(bad.is_empty(), "C2: a lookup rejects (should be R1CS only)");
+	}
+
+	/// T992 R1/R2: CpComponentMapper::new on t928_fx's DB (rb 14) after
+	/// `f` edits the DFAs (as a stale cached DB could).
+	fn t992_new_cp(f: impl Fn(&mut data_processor::clam_db::ClamavDB<Fr>)){
+		let _cfg = t938_cfg_guard();
+		{
+			let mut c = get_global_config();
+			c.clamav_cfg.b_aggressive_sde_for_rep = true;
+			c.clamav_cfg.b_use_discharge_neo = false;
+			c.aggr_needs_subsigs = 0;
+			c.range2_bit = 14;
+			c.b_read_cache = false;
+		}
+		let mut cfg = data_processor::clamav::default_clamav_cfg();
+		cfg.b_aggressive_sde_for_rep = true;
+		cfg.sde_rep_fanout_cap = 4;
+		cfg.min_bag_len = 2;
+		let dir = "debug/t992/new_cp";
+		std::fs::create_dir_all(format!("{}/data/{}", utils::os::proj_root(),
+			dir)).unwrap();
+		let mut db = data_processor::clam_db::ClamavDB::<Fr>::build_test_db(
+			&cfg, dir, &vec!["aggneo.fwd;Engine:51-255,Target:1;0;/HELLO.{0,4}[ab][ab]/"
+			.to_string()], &vec![], &vec![], &vec![]).expect("aggr db");
+		f(&mut db);
+		let cp = CpCapacity{max_word_len: 8, basis_unique_states: 4000,
+			subsigs: 8, avg_pats_per_subsig: 6};
+		let _ = crate::circs::cp_mapper::CpComponentMapper::<Fr, super::LK<Fr>>
+			::new(cp, std::sync::Arc::new(db), false);
+	}
+
+	/// T992 R1 control: the unedited DB passes both asserts.
+	#[test]
+	fn test_t992_r1_ok(){ t992_new_cp(|_| {}); }
+
+	/// T992 R1: cs DFA with N = 2^rb states is rejected.
+	#[test]
+	#[should_panic(expected = "T992: CP state bound")]
+	fn test_t992_r1_cs_bound(){
+		t992_new_cp(|db| db.dfa_crit.num_states = 1 << db.dfa_crit.state_part_bits);
+	}
+
+	/// T992 R1: igc DFA with N = 2^rb states is rejected.
+	#[test]
+	#[should_panic(expected = "T992: CP state bound")]
+	fn test_t992_r1_igc_bound(){
+		t992_new_cp(|db| db.dfa_crit_igc.num_states =
+			1 << db.dfa_crit_igc.state_part_bits);
+	}
+
+	/// T992 R1: rb = 28 (above 27) is rejected.
+	#[test]
+	#[should_panic(expected = "T992: CP state bound")]
+	fn test_t992_r1_rb_above_27(){
+		t992_new_cp(|db| db.dfa_crit.state_part_bits = 28);
+	}
+
+	/// T992 R2: igc state_part_bits != cs state_part_bits is rejected.
+	#[test]
+	#[should_panic(expected = "T992: igc/cs state_part_bits")]
+	fn test_t992_r2_igc_bits_differ(){
+		t992_new_cp(|db| db.dfa_crit_igc.state_part_bits += 1);
+	}
+
 	/// T928 T2: halo state p := 0 with honest trans. The pack is
 	/// satisfied (0 counts in a dummy unique slot), lookups hold, and the
 	/// fsm packed eq fails: UNSAT.

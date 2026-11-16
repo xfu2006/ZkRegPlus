@@ -32212,8 +32212,13 @@ Goal 2. B3. -> COMPLETED
 	[g] SUMMARY: almost no change on cs and prove cost.
 
 Goal 3. B3_2
-	[a] T952
-	[b] T928 
+	[a] T952: run tooling change for 11/18
+	[b] T928: fix CP handling of halo
+	[c] T992: range check for middle state is redundant
+		becasuse lkup already there.
+
+Goal 4. GRP3 scripts
+	[a]
 	
 
 Goal 4. Writing

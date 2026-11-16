@@ -3603,7 +3603,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 	// CP cap demand: distinct crit-DFA states per chunk (cs/igc max). Sizes
 	// cp_basis_unique_states (CP pack imm_buf). Estimator-pass only.
 	let (max_cp_unique_states, cp_unique_states_per_chunk) =
-		if read_global_config().b_estimate_caps {
+		if read_global_config().b_estimate_caps && m_halo > 0 && seg_size > 0 {
+		//T928 halo: count the CP pack window, states[lo..=lo+nlen+M]
+		cp_window_distinct_per_chunk(dfa_crit, dfa_crit_igc,
+			&padded_nibbles, seg_size, m_halo)
+	} else if read_global_config().b_estimate_caps {
 		let cp_cs = dfa_crit.acc_path(&padded_nibbles);
 		let cp_ig = dfa_crit_igc.acc_path(&padded_nibbles);
 		let m = dfa_crit.max_distinct_states_per_chunk(&cp_cs, seg_size).max(
@@ -3707,6 +3711,22 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 
 
 	(fdr, wi)
+}
+
+/// T928 halo: CP pack demand per body chunk c (cs/igc max) = distinct
+/// crit-DFA states over states[c*seg ..= (c+1)*seg + M]; last halo pad(0, M).
+fn cp_window_distinct_per_chunk(dfa_crit: &HexACDFA, dfa_crit_igc: &HexACDFA,
+	padded_nibbles: &Vec<u8>, seg_size: usize, m_halo: usize)
+	-> (usize, Vec<usize>) {
+	let mut ext = padded_nibbles.clone();
+	ext.extend(gen_pad_nibbles(0, m_halo));
+	let (cp_cs, cp_ig) = (dfa_crit.acc_path(&ext), dfa_crit_igc.acc_path(&ext));
+	let win = |p: &Vec<usize>, c: usize| p[c * seg_size
+		..((c + 1) * seg_size + 1 + m_halo).min(p.len())]
+		.iter().collect::<HashSet<_>>().len();
+	let v: Vec<usize> = (0..(padded_nibbles.len() + seg_size - 1) / seg_size)
+		.map(|c| win(&cp_cs, c).max(win(&cp_ig, c))).collect();
+	(v.iter().copied().max().unwrap_or(0), v)
 }
 
 /// AGGRESSIVE: per-segment CP failed_c (discharged sig ids + 1-1 info),
@@ -5589,6 +5609,79 @@ mod tests_clamav{
 			&sig_to_id, &info);
 		assert!(!ih1[0].contains(&2), "{:?}", ih1);
 		println!("=== test_build_failed_c_per_seg OK ===");
+	}
+
+	/// T928 halo (r3): per chunk, the CP cap stat equals the distinct
+	/// states the CP pack sees (carried body-end state, body ++ M halo,
+	/// pad(0, k) tail), on both arms, and a halo can raise it.
+	#[test]
+	fn test_t928_cp_window_stat_covers_pack(){
+		use super::cp_window_distinct_per_chunk;
+		use utils::data::gen_pad_nibbles;
+		let fill = "0123456789abcdef".to_string();
+		let dfa = HexACDFA::new(0,
+			&vec!["ab".to_string(), "cd".to_string(), fill.clone()]);
+		let dfa_igc = HexACDFA::new(1, &vec!["ce".to_string(), fill.clone()]);
+		let seg = 62usize; //one word per chunk
+		// circuit-style pack window (cp_mapper.rs CpAdvice + halo fill)
+		let pack = |d: &HexACDFA, nib: &[u8], m: usize| -> Vec<usize> {
+			let (mut st, mut out) = (d.init_state, vec![]);
+			for c in 0..nib.len() / seg {
+				let mut halo: Vec<u8> =
+					nib[(c + 1) * seg..].iter().take(m).copied().collect();
+				halo.extend(gen_pad_nibbles(0, m - halo.len()));
+				let mut s = st;
+				let mut seen = HashSet::from([s]);
+				for (j, &ch) in nib[c * seg..(c + 1) * seg].iter()
+					.chain(halo.iter()).enumerate(){
+					s = d.trans[&s][ch as usize];
+					seen.insert(s);
+					if j + 1 == seg { st = s; } //carry the body-end state
+				}
+				out.push(seen.len());
+			}
+			out
+		};
+		// sub-F pad as pack_nibbles does (raw length not a multiple of 62)
+		let pad62 = |raw: Vec<u8>| -> Vec<u8> {
+			let m1 = (62 - raw.len() % 62) % 62;
+			[raw, gen_pad_nibbles(0, m1)].concat()
+		};
+		let mut a = vec![0u8; 2 * seg];
+		a[0] = 10; a[1] = 11; a[seg] = 12; a[seg + 1] = 13;
+		let docs = vec![a.clone(), pad62(vec![12, 14, 3]),
+			pad62((0..70u8).map(|i| i % 16).collect())];
+		let mut n_strict = 0;
+		for nib in &docs {
+			assert_eq!(nib.len() % seg, 0);
+			for m in [2usize, 5, 70, 130] { //70, 130 > seg
+				let (mx, v) = cp_window_distinct_per_chunk(&dfa, &dfa_igc,
+					nib, seg, m);
+				let (pc, pi) = (pack(&dfa, nib, m), pack(&dfa_igc, nib, m));
+				assert_eq!(v.len(), nib.len() / seg);
+				for c in 0..v.len() {
+					let need = pc[c].max(pi[c]);
+					assert!(v[c] >= need, "m {} c {}: {} < {}", m, c, v[c], need);
+					assert_eq!(v[c], need, "m {} c {}", m, c);
+				}
+				assert_eq!(mx, *v.iter().max().unwrap());
+				// body-only stat (the M = 0 path) over the same chunks
+				let bc = dfa.distinct_states_per_chunk(&dfa.acc_path(nib), seg);
+				let bi = dfa_igc.distinct_states_per_chunk(
+					&dfa_igc.acc_path(nib), seg);
+				for c in 0..v.len() {
+					if bc[c].max(bi[c]) < v[c] { n_strict += 1; }
+				}
+			}
+		}
+		// non-vacuity: doc a, chunk 0, M = 2 sees "c", "cd" only in its halo
+		let (_, v) = cp_window_distinct_per_chunk(&dfa, &dfa_igc, &a, seg, 2);
+		let b0 = dfa.distinct_states_per_chunk(&dfa.acc_path(&a), seg)[0].max(
+			dfa_igc.distinct_states_per_chunk(&dfa_igc.acc_path(&a), seg)[0]);
+		assert!(b0 < v[0], "body-only {} !< window {}", b0, v[0]);
+		assert!(n_strict > 0);
+		println!("=== test_t928_cp_window_stat_covers_pack OK ({} strict) ===",
+			n_strict);
 	}
 
 	/// T990: igc EP+1 bag and pm words were cut at nibble 1, a false clean

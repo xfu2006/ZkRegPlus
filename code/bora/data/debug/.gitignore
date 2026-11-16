@@ -49,6 +49,7 @@ watson_seg5/
 t965/
 # t962/<name>/ is the WRITE target of the T962 DFA tests (dfa_adv.rs).
 t962/
+t992/
 # t928_*/ are WRITE targets of the T928 halo tests (zkp_driver.rs).
 t928_green/
 t928_red_attack/
