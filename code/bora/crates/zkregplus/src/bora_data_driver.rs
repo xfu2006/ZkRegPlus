@@ -1799,6 +1799,55 @@ fn harvest_units(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	units
 }
 
+/// T997: SED pats join (rows, need = excess + target_acc), fsm_adv :752.
+fn t997_pats_rows_need(p: &CapParams, m: usize, exc: usize)
+	-> (usize, usize) {
+	let w = p.max_word_len * LEGS + m;
+	(w * p.basis_pats_in_trace / 10000,
+		exc + (w * p.basis_acc_states / 10000).max(2))
+}
+
+/// T997: lift the top pats cap (and Phase B's acc floor) to a fixpoint.
+fn t997_lift_top_pats(p: &mut CapParams, m: usize, exc: usize) -> bool {
+	let w = p.max_word_len * LEGS + m;
+	let mut lifted = false;
+	for _ in 0..64 {
+		let (rows, need) = t997_pats_rows_need(p, m, exc);
+		if rows >= need { break; }
+		p.basis_pats_in_trace = cdiv(need * 10000, w);
+		p.basis_acc_states =
+			p.basis_acc_states.max(p.basis_pats_in_trace / 10 + 2);
+		lifted = true;
+	}
+	lifted
+}
+
+/// T997: every tuned document's pats join fits the top rung.
+fn t997_check_top(p: &CapParams, m: usize, doc: &str, exc: usize) {
+	let (rows, need) = t997_pats_rows_need(p, m, exc);
+	assert!(rows >= need, "T997: top SED pats cap {} rows < pats-acc {} + \
+		target_acc {} rows (doc {}); raise basis_pats_in_trace",
+		rows, exc, need - exc, doc);
+}
+
+/// T997: the shipped top rung, lifted after the lower rungs are sized.
+fn t997_top_rung(spec: &DatasetSpec, ts: &TuningSet, m: usize,
+	p_max: &CapParams) -> CapParams {
+	let mut p = p_max.clone();
+	if m == 0 { return p; }
+	let (doc, exc) = ts.vdata.iter().map(|r|
+		(r.fname.as_str(), r.chunk_peaks.max_pats_excess))
+		.max_by_key(|d| d.1).unwrap_or(("", 0));
+	let b0 = p.basis_pats_in_trace;
+	if t997_lift_top_pats(&mut p, m, exc) {
+		utils::logger::log(0, utils::logger::LOG1, &format!(
+			"v5[{}]: T997 top basis_pats {} -> {} (excess {} rows)",
+			spec.name, b0, p.basis_pats_in_trace, exc));
+	}
+	t997_check_top(&p, m, doc, exc);
+	p
+}
+
 /// v5 aggressive ladder: DP-partition the harvested units and size
 /// every non-top rung to its occupants' measured max; the top rung is
 /// the fixpoint P_max VERBATIM. Replaces the band/peel ladder.
@@ -1807,7 +1856,8 @@ fn build_ladder_v5_aggr(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 	-> Vec<CapParams> {
 	let mut p_max =
 		fixpoint.last().expect("v5: empty fixpoint").clone();
-	if num_circs <= 1 { return vec![p_max]; }
+	let m = db.aggressive_max_span_nibbles;
+	if num_circs <= 1 { return vec![t997_top_rung(spec, ts, m, &p_max)]; }
 	// b_fold_only: give the walk the ratchet finalize has. p_max is a
 	// CEILING (rung_params_from_env: env.qm[0].min(p_max...)), so
 	// raising it lets each rung keep its own MEASURED demand instead
@@ -1839,11 +1889,11 @@ fn build_ladder_v5_aggr(spec: &DatasetSpec, db: &Arc<ClamavDB<Fr>>,
 		harvest_units(spec, db, ts, &p_max, false)
 	};
 	let grps = group_units_v5(units, &p_max, num_circs, true);
-	// size rungs; the LAST group ships P_max verbatim (fixpoint).
+	// size rungs; the LAST group ships P_max (fixpoint) + T997 pats lift.
 	let (mut lad, mut hist) = (vec![], vec![]);
 	for (gi, grp) in grps.iter().enumerate() {
 		if gi + 1 == grps.len() {
-			lad.push(p_max.clone());
+			lad.push(t997_top_rung(spec, ts, m, &p_max));
 		} else {
 			lad.push(rung_params_from_env(&env_of(grp), &p_max, true));
 		}
@@ -4284,6 +4334,45 @@ pub mod tests_bora_data_driver {
 			dfa_sigs: 0, dfa_subsigs: 0, aggr_needs_subsigs: 0,
 			max_word_len: 64, acdfa_state_part_bits: 4,
 			levels: vec![],
+		}
+	}
+
+	/// T997: the lifted top rung's SED pats rows hold max (pats - acc) +
+	/// target_acc, keep fsm_adv's basis_pats <= 10 x basis_acc, and the
+	/// check fires on the unlifted cap; no lift leaves the rung unchanged.
+	#[test]
+	fn test_t997_pats_cap_covers_acc_padding() {
+		let m = 702usize; //Dlp halo, W = 3,968 + 702 = 4,670 nibbles
+		let mk = |bp: usize, ba: usize| { let mut p = big_pmax_fixture();
+			p.basis_pats_in_trace = bp; p.basis_acc_states = ba; p };
+		let fires = |p: &CapParams, exc: usize| std::panic::catch_unwind(
+			|| t997_check_top(p, m, "fixture", exc)).is_err();
+		// (a) seed-like cap 4,670 rows < 1,937 + 2,802 rows: check fires
+		let mut a = mk(10000, 6000);
+		assert!(fires(&a, 1937), "unlifted cap must trip the check");
+		assert!(t997_lift_top_pats(&mut a, m, 1937), "lift must fire");
+		assert_eq!(t997_pats_rows_need(&a, m, 1937), (4739, 4739));
+		assert!(!fires(&a, 1937));
+		// (b) acc floor binds: the fixpoint needs more than 3 rounds
+		let mut b = mk(1000, 102);
+		assert!(fires(&b, 1000) && t997_lift_top_pats(&mut b, m, 1000));
+		let (rows, need) = t997_pats_rows_need(&b, m, 1000);
+		assert!(rows >= need && need > 1047, "rows {} need {}", rows, need);
+		assert!(b.basis_acc_states >= b.basis_pats_in_trace / 10 + 2);
+		// (c) a cap that already fits is left byte-identical
+		let c0 = mk(10000, 6000);
+		let mut c = c0.clone();
+		assert!(!t997_lift_top_pats(&mut c, m, 1000) && c == c0);
+		// (d) sweep: covered and never past fsm_adv's 10x panic guard
+		for exc in (0..3000usize).step_by(37) {
+			for ba in [2usize, 50, 400, 3000] {
+				let mut p = mk(ba * 10, ba);
+				t997_lift_top_pats(&mut p, m, exc);
+				let (rows, need) = t997_pats_rows_need(&p, m, exc);
+				assert!(rows >= need, "exc {} ba {}", exc, ba);
+				assert!(p.basis_pats_in_trace <= 10 * p.basis_acc_states);
+				assert!(!fires(&p, exc));
+			}
 		}
 	}
 

@@ -3634,6 +3634,11 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		},
 		None => (u_cs, a_cs, p_cs, u_ig, a_ig, p_ig),
 	};
+	let max_pats_excess = sed_win.as_ref().map_or(0, //T997 per arm, M > 0
+		|((_, ac, pc), (_, ai, pi))| {
+		let exc = |p: &Vec<usize>, a: &Vec<usize>| p.iter().zip(a)
+			.map(|(p, a)| p.saturating_sub(*a)).max().unwrap_or(0);
+		exc(pc, ac).max(exc(pi, ai)) });
 	let chunk_peaks = ChunkPeaks{
 		seg_size,
 		max_unique_states: u_cs.max(u_ig),
@@ -3647,6 +3652,7 @@ pub fn quick_discharge_file_by_crit_bag_pm_new(fname: &str,
 		max_carried_live_per_chunk,
 		max_active_steps_per_chunk,
 		max_cp_unique_states,
+		max_pats_excess,
 		fwd_entries_per_chunk,
 		active_steps_per_chunk,
 		carried_live_per_chunk,
