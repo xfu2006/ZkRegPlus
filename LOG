@@ -32216,6 +32216,9 @@ Goal 3. B3_2
 	[b] T928: fix CP handling of halo
 	[c] T992: range check for middle state is redundant
 		becasuse lkup already there.
+	[d] T993: handling sid to constant.
+	[e] cap fix
+	[f] T995: similar cap fix for fsm
 
 Goal 4. GRP3 scripts
 	[a]
