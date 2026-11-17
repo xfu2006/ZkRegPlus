@@ -45,9 +45,12 @@ configuration.
 
 ## `PREFLIGHT: NUMA split disabled; one unpinned process per leaf`
 
-`numactl` is missing or `--preferred-many` unsupported. Not fatal: the
+The `numactl` launch probe failed (`--preferred-many` unsupported, or a
+cpuset excludes the nodes). Not fatal: the
 8-job leaves (`clam`, `dlp`) lose their 4+4 two-socket split and run as
-one unpinned process — slower, same results.
+one unpinned process — slower, same results. If `numactl` is missing
+the run takes the same fallback with no message. `INSTALL.py` installs
+it by default (`--skip-run-tools` skips it).
 
 ## Run much slower than the quoted cost (laptop)
 

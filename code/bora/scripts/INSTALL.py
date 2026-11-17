@@ -143,6 +143,9 @@ APT_PACKAGES = [
 ]
 RUST_VERSION = "1.76.0"
 
+# ALL_T1007: numactl (two-socket pinning) + time, default on, --skip-run-tools.
+RUN_APT_PACKAGES = ["numactl", "time"]
+
 # The .sty files list_figures.tex loads.  texlive-latex-recommended and
 # texlive-pictures ship no binary, so `which` cannot see them and only
 # kpsewhich answers -- the same trap have_header() covers for the -dev
@@ -199,6 +202,48 @@ def install_zombie_apt_deps():
     sudo = [] if os.geteuid() == 0 else ["sudo"]
     run_cmd(sudo + ["apt-get", "update"])
     run_cmd(sudo + ["apt-get", "install", "-y"] + ZOMBIE_APT_PACKAGES)
+
+
+# ALL_T1007: RUN_APT_PACKAGES still missing (time probed as /usr/bin/time).
+def missing_run_tools():
+    miss = []
+    if shutil.which("numactl") is None:
+        miss.append("numactl")
+    if not os.path.exists("/usr/bin/time"):
+        miss.append("time")
+    return miss
+
+
+def run_tools_present():
+    return not missing_run_tools()
+
+
+# ALL_T1007: warn-only install; success = probe after install.
+_RUN_TOOLS_WARN = ""
+
+
+def install_run_apt_deps():
+    global _RUN_TOOLS_WARN
+    sudo = [] if os.geteuid() == 0 else ["sudo"]
+    rcs = []
+    for argv in (sudo + ["apt-get", "update"],
+                 sudo + ["apt-get", "install", "-y"] + RUN_APT_PACKAGES):
+        print("  $ " + " ".join(argv))
+        try:
+            rcs.append(subprocess.run(argv).returncode)
+        except OSError as e:
+            print("  (%s)" % e)
+            rcs.append(127)
+    miss = missing_run_tools()
+    if miss:
+        _RUN_TOOLS_WARN = (
+            "WARN: could not install %s (apt-get update rc %d, install "
+            "rc %d).%s Install by hand, or pass --skip-run-tools to "
+            "silence this." % (" and ".join(miss), rcs[0], rcs[1],
+                               " Without numactl PAPER_DATA.py runs a "
+                               "two-socket machine as one unpinned "
+                               "process." if "numactl" in miss else ""))
+        print("  " + _RUN_TOOLS_WARN)
 
 
 # pip-install gdown (Ubuntu 24 is PEP-668 managed -> retry w/ override).
@@ -278,6 +323,8 @@ def install_toolchain(with_zombie=False):
     print("=== install toolchain (Rust %s + build deps) ==="
           % RUST_VERSION)
     install_apt_deps()
+    if not _SKIP_RUN_TOOLS:
+        install_run_apt_deps()
     install_rust()
     if with_zombie:
         print("=== zombie baseline build deps (rust %s) ==="
@@ -394,18 +441,23 @@ def have_zombie_rust():
 def ensure_toolchain(selected=()):
     want_z = "zombie" in selected
     ok_apt, ok_rust = apt_tools_present(), have_rust()
+    ok_run = (True if (_SKIP_RUN_TOOLS or _RUN_TOOLS_WARN)
+              else run_tools_present())
     ok_z_apt = zombie_apt_present() if want_z else True
     ok_z_pip = have_tqdm() if want_z else True
     ok_z_rust = have_zombie_rust() if want_z else True
-    if (ok_apt and ok_rust
+    if (ok_apt and ok_rust and ok_run
             and ok_z_apt and ok_z_pip and ok_z_rust):
-        print("toolchain present (apt deps, rust %s%s)."
-              % (RUST_VERSION,
+        print("toolchain present (apt deps%s, rust %s%s)."
+              % ("" if _SKIP_RUN_TOOLS else ", numactl/time",
+                 RUST_VERSION,
                  ", zombie deps, rust " + ZOMBIE_NIGHTLY if want_z else ""))
         return
     print("=== ensure toolchain (installing missing tools) ===")
     if not ok_apt:
         install_apt_deps()
+    if not ok_run:
+        install_run_apt_deps()
     if not ok_rust:
         install_rust()
     if not ok_z_apt:
@@ -599,12 +651,13 @@ ZOMBIE_UPSTREAM = os.path.join(ZOMBIE_DIR, "UPSTREAM.txt")
 ZOMBIE_DOWNLOAD = os.path.join(MS_DLP_DIR, "scripts", "download_zombie.py")
 
 # Set by main() from --verify / --skip-reef-build / --force-zombie /
-# --build-zombie; the DATASETS registry
+# --build-zombie / --skip-run-tools; the DATASETS registry
 # calls install functions with no arguments, so flags travel as module state.
 _VERIFY_ALL = False
 _SKIP_REEF_BUILD = False
 _FORCE_ZOMBIE = False
 _BUILD_ZOMBIE = False
+_SKIP_RUN_TOOLS = False
 
 
 def sha256_file(path):
@@ -1260,7 +1313,8 @@ def check_zombie_dep_drift():
             src = f.read()
     except OSError:
         return
-    known = set(APT_PACKAGES) | set(ZOMBIE_APT_PACKAGES) | set(_APT_IMPLIED)
+    known = (set(APT_PACKAGES) | set(ZOMBIE_APT_PACKAGES)
+             | set(RUN_APT_PACKAGES) | set(_APT_IMPLIED))
     want = set()
     for hint in re.findall(r'"apt install ([^"]+)"', src):
         want.update(hint.split())
@@ -1606,9 +1660,17 @@ def main():
                          "instead of on first use (slow); implies "
                          "--force-zombie, since the downloader can only "
                          "build a tree it just cloned")
+    ap.add_argument("--skip-run-tools", action="store_true",
+                    help="do not install numactl and time "
+                         "(RUN_APT_PACKAGES). Use on a node whose setup "
+                         "already installed them, or without sudo. "
+                         "Without numactl a two-socket machine runs "
+                         "PAPER_DATA.py as one unpinned process")
     args = ap.parse_args()
 
     global _VERIFY_ALL, _SKIP_REEF_BUILD, _FORCE_ZOMBIE, _BUILD_ZOMBIE
+    global _SKIP_RUN_TOOLS
+    _SKIP_RUN_TOOLS = args.skip_run_tools
     _VERIFY_ALL = args.verify_download
     _SKIP_REEF_BUILD = args.skip_reef_build
     _BUILD_ZOMBIE = args.build_zombie
@@ -1668,6 +1730,8 @@ def main():
     print("  New shells pick it up automatically (added to ~/.bashrc).")
     print("=" * 64)
     print("INSTALL complete: %s" % ", ".join(selected))
+    if _RUN_TOOLS_WARN:
+        print(_RUN_TOOLS_WARN)
 
 
 if __name__ == "__main__":

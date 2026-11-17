@@ -159,14 +159,16 @@ as expected, not guaranteed.
   link-args=-fuse-ld=lld -Awarnings"`.
 - Linux; tested on **Ubuntu 24.04 LTS**. `INSTALL.py` uses `apt-get`
   and Debian package names — on other distributions install the
-  equivalents of its `APT_PACKAGES` (and `ZOMBIE_APT_PACKAGES` for the
-  `zombie` leaf) yourself.
+  equivalents of its `APT_PACKAGES` and `RUN_APT_PACKAGES` (and
+  `ZOMBIE_APT_PACKAGES` for the `zombie` leaf) yourself.
 - Python 3 (3.12 on 24.04).
 - **Step 1 also needs `pdflatex`** with geometry, booktabs, tikz,
   pgfplots, hyperref (TeX Live >= 2021); `INSTALL.py --toolchain`
   installs the three Ubuntu texlive packages.
-- `numactl`, optional — without it a run degrades to one unpinned
-  process per leaf.
+- `INSTALL.py` installs `numactl` and `time` by default
+  (`RUN_APT_PACKAGES`), and `--skip-run-tools` skips them. Without
+  `numactl` a run degrades to one unpinned process per leaf. `time`
+  provides `/usr/bin/time -v` for measuring peak memory by hand.
 - `vm.max_map_count`: every run raises this kernel knob (target
   1,073,741,824) and **aborts** below it — full runs exhaust the stock
   65,530 otherwise. Without root, `export ZKR_SKIP_MAP_COUNT_CHECK=1`
