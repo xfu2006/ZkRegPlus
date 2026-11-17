@@ -15,8 +15,10 @@ length. The full-set numbers come from the direct evaluator
 106 of the 6,208 (e-mail, unit) pairs, every one fails only the `accum`
 assertion, and all 32 e-mails are hit. Fix 1 alone and both fixes give 0
 rejections (evaluator, `docs/zombie_bugs/scripts/zdoc/full1000.py`, output in
-`docs/zombie_bugs/runs/full1000_eval.txt`). We did not rerun this at 2,000 or 4,000
-bytes.
+`docs/zombie_bugs/runs/full1000_eval.txt`). The same check at 2,000 and 4,000 bytes,
+on the other 64 drawn e-mails and all 194 units, also gives 0 rejections for both
+fix 1 alone and both fixes (`docs/zombie_bugs/scripts/evaluator/fixsim2.py`, output in
+`docs/zombie_bugs/runs/fixsim2.txt`).
 
 
 Source of the Zombie code. `src_sig/ms_dlp/zombie/` is a clone of upstream

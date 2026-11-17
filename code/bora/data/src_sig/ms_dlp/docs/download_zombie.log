@@ -1,12 +1,12 @@
 # zombie source retrieval
-date:    2026-06-05
-command: /usr/bin/python3 download_zombie.py --verify-build
+date:    2026-11-17
+command: /usr/bin/python3 download_zombie.py
 
 [machine config]
-os:              Linux 6.17.0-23-generic
+os:              Linux 7.0.0-38-generic
 logical_cores:   32
 cpu_model:       13th Gen Intel(R) Core(TM) i9-13950HX
-cpu_mhz:         800.000
+cpu_mhz:         1052.904
 cpu_count_proc:  32
 ram_total:       125.4 GiB
 
@@ -21,11 +21,10 @@ size:    1668 files, 28.3 MiB
   P1 circ/third_party/curve-constraint-tests -> curves/curve-constraint-tests (symlink)
   P2 circ/src/witnesses/mod.rs: commented dangling `pub mod tmp;`
   P3 circ/Cargo.toml: [lib] name "circ_zkmb" -> "circ"
+  P4 circ/examples/run_zok.rs: rewrote 6 line(s) to the single-assignment Spartan NIZK prove/verify API
+  P5 regex/src/builder/ZokWriter.C: proximitySet.count(i) == 0); -> proximitySet.count(regNumToFinalId.size()) == 0);
+  P6 regex/src/builder/ZokWriter.C: << "[i] = 1 - t_" << -> << "[i] = t_" <<
   note: build circ OUT of any parent Cargo workspace (--locked, committed lock); see verify_build
-
-[build verification]  2/2 components compiled
-  [OK  ] regex/TestRegex (make)                       built bin/TestRegex
-  [OK  ] circ (cargo, out-of-workspace --locked, system-libs) compiled circ example
 
 [dependencies]  13/13 present (report only, nothing installed)
   [OK  ] git                /usr/bin/git
@@ -40,9 +39,9 @@ size:    1668 files, 28.3 MiB
          needed for: CirC gmp-mpfr-sys system-libs build (avoids bundled MPFR make-check fail)
   [OK  ] mpc.h (MPC)        ok
          needed for: CirC gmp-mpfr-sys system-libs build (avoids bundled MPFR make-check fail)
-  [OK  ] cargo              ~/.cargo/bin/cargo
+  [OK  ] cargo              /home/xiang/.cargo/bin/cargo
          needed for: build circ / middlebox
-  [OK  ] rustc              ~/.cargo/bin/rustc
+  [OK  ] rustc              /home/xiang/.cargo/bin/rustc
          needed for: build circ / middlebox
   [OK  ] rust nightly-2023-02-01 installed
          needed for: circ pins this nightly in rust-toolchain.toml
