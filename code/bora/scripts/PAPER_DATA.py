@@ -6067,17 +6067,75 @@ _TEST_REDIRECTS = {
     # so the suite never contends with a LIVE run's lock (its main()
     # tests would otherwise be refused, rc 7) nor leaves one behind.
     "RUN_LOCK": "run.lock",
+    # ALL_T1003: a main() test leaves _run_lock_fd set, and a later full
+    # Sequencer test then ran clear_db_cache() on the REAL data/cache.
+    "CACHE_DIR": "cache",
+    "RAW_DATA_ROOT": "raw_data",
+    "MS_DLP_DIR": "ms_dlp",
+    "FLAG_DIR": "snark_start",              # a live run's decider gate
+    "FLAG": os.path.join("snark_start", "flag"),
+    "FOLD_DONE": os.path.join("snark_start", "fold_done"),
+    "DNA_DEBUG_VERDICT": "dna_debug_verdict.txt",
+    "V101_ROOT": "v101",
+    "V101_VERDICT": os.path.join("v101", "V101_VERDICT.txt"),
+    "V101_PROGRESS": os.path.join("v101", "V101_PROGRESS.txt"),
+    "V101_BUNDLE": os.path.join("v101", "V101_BUNDLE.tgz"),
 }
+
+# ALL_T1003: real dirs the suite must leave unchanged (checked in
+# tearDownModule).  data/cache/logs is skipped: a live run writes it.
+_REAL_GUARD_DIRS = (CACHE_DIR, os.path.join(REPO, "data", "paper_data"),
+                    os.path.join(REPO, "data", "small_data_set"),
+                    os.path.join(MS_DLP_DIR, "docs"), "/tmp/bora_zombie_run",
+                    "/tmp/bora", FLAG_DIR, "/tmp/bora_zombie_circ")
+_REAL_GUARD_SKIP = (os.path.join(CACHE_DIR, "logs") + os.sep,)
+_REAL_GUARD_BEFORE = None
+_REAL_ZOMBIE_PARTIALS = ZOMBIE_PARTIALS      # import-time values
+# import-time values of every redirected name, for tests that compare a
+# constant with a literal in Rust or another file.
+_REAL_CONSTS = {k: getattr(_MOD, k) for k in _TEST_REDIRECTS}
+_REAL_RAW_DATA_ROOT = RAW_DATA_ROOT
+
+
+def _tree_state(*roots):
+    """{path: (mtime_ns, size)} for every file under roots, plus
+    {dir: "dir"} for every dir, so empty dirs made or removed count."""
+    out = {}
+    for r in roots:
+        for d, ds, fs in os.walk(r):
+            ds[:] = [x for x in ds if x != "__pycache__"]   # python's own
+            out[d] = "dir"
+            for f in fs:
+                if f.endswith(".pyc"):
+                    continue
+                p = os.path.join(d, f)
+                try:
+                    st = os.stat(p)
+                except OSError:
+                    continue
+                out[p] = (st.st_mtime_ns, st.st_size)
+    return out
+
+
+def _real_guard_state():
+    return {k: v for k, v in _tree_state(*_REAL_GUARD_DIRS).items()
+            if not k.startswith(_REAL_GUARD_SKIP)}
 
 
 def setUpModule():
-    global _TEST_TMP
+    global _TEST_TMP, _REAL_GUARD_BEFORE
+    _REAL_GUARD_BEFORE = _real_guard_state()
     _TEST_TMP = tempfile.TemporaryDirectory()
     for name, base in _TEST_REDIRECTS.items():
         p = mock.patch.object(_MOD, name,
                                os.path.join(_TEST_TMP.name, base))
         p.start()
         _TEST_PATCHES.append(p)
+    p = mock.patch.object(_MOD, "ZOMBIE_PARTIALS", tuple(
+        os.path.join(_TEST_TMP.name, d, ZOMBIE_PARTIAL_NAME)
+        for d in ("bora_zombie_run", os.path.join("ms_dlp", "docs"))))
+    p.start()
+    _TEST_PATCHES.append(p)
     os.makedirs(os.path.join(_TEST_TMP.name, "job_logs"), exist_ok=True)
 
 
@@ -6086,6 +6144,14 @@ def tearDownModule():
         p.stop()
     _TEST_PATCHES.clear()
     _TEST_TMP.cleanup()
+    after = _real_guard_state()
+    changed = sorted(k for k in set(_REAL_GUARD_BEFORE) | set(after)
+                     if _REAL_GUARD_BEFORE.get(k) != after.get(k))
+    if changed:     # ALL_T1003: loud, fails the run (or a live job ran)
+        raise AssertionError(
+            "unit suite changed %d REAL path(s) under %s (or a live "
+            "run wrote there meanwhile): %s" % (
+                len(changed), ", ".join(_REAL_GUARD_DIRS), changed[:20]))
 
 
 def _sandbox_aborted():
@@ -9699,7 +9765,10 @@ class CleanGateTest(unittest.TestCase):
 
     def test_non_tty_refuses_and_wipes_nothing(self):
         """Unattended (cron, pipe) run_clean returns 7, deletes none."""
+        # run_clean asserts its roots sit under data/paper_data; the
+        # suite-wide redirect would trip that, and the wipe is mocked.
         with mock.patch.object(sys.stdin, "isatty", return_value=False), \
+             mock.patch.object(_MOD, "RAW_DATA_ROOT", _REAL_RAW_DATA_ROOT), \
              mock.patch.object(_MOD, "log"), \
              mock.patch.object(_MOD, "_wipe_generated") as wp:
             rc = run_clean()
@@ -10550,8 +10619,9 @@ class FlagLiteralsTest(unittest.TestCase):
         def const(name):
             m = re.search(r'const %s: &str = "([^"]+)";' % name, src)
             return m and m.group(1)
-        self.assertEqual(const("SNARK_WAIT_FLAG"), FLAG)
-        self.assertEqual(const("FOLD_DONE_FLAG"), FOLD_DONE)
+        # the import-time paths: setUpModule redirects FLAG/FOLD_DONE
+        self.assertEqual(const("SNARK_WAIT_FLAG"), _REAL_CONSTS["FLAG"])
+        self.assertEqual(const("FOLD_DONE_FLAG"), _REAL_CONSTS["FOLD_DONE"])
         self.assertIn(SELF_COVER_MARK, src)
 
     def test_driver_wait_marker(self):
@@ -12031,7 +12101,7 @@ class ZombieDryIsolationTest(unittest.TestCase):
 
     def setUp(self):
         self.d = tempfile.mkdtemp()
-        self.real = ZOMBIE_PARTIALS          # capture before patching
+        self.real = _REAL_ZOMBIE_PARTIALS    # import-time, pre-redirect
         self.tmp = os.path.join(self.d, "tmp.partial.jsonl")
         self.docs = os.path.join(self.d, "docs.partial.jsonl")
         self.patch = mock.patch.object(
