@@ -1,0 +1,2 @@
+zok_fix12 [2000, 4000] e-mails 64 pairs 12416 rejected e-mails 0 {}
+zok_fix1 [2000, 4000] e-mails 64 pairs 12416 rejected e-mails 0 {}
