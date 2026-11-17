@@ -1,0 +1,45 @@
+policy_1000_real
+start generate
+gen finish 31502
+opt finish 40424
+r1cs cons before reduce linearity 319653
+begin constant fold
+finish constant fold
+begin obliv
+new visit
+finish obliv
+begin tuple
+finish tuple
+r1cs cons after reduce linearity 203325
+Num Variables 321253
+inst 262144
+DEBUG USE 61427.3: keygen takes 103131
+get prover time 1281670
+policy1000 circuit constraints cons 262144 inputs 2001 vars 524288
+DEBUG USE 61427.1: is_sat true
+prove takes 2966
+verify takes 1327
+DEBUG USE 61427.4: verify result true
+	Command being timed: "systemd-run --user --scope -q -p MemoryMax=19G -p MemorySwapMax=0 taskset -c 0-11 ~/tmp/same_sample_work/zcopy/zombie/circ/target/release/circ_executable policy_1000_real true prover_verifier"
+	User time (seconds): 105.03
+	System time (seconds): 7.28
+	Percent of CPU this job got: 102%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:50.10
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 10025572
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 5218847
+	Voluntary context switches: 1315
+	Involuntary context switches: 10617
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 2550048
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

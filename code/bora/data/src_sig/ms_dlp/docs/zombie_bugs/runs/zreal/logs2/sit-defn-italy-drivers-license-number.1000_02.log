@@ -1,0 +1,24 @@
+policy_1000_real
+start generate
+gen finish 31121
+opt finish 37670
+r1cs cons before reduce linearity 675430
+begin constant fold
+finish constant fold
+begin obliv
+new visit
+finish obliv
+begin tuple
+finish tuple
+r1cs cons after reduce linearity 415826
+Num Variables 677029
+inst 524288
+DEBUG USE 61427.3: keygen takes 109746
+get prover time 2802683
+policy1000 circuit constraints cons 524288 inputs 2001 vars 1048576
+DEBUG USE 61427.1: is_sat false
+prove takes 7786
+thread '<unnamed>' panicked at 'assertion failed: self.proof_eq_sc_phase1.verify(&gens.gens_sc.gens_1, &mut transcript.trans,\n        &expected_claim_post_phase1, &comm_claim_post_phase1).is_ok()', third_party/Spartan/src/r1csproof.rs:744:5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+verify takes 3343
+DEBUG USE 61427.4: verify result false

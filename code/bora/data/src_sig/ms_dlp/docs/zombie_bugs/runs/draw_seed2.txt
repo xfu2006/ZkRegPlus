@@ -1,0 +1,12 @@
+seed 2
+units sit-defn-australia-drivers-license-number/comb07 sit-defn-australia-drivers-license-number/comb16 sit-defn-australia-drivers-license-number/comb14 sit-defn-hungary-drivers-license-number sit-defn-canada-drivers-license-number/comb02
+emails 1000_20 1000_09 1000_32 1000_07 1000_30 1000_02 1000_19 1000_22
+1000_20 rejecting_among_drawn: -
+1000_09 rejecting_among_drawn: -
+1000_32 rejecting_among_drawn: -
+1000_07 rejecting_among_drawn: -
+1000_30 rejecting_among_drawn: -
+1000_02 rejecting_among_drawn: -
+1000_19 rejecting_among_drawn: -
+1000_22 rejecting_among_drawn: -
+predicted XXX (evaluator, old circuits) = 0 of 8

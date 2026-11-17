@@ -1,0 +1,12 @@
+seed 3
+units sit-defn-chile-identity-card-number sit-defn-poland-passport-number sit-defn-new-zealand-drivers-license-number sit-defn-belgium-passport-number sit-defn-hungary-personal-identification-number
+emails 1000_31 1000_21 1000_19 1000_03 1000_20 1000_01 1000_16 1000_09
+1000_31 rejecting_among_drawn: -
+1000_21 rejecting_among_drawn: -
+1000_19 rejecting_among_drawn: -
+1000_03 rejecting_among_drawn: -
+1000_20 rejecting_among_drawn: -
+1000_01 rejecting_among_drawn: -
+1000_16 rejecting_among_drawn: -
+1000_09 rejecting_among_drawn: -
+predicted XXX (evaluator, old circuits) = 0 of 8

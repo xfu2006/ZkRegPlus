@@ -30,10 +30,11 @@ relative to `src_sig/ms_dlp/`. E-mail ids such as `1000_13` refer to
 `docs/zombie_bugs/emails/fixture/emails/padded/<id>.eml` (original bytes in
 `.../emails/orig/`, sources in `.../fixture/ids.tsv`), and `nz_near` refers
 to `docs/zombie_bugs/emails/violation_tests/nz_near.eml`. The generated
-circuits (original, fix 1, fix 1 and fix 2) are in
-`docs/zombie_bugs/circuits_zok_orig_fix1_fix12.tgz` (directories `zok/`,
-`zok_fix1/`, `zok_fix12/`, 194 files each). Prover logs are in
-`docs/zombie_bugs/runs/`.
+circuits (original, fix 1, fix 1 and fix 2; directories `zok/`,
+`zok_fix1/`, `zok_fix12/`, 194 files each) are Zombie code-generator output
+and are not archived. Step 2 of the reproduction regenerates them. Prover
+logs are in `docs/zombie_bugs/runs/`. In those logs the home-directory
+prefix is written as `~/`.
 
 Since DLP_T999 the BORA artifact applies both fixes automatically:
 `src_sig/ms_dlp/scripts/download_zombie.py` applies them (P5 and P6) after
@@ -386,20 +387,29 @@ scratch directory and still contain its absolute paths. Map them as follows.
 | `<scratch>/zdoc/runs/` | `docs/zombie_bugs/runs/` |
 | `<scratch>/zreal/logs2/`, `logs3/`, `viol/`, `viol2/` | `docs/zombie_bugs/runs/zreal/logs2/` and so on |
 | `<scratch>/zreal/viol2/*.eml` | `docs/zombie_bugs/emails/violation_tests/` |
-| `~/tmp/same_sample_work/zok/`, `zok_fix1/`, `zok_fix12/` | `docs/zombie_bugs/circuits_zok_orig_fix1_fix12.tgz` |
+| `~/tmp/same_sample_work/zok/`, `zok_fix1/`, `zok_fix12/` | not archived, regenerate with step 2 |
 | `~/tmp/same_sample_work/zcopy/zombie/` (scratch Zombie copy) | rebuild, see step 1 |
 | `<scratch>/zdoc/gen/g0`, `g1`, `g12` (generator copies) | rebuild, see step 2 |
 | `<scratch>/zdoc/rundirs/` (prover keys) | not archived, recreated by `runs.sh` |
 
 1. Scratch Zombie copy with the real-witness test arm. Copy
-   `src_sig/ms_dlp/zombie/` to a scratch directory, apply
-   `docs/zombie_bugs/patches/zkmb_real_witness_arm_test_only.patch` from the
-   copy's root (`patch -p1`, it changes `circ/src/zkmb.rs` only), and build
-   `circ_executable` the way `src_sig/ms_dlp/scripts/run_zombie.py` builds
-   it. The patch adds the test-only mode `policy_1000_real`. It reads the
-   e-mail named by `ZREAL_EMAIL`, pads it with 0x0A to 1,000 bytes, uses it
-   as the witness, and prints `DEBUG USE 61427.x` lines (R1CS satisfiability,
-   key-generation time, verify result).
+   `src_sig/ms_dlp/zombie/` to a scratch directory, add the test arm below
+   to `circ/src/zkmb.rs`, and build `circ_executable` the way
+   `src_sig/ms_dlp/scripts/run_zombie.py` builds it. The arm's diff is not
+   archived because it carries Zombie source lines. It makes three edits.
+   First, in the prover, it replaces the commented-out R1CS satisfiability
+   check with one that prints `DEBUG USE 61427.1: is_sat <true|false>` (or
+   `DEBUG USE 61427.2` on an error). Second, it adds a function that reads
+   the e-mail named by `ZREAL_EMAIL`, pads it with 0x0A to 1,000 bytes, and
+   uses it as both the prover and the verifier witness. When its second
+   argument is true it first runs key generation and prints
+   `DEBUG USE 61427.3: keygen takes <ms>`. It then proves and verifies with
+   the same calls as Zombie's `benchmark_one_circuit` and prints
+   `DEBUG USE 61427.4: verify result <true|false>`. Third, it adds the match
+   arm `policy_1000_real` that calls this function on `policy1000`. The
+   same-sample run carries the maintained version of this witness path, the
+   `ARM_T` template in `src_sig/ms_dlp/scripts/same_zombie.py` (mode
+   `policy_real_<n>`, no padding, no key generation, no `is_sat` line).
 
 2. Generator copies. Copy `src_sig/ms_dlp/zombie/regex/` three times. Leave
    the first unchanged. In the second apply only the first hunk of
@@ -413,9 +423,9 @@ scratch directory and still contain its absolute paths. Map them as follows.
    taskset -c 12-15 python3 -I docs/zombie_bugs/scripts/zdoc/gen_patched.py <copy>/bin/TestRegex <out dir>
    ``
 
-   The unchanged build reproduces `zok/` of the archived tarball byte for
-   byte, and the patched builds reproduce `zok_fix1/` and `zok_fix12/` byte
-   for byte (0 differing files of 194 each).
+   When we checked, the unchanged build reproduced the `zok/` circuits we
+   ran byte for byte, and the patched builds reproduced `zok_fix1/` and
+   `zok_fix12/` byte for byte (0 differing files of 194 each).
 
 3. Draw the sample: `python3 docs/zombie_bugs/scripts/zdoc/draw.py 1` (prints
    the 5 units, the 8 e-mails, and the evaluator prediction).

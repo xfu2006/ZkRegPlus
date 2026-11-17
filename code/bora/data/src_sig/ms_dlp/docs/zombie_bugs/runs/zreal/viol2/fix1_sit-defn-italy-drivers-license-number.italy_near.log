@@ -1,0 +1,9 @@
+policy_1000_real
+get prover time 1243951
+policy1000 circuit constraints cons 262144 inputs 2001 vars 524288
+DEBUG USE 61427.1: is_sat false
+prove takes 3129
+thread '<unnamed>' panicked at 'assertion failed: self.proof_eq_sc_phase1.verify(&gens.gens_sc.gens_1, &mut transcript.trans,\n        &expected_claim_post_phase1, &comm_claim_post_phase1).is_ok()', third_party/Spartan/src/r1csproof.rs:744:5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+verify takes 1308
+DEBUG USE 61427.4: verify result false

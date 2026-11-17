@@ -1,0 +1,25 @@
+fix12	sit-defn-czech-drivers-license-number	1000_32	keygen=true	rc=0	verify=true	cons=193195
+fix12	sit-defn-czech-drivers-license-number	1000_25	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-czech-drivers-license-number	1000_15	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-czech-drivers-license-number	1000_16	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-czech-drivers-license-number	1000_21	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-czech-drivers-license-number	1000_13	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-czech-drivers-license-number	1000_26	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-czech-drivers-license-number	1000_07	keygen=false	rc=0	verify=true	cons=
+old	sit-defn-austria-social-security-number	1000_32	keygen=true	rc=0	verify=true	cons=83722
+old	sit-defn-austria-social-security-number	1000_25	keygen=false	rc=0	verify=true	cons=
+old	sit-defn-austria-social-security-number	1000_15	keygen=false	rc=0	verify=true	cons=
+old	sit-defn-austria-social-security-number	1000_16	keygen=false	rc=0	verify=true	cons=
+old	sit-defn-austria-social-security-number	1000_21	keygen=false	rc=0	verify=true	cons=
+old	sit-defn-austria-social-security-number	1000_13	keygen=false	rc=0	verify=true	cons=
+old	sit-defn-austria-social-security-number	1000_26	keygen=false	rc=0	verify=true	cons=
+old	sit-defn-austria-social-security-number	1000_07	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-austria-social-security-number	1000_32	keygen=true	rc=0	verify=true	cons=43860
+fix12	sit-defn-austria-social-security-number	1000_25	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-austria-social-security-number	1000_15	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-austria-social-security-number	1000_16	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-austria-social-security-number	1000_21	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-austria-social-security-number	1000_13	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-austria-social-security-number	1000_26	keygen=false	rc=0	verify=true	cons=
+fix12	sit-defn-austria-social-security-number	1000_07	keygen=false	rc=0	verify=true	cons=
+ALLDONE

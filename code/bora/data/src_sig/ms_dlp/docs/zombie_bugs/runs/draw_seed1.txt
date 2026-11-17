@@ -1,0 +1,12 @@
+seed 1
+units sit-defn-belgium-value-added-tax-number sit-defn-philippines-passport-number/comb00 sit-defn-australia-drivers-license-number/comb09 sit-defn-czech-drivers-license-number sit-defn-austria-social-security-number
+emails 1000_32 1000_25 1000_15 1000_16 1000_21 1000_13 1000_26 1000_07
+1000_32 rejecting_among_drawn: -
+1000_25 rejecting_among_drawn: -
+1000_15 rejecting_among_drawn: -
+1000_16 rejecting_among_drawn: -
+1000_21 rejecting_among_drawn: -
+1000_13 rejecting_among_drawn: sit-defn-czech-drivers-license-number
+1000_26 rejecting_among_drawn: -
+1000_07 rejecting_among_drawn: -
+predicted XXX (evaluator, old circuits) = 1 of 8

@@ -1,0 +1,47 @@
+policy_1000_real
+start generate
+gen finish 41532
+opt finish 49916
+r1cs cons before reduce linearity 623320
+begin constant fold
+finish constant fold
+begin obliv
+new visit
+finish obliv
+begin tuple
+finish tuple
+r1cs cons after reduce linearity 397003
+Num Variables 624919
+inst 524288
+DEBUG USE 61427.3: keygen takes 169187
+get prover time 3756048
+policy1000 circuit constraints cons 524288 inputs 2001 vars 1048576
+DEBUG USE 61427.1: is_sat false
+prove takes 12366
+thread '<unnamed>' panicked at 'assertion failed: self.proof_eq_sc_phase1.verify(&gens.gens_sc.gens_1, &mut transcript.trans,\n        &expected_claim_post_phase1, &comm_claim_post_phase1).is_ok()', third_party/Spartan/src/r1csproof.rs:744:5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+verify takes 4924
+DEBUG USE 61427.4: verify result false
+	Command being timed: "systemd-run --user --scope -q -p MemoryMax=40G -p MemorySwapMax=0 taskset -c 12-15 ~/tmp/same_sample_work/zcopy/zombie/circ/target/release/circ_executable policy_1000_real true prover_verifier"
+	User time (seconds): 180.78
+	System time (seconds): 20.41
+	Percent of CPU this job got: 103%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:15.21
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 21896508
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 11474358
+	Voluntary context switches: 550
+	Involuntary context switches: 822
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 5925960
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

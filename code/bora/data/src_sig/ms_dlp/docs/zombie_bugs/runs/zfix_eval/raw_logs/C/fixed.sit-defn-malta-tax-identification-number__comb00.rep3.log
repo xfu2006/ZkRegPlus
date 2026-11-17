@@ -1,0 +1,7 @@
+policy_1000_real
+get prover time 371604
+policy1000 circuit constraints cons 131072 inputs 2001 vars 262144
+DEBUG USE 61427.1: is_sat true
+prove takes 1145
+verify takes 398
+DEBUG USE 61427.4: verify result true

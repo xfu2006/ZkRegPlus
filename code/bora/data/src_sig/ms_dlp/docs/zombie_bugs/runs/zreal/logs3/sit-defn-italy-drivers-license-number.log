@@ -1,0 +1,22 @@
+policy_1000_real
+start generate
+gen finish 31564
+opt finish 37828
+r1cs cons before reduce linearity 319653
+begin constant fold
+finish constant fold
+begin obliv
+new visit
+finish obliv
+begin tuple
+finish tuple
+r1cs cons after reduce linearity 203325
+Num Variables 321253
+inst 262144
+DEBUG USE 61427.3: keygen takes 99465
+get prover time 1201060
+policy1000 circuit constraints cons 262144 inputs 2001 vars 524288
+DEBUG USE 61427.1: is_sat true
+prove takes 2836
+verify takes 1314
+DEBUG USE 61427.4: verify result true

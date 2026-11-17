@@ -2,7 +2,7 @@
 # zdoc: real-prover runs (old / fix1 / fix12), keygen once per (variant, unit); cpus 12-15, 16 GB cap
 set -u
 export ZSHARP_STDLIB_PATH=$HOME/tmp/same_sample_work/zcopy/zombie/circ/third_party/ZoKrates/zokrates_stdlib/stdlib
-S=/tmp/claude-1000/-home-xiang-Desktop-NewResearch-Projects-ZkregPlusAll-PaperDiscussion/bd99bcfb-815e-489d-aa0c-423b97de9fea/scratchpad
+S=${SCRATCH:?set SCRATCH to the session scratch dir, see ZOMBIE_BUGS.md}
 W=$HOME/tmp/same_sample_work; BIN=$W/zcopy/zombie/circ/target/release/circ_executable
 OUT=$S/zdoc/runs; RD=$S/zdoc/rundirs; E=$S/same_sample/fixture/emails/padded
 mkdir -p $OUT $RD
