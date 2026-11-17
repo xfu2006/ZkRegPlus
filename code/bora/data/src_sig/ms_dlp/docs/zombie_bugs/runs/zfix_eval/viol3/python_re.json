@@ -1,0 +1,65 @@
+{
+ "malta_near": {
+  "unit": "sit-defn-malta-drivers-license-number",
+  "len": 520,
+  "kw_end": 520,
+  "id_end": 430,
+  "body_match": true,
+  "body_match_span": [
+   259,
+   357
+  ],
+  "match_whole_padded": true
+ },
+ "malta_far": {
+  "unit": "sit-defn-malta-drivers-license-number",
+  "len": 900,
+  "kw_end": 350,
+  "id_end": 900,
+  "body_match": false,
+  "body_match_span": null,
+  "match_whole_padded": false
+ },
+ "ausdl12_near": {
+  "unit": "sit-defn-australia-drivers-license-number/comb12",
+  "len": 520,
+  "kw_end": 520,
+  "id_end": 430,
+  "body_match": true,
+  "body_match_span": [
+   255,
+   357
+  ],
+  "match_whole_padded": true
+ },
+ "ausdl12_far": {
+  "unit": "sit-defn-australia-drivers-license-number/comb12",
+  "len": 900,
+  "kw_end": 350,
+  "id_end": 900,
+  "body_match": false,
+  "body_match_span": null,
+  "match_whole_padded": false
+ },
+ "austria_near": {
+  "unit": "sit-defn-austria-passport-number",
+  "len": 520,
+  "kw_end": 520,
+  "id_end": 430,
+  "body_match": true,
+  "body_match_span": [
+   259,
+   357
+  ],
+  "match_whole_padded": true
+ },
+ "austria_far": {
+  "unit": "sit-defn-austria-passport-number",
+  "len": 900,
+  "kw_end": 350,
+  "id_end": 900,
+  "body_match": false,
+  "body_match_span": null,
+  "match_whole_padded": false
+ }
+}

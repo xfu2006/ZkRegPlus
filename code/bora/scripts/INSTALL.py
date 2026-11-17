@@ -1330,6 +1330,9 @@ def install_dataset_zombie():
               % zombie_commit())
         print("    re-cloning tracks the default branch and could move the")
         print("    baseline commit; pass --force-zombie to do it anyway.")
+        # DLP_T999: apply Zombie generator fixes to the kept tree (no clone)
+        run_cmd_in([sys.executable, "-u", ZOMBIE_DOWNLOAD, "--patch-only"],
+                   os.path.dirname(ZOMBIE_DOWNLOAD))
         return
     if not os.path.isfile(ZOMBIE_DOWNLOAD):
         raise RuntimeError("missing %s (expected in the repo)"

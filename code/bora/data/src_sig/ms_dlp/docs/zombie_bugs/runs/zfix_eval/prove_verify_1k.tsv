@@ -1,0 +1,11 @@
+unit	orig_inst_cons	fixed_inst_cons	orig_prove_ms_median3	fixed_prove_ms_median3	prove_ratio	orig_verify_ms_median3	fixed_verify_ms_median3	verify_ratio	orig_prove_reps	fixed_prove_reps	orig_verify_reps	fixed_verify_reps	orig_ok	fixed_ok
+sit-defn-canada-drivers-license-number__comb07	524288	262144	8249	4100	0.497	4230	1667	0.394	[8201, 8249, 10141]	[3334, 4124, 4100]	[3529, 4304, 4230]	[1393, 1671, 1667]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-sweden-national-id	131072	65536	1601	756	0.472	592	279	0.471	[1604, 1601, 1598]	[748, 756, 758]	[591, 592, 610]	[282, 279, 270]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-malta-tax-identification-number__comb00	131072	131072	2527	1151	0.455	910	396	0.435	[2516, 2527, 2558]	[1158, 1151, 1145]	[908, 910, 917]	[395, 396, 398]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-norway-identification-number	32768	32768	685	424	0.619	244	147	0.602	[667, 689, 685]	[419, 424, 434]	[244, 244, 254]	[147, 143, 147]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-thai-population-identification-code	32768	32768	425	275	0.647	148	101	0.682	[421, 434, 425]	[271, 282, 275]	[147, 148, 148]	[101, 109, 101]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-japan-my-number-corporate	32768	32768	254	251	0.988	90	90	1.000	[258, 248, 254]	[243, 255, 251]	[92, 89, 90]	[90, 88, 90]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-france-national-id-card	131072	65536	1065	554	0.520	352	193	0.548	[1065, 1053, 1073]	[549, 566, 554]	[357, 352, 348]	[187, 194, 193]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-lithuania-passport-number	131072	65536	1468	591	0.403	564	229	0.406	[1671, 1468, 1418]	[724, 591, 585]	[630, 564, 523]	[267, 220, 229]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-australia-drivers-license-number__comb15	262144	131072	4061	1722	0.424	1721	701	0.407	[4061, 4140, 4059]	[1722, 1703, 1760]	[1728, 1721, 1709]	[701, 703, 701]	['true', 'true', 'true']	['true', 'true', 'true']
+sit-defn-sweden-passport-number	131072	65536	2133	943	0.442	834	353	0.423	[2129, 2143, 2133]	[948, 943, 941]	[834, 834, 834]	[353, 353, 354]	['true', 'true', 'true']	['true', 'true', 'true']

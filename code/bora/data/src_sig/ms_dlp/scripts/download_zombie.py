@@ -224,6 +224,47 @@ def write_log(status, commit, nfiles, nbytes, error, deps, patches=None,
 
 
 # --- post-clone patches ----------------------------------------------------
+# DLP_T999: Zombie generator fixes P5/P6 (ZOMBIE_BUGS.md), old -> new substring
+GENERATOR_FIXES = [
+    ("P5", "proximitySet.count(i) == 0);",
+     "proximitySet.count(regNumToFinalId.size()) == 0);"),
+    ("P6", '<< "[i] = 1 - t_" <<', '<< "[i] = t_" <<'),
+]
+
+
+# DLP_T999: apply P5/P6 to <dest>/regex ZokWriter.C; SystemExit on drift
+def apply_generator_fixes(dest):
+    regex = os.path.join(dest, "regex")
+    src = os.path.join(regex, "src", "builder", "ZokWriter.C")
+    if not os.path.isfile(src):
+        raise SystemExit("P5/P6: %s not found" % src)
+    with open(src) as f:
+        txt = f.read()
+    applied, changed = [], False
+    for tag, old, new in GENERATOR_FIXES:
+        n_old, n_new = txt.count(old), txt.count(new)
+        if (n_old, n_new) == (0, 1):
+            applied.append("%s ZokWriter.C: already applied (skip)" % tag)
+        elif (n_old, n_new) == (1, 0):
+            txt = txt.replace(old, new)
+            changed = True
+            applied.append("%s regex/src/builder/ZokWriter.C: %s -> %s"
+                           % (tag, old, new))
+        else:
+            raise SystemExit("%s: %s has %d old / %d new copies of the fix "
+                             "string (expected 1/0 or 0/1)"
+                             % (tag, src, n_old, n_new))
+    if changed:
+        with open(src, "w") as f:
+            f.write(txt)
+        # DLP_T999: drop stale objects so make rebuilds even with an old mtime
+        for stale in (os.path.join(regex, "bin", "builder", "ZokWriter.o"),
+                      os.path.join(regex, "bin", "TestRegex")):
+            if os.path.isfile(stale):
+                os.remove(stale)
+    return applied
+
+
 # Make the freshly-cloned Zombie tree build standalone in this environment.
 # Every patch is idempotent and recorded in the log; the upstream clone is
 # otherwise untouched. These were derived empirically while building the
@@ -333,6 +374,8 @@ def apply_patches():
     else:
         applied.append("P4 WARN: circ/examples/run_zok.rs not found")
 
+    applied.extend(apply_generator_fixes(DEST))  # DLP_T999: P5/P6
+
     # NOTE (no file patch): circ/ must NOT be built in place if it sits inside
     # an enclosing Cargo workspace -- adding a local [workspace] re-resolves the
     # lockfile and pulls MSRV-incompatible crates (syn/quote needing rustc 1.71
@@ -441,6 +484,19 @@ def main():
 
     # resolve all relative paths against the ms_dlp dir (never cwd / hardcoded).
     os.chdir(get_ms_dlp_dir())
+
+    # DLP_T999: --patch-only fixes a kept tree; no wipe/clone, log untouched
+    if "--patch-only" in sys.argv:
+        for p in apply_generator_fixes(DEST):
+            print("  %s" % p)
+        # DLP_T999: rebuild TestRegex now, so direct callers never miss it
+        rc, _o, err = run_in(["make"], os.path.join(DEST, "regex"),
+                             BUILD_TIMEOUT)
+        if rc != 0:
+            raise SystemExit("--patch-only: make in %s/regex failed: %s"
+                             % (DEST, err.strip()[-500:]))
+        print("  regex/bin/TestRegex rebuilt (make)")
+        return
 
     # wipe any prior clone so we always get a clean snapshot.
     if os.path.exists(DEST):

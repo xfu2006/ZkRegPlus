@@ -1,0 +1,20 @@
+--- a/regex/src/builder/ZokWriter.C	2026-06-05 11:03:12.387445261 -0400
++++ b/regex/src/builder/ZokWriter.C	2026-11-16 17:10:22.111809741 -0500
+@@ -20,7 +20,7 @@
+   for (uint i = 0; i < fa.states.size(); i++) {
+     // if state's patId is not -1 (or it is a finalState), print it to a loop
+     if (fa.states[i].patId != -1 || fa.finalStates.count(i) > 0) {
+-      stateToLoop(fa, i, fa.finalStates.count(i) > 0, proximitySet.count(i) == 0);
++      stateToLoop(fa, i, fa.finalStates.count(i) > 0, proximitySet.count(regNumToFinalId.size()) == 0);
+       if (fa.finalStates.count(i) > 0) { regNumToFinalId.push_back(i); }
+     }
+   }
+@@ -185,7 +185,7 @@
+   std::cout << "\tfor u32 i in " << pattern.size() - 1 << "..STR_LENGTH do" << std::endl;
+   // if this tape just aliases a single character pattern, handle that directly
+   if (pattern.size() == 1 && 1 < pattern[0].size() && pattern[0].size() < 256) {
+-    std::cout << "\t\tp_" << patId << "[i] = 1 - t_" << classToId[pattern[0]] << "[i]" << std::endl;
++    std::cout << "\t\tp_" << patId << "[i] = t_" << classToId[pattern[0]] << "[i]" << std::endl;
+     std::cout << "\tendfor" << std::endl;
+     return;
+   }

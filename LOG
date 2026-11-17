@@ -32221,10 +32221,16 @@ Goal 3. B3_2
 	[f] T995: similar cap fix for fsm
 
 Monday 11/16/2026
-Goal 1. B3_2
+Goal 1. B3_2 -> COMPLETED
 	[a] T977: improve tuner
+	[b] cost increase: worst 7%, like 2% for Dlp
+	[c] all three batches no big chagnes.
 Goal 2. Paper revision
 	[a] a variety of minor issues
+Goal 3. make double check of the cloud lab plan
+	[a] Compairing with Zombie
+		-> Zombie bugs
+	[b] Comparing with Reef
 
 Goal 4. GRP3 scripts
 	[a]

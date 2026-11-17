@@ -66,6 +66,7 @@ LOG_FILE   = os.path.join(DOCS_DIR, "run_zombie.log")            # per-pass belo
 PARTIAL_DIR  = "/tmp/bora_zombie_run"
 PARTIAL      = os.path.join(PARTIAL_DIR, "run_zombie.partial.jsonl")  # per-pass below
 PARTIAL_DOCS = os.path.join(DOCS_DIR, "run_zombie.partial.jsonl")     # durable mirror
+ZOK_GEN      = "fix12"          # DLP_T999: partial-row stamp for fixed .zok
 
 ZOMBIE     = "zombie"
 REGEX_DIR  = os.path.join(ZOMBIE, "regex")         # TestRegex source (built via make)
@@ -518,17 +519,19 @@ def _copy_circ_out_of_workspace():
 def ensure_testregex():
     """Ensure <ms_dlp>/zombie/regex/bin/TestRegex (the regex->DFA codegen tool) is
     present. It is a `make` artifact -- the source copy ships zombie/regex/src but
-    not the compiled bin/ -- so build it in place on first use. Paths are relative
+    not the compiled bin/ -- so build it in place (always make). Paths are relative
     to cwd (set to get_ms_dlp_dir() in main), so this is machine-independent. Fail
     early with an actionable message instead of crashing deep in a worker thread
     with FileNotFoundError."""
-    if os.path.isfile(TESTREGEX):
-        return
     if not os.path.isdir(REGEX_DIR):
         raise SystemExit(
             "TestRegex missing and %s/ not found. Run scripts/download_zombie.py to "
             "fetch + build the Zombie tree." % REGEX_DIR)
-    print("[zombie] TestRegex missing; building (make in %s)..." % REGEX_DIR)
+    # DLP_T999: apply Zombie generator fixes, then always make (incremental)
+    from download_zombie import apply_generator_fixes
+    for p in apply_generator_fixes(ZOMBIE):
+        print("[zombie] %s" % p)
+    print("[zombie] make in %s (rebuilds only changed sources)..." % REGEX_DIR)
     r = subprocess.run(["make"], cwd=REGEX_DIR)
     if r.returncode != 0 or not os.path.isfile(TESTREGEX):
         raise SystemExit(
@@ -685,12 +688,17 @@ def _load_partial():
                 if not ln:
                     continue
                 r = json.loads(ln)
+                if r.get("zok_gen") != ZOK_GEN:   # DLP_T999: no pre-fix rows
+                    raise SystemExit(
+                        "%s holds rows from the unfixed Zombie generator; delete "
+                        "%s and %s to re-measure." % (src, PARTIAL, PARTIAL_DOCS))
                 done["%s|%d" % (r["regex_name"], r["str_len"])] = r
     return done
 
 
 def _append_partial(rec):
     # write the primary (/tmp) copy and the durable docs mirror in lockstep.
+    rec["zok_gen"] = ZOK_GEN               # DLP_T999: stamp the generator fix
     line = json.dumps(rec) + "\n"
     for p in (PARTIAL, PARTIAL_DOCS):
         with open(p, "a") as f:

@@ -1,0 +1,11 @@
+unit	orig_cons_after_reduce	fixed_cons_after_reduce	ratio	orig_num_vars	fixed_num_vars	vars_ratio	orig_inst	fixed_inst	jet1tb_inst_2k	orig_prove_ms	fixed_prove_ms	orig_rc	fixed_rc
+sit-defn-denmark-personal-identification-number	None	336951		None	None		None	None	524288	None	None	rc=137	rc=137
+sit-defn-uk-national-insurance-number__comb00	225526	192503	0.8536	615393	480486	0.7808	262144	262144	262144	5496	4517	rc=0	rc=0
+sit-defn-new-zealand-inland-revenue-number	88870	78349	0.8816	229617	184931	0.8054	131072	131072	131072	1675	1333	rc=0	rc=0
+sit-defn-italy-passport-number	201762	170462	0.8449	514500	403040	0.7834	262144	262144	262144	4844	3141	rc=0	rc=0
+sit-defn-philippines-passport-number__comb01	166398	145457	0.8742	368490	299539	0.8129	262144	262144	262144	3074	2287	rc=0	rc=0
+sit-defn-canada-drivers-license-number__comb08	None	None		None	None		None	None	1048576	None	None	rc=137	rc=137
+sit-defn-brazil-cpf-number__comb00	69003	58440	0.8469	211896	171519	0.8094	131072	65536	131072	1713	1230	rc=0	rc=0
+sit-defn-indonesia-drivers-license-number__comb01	None	327230		None	None		None	None	524288	None	None	rc=137	rc=137
+sit-defn-canada-drivers-license-number__comb13	None	None		None	None		None	None	1048576	None	None	rc=137	rc=137
+sit-defn-malaysia-passport-number	160125	126956	0.7929	372316	286899	0.7706	262144	131072	262144	4403	3108	rc=0	rc=0

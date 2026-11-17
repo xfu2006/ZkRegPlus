@@ -1,0 +1,74 @@
+--- a/circ/src/zkmb.rs	2026-06-06 21:22:21.412403081 -0400
++++ b/circ/src/zkmb.rs	2026-11-16 11:28:20.776068525 -0500
+@@ -93,11 +93,11 @@
+                 let (var_assignment, input_assignment) =
+                     spartan::get_spartan_assignment(&self.input_idxes, &self.var_idxes, &val_arr);
+                 // let t4 = Instant::now();
+-                // let result = self
+-                //     .inst
+-                //     .is_sat(&var_assignment, &input_assignment)
+-                //     .unwrap();
+-                // println!("is proof satisfiable? {}", result);
++                // zreal: report R1CS satisfiability of the real witness
++                match self.inst.is_sat(&var_assignment, &input_assignment) {
++                    Ok(r) => println!("DEBUG USE 61427.1: is_sat {}", r),
++                    Err(e) => println!("DEBUG USE 61427.2: is_sat error {:?}", e),
++                }
+                 // println!("map {}", t2.duration_since(t1).as_millis());
+                 // println!("eval {}", t3.duration_since(t2).as_millis());
+                 // println!("transform {}", t4.duration_since(t3).as_millis());
+@@ -844,6 +844,45 @@
+     }
+ }
+ 
++// zreal: real-e-mail witness for the 1000-byte arm (pad 0x0A), verify result printed
++fn zreal_bytes() -> Vec<u8> {
++    let path = env::var("ZREAL_EMAIL").expect("ZREAL_EMAIL unset");
++    let mut b = fs::read(&path).expect("read e-mail");
++    assert!(b.len() <= 1000, "e-mail longer than 1000 bytes");
++    b.resize(1000, 0x0A);
++    b
++}
++
++fn zreal_one_circuit(circuit: &str, should_generate: bool) {
++    let b = zreal_bytes();
++    let pw = RegexProverWitness::<1000> { t: b.iter().map(|c| c.to_string()).collect(), tu: b.clone() };
++    let vw = RegexVerifierWitness::<1000> { t: b.iter().map(|c| c.to_string()).collect(), tu: b.clone() };
++    let inst_path = CString::new(format!("./keys/{}_inst", circuit)).expect("failed").into_raw();
++    let gens_path = CString::new(format!("./keys/{}_gens", circuit)).expect("failed").into_raw();
++    let input_names_path = CString::new(format!("./keys/{}_input_names", circuit)).expect("failed").into_raw();
++    let term_arr_path = CString::new(format!("./keys/{}_term_arr", circuit)).expect("failed").into_raw();
++    let input_idxes_path = CString::new(format!("./keys/{}_input_idxes", circuit)).expect("failed").into_raw();
++    let var_idxes_path = CString::new(format!("./keys/{}_var_idxes", circuit)).expect("failed").into_raw();
++    let file_path = CString::new(format!("./zkmb/{}.zok", circuit)).expect("failed").into_raw();
++    if should_generate {
++        let timer = Instant::now();
++        zkmb_generate_keys(file_path, inst_path, gens_path, input_names_path, term_arr_path, input_idxes_path, var_idxes_path);
++        println!("DEBUG USE 61427.3: keygen takes {}", timer.elapsed().as_millis());
++    }
++    let prover = zkmb_get_prover(inst_path, gens_path, term_arr_path, input_idxes_path, var_idxes_path);
++    let prover = unsafe { &mut *prover };
++    println!("{} circuit constraints cons {} inputs {} vars {}", circuit, prover.inst.inst.get_num_cons(), prover.inst.inst.get_num_inputs(), prover.inst.inst.get_num_vars());
++    let timer = Instant::now();
++    let proof = prover.prove(vec![pw]);
++    println!("prove takes {}", timer.elapsed().as_millis());
++    let verifier = zkmb_get_verifier(inst_path, gens_path, input_names_path);
++    let verifier = unsafe { & *verifier };
++    let timer = Instant::now();
++    let ok = verifier.verify(&proof, &vec![vw]);
++    println!("verify takes {}", timer.elapsed().as_millis());
++    println!("DEBUG USE 61427.4: verify result {}", ok);
++}
++
+ fn zk_test() {
+     let aes_prover_witness = AESProverWitness {
+         key: vec![0; 16],
+@@ -1043,6 +1082,8 @@
+         "policy_100" => benchmark_one_circuit("policy100", vec![RegexProverWitness::<100>::default()], vec![RegexVerifierWitness::<100>::default()], should_generate, benchmark_method),
+         "RegexChaChaAmortized_100" => benchmark_one_circuit("RegexChaChaAmortized100", vec![RegexAmortizedProverWitness::<1000>::default()], vec![RegexAmortizedVerifierWitness::<1000>::default()], should_generate, benchmark_method),
+         "RegexChaChaAmortized_2000" => benchmark_one_circuit("RegexChaChaAmortized2000", vec![RegexAmortizedProverWitness::<2000>::default()], vec![RegexAmortizedVerifierWitness::<2000>::default()], should_generate, benchmark_method),
++        "policy_1000" => benchmark_one_circuit("policy1000", vec![RegexProverWitness::<1000>::default()], vec![RegexVerifierWitness::<1000>::default()], should_generate, benchmark_method),
++        "policy_1000_real" => zreal_one_circuit("policy1000", should_generate),
+         "policy_2000" => benchmark_one_circuit("policy2000", vec![RegexProverWitness::<2000>::default()], vec![RegexVerifierWitness::<2000>::default()], should_generate, benchmark_method),
+         _ => ()
+     }
