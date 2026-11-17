@@ -1,6 +1,6 @@
 # C timing, 2 KB counts, jet1tb comparison.
 import re, os, glob, statistics, sys
-L='/home/xiang/tmp/same_sample_work/zfix_run/logs'; OUT=sys.argv[1]
+L=os.path.expanduser('~/tmp/same_sample_work/zfix_run/logs'); OUT=sys.argv[1]
 def g(t,p,cast=int):
     m=re.search(p,t); return cast(m.group(1)) if m else None
 CU=['sit-defn-canada-drivers-license-number__comb07','sit-defn-sweden-national-id','sit-defn-malta-tax-identification-number__comb00','sit-defn-norway-identification-number','sit-defn-thai-population-identification-code','sit-defn-japan-my-number-corporate','sit-defn-france-national-id-card','sit-defn-lithuania-passport-number','sit-defn-australia-drivers-license-number__comb15','sit-defn-sweden-passport-number']
@@ -31,7 +31,7 @@ if os.path.exists(f'{L}/k2/rc.txt'):
     for l in open(f'{L}/k2/rc.txt'):
         p=l.split()
         if len(p)==4: rc[(p[1],p[2])]=p[3]
-for u in open('/home/xiang/tmp/same_sample_work/zfix_run/units_2k.txt').read().split():
+for u in open(os.path.expanduser('~/tmp/same_sample_work/zfix_run/units_2k.txt')).read().split():
     m={}
     for v in ('orig','fixed'):
         f=f'{L}/k2/{v}.{u}.log'; t=open(f,errors='replace').read() if os.path.exists(f) else ''

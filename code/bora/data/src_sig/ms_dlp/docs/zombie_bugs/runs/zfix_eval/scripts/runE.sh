@@ -1,6 +1,6 @@
 #!/bin/bash
 # E: violation e-mails on fixed circuits (keys reused); viol3 also on orig circuits
-J=/home/xiang/tmp/same_sample_work/zgen_fixed/scripts/job.sh
+J=$HOME/tmp/same_sample_work/zgen_fixed/scripts/job.sh
 V2=/tmp/claude-1000/-home-xiang-Desktop-NewResearch-Projects-ZkregPlusAll-PaperDiscussion/bd99bcfb-815e-489d-aa0c-423b97de9fea/scratchpad/zreal/viol2
 V3=/tmp/claude-1000/-home-xiang-Desktop-NewResearch-Projects-ZkregPlusAll-PaperDiscussion/bd99bcfb-815e-489d-aa0c-423b97de9fea/scratchpad/zfix_eval/viol3
 export MEM=${MEM:-24G}
@@ -16,4 +16,4 @@ for v in fixed orig; do
 done
 $J fixed sit-defn-austria-passport-number false $V3/austria_early.eml $V3/austria_late.eml
 $J orig sit-defn-austria-passport-number false $V3/austria_early.eml $V3/austria_late.eml
-echo EDONE >> /home/xiang/tmp/same_sample_work/zfix_run/logs/rc.txt
+echo EDONE >> $HOME/tmp/same_sample_work/zfix_run/logs/rc.txt

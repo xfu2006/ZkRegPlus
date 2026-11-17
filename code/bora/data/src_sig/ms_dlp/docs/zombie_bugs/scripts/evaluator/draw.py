@@ -2,7 +2,7 @@
 import sys, os, json, random, hashlib
 from multiprocessing import Pool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-R = '/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/bora/'
+R = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../../../..')) + '/'
 W = os.path.expanduser('~/tmp/same_sample_work')
 D = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FX = D + '/fixture'

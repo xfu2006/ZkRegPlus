@@ -2947,6 +2947,7 @@ where
 	// automatically unified through the projection).
 	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
 	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::Proof: Send, // ALL_T1000: on_wide
 {
 		// 2026-05-15: allow gdb attach from non-parent same-uid procs
 		// (e.g. deadlock_detect.py). No-op unless ZKR_ALLOW_PTRACE_ANY
@@ -3490,6 +3491,11 @@ where
 	  	let max_total_n:usize = vec_words.iter().map(|x| x.len()).sum();
 
 	  	let mut guard_outer: Option<SemaphoreGuard> = None;
+	  	// ALL_T1000: a gated part's proofs may use the whole machine
+	  	// (numa::on_wide); every job of the part runs at once, and one
+	  	// decider at a time (a second would wait on a wide worker).
+	  	let t1000 = read_global_config().snark_wait_flag.is_some()
+	  		&& n_fold_wait == n_jobs_total && outer_cap == 1;
 
 	  	//put in one block to avoid do two snarks at the same time to
 	  	//save RAM.
@@ -3702,7 +3708,8 @@ where
 	  			use crate::folding::foldpot::utils::set_gadget_sat;
 	  			set_gadget_sat(true);
 	  		}
-	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main, prf_kzg, kzg_all_com_ch) = {
+	  		let (snark_proof_main,mainres,mainres_hash, g16_vk_main, prf_kzg, kzg_all_com_ch) =
+	  			super::numa::on_wide(t1000, &|m: &str| log(job_id, log_level, &m.to_string()), || {
 				// T940: a main pk set up in this run drops at the end of
 				// this block, before the CyclePair phase.
 				let (pk_main_owned, vk_main_owned);
@@ -3788,7 +3795,7 @@ set; exit(0) before Phase 2.");
 
 	  			(snark_proof_main, mainres, mainres_hash, g16_vk_owned,
 	  				prf_kzg, kzg_all_com_ch)
-	  		};
+	  		});
 
 	  		//7. prepare the other data.
 	  		let mut batch_ver_param = driver1.batch_vk.clone().unwrap().clone();
@@ -3873,7 +3880,8 @@ set; exit(0) before Phase 2.");
 
 			qa_nizk_vkey_hash: qa_nizk_vkey_hash1,
 	};
-	let (snark_proof_cp, g16_vk_cp, nova2_prf_kzg) = {
+	let (snark_proof_cp, g16_vk_cp, nova2_prf_kzg) =
+		super::numa::on_wide(t1000, &|m: &str| log(job_id, log_level, &m.to_string()), || {
 		// T952: a cp pk set up here drops at block end, as pk_main does.
 		let (pk_cp_owned, vk_cp_owned);
 		// ------------- The following is the CRITICAL SECTION -------
@@ -3973,7 +3981,7 @@ set; exit(0) before Phase 2.");
 		}
 
 		(snark_proof_cp, g16_vk_cp_owned, nova2_prf_kzg)
-	};
+	});
 	drop(guard_outer);
 
 	batch_prf.add_part2(

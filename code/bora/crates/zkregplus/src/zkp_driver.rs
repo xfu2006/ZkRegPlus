@@ -1539,6 +1539,7 @@ where
 	<S as SNARK<C1::ScalarField>>::VerifyingKey: 'static,
 	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
 	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::Proof: Send, // ALL_T1000: on_wide
 {
 	// re-use the capacity for BOTH cs and ignore_case
 	// this is usaully inefficient for ignore_case (but
@@ -1669,6 +1670,7 @@ where
 	<S as SNARK<C1::ScalarField>>::VerifyingKey: 'static,
 	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
 	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::Proof: Send, // ALL_T1000: on_wide
 {
 	//T217: mirror b_check_lkup into GlobalConfig so the composite
 	//gadget mapper's dummy self-cover (composable_gadget_mapper.rs
@@ -2035,6 +2037,7 @@ where
 	<S as SNARK<C1::ScalarField>>::VerifyingKey: 'static,
 	<S as SNARK<<E as Pairing>::ScalarField>>::ProvingKey: Send,
 	<S as SNARK<<E as Pairing>::ScalarField>>::VerifyingKey: Send,
+	<S as SNARK<<E as Pairing>::ScalarField>>::Proof: Send, // ALL_T1000: on_wide
 {
 	//T217: mirror b_check_lkup into GlobalConfig so the composite
 	//gadget mapper's dummy self-cover (composable_gadget_mapper.rs

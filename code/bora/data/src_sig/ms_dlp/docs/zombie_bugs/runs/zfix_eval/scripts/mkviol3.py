@@ -1,6 +1,6 @@
 # Build near/far violation e-mails (1000 bytes, 0x0A pad) for 3 units; check the true regex with Python re on the body.
 import re, os, sys, json
-Z='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/bora/data/src_sig/ms_dlp/regex_zombie_international/'
+Z=os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../..')) + '/regex_zombie_international/'
 OUT=sys.argv[1]
 H=(b"Message-ID: <100001.1075800000000.JavaMail.evans@thyme>\r\nDate: Mon, 3 Jul 2000 09:00:00 -0700 (PDT)\r\n"
    b"From: a.b@enron.com\r\nTo: c.d@enron.com\r\nSubject: follow up\r\n\r\n")

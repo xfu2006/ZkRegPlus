@@ -39,9 +39,9 @@ size:    1668 files, 28.3 MiB
          needed for: CirC gmp-mpfr-sys system-libs build (avoids bundled MPFR make-check fail)
   [OK  ] mpc.h (MPC)        ok
          needed for: CirC gmp-mpfr-sys system-libs build (avoids bundled MPFR make-check fail)
-  [OK  ] cargo              /home/xiang/.cargo/bin/cargo
+  [OK  ] cargo              ~/.cargo/bin/cargo
          needed for: build circ / middlebox
-  [OK  ] rustc              /home/xiang/.cargo/bin/rustc
+  [OK  ] rustc              ~/.cargo/bin/rustc
          needed for: build circ / middlebox
   [OK  ] rust nightly-2023-02-01 installed
          needed for: circ pins this nightly in rust-toolchain.toml

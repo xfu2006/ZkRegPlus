@@ -169,7 +169,7 @@ pub mod numa {
         const MPOL_PREFERRED: libc::c_long = 1;
         const MPOL_INTERLEAVE: libc::c_long = 3;
 
-        fn enabled() -> bool {
+        pub(super) fn enabled() -> bool {
             std::env::var("ZKR_NUMA").map(|v| v == "perjob").unwrap_or(false)
                 && n_nodes() > 1
         }
@@ -244,8 +244,208 @@ pub mod numa {
         }
     }
 
+    /// ALL_T1000: a two-part run pins each part to its half of the machine
+    /// for life (PAPER_DATA.py numa_prefix), so its proofs ran on half the
+    /// CPUs while the other part waited at its T952 gate. `on_wide` runs a
+    /// proof phase on a second pool over the CPUs PAPER_DATA.py itself had
+    /// (env ZKR_T1000_WIDE = that cpu list, set only for its pinned parts),
+    /// with local memory placement, as in an unpinned process. Inline when
+    /// `!enable`, the env is absent, or this thread already has those CPUs.
+    #[cfg(target_os = "linux")]
+    pub mod wide {
+        use std::sync::OnceLock;
+        const MPOL_DEFAULT: libc::c_long = 0;
+        static POOL: OnceLock<Option<rayon::ThreadPool>> = OnceLock::new();
+        static NOTE: OnceLock<()> = OnceLock::new();
+
+        /// CPUs this thread may run on (usize::MAX on error: never widen).
+        pub fn n_mine() -> usize {
+            unsafe {
+                let mut set: libc::cpu_set_t = std::mem::zeroed();
+                if libc::sched_getaffinity(0,
+                    std::mem::size_of::<libc::cpu_set_t>(), &mut set) != 0 {
+                    return usize::MAX;
+                }
+                libc::CPU_COUNT(&set) as usize
+            }
+        }
+
+        /// The target cpu list from env ZKR_T1000_WIDE ("0,1,2,..."), if any.
+        fn target() -> Option<Vec<usize>> {
+            let v = std::env::var("ZKR_T1000_WIDE").ok()?;
+            let max = 8 * std::mem::size_of::<libc::cpu_set_t>();
+            let cpus: Vec<usize> = v.split(',')
+                .filter_map(|c| c.trim().parse::<usize>().ok())
+                .filter(|&c| c < max).collect();
+            (!cpus.is_empty()).then_some(cpus)
+        }
+
+        /// Widen the calling thread to `cpus` with the default (local)
+        /// memory policy. Returns its CPU count.
+        fn widen_self(cpus: &[usize]) -> Result<usize, String> {
+            unsafe {
+                let mut set: libc::cpu_set_t = std::mem::zeroed();
+                for &c in cpus { libc::CPU_SET(c, &mut set); }
+                if libc::sched_setaffinity(0,
+                    std::mem::size_of::<libc::cpu_set_t>(), &set) != 0 {
+                    return Err(format!("sched_setaffinity: {}",
+                        std::io::Error::last_os_error()));
+                }
+                if libc::syscall(libc::SYS_set_mempolicy, MPOL_DEFAULT,
+                    std::ptr::null::<libc::c_ulong>(), 0 as libc::c_ulong) != 0 {
+                    return Err(format!("set_mempolicy: {}",
+                        std::io::Error::last_os_error()));
+                }
+            }
+            Ok(n_mine())
+        }
+
+        fn new_pool(n: usize, cpus: Vec<usize>)
+            -> Result<rayon::ThreadPool, rayon::ThreadPoolBuildError> {
+            rayon::ThreadPoolBuilder::new().num_threads(n)
+                .thread_name(|i| format!("t1000-wide-{}", i))
+                .start_handler(move |i| if let Err(e) = widen_self(&cpus) {
+                    eprintln!("ALL_T1000 wide worker {}: {}", i, e); })
+                .build()
+        }
+
+        fn build(cpus: Vec<usize>, log: &dyn Fn(&str)) -> Option<rayon::ThreadPool> {
+            let mine = n_mine();
+            let mut pool = new_pool(cpus.len(), cpus.clone());
+            // a cpuset may allow fewer of the listed CPUs: one thread per CPU
+            if let Ok(p) = &pool {
+                let got = p.install(n_mine);
+                if got < cpus.len() && got > mine && got != usize::MAX {
+                    pool = new_pool(got, cpus);
+                }
+            }
+            match pool {
+                Ok(p) => {
+                    let got = p.install(n_mine);
+                    if got <= mine || got == usize::MAX {
+                        log(&format!("ALL_T1000 wide proof pool not used: a \
+                            worker has {} CPUs, this part {}: proofs stay on \
+                            the pinned pool", got, mine));
+                        return None;
+                    }
+                    log(&format!("ALL_T1000 wide proof pool: {} threads on {} \
+                        CPUs (this part was pinned to {} of them)",
+                        p.current_num_threads(), got, mine));
+                    Some(p)
+                }
+                Err(e) => {
+                    log(&format!("ALL_T1000 wide proof pool not built ({}): \
+                        proofs stay on the pinned pool", e));
+                    None
+                }
+            }
+        }
+
+        /// The wide pool, if this call should use it (decided per call;
+        /// only the built pool is cached).
+        pub fn pool(enable: bool, log: &dyn Fn(&str))
+            -> Option<&'static rayon::ThreadPool> {
+            if !enable { return None; }
+            let t = target();
+            let why = match &t {
+                None => Some("no ZKR_T1000_WIDE (not a pinned PAPER_DATA.py part)".to_string()),
+                Some(_) if super::imp::enabled() => Some("ZKR_NUMA=perjob is on".to_string()),
+                Some(t) if n_mine() >= t.len() => Some(format!(
+                    "this part already has {} CPUs (not pinned)", n_mine())),
+                Some(_) => None,
+            };
+            if let Some(w) = why {
+                NOTE.get_or_init(|| log(&format!(
+                    "ALL_T1000 proofs stay on this part's pool: {}", w)));
+                return None;
+            }
+            POOL.get_or_init(|| build(t.unwrap(), log)).as_ref()
+        }
+    }
+
+    /// ALL_T1000: run `f` on the wide pool when `wide::pool` gives one.
+    #[cfg(target_os = "linux")]
+    pub fn on_wide<R: Send, F: FnOnce() -> R + Send>(enable: bool,
+        log: &dyn Fn(&str), f: F) -> R {
+        match wide::pool(enable, log) {
+            Some(p) => {
+                log(&format!("ALL_T1000 proof phase on the wide pool ({} \
+                    threads)", p.current_num_threads()));
+                p.install(f)
+            }
+            None => f(),
+        }
+    }
+
     #[cfg(target_os = "linux")]
     pub use imp::{set_interleave_all, bind_thread_to_node, n_nodes};
+
+    #[cfg(all(test, target_os = "linux"))]
+    mod tests_t1000 {
+        use super::{on_wide, wide::n_mine};
+        fn here() -> (String, usize, usize, i32) {
+            (std::thread::current().name().unwrap_or("").to_string(),
+             rayon::current_num_threads(), n_mine(), mempolicy())
+        }
+        /// This thread's memory policy mode (0 = MPOL_DEFAULT).
+        fn mempolicy() -> i32 {
+            let mut mode: libc::c_int = -1;
+            unsafe { libc::syscall(libc::SYS_get_mempolicy, &mut mode as *mut libc::c_int,
+                std::ptr::null_mut::<libc::c_ulong>(), 0 as libc::c_ulong,
+                std::ptr::null_mut::<libc::c_void>(), 0 as libc::c_ulong); }
+            mode
+        }
+        fn my_cpus() -> Vec<usize> {
+            unsafe {
+                let mut set: libc::cpu_set_t = std::mem::zeroed();
+                assert_eq!(libc::sched_getaffinity(0,
+                    std::mem::size_of::<libc::cpu_set_t>(), &mut set), 0);
+                (0..8 * std::mem::size_of::<libc::cpu_set_t>())
+                    .filter(|&c| libc::CPU_ISSET(c, &set)).collect()
+            }
+        }
+        fn pin_to(c: usize) {
+            unsafe {
+                let mut set: libc::cpu_set_t = std::mem::zeroed();
+                libc::CPU_SET(c, &mut set);
+                assert_eq!(libc::sched_setaffinity(0,
+                    std::mem::size_of::<libc::cpu_set_t>(), &set), 0);
+            }
+        }
+        // One test: the env flag is process-wide. It uses only the CPUs this
+        // test already has (it may run inside a taskset).
+        #[test]
+        fn test_t1000_on_wide() {
+            let log = |m: &str| eprintln!("{}", m);
+            let mine = my_cpus();
+            let list = mine.iter().map(|c| c.to_string()).collect::<Vec<_>>().join(",");
+            std::env::remove_var("ZKR_T1000_WIDE");
+            // an unpinned thread: inline even with the flag
+            std::env::set_var("ZKR_T1000_WIDE", &list);
+            assert!(!on_wide(true, &log, here).0.starts_with("t1000-wide"));
+            std::env::remove_var("ZKR_T1000_WIDE");
+            if mine.len() < 2 { return; }   // nothing to widen to
+            let first = mine[0];
+            std::thread::spawn(move || {
+                pin_to(first);
+                // no flag, or enable false: inline on this pinned thread
+                assert!(!on_wide(true, &log, here).0.starts_with("t1000-wide"));
+                std::env::set_var("ZKR_T1000_WIDE", &list);
+                assert!(!on_wide(false, &log, here).0.starts_with("t1000-wide"));
+                // flag + enable + pinned: the wide pool over the listed CPUs
+                let (name, threads, cpus, mode) = on_wide(true, &log, here);
+                assert!(name.starts_with("t1000-wide"), "{}", name);
+                assert_eq!(threads, mine.len());
+                assert_eq!(cpus, mine.len());
+                // a run under numactl --preferred-many inherits a policy: reset
+                assert_eq!(mode, 0, "wide worker memory policy is MPOL_DEFAULT");
+                eprintln!("ALL_T1000 test: wide worker has {} CPUs, policy {}, caller policy {}",
+                    cpus, mode, mempolicy());
+                assert_eq!(n_mine(), 1, "the caller stays pinned");
+            }).join().unwrap();
+            std::env::remove_var("ZKR_T1000_WIDE");
+        }
+    }
 
     #[cfg(not(target_os = "linux"))]
     pub fn set_interleave_all() {}
@@ -253,6 +453,9 @@ pub mod numa {
     pub fn bind_thread_to_node(_job_id: usize) {}
     #[cfg(not(target_os = "linux"))]
     pub fn n_nodes() -> usize { 1 }
+    #[cfg(not(target_os = "linux"))]
+    pub fn on_wide<R: Send, F: FnOnce() -> R + Send>(_enable: bool,
+        _log: &dyn Fn(&str), f: F) -> R { f() }
 }
 
 //use circuits::{AugmentedFCircuit, ChallengeGadget};

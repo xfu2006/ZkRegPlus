@@ -637,14 +637,16 @@ where
 	E::G1: ToConstraintField<CF2<C1>>,
 	E::TargetField: ToConstraintField<CF2<C1>>,
 {
-	_gm: PhantomData<GM>,
-	_e: PhantomData<E>,
-	_p: PhantomData<P>,
-	_c2g2: PhantomData<C2G2>,
-    _gc1: PhantomData<GC1>,
-    _c2: PhantomData<C2>,
-    _gc2: PhantomData<GC2>,
-	_cs1: PhantomData<CS1>,
+	// ALL_T1000: fn() -> T markers keep the struct Send (it moves into
+	// numa::on_wide's proof pool); no field holds a T.
+	_gm: PhantomData<fn() -> GM>,
+	_e: PhantomData<fn() -> E>,
+	_p: PhantomData<fn() -> P>,
+	_c2g2: PhantomData<fn() -> C2G2>,
+    _gc1: PhantomData<fn() -> GC1>,
+    _c2: PhantomData<fn() -> C2>,
+    _gc2: PhantomData<fn() -> GC2>,
+	_cs1: PhantomData<fn() -> CS1>,
 
     /// R1CS of the Augmented Function circuit
     pub r1cs: Vec<Arc<R1CS<C1::ScalarField>>>,

@@ -125,6 +125,20 @@ def resolve_process_model(force_single=False):
     return ProcessModel(2, [lo, hi])
 
 
+def online_cpus():
+    """ALL_T1000: ids of the machine's online CPUs (/sys/.../cpu/online,
+    e.g. "0-127"); falls back to 0..cpu_count-1."""
+    try:
+        with open("/sys/devices/system/cpu/online") as f:
+            out = []
+            for part in f.read().strip().split(","):
+                a, _, b = part.partition("-")
+                out.extend(range(int(a), int(b or a) + 1))
+            return out
+    except (OSError, ValueError):
+        return list(range(os.cpu_count() or 1))
+
+
 def numa_prefix(nodes):
     """numactl wrapper: HARD cpu pin (--cpunodebind) + SOFT memory pin
     (--preferred-many, spills instead of OOM).  [] when not applicable."""
@@ -616,6 +630,11 @@ def run_example_two_half(ctx, example_name, args, env, node_ranges):
     decider, and the finally signals BOTH halves before waiting."""
     assert args.count(PART_TOKEN) == 1, args
     a, b = node_ranges
+    # ALL_T1000: each part is pinned to its half for life, so after the
+    # T952 gates its proofs may widen to the CPUs this process has
+    # (numa::on_wide); only these pinned parts ask for it.
+    env = dict(env, ZKR_T1000_WIDE=",".join(
+        str(c) for c in sorted(os.sched_getaffinity(0))))
 
     def argv(pid):
         return [str(pid) if t == PART_TOKEN else t for t in args]
@@ -1909,6 +1928,10 @@ def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs,
         for f in (FLAG, FOLD_DONE):
             open(f, "w").close()
         name = "part%d" % (HALF + 1)
+        # ALL_T1000: a half run pinned from outside (a CloudLab test of the
+        # jet1tb part) widens its proofs to the whole machine; unpinned it
+        # already has every CPU, so this is a no-op.
+        env = dict(env, ZKR_T1000_WIDE=",".join(str(c) for c in online_cpus()))
         rc = run_rust_example(ctx, "bora_cli", argv_fn(mode, 2, str(HALF)),
                               env, log_name=name)
         logs, num_jobs = [ctx.log_path(name)], num_jobs // 2
@@ -6532,6 +6555,34 @@ class RunExampleTwoHalfTest(unittest.TestCase):
         self.ctx.log_path.side_effect = lambda name: os.path.join(
             self.tmp.name, name + ".log")
 
+    def test_t1000_env_on_both_parts(self):
+        """ALL_T1000: both pinned parts get this process's cpu list; the
+        caller's env dict is not changed."""
+        p1, p2 = _FakeProc(pid=1, rc=0), _FakeProc(pid=2, rc=0)
+        envs, env = [], {"E": "1"}
+
+        def fake_spawn(cmd, e, lp, label):
+            envs.append(e)
+            return (p1, None) if len(envs) == 1 else (p2, None)
+
+        with mock.patch.object(_MOD, "spawn", side_effect=fake_spawn), \
+             mock.patch.object(os, "sched_getaffinity",
+                                return_value={3, 0, 2, 1}):
+            run_example_two_half(self.ctx, "bora_cli", self.ARGS, env,
+                                 ["0-3", "4-7"])
+        self.assertEqual([e.get("ZKR_T1000_WIDE") for e in envs],
+                         ["0,1,2,3", "0,1,2,3"])
+        self.assertEqual(env, {"E": "1"})
+
+    def test_t1000_online_cpus(self):
+        for text, want in (("0-3\n", [0, 1, 2, 3]), ("0\n", [0]),
+                           ("0-1,4-5\n", [0, 1, 4, 5])):
+            with mock.patch("builtins.open", mock.mock_open(read_data=text)):
+                self.assertEqual(online_cpus(), want)
+        with mock.patch("builtins.open", side_effect=OSError), \
+             mock.patch.object(os, "cpu_count", return_value=2):
+            self.assertEqual(online_cpus(), [0, 1])
+
     def test_argvs_differ_only_in_part_id(self):
         os.makedirs(self.flag_dir, exist_ok=True)
         open(self.flag, "w").close()          # stale from a prior run
@@ -7080,11 +7131,13 @@ class RunLeafDlpTest(unittest.TestCase):
              mock.patch.object(_MOD, "dlp_missing_success",
                                 return_value=None) as dms, \
              mock.patch.object(_MOD, "pack_full_dump",
-                                return_value=["/d/p2"]) as pk:
+                                return_value=["/d/p2"]) as pk, \
+             mock.patch.object(_MOD, "online_cpus", return_value=[0, 1]):
             self.assertEqual(run_leaf_dlp("full", self.ctx), 0)
         reth.assert_not_called()
         rre.assert_called_once_with(self.ctx, "bora_cli",
-                                    dlp_argv("full", 2, "1"), {"E": "1"},
+                                    dlp_argv("full", 2, "1"),
+                                    {"E": "1", "ZKR_T1000_WIDE": "0,1"},
                                     log_name="part2")
         dms.assert_called_once_with(["/lp/part2.log"], 4)
         pk.assert_called_once_with("full_dlp", ["/lp/part2.log"],

@@ -1,7 +1,7 @@
 # zdoc: regenerate all 194 .zok with a (patched) TestRegex copy; argv: TestRegex path, out dir
 import sys, os
 from multiprocessing import Pool
-D = '/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/bora/data/src_sig/ms_dlp'
+D = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../..'))
 sys.path.insert(0, D + '/scripts'); import run_zombie as rz
 rz.FULL_DIR = D + '/regex_zombie_international'; rz.TESTREGEX = sys.argv[1]; OUT = sys.argv[2]
 def one(nm):

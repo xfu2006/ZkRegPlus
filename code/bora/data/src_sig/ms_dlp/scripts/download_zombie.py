@@ -127,6 +127,9 @@ def have_rust_nightly():
 def check_one(kind, probe):
     if kind == "bin":
         path = shutil.which(probe)
+        home = os.path.expanduser("~")   # DLP_T1002: no home dir in the log
+        if path and home not in ("", "/") and path.startswith(home + os.sep):
+            path = "~" + path[len(home):]
         return (path is not None, path or "not on PATH")
     if kind == "py":
         rc, _o, _e = run(["python3", "-c", "import %s" % probe])

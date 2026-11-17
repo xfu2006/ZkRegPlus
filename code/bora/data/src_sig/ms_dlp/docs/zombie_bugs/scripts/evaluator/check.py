@@ -3,7 +3,7 @@
 import sys, os, re, json
 from multiprocessing import Pool
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-R = '/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/bora/'
+R = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../../../../..')) + '/'
 W = os.path.expanduser('~/tmp/same_sample_work')
 BANDS = {1000: (900, 1000), 2000: (1900, 2000), 4000: (3800, 4000)}
 PREFIX = 'data/samples/email/src/maildir/'

@@ -1,6 +1,6 @@
 # Load ground-truth rule sets: Zombie units (combined regex + parts) and BORA PCRE subsigs.
-import sys, re
-S='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/bora/data/src_sig/ms_dlp'
+import sys, re, os
+S=os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../..'))
 sys.path.insert(0, S+'/scripts'); import run_zombie as rz
 rz.FULL_DIR = S+'/regex_zombie_international'
 def zombie_units():

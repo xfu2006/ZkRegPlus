@@ -1,7 +1,7 @@
 # Codegen every Zombie unit's .zok (STR_LENGTH 1000) via run_zombie._codegen_zok (stdout only).
 import sys, os
 from multiprocessing import Pool
-S='/home/xiang/Desktop/NewResearch/Projects/ZkregPlusAll/ZkregPlus/code/bora/data/src_sig/ms_dlp'
+S=os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '../../../..'))
 sys.path.insert(0, S+'/scripts'); import run_zombie as rz
 rz.FULL_DIR = S+'/regex_zombie_international'
 rz.TESTREGEX = S+'/zombie/regex/bin/TestRegex'
