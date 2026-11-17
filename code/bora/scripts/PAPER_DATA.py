@@ -37,7 +37,10 @@ import threading
 import time
 import traceback
 import unittest
-from dataclasses import dataclass
+import csv
+import hashlib
+import json
+from dataclasses import asdict, dataclass
 from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -489,6 +492,12 @@ HALF = None                     # None = whole leaf; 0/1 = that part only
 HALF_LEAVES = {"dlp", "clam"}
 ONE_PROOF_PER_HALF = False
 ONE_PROOF_ENV = "ZKR_ONE_PROOF_PER_HALF"
+# DLP_T1001: --same_1kb (same-sample job at 1 KB only), set in main().
+SAME_1KB = False
+# DLP_T1001: ZKR_SAME_ONLY=1 (dlp sample-only re-run), set in main().
+SAME_ONLY = False
+SAME_ONLY_ENV = "ZKR_SAME_ONLY"
+SAME_CAP_ENV = "ZKR_SAME_MAX_WIDTH_CORES"
 
 # mimalloc transparent huge pages, set by --thp (default on).  "on" =
 # mimalloc's own default (allow_thp=1), as in the paper's runs.  Same
@@ -535,6 +544,15 @@ def neo_env(b_show_dropped=False):
         e[ONE_PROOF_ENV] = "1"   # T952 DD9 L1 fallback, flag-only
     if b_show_dropped and dropped:
         log("neo_env: dropped %s" % " ".join(dropped))
+    return e
+
+
+def same_env():
+    """DLP_T1001: neo_env() minus the ladder-load and one-proof knobs,
+    which must never reach the BORA same-sample job."""
+    e = neo_env()
+    for k in ("ZKR_NEO_LOAD_LADDER", ONE_PROOF_ENV):
+        e.pop(k, None)
     return e
 
 
@@ -1913,8 +1931,446 @@ def dlp_missing_success(logs, num_jobs):
     return None
 
 
+# =====================================================================
+# DLP_T1001: BORA same-sample job, dlp main stamp, plan-start checks
+# =====================================================================
+
+# Fixture shared with the Zombie sample (32 e-mails per arm).
+SAME_FX_DIR = os.path.join(REPO, "data", "src_sig", "ms_dlp", "docs",
+                           "zombie_bugs", "emails", "fixture")
+SAME_FX_IDS = os.path.join(SAME_FX_DIR, "ids.tsv")
+SAME_FX_REJECT = os.path.join(SAME_FX_DIR, "zombie_expected_reject.tsv")
+SAME_FX_PER_ARM = 32
+
+# same_dlp <perc_db> <num_circs> <n> <dry 0|1>, then sizes and ladder_only.
+SAME_DLP_ARGS = {
+    "dry":  ("0.25", "2", "2", "1"),
+    "full": ("100", "4", "32", "0"),
+}
+
+
+def same_sizes(mode):
+    """DLP_T1001: sample sizes, 1 KB only under --same_1kb or dry."""
+    return [1000] if (SAME_1KB or mode == "dry") else [1000, 2000, 4000]
+
+
+def same_dlp_argv(mode):
+    return ["same_dlp"] + list(SAME_DLP_ARGS[mode]) + [
+        ",".join(str(s) for s in same_sizes(mode)), "0"]
+
+
+def same_fx_rows():
+    """FX/ids.tsv rows as dicts (id, arm, sha256_padded, ...)."""
+    with open(SAME_FX_IDS, newline="") as f:
+        return list(csv.DictReader(f, delimiter="\t"))
+
+
+def same_fx_ids(size, n):
+    """The first n fixture ids of arm size, sorted by id (as same_bins)."""
+    ids = sorted(r["id"] for r in same_fx_rows() if int(r["arm"]) == size)
+    return ids[:n]
+
+
+def same_fx_check(sizes):
+    """None when FX holds 32 padded e-mails per size with length == arm
+    and sha256 == column 6, else the first problem."""
+    try:
+        rows = same_fx_rows()
+    except (OSError, KeyError, ValueError) as e:
+        return "fixture ids.tsv unreadable: %s" % e
+    for size in sizes:
+        arm = [r for r in rows if r.get("arm") == str(size)]
+        if len(arm) != SAME_FX_PER_ARM:
+            return "fixture arm %d has %d e-mails, want %d" % (
+                size, len(arm), SAME_FX_PER_ARM)
+        for r in arm:
+            p = os.path.join(SAME_FX_DIR, "emails", "padded",
+                             r["id"] + ".eml")
+            try:
+                b = open(p, "rb").read()
+            except OSError as e:
+                return "fixture e-mail %s unreadable: %s" % (r["id"], e)
+            if len(b) != size:
+                return "fixture e-mail %s is %d bytes, want %d" % (
+                    r["id"], len(b), size)
+            if hashlib.sha256(b).hexdigest() != r["sha256_padded"]:
+                return "fixture e-mail %s sha256 mismatch" % r["id"]
+    return None
+
+
+SAME_DISCHARGE_RE = re.compile(r"SAME discharge (\S+) fail (true|false)")
+SAME_BEGIN_RE = re.compile(r"SAME fold begin i=(\d+) size=(\d+) n=(\d+)")
+SAME_END_RE = re.compile(r"SAME fold end i=(\d+)")
+SAME_PROBE_RE = re.compile(r"PROBE DLP job (\d+) n (\d+)")
+SAME_UNBOUND_IND_RE = re.compile(r"VERIFY-FLAGS ind\[final\].*"
+                                 r"verdict=UNBOUND")
+
+
+def same_dlp_missing_success(log_path, n_mail, sizes):
+    """DLP_T1001 (d9 3a): None when the same_dlp log shows n_mail clean
+    discharges per size and one complete fold segment per size."""
+    try:
+        text = open(log_path, errors="replace").read()
+    except OSError as e:
+        return "same_dlp log unreadable: %s" % e
+    if "SAME discharge rejected" in text:
+        return "SAME discharge rejected"
+    for rx, what in ((VERIFY_FAIL_RE, "PROOF VERIFICATION FAILED"),
+                     (VERIFY_REJECT_RE, "final verdict=REJECT"),
+                     (VERIFY_PASS_RE, "unexpected verdict=PASS "
+                                      "(lookup check must be off)")):
+        if rx.search(text):
+            return what
+    seen = {}
+    for m in SAME_DISCHARGE_RE.finditer(text):
+        if m.group(2) == "true":
+            return "discharge %s fail true" % m.group(1)
+        seen[m.group(1)] = seen.get(m.group(1), 0) + 1
+    for size in sizes:
+        want = same_fx_ids(size, n_mail)
+        got = [i for i in want if seen.get(i) == 1]
+        if len(want) != n_mail or len(got) != n_mail:
+            return "size %d: %d of %d discharge lines 'fail false'" % (
+                size, len(got), n_mail)
+    lines = text.splitlines()
+    segs, cur = [], None
+    for ln in lines:
+        b, e = SAME_BEGIN_RE.search(ln), SAME_END_RE.search(ln)
+        if b:
+            if cur is not None:
+                return "fold begin i=%s inside segment i=%s" % (
+                    b.group(1), cur[0])
+            cur = (int(b.group(1)), int(b.group(2)), int(b.group(3)), [])
+        elif e:
+            if cur is None or int(e.group(1)) != cur[0]:
+                return "fold end i=%s without its begin" % e.group(1)
+            segs.append(cur)
+            cur = None
+        elif cur is not None:
+            cur[3].append(ln)
+    if cur is not None:
+        return "fold segment i=%d never ended" % cur[0]
+    if len(segs) != len(sizes):
+        return "%d fold segments, want %d" % (len(segs), len(sizes))
+    for k, (i, size, n, body) in enumerate(segs):
+        if (i, size, n) != (k, sizes[k], n_mail):
+            return "segment %d is i=%d size=%d n=%d, want i=%d size=%d " \
+                   "n=%d" % (k, i, size, n, k, sizes[k], n_mail)
+        seg = "\n".join(body)
+        counts = (
+            ("fold-done", len(FOLD_OK_RE.findall(seg))),
+            ("Verify Individual Proof", len(VERIFY_IND_RE.findall(seg))),
+            ("ind[final] UNBOUND", len(SAME_UNBOUND_IND_RE.findall(seg))),
+            ("PROBE DLP job %d n %d" % (i, n_mail),
+             sum(1 for m in SAME_PROBE_RE.finditer(seg)
+                 if (int(m.group(1)), int(m.group(2))) == (i, n_mail))))
+        for what, c in counts:
+            if c != 1:
+                return "segment i=%d: %d x %s, want 1" % (i, c, what)
+    return None
+
+
+def run_same_dlp(mode, ctx, rc_main):
+    """DLP_T1001: the BORA same-sample job after the main dlp run.
+    Returns its rc (0 when skipped); same_dlp*.tgz on every outcome."""
+    if rc_main != 0:
+        ctx.note("BORA same-sample skipped: main rc=%s" % rc_main)
+        return 0
+    if HALF == 1:
+        ctx.note("BORA same-sample skipped under --half 1")
+        return 0
+    sizes = same_sizes(mode)
+    bad = same_fx_check(sizes)
+    if bad:
+        ctx.note("BORA same-sample not run: %s" % bad)
+        return 6
+    rc = run_rust_example(ctx, "bora_cli", same_dlp_argv(mode), same_env(),
+                          log_name="same_dlp")
+    log_p = ctx.log_path("same_dlp")
+    name = "same_dlp.tgz" if mode == "full" else "same_dlp.dry.tgz"
+    try:
+        dest = raw_data_path(name)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        _tgz_single(dest + ".tmp", log_p, "same_dlp_%s.log" % ctx._ts)
+        os.replace(dest + ".tmp", dest)
+        ctx.raw_data.append(dest)
+    except Exception as e:
+        _unlink_quiet(raw_data_path(name) + ".tmp")
+        ctx.note("same_dlp dump not placed: %s" % e)
+    m = re.search(r"SAME db path (load|build) (\S+)",
+                  open(log_p, errors="replace").read()
+                  if os.path.isfile(log_p) else "")
+    if m:
+        ctx.note("BORA same-sample db %s %s" % m.groups())
+    if rc == 0:
+        miss = same_dlp_missing_success(log_p, int(SAME_DLP_ARGS[mode][2]),
+                                        sizes)
+        if miss:
+            ctx.note("BORA same-sample markers missing: %s" % miss)
+            rc = 6
+    ctx.note("BORA same-sample: lookup check off, share 1, not "
+             "production-comparable circuits")
+    return rc
+
+
+# ---- DLP_T1001: stamps (d9 1d) ----------------------------------------
+
+STAMP_LISTS = {
+    "dlp_main": ["crates/", "vendor/", "Cargo.toml", "Cargo.lock",
+                 "rust-toolchain", "data/paper_data/dlp/",
+                 ":(exclude)crates/zkregplus/src/same_dlp.rs"],
+}   # zombie_timing validity is owned by same_zombie.py alone
+
+
+def _git(args, repo=None):
+    """(rc, stdout) of `git -C repo args`; rc 127 when git is missing."""
+    try:
+        p = subprocess.run(["git", "-C", repo or REPO] + list(args),
+                           capture_output=True, text=True, timeout=120)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return 127, str(e)
+    return p.returncode, p.stdout
+
+
+def _git_head(repo=None):
+    rc, out = _git(["rev-parse", "HEAD"], repo)
+    if rc != 0 or not out.strip():
+        raise RuntimeError("git rev-parse HEAD failed (rc %d)" % rc)
+    return out.strip()
+
+
+def _git_status(kind, repo=None):
+    """Porcelain status lines under the kind's list (incl. untracked)."""
+    rc, out = _git(["status", "--porcelain", "--untracked-files=all",
+                    "--"] + STAMP_LISTS[kind], repo)
+    if rc != 0:
+        raise RuntimeError("git status failed (rc %d)" % rc)
+    return [ln for ln in out.splitlines() if ln.strip()]
+
+
+def box_fingerprint():
+    """hostname, cpu model, logical cpus, floor(MemTotal) GiB."""
+    model, mem_kb = "", 0
+    try:
+        for ln in open("/proc/cpuinfo"):
+            if ln.startswith("model name"):
+                model = ln.split(":", 1)[1].strip()
+                break
+    except OSError:
+        pass
+    try:
+        for ln in open("/proc/meminfo"):
+            if ln.startswith("MemTotal:"):
+                mem_kb = int(ln.split()[1])
+                break
+    except (OSError, ValueError):
+        pass
+    return {"hostname": platform.node(), "cpu_model": model,
+            "ncpu": os.cpu_count(), "mem_gib": mem_kb // (1 << 20)}
+
+
+def dlp_stamp_path(mode):
+    """Full and dry stamps never share a file (amend R3)."""
+    return raw_data_path("full_dlp.stamp.json" if mode == "full"
+                         else "full_dlp.dry.stamp.json")
+
+
+def load_stamp(mode="full"):
+    try:
+        with open(dlp_stamp_path(mode)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def _dlp_main_argv(mode, half, n_parts):
+    """The bora_cli argv run_leaf_full_neo uses for this shape."""
+    if half is not None:
+        return dlp_argv(mode, 2, str(half))
+    if n_parts == 1:
+        return dlp_argv(mode, 1, "0")
+    return dlp_argv(mode, 2, PART_TOKEN)
+
+
+def dlp_before(ctx):
+    """DLP_T1001: commit and list status at leaf start.  Never raises;
+    an error is kept and makes the stamp invalid (amend m4)."""
+    ctx._same_err = None
+    ctx._same_commit_t0, ctx._same_dirty_t0 = None, None
+    try:
+        # A stale stamp must never vouch for this leaf's new dumps.
+        if os.path.exists(dlp_stamp_path(ctx.mode)):
+            os.unlink(dlp_stamp_path(ctx.mode))
+        ctx._same_commit_t0 = _git_head()
+        ctx._same_dirty_t0 = _git_status("dlp_main")
+        if ctx.mode == "full" and ctx._same_dirty_t0:
+            _summary_line("DIRTY TREE under the dlp main list: "
+                          "ZKR_SAME_ONLY will NOT be usable for this run: "
+                          "%s" % " ".join(ln[3:] for ln in
+                                          ctx._same_dirty_t0))
+    except Exception as e:
+        ctx._same_err = "dlp_before: %s" % e
+        ctx.note("stamp: %s" % ctx._same_err)
+
+
+def dlp_after(mode, ctx, rc):
+    """DLP_T1001 after= hook: write the dlp stamp, then run the BORA
+    same-sample job.  Returns the leaf rc.  The stamp part never raises."""
+    try:
+        err = getattr(ctx, "_same_err", None)
+        head_moved = False
+        try:
+            head_moved = _git_head() != ctx._same_commit_t0
+        except Exception as e:
+            err = err or "dlp_after: %s" % e
+        model = resolve_process_model()
+        reason = err or ("HEAD moved during the leaf" if head_moved
+                         else None)
+        stamp = {
+            "kind": "dlp_main", "invalid_reason": reason,
+            "commit": ctx._same_commit_t0,
+            "dirty": bool(ctx._same_dirty_t0) or ctx._same_dirty_t0 is None,
+            "dirty_paths": ctx._same_dirty_t0 or [],
+            "head_moved": head_moved, "host": platform.node(),
+            "fingerprint": box_fingerprint(), "mode": mode,
+            "t_leaf_start": ctx._t0, "rc": rc,
+            "argv": _dlp_main_argv(mode, HALF, model.n_parts),
+            "process_model": asdict(model), "half": HALF,
+            "dumps": [d for d in ctx.raw_data
+                      if os.path.basename(d).startswith("full_dlp")
+                      and d.endswith(".tgz")],
+            "written": datetime.datetime.now().isoformat(
+                timespec="seconds"),
+        }
+        dest = dlp_stamp_path(mode)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest + ".tmp", "w") as f:
+            json.dump(stamp, f, indent=1, sort_keys=True)
+        os.replace(dest + ".tmp", dest)
+        if reason:
+            ctx.note("stamp invalid: %s" % reason)
+    except Exception as e:
+        # Fallback: an invalid stamp, or none (both read as invalid).
+        try:
+            dest = dlp_stamp_path(mode)
+            _unlink_quiet(dest + ".tmp")
+            with open(dest, "w") as f:
+                json.dump({"kind": "dlp_main", "mode": mode,
+                           "invalid_reason": "dlp_after: %s" % e}, f)
+        except Exception:
+            pass
+        ctx.note("stamp invalid: dlp_after: %s" % e)
+    rc_same = run_same_dlp_safe(mode, ctx, rc)
+    return rc if rc != 0 else rc_same
+
+
+def run_same_dlp_safe(mode, ctx, rc_main):
+    """DLP_T1001: run_same_dlp; an escape is the sample's rc 6, noted."""
+    try:
+        return run_same_dlp(mode, ctx, rc_main)
+    except Exception as e:
+        ctx.note("BORA same-sample raised: %r" % e)
+        return 6
+
+
+def _unlink_quiet(p):
+    try:
+        os.unlink(p)
+    except OSError:
+        pass
+
+
+def stamp_check(stamp, kind, repo=None):
+    """DLP_T1001 valid(stamp, kind): None when valid, else the failed
+    check."""
+    if not stamp:
+        return "no stamp"
+    if stamp.get("kind") != kind:
+        return "stamp kind %r, want %r" % (stamp.get("kind"), kind)
+    if stamp.get("invalid_reason"):
+        return "stamp marked invalid: %s" % stamp["invalid_reason"]
+    if kind == "dlp_main" and stamp.get("mode") != "full":
+        return "stamp mode %r, want full" % stamp.get("mode")
+    if stamp.get("host") != platform.node():
+        return "stamp host %r, this box %r" % (stamp.get("host"),
+                                               platform.node())
+    if stamp.get("fingerprint") != box_fingerprint():
+        return "fingerprint differs: %s vs %s" % (stamp.get("fingerprint"),
+                                                  box_fingerprint())
+    if stamp.get("dirty"):
+        return "tree was dirty under the list at leaf start: %s" % (
+            " ".join(stamp.get("dirty_paths") or []) or "?")
+    if stamp.get("head_moved"):
+        return "HEAD moved during the leaf"
+    c = stamp.get("commit") or ""
+    if _git(["rev-parse", "--verify", "-q", c + "^{commit}"],
+            repo)[0] != 0:
+        return "stamp commit %r unknown to git" % c
+    if _git(["merge-base", "--is-ancestor", c, "HEAD"], repo)[0] != 0:
+        return "stamp commit %s is not an ancestor of HEAD" % c[:12]
+    rc, out = _git(["diff", "--name-only", c, "HEAD", "--"]
+                   + STAMP_LISTS[kind], repo)
+    if rc != 0 or out.strip():
+        return "committed changes under the %s list since %s: %s" % (
+            kind, c[:12], " ".join(out.split()) or "git diff failed")
+    try:
+        st = _git_status(kind, repo)
+    except RuntimeError as e:
+        return str(e)
+    if st:
+        return "uncommitted changes under the %s list: %s" % (
+            kind, " ".join(ln[3:] for ln in st))
+    if kind == "dlp_main":
+        if stamp.get("rc") != 0:
+            return "main dlp rc %s, want 0" % stamp.get("rc")
+        if HALF != stamp.get("half"):
+            return "stamp --half %s, this run %s" % (stamp.get("half"),
+                                                    HALF)
+        n_parts = (stamp.get("process_model") or {}).get("n_parts")
+        want = _dlp_main_argv("full", stamp.get("half"), n_parts)
+        if stamp.get("argv") != want:
+            return "main argv %s differs from today's %s" % (
+                stamp.get("argv"), want)
+        dumps = stamp.get("dumps") or []
+        if not dumps:
+            return "stamp lists no dumps"
+        for d in dumps:
+            if not os.path.isfile(d):
+                return "dump %s missing" % d
+            if os.path.getmtime(d) < (stamp.get("t_leaf_start") or 0):
+                return "dump %s older than the leaf start" % d
+    return None
+
+
+def same_only_refusal():
+    """Why ZKR_SAME_ONLY cannot reuse the main dlp dump, or None."""
+    st = load_stamp("full")
+    if st is None:
+        dry = " (only a dry stamp exists)" if load_stamp("dry") else ""
+        return "no full dlp stamp at %s%s" % (dlp_stamp_path("full"), dry)
+    return stamp_check(st, "dlp_main")
+
+
+def restricted_run_banner():
+    """DLP_T1001: the RESTRICTED RUN lines, to stdout and SUMMARY.log."""
+    st = load_stamp("full") or {}
+    c = st.get("commit") or "?"
+    rc, out = _git(["rev-list", "--count", "%s..HEAD" % c])
+    k = out.strip() if rc == 0 else "?"
+    _summary_line("RESTRICTED RUN: %s=1 -- dlp main run SKIPPED, BORA "
+                  "same-sample job only; main dump from %s (%s commits "
+                  "back)" % (SAME_ONLY_ENV, c[:12], k))
+    rc, out = _git(["diff", "--stat", c])
+    for ln in (out.splitlines() if rc == 0 else ["(git diff failed)"]):
+        _summary_line("  diff: %s" % ln)
+    rc, out = _git(["status", "--short", "--untracked-files=all", "--"]
+                   + STAMP_LISTS["dlp_main"])
+    for ln in (out.splitlines() if rc == 0 else ["(git status failed)"]):
+        _summary_line("  status: %s" % ln)
+
+
 def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs,
-                       b_fail_scan):
+                       b_fail_scan, after=None):
     """Shared full-run leaf body (DLP/Clamav): one process on a
     1-socket box, two-half otherwise, one part under --half; verdict
     = rc + positive markers; packs <base>{,.partN}.tgz."""
@@ -1957,6 +2413,8 @@ def run_leaf_full_neo(mode, ctx, argv_fn, base, num_jobs,
     # FAILURE report.  (D1: canonical name, no backup, so a failed run
     # DOES overwrite the last good dump.)
     ctx.raw_data.extend(safe_pack_dump(ctx, base, logs, rc))
+    if after is not None:
+        rc = after(mode, ctx, rc)  # DLP_T1001: stamp + same-sample hook
     return ctx.finish(rc, b_fail_scan=b_fail_scan,
                        b_proof_ok=leaf_proof_ok(ctx, logs))
 
@@ -1973,8 +2431,19 @@ def run_leaf_dlp(mode, ctx):
     # clears b_check_lkup (bora_data_driver.rs:1344), so no dry sweep
     # can see it. Verdict = rc + dlp_missing_success's markers, which
     # now include the PROOF VERIFICATION FAILED negative marker.
+    if SAME_ONLY:
+        # DLP_T1001: sample-only re-run on a still-valid main dump.
+        why = same_only_refusal() if mode == "full" else "needs full mode"
+        if why:
+            ctx.note("%s=1 refused at leaf start: %s" % (SAME_ONLY_ENV, why))
+            return ctx.finish(6, b_fail_scan=False)
+        ctx.note("RESTRICTED RUN: dlp main run skipped, no stamp written")
+        return ctx.finish(run_same_dlp_safe(mode, ctx, 0),
+                          b_fail_scan=False)
+    dlp_before(ctx)  # DLP_T1001: commit and dirty status at leaf start
     return run_leaf_full_neo(mode, ctx, dlp_argv, "full_dlp",
-                              int(DLP_LEAF_ARGS[mode][3]), False)
+                              int(DLP_LEAF_ARGS[mode][3]), False,
+                              after=dlp_after)
 
 
 # bora_cli full_dna constants (M103): dry = 1% DB (276 of 27,501
@@ -2281,7 +2750,10 @@ def find_run_dir(key):
         parts = os.path.basename(d).split("_")
         if not os.path.isdir(d) or len(parts) != 4 or parts[0] != key:
             continue                 # scale_clam etc, or a stray file
-        if glob.glob(os.path.join(d, "*.log")):
+        # DLP_T1001: a dir with only same_*.log (sample-only re-run)
+        # holds no main log to replay.
+        if any(not os.path.basename(x).startswith("same_")
+               for x in glob.glob(os.path.join(d, "*.log"))):
             out.append(("%s_%s" % (parts[2], parts[3]), d, parts[1]))
     if not out:
         return None, None
@@ -3028,24 +3500,328 @@ def zombie_missing_success(run_log, docs_log, t0):
     return (None, note)
 
 
+# DLP_T1001: same-sample Zombie driver (imports run_zombie, edits nothing).
+SAME_ZOMBIE_SCRIPT = os.path.join(MS_DLP_SCRIPTS_DIR, "same_zombie.py")
+SAME_ZOMBIE_BASE = "same_zombie_regex_zombie_international"
+SAME_ZOMBIE_SCALECAL = "same_zombie_scalecal.tsv"
+SAME_ZOMBIE_STOP_RE = re.compile(r"SAME STOP at (\S+): (.*)")
+SAME_ZOMBIE_SIG_RE = re.compile(r"SAME topology .*launch_sig=(\S+)")
+SAME_ZOMBIE_FAILPAIR_RE = re.compile(r"SAME failing pair: (.*)")
+SAME_ZOMBIE_REFUSE_RE = re.compile(r"(SAME (?:STOP at|refuse)\b.*)")
+
+
+def _read_text(p):
+    try:
+        return open(p, errors="replace").read()
+    except OSError:
+        return ""
+# 3b notes the leaf carries over from the child's own log lines.
+SAME_ZOMBIE_NOTE_RE = re.compile(r"(SAME (?:gate|widen|note:) .*)")
+SAME_ZOMBIE_CHECK_TIMEOUT_S = 1800
+
+
 def zombie_script(mode):
     """Child script for this mode; ONE site so the launch and the
-    preflight can never disagree about which file must exist."""
-    return os.path.join(MS_DLP_SCRIPTS_DIR,
-                        "dry_run_zombie.py" if mode == "dry"
-                        else "run_zombie.py")
+    preflight can never disagree about which file must exist.
+    DLP_T1001: same_zombie.py in both modes (it wraps run_zombie and
+    dry_run_zombie)."""
+    return SAME_ZOMBIE_SCRIPT
+
+
+def zombie_args(mode):
+    """DLP_T1001: same_zombie argv for this mode (d9 1b)."""
+    if mode == "dry":
+        a = ["--dry", str(ZOMBIE_DRY_PERC), "--sizes", "1000", "--n", "2",
+             "--server", SERVER, "--scalecal"]
+        return a + (["--only-same"] if SAME_1KB else [])
+    if SAME_1KB:
+        return ["--sizes", "1000", "--n", "32", "--only-same",
+                "--server", SERVER]
+    return ["--sizes", "1000,2000,4000", "--n", "32", "--server", SERVER]
+
+
+def _zombie_shape(mode):
+    """(sizes, n) parsed from zombie_args, so the two never drift."""
+    a = zombie_args(mode)
+    return ([int(x) for x in a[a.index("--sizes") + 1].split(",")],
+            int(a[a.index("--n") + 1]))
+
+
+def zombie_out_name(name, mode):
+    """DLP_T1001 (amend R3): dry outputs wear .dry before the suffix."""
+    if mode != "dry":
+        return name
+    root, ext = os.path.splitext(name)
+    return root + ".dry" + ext
+
+
+ZOMBIE_TMP_DIR = "/tmp/bora_zombie_run"   # run_zombie PARTIAL_DIR
+
+
+def _partial_pair_rows(name):
+    """(rows, note) of a /tmp + docs partial pair: /tmp when non-empty,
+    else docs (run_zombie _load_partial).  ([], None) when absent.  A torn
+    LAST line (kill mid-append) is dropped with a note; any other bad
+    line raises ValueError."""
+    for p in (os.path.join(ZOMBIE_TMP_DIR, name),
+              os.path.join(MS_DLP_DIR, "docs", name)):
+        if os.path.isfile(p) and os.path.getsize(p) > 0:
+            try:
+                with open(p, errors="replace") as f:
+                    lines = [ln for ln in f if ln.strip()]
+            except OSError as e:
+                raise ValueError("sweep partial %s unreadable: %s" % (p, e))
+            rows, note = [], None
+            for i, ln in enumerate(lines):
+                try:
+                    rows.append(json.loads(ln))
+                except ValueError as e:
+                    if i != len(lines) - 1:
+                        raise ValueError("sweep partial %s line %d bad: %s"
+                                         % (p, i + 1, e))
+                    note = "sweep partial %s: torn last line dropped" % p
+            return rows, note
+    return [], None
+
+
+def _truthy(v):
+    return str(v).strip().lower() in ("1", "true", "yes")
+
+
+def same_zombie_missing_success(tsv, run_log, t0, mode, only=None):
+    """DLP_T1001 (d9 3b): (reason, notes) for the Zombie sample, read
+    from the TSV.  reason None when every unlisted pair is accepted.
+    only: judge just these sizes and ignore STOP lines (rc-6 leaf)."""
+    sizes, n = _zombie_shape(mode)
+    sizes = sizes if only is None else list(only)
+    notes = []
+    try:
+        text = open(run_log, errors="replace").read()
+    except OSError:
+        text = ""
+    m = SAME_ZOMBIE_STOP_RE.search(text)
+    if m and only is None:
+        return ("SAME STOP at %s: %s" % (m.group(1), m.group(2)), notes)
+    for fp in SAME_ZOMBIE_FAILPAIR_RE.findall(text):
+        # review5 F3: with only, a pair at a refused size is not judged
+        num = [t for t in fp.split() if t.isdigit()]
+        if only is None or not num or int(num[-1]) in sizes:
+            return ("SAME failing pair: %s" % fp, notes)
+    stale = stale_artifact(tsv, t0)
+    if stale:
+        return (stale, notes)
+    with open(tsv, newline="", errors="replace") as f:
+        rows = list(csv.DictReader(f, delimiter="\t"))
+    need = ("unit", "size", "email_id", "mode", "accepted",
+            "expected_reject", "rc", "verify_ok", "class")
+    if rows:
+        miss = [c for c in need if c not in rows[0]]
+        if miss:
+            return ("TSV lacks column(s) %s" % ",".join(miss), notes)
+    listed = set()
+    try:
+        with open(SAME_FX_REJECT, newline="") as f:
+            for r in csv.DictReader(f, delimiter="\t"):
+                listed.add((r["unit"], r["email_id"], str(r["size"])))
+    except (OSError, KeyError):
+        pass
+    for r in rows:
+        if _truthy(r["expected_reject"]):
+            listed.add((r["unit"], r["email_id"], r["size"]))
+    # DLP_T1001: rows of an older launch_sig are history; only the
+    # current one (last topology line, else the last row) can fail.
+    sigs = SAME_ZOMBIE_SIG_RE.findall(text)
+    cur = sigs[-1] if sigs else (rows[-1].get("launch_sig") if rows
+                                 else None)
+    if sigs and not re.fullmatch(r"[0-9a-f]{64}", cur):
+        # review W1: a short sig matches no row and hides every failure.
+        return ("log launch_sig %r is not a full sha256" % cur, notes)
+    for r in rows:
+        key = (r["unit"], r["email_id"], r["size"])
+        if key in listed:
+            continue
+        if r["class"] in ("verify_false", "cons_mismatch") \
+                and r.get("launch_sig", cur) == cur \
+                and (only is None or r["size"] in map(str, sizes)):
+            return ("%s on unit %s e-mail %s size %s" % (
+                r["class"], r["unit"], r["email_id"], r["size"]), notes)
+        if r["mode"] == "packed" and _truthy(r["accepted"]) \
+                and not (r.get("gate_id") or r.get("gate id")):
+            return ("packed row without a covering gate: unit %s e-mail "
+                    "%s size %s" % key, notes)
+    # Units whose latest sweep row at S is ok (full mode; dry deletes
+    # its partials) must be complete too, not only units in the TSV.
+    sweep = {}
+    if mode == "full":
+        pname = ("same_only_%s.partial.jsonl" % SERVER if SAME_1KB
+                 else ZOMBIE_PARTIAL_NAME)
+        try:
+            prow, pnote = _partial_pair_rows(pname)
+        except ValueError as e:
+            return (str(e), notes)
+        if pnote:
+            notes.append(pnote)
+        for r in prow:
+            if "regex_name" in r and "str_len" in r:
+                sweep[(r["regex_name"], int(r["str_len"]))] = r.get("status")
+    for size in sizes:
+        want = same_fx_ids(size, n)
+        # in-run scalecal rows (gate_serial/scalecal) are not sample rows
+        units = {r["unit"] for r in rows if r["size"] == str(size)
+                 and r["mode"] not in ("scalecal", "gate_serial")}
+        units |= {u for (u, s), st in sweep.items()
+                  if s == size and st == "ok"}
+        if not units:
+            return ("no sample rows at size %d" % size, notes)
+        for u in sorted(units):
+            for e in want:
+                if (u, e, str(size)) in listed:
+                    continue
+                mine = [r for r in rows if (r["unit"], r["email_id"],
+                                            r["size"]) == (u, e, str(size))]
+                if any(_truthy(r["accepted"]) and r["rc"] == "0"
+                       and _truthy(r["verify_ok"]) for r in mine):
+                    continue
+                crash = sum(1 for r in mine if r["class"] == "crash_suspect"
+                            and r.get("launch_sig", cur) == cur)
+                return ("%s: unit %s e-mail %s size %d" % (
+                    "reproduced crash" if crash >= 2 else "incomplete",
+                    u, e, size), notes)
+    lrows = [r for r in rows if _truthy(r["expected_reject"])]
+    if listed:
+        notes.append("expected-reject pairs %d, prover-confirmed %d" % (
+            len(listed), sum(1 for r in lrows
+                             if not _truthy(r["verify_ok"]))))
+    if "SERIAL MODE 1 KB" in text:
+        notes.append("SERIAL MODE 1 KB")
+    notes.extend(m.group(1) for m in SAME_ZOMBIE_NOTE_RE.finditer(text))
+    if len(set(sigs)) > 1:
+        notes.append("launch_sig changed %d times" % (len(set(sigs)) - 1))
+    return (None, notes)
+
+
+def place_same_zombie_outputs(mode, ctx):
+    """DLP_T1001: place the sample TSV and log (and the dry scalecal TSV)
+    on every outcome.  Returns the docs TSV path."""
+    docs = os.path.join(MS_DLP_DIR, "docs")
+    # DLP_T1001: same_zombie writes dry docs outputs as <base>.dry.*.
+    tsv = os.path.join(docs, zombie_out_name(SAME_ZOMBIE_BASE + ".tsv", mode))
+    for src in (tsv, os.path.join(docs, zombie_out_name(
+            SAME_ZOMBIE_BASE + ".log", mode))):
+        stale = stale_artifact(src, ctx._t0)
+        if stale:
+            ctx.note("same_zombie output: %s" % stale)
+            continue
+        try:
+            ctx.raw_data.append(place_raw_data(src, os.path.basename(src)))
+        except OSError as e:
+            ctx.note("same_zombie output %s not placed: %s" % (src, e))
+    # same_zombie writes the speed-check TSV itself, in dry runs and in a
+    # full run without a valid PASS; only this run's copy is reported.
+    for name in dict.fromkeys([zombie_out_name(SAME_ZOMBIE_SCALECAL, mode),
+                               SAME_ZOMBIE_SCALECAL]):
+        sc = raw_data_path(name)
+        if stale_artifact(sc, ctx._t0) is None:
+            ctx.raw_data.append(sc)
+            break
+    return tsv
+
+
+def zombie_check_start(mode):
+    """DLP_T1001: same_zombie --check-start (rules + preflight) with the
+    leaf's own argv.  None when it exits 0, else the refusal with its
+    last 20 lines."""
+    cmd = [sys.executable, "-I", zombie_script(mode)] \
+        + zombie_args(mode) + ["--check-start"]
+    try:
+        p = subprocess.run(cmd, cwd=REPO, env=dict(os.environ),
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                           text=True, timeout=SAME_ZOMBIE_CHECK_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        return "REFUSED: zombie --check-start did not finish: %s" % e
+    tail = (p.stdout or "").splitlines()[-20:]
+    if p.returncode == 0:
+        for ln in tail:
+            log("zombie check-start: %s" % ln)
+        return None
+    what = ("start check refused" if p.returncode == 6
+            else "check-start crashed (rc %d)" % p.returncode)
+    return "REFUSED: zombie %s:\n%s" % (what, "\n".join(tail))
+
+
+# DLP_T1001: one-key launch -- re-exec inside an oomd-omit scope.
+SAME_SCOPE_ENV = "ZKR_SAME_SCOPE"     # set in the re-exec'd child only
+SAME_SCOPE_PROPS = ["ManagedOOMPreference=omit"]   # same_zombie OUTER_SCOPE
+
+
+def same_scope_argv(unit, argv):
+    """The systemd-run command same_zombie's OUTER_SCOPE text asks for."""
+    return (["systemd-run", "--user", "--scope", "--quiet", "--unit=" + unit]
+            + sum((["-p", q] for q in SAME_SCOPE_PROPS), [])
+            + ["--", sys.executable, os.path.abspath(__file__)] + list(argv))
+
+
+def same_oomd_refusal():
+    """same_zombie's own oomd_check, read only (repair=False), so the
+    operator's terminal scope is never edited."""
+    spec = importlib.util.spec_from_file_location("same_zombie_oomd",
+                                                  SAME_ZOMBIE_SCRIPT)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.oomd_check(repair=False)
+
+
+def ensure_same_scope(plan, argv):
+    """DLP_T1001: dry/full plans with zombie need a scope that passes
+    same_zombie's oomd_check.  Returns None to go on, or a refusal;
+    re-execs (never returns) when a fresh scope is needed."""
+    if plan.mode not in ("dry", "full") or "zombie" not in plan.leaf_keys:
+        return None
+    unit = os.environ.get(SAME_SCOPE_ENV)
+    manual = " ".join(["systemd-run", "--user", "--scope"]
+                      + sum((["-p", q] for q in SAME_SCOPE_PROPS), [])
+                      + ["python3", "scripts/PAPER_DATA.py"] + list(argv))
+    try:
+        why = same_oomd_refusal()
+    except Exception as e:
+        why = "oomd check failed to run: %r" % e
+    if why is None:
+        if unit:
+            log("re-launched inside scope %s (%s)" % (unit, open(
+                "/proc/self/cgroup").read().strip().split("::")[-1]))
+        return None
+    if unit:                     # already re-exec'd once: never loop
+        return ("REFUSED: scope %s still fails the oomd check (%s). Run "
+                "by hand: %s" % (unit, why, manual))
+    unit = "paperdata-%d-%d" % (os.getpid(), int(time.time()))
+    try:
+        r = subprocess.run(same_scope_argv(unit + "-probe", [])[:-2]
+                           + ["true"], capture_output=True, text=True,
+                           timeout=60)
+        ok, err = r.returncode == 0, (r.stderr or "").strip()
+    except (OSError, subprocess.TimeoutExpired) as e:
+        ok, err = False, str(e)
+    if not ok:
+        return ("REFUSED: cannot create an oomd-omit scope (%s). Run by "
+                "hand: %s" % (err or "systemd-run failed", manual))
+    sys.stdout.flush()
+    sys.stderr.flush()
+    env = dict(os.environ, **{SAME_SCOPE_ENV: unit + ".scope"})
+    cmd = same_scope_argv(unit, argv)
+    os.execvpe(cmd[0], cmd, env)
 
 
 def run_leaf_zombie(mode, ctx):
     """Spartan-NIZK proximity-non-membership circuits over
-    regex_zombie_international/ policies. dry delegates to
-    dry_run_zombie.py (evenly-spaced ZOMBIE_DRY_PERC% of policies, small
-    proximity-safe VEC_SIZE); full runs run_zombie.py untouched.
+    regex_zombie_international/ policies. DLP_T1001: both modes launch
+    same_zombie.py, which wraps dry_run_zombie.py (dry: evenly-spaced
+    ZOMBIE_DRY_PERC% of policies) or run_zombie.py (full) unedited and
+    adds the same-sample prove run.
     The dry leaf runs hermetic -- see zombie_isolate_dry.
     Verdict = rc + a fresh docs log with >=1 ok measurement (the child
     exits 0 after a total failure)."""
     env = dict(os.environ)
-    args = [str(ZOMBIE_DRY_PERC)] if mode == "dry" else []
+    args = zombie_args(mode)          # DLP_T1001: same_zombie argv
     b_dry = mode == "dry"
     zombie_recover_dry()               # undo any interrupted dry leaf
     if b_dry:
@@ -3061,18 +3837,74 @@ def run_leaf_zombie(mode, ctx):
         if b_dry:
             zombie_isolate_dry(False)  # drop dry rows, put it back
     src = os.path.join(MS_DLP_DIR, "docs", ZOMBIE_LOG_NAME)
+    if SAME_1KB:
+        # DLP_T1001: --only-same runs no sweep, so no sweep verdict/log.
+        ctx.note("--same_1kb: sweep predicate and sweep log skipped")
+    else:
+        # DLP_T1001 review3 N1: rc 6 after a finished sweep (2/4 KB sample
+        # refused) still keeps the sweep data.
+        swept = rc == 6 and ZOMBIE_OK_RE.search(_read_text(
+            ctx.log_path("run")))
+        if rc == 0 or swept:
+            reason, note = zombie_missing_success(
+                ctx.log_path("run"), src, ctx._t0)
+            if note:
+                ctx.note(note)
+            if reason:
+                ctx.note("success markers missing: %s" % reason)
+                rc = 6
+            else:
+                dest = place_raw_data(src, zombie_out_name(
+                    ZOMBIE_LOG_NAME, mode))
+                ctx.raw_data.append(dest)
+    if rc == 6:
+        stops = SAME_ZOMBIE_REFUSE_RE.findall(_read_text(ctx.log_path("run")))
+        if stops:
+            ctx.note("sample sizes refused: %s" % " | ".join(stops))
+    # DLP_T1001: the same-sample part, outputs placed on every outcome.
+    tsv = place_same_zombie_outputs(mode, ctx)
     if rc == 0:
-        reason, note = zombie_missing_success(
-            ctx.log_path("run"), src, ctx._t0)
-        if note:
-            ctx.note(note)
+        reason, notes = same_zombie_missing_success(
+            tsv, ctx.log_path("run"), ctx._t0, mode)
+        for nt in notes:
+            ctx.note(nt)
         if reason:
-            ctx.note("success markers missing: %s" % reason)
+            ctx.note("same-sample markers missing: %s" % reason)
             rc = 6
-    if rc == 0:
-        dest = place_raw_data(src, ZOMBIE_LOG_NAME)
-        ctx.raw_data.append(dest)
+    elif rc == 6:
+        # DLP_T1001 review4 M4: still judge the sizes that did run.
+        ran = _same_sizes_ran(tsv, ctx.log_path("run"), mode)
+        if ran:
+            reason, notes = same_zombie_missing_success(
+                tsv, ctx.log_path("run"), ctx._t0, mode, only=ran)
+            for nt in notes:
+                ctx.note(nt)
+            ctx.note("sample check on sizes %s: %s" % (
+                ",".join(map(str, ran)), reason or "PASS"))
     return ctx.finish(rc)
+
+
+def _same_sizes_ran(tsv, run_log, mode):
+    """Sample sizes with own prove rows in the TSV and no SAME STOP."""
+    stopped = set(SAME_ZOMBIE_STOP_RE.findall(_read_text(run_log)))
+    stopped = {s for s, _ in stopped}
+    try:
+        with open(tsv, newline="", errors="replace") as f:
+            have = {r.get("size") for r in csv.DictReader(f, delimiter="\t")
+                    if r.get("mode") not in ("scalecal", "gate_serial")}
+    except OSError:
+        return []
+    return [s for s in _zombie_shape(mode)[0]
+            if str(s) in have and str(s) not in stopped]
+
+
+def zombie_required_files(mode):
+    """DLP_T1001: same_zombie plus what it imports and reads."""
+    return [zombie_script(mode),
+            os.path.join(MS_DLP_SCRIPTS_DIR, "run_zombie.py"),
+            SAME_FX_IDS, SAME_FX_REJECT] + (
+        [os.path.join(MS_DLP_SCRIPTS_DIR, "dry_run_zombie.py")]
+        if mode == "dry" else [])
 
 
 REEF_DIR = os.path.join(REPO, "data", "src_sig", "chr17_variants")
@@ -3150,7 +3982,8 @@ def run_leaf_reef(mode, ctx):
 
 
 JOB_SPECS.update({
-    "dlp":        JobSpec("dlp",        "DLP",          run_leaf_dlp),
+    "dlp":        JobSpec("dlp",        "DLP",          run_leaf_dlp,
+                          lambda m: [SAME_FX_IDS]),
     "dna":        JobSpec("dna",        "Dna",          run_leaf_dna),
     "clam":       JobSpec("clam",       "Clamav",       run_leaf_clamav),
     "scale_clam": JobSpec("scale_clam", "Scale-ClamAV", run_leaf_scale_clamav),
@@ -3158,7 +3991,7 @@ JOB_SPECS.update({
     "lkup":       JobSpec("lkup",       "Analyze lkup", run_leaf_analyze_lkup),
     "effective":  JobSpec("effective",  "Effectiveness", run_leaf_effective),
     "zombie":     JobSpec("zombie",     "Zombie",       run_leaf_zombie,
-                          lambda m: [zombie_script(m)]),
+                          lambda m: zombie_required_files(m)),
     "reef":       JobSpec("reef",       "Reef",         run_leaf_reef,
                           lambda m: [reef_script(m)]),
 })
@@ -3347,10 +4180,10 @@ def install_signal_handlers():
 #   CAVEAT: zombie's 30.3 GiB is over the 24 GiB dry budget. It is
 #   recorded as measured; the pool/concurrency retune is pending.
 DRY_COST = [
-    ("dlp",        "DLP",           2.4,  6.5,  ""),
+    ("dlp",        "DLP",           4.0,  6.5,  ""),   # DLP_T1001 est
     ("dna",        "Dna",           7.0,  15.9, ""),
     ("clam",       "Clamav",        8.7,  17.1, ""),
-    ("zombie",     "Zombie",        15.5, 30.3, " cold"),
+    ("zombie",     "Zombie",        18.0, 30.3, " cold"),  # DLP_T1001
     ("reef",       "Reef",          31.9, 28.5, ""),
     ("lkup",       "Analyze lkup",  3.5,  8.3,  ""),
     ("scale_clam", "Scale-ClamAV",  7.3,  5.2,  ""),
@@ -3450,10 +4283,10 @@ def dry_total():
 # 900.  Read them as provisioning floors.  Neither sets the rollup
 # peak -- zombie's metered 952 GB does.
 FULL_COST = [
-    ("dlp",        70.8,  700,  " x2 parts"),
+    ("dlp",        81.0,  700,  " x2 parts"),  # DLP_T1001 est
     ("dna",         5.8,  529,  ""),
     ("clam",       20.3,  900,  " x2 parts"),
-    ("zombie",     43.5,  952,  ""),
+    ("zombie",     58.0,  952,  ""),  # DLP_T1001 est, upper
     ("reef",        5.0,   29,  ""),
     ("lkup",        1.8,   73,  ""),
     ("scale_clam",  7.1,  148,  ""),
@@ -3647,6 +4480,11 @@ def build_argparser():
                      help="fallback: one SNARK proof per part instead of "
                           "one per job (also reaches scale sweeps).  A "
                           "--final_pack replay of such a run needs it too")
+    # DLP_T1001: same-sample comparison at 1 KB only.
+    ap.add_argument("--same_1kb", action="store_true",
+                     help="same-sample Zombie vs BORA job at 1 KB only.  "
+                          "dlp: works with --half 0.  zombie: own "
+                          "invocation WITHOUT --half (half_refusal)")
     return ap
 
 
@@ -3657,6 +4495,70 @@ def half_refusal(plan):
         return None
     return ("REFUSED: --half runs only --items %s under dry_run/full_run"
             % ",".join(sorted(HALF_LEAVES)))
+
+
+def _unvouched_dlp_dumps():
+    """DLP_T1001: full_dlp*.tgz here that the dry stamp did not write
+    (not listed in it, or newer than it)."""
+    dumps = sorted(glob.glob(raw_data_path("full_dlp.tgz"))
+                   + glob.glob(raw_data_path("full_dlp.part*.tgz")))
+    st, sp = load_stamp("dry"), dlp_stamp_path("dry")
+    mine = set((st or {}).get("dumps") or [])
+    return [d for d in dumps if d not in mine
+            or os.path.getmtime(d) > os.path.getmtime(sp)]
+
+
+def same_plan_check(plan):
+    """DLP_T1001: plan-start refusals for the same-sample job, before the
+    run lock and before any leaf.  Returns the refusal, or None."""
+    if plan.mode == "dry" and "dlp" in plan.leaf_keys:
+        st = load_stamp("full")
+        if st is not None and st.get("mode") == "full":
+            return ("REFUSED: a full dlp result exists for %s (stamp %s, "
+                    "%s); a dry dlp run would overwrite raw_data/%s/"
+                    "full_dlp*.tgz and become --final_pack's newest dlp "
+                    "dir. A full run does its own zombie speed check, so "
+                    "no dry run is needed; to dry-test zombie alone run "
+                    "`--run dry_run --items zombie` (CloudLab: add "
+                    "--same_1kb --server cl2x7542). To run "
+                    "a dry dlp anyway, move full_dlp*.tgz and "
+                    "full_dlp.stamp.json out of raw_data/%s/ first."
+                    % (SERVER, (st.get("commit") or "?")[:12],
+                       st.get("written", "?"), SERVER, SERVER))
+        loose = _unvouched_dlp_dumps()
+        if loose:
+            ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            return ("REFUSED: %s has no stamp from a dry run (a full "
+                    "result from before stamps, or a dry leaf killed "
+                    "before its stamp); a dry dlp run would overwrite it. "
+                    "If it is not needed, set it aside with: %s ; or run "
+                    "`--run dry_run --items zombie` only."
+                    % (", ".join(loose), " ; ".join(
+                        "mv '%s' '%s.aside_%s'" % (d, d, ts)
+                        for d in loose)))
+    raw = os.environ.get(SAME_ONLY_ENV, "")
+    if raw not in ("", "1"):
+        return "REFUSED: %s must be 1 or unset" % SAME_ONLY_ENV
+    if raw == "1":
+        if not (plan.mode == "full" and plan.leaf_keys == ["dlp"]):
+            return "REFUSED: %s needs --run full_run --items dlp" \
+                % SAME_ONLY_ENV
+        why = same_only_refusal()
+        if why:
+            return "REFUSED: %s=1: %s" % (SAME_ONLY_ENV, why)
+    if "zombie" in plan.leaf_keys:
+        cap = os.environ.get(SAME_CAP_ENV)
+        if cap is not None:
+            try:
+                bad = int(cap) < 0
+            except ValueError:
+                bad = True
+            if bad:
+                return "REFUSED: %s=%r is not a non-negative integer" % (
+                    SAME_CAP_ENV, cap)
+        if plan.mode in ("dry", "full"):
+            return zombie_check_start(plan.mode)
+    return None
 
 
 def _show_menu():
@@ -5826,9 +6728,11 @@ def main():
 
     # T952/T955 opt-in options (owner decision 4): with none given
     # every global keeps its module default.
-    global SERVER, HALF, ONE_PROOF_PER_HALF
+    global SERVER, HALF, ONE_PROOF_PER_HALF, SAME_1KB, SAME_ONLY
     SERVER, HALF = args.server, args.half
     ONE_PROOF_PER_HALF = args.one_proof_per_half
+    SAME_1KB = args.same_1kb                      # DLP_T1001
+    SAME_ONLY = os.environ.get(SAME_ONLY_ENV) == "1"   # DLP_T1001
 
     if args.final_pack:
         # Takes the run lock -- a replay writes raw_data/ and
@@ -5863,10 +6767,24 @@ def main():
     log("resolved: python3 PAPER_DATA.py --run %s%s" % (
         plan.top,
         " --items %s" % ",".join(plan.leaf_keys) if plan.leaf_keys else ""))
-    if (SERVER, HALF, ONE_PROOF_PER_HALF) != ("jet1tb", None, False):
-        log("opt-in: --server %s --half %s --one_proof_per_half %s"
-            % (SERVER, HALF, ONE_PROOF_PER_HALF))
+    if (SERVER, HALF, ONE_PROOF_PER_HALF, SAME_1KB, SAME_ONLY) != (
+            "jet1tb", None, False, False, False):
+        log("opt-in: --server %s --half %s --one_proof_per_half %s "
+            "--same_1kb %s %s=%s" % (SERVER, HALF, ONE_PROOF_PER_HALF,
+                                     SAME_1KB, SAME_ONLY_ENV, SAME_ONLY))
     refusal = half_refusal(plan)
+    if refusal:
+        log(refusal)
+        return 2
+    # DLP_T1001: re-exec inside an oomd-omit scope; the menu's choice is
+    # passed on as --run/--items so the child does not ask again.
+    refusal = ensure_same_scope(plan, sys.argv[1:] + (
+        [] if args.run else ["--run", plan.top, "--items",
+                             ",".join(plan.leaf_keys)]))
+    if refusal:
+        log(refusal)
+        return 2
+    refusal = same_plan_check(plan)    # DLP_T1001: before the run lock
     if refusal:
         log(refusal)
         return 2
@@ -5891,6 +6809,8 @@ def main():
                   "data/cache; wait for it or kill it first." % holder)
             return 7
         reset_summary_log(plan.top)
+        if SAME_ONLY:
+            restricted_run_banner()    # DLP_T1001
 
     if plan.top == "small":
         if args.plan_only:
@@ -6072,6 +6992,8 @@ _TEST_REDIRECTS = {
     "CACHE_DIR": "cache",
     "RAW_DATA_ROOT": "raw_data",
     "MS_DLP_DIR": "ms_dlp",
+    "ZOMBIE_TMP_DIR": "bora_zombie_run",
+    # DLP_T1001 review4 M5: every other real path a leaf or top writes.
     "FLAG_DIR": "snark_start",              # a live run's decider gate
     "FLAG": os.path.join("snark_start", "flag"),
     "FOLD_DONE": os.path.join("snark_start", "fold_done"),
@@ -6086,7 +7008,7 @@ _TEST_REDIRECTS = {
 # tearDownModule).  data/cache/logs is skipped: a live run writes it.
 _REAL_GUARD_DIRS = (CACHE_DIR, os.path.join(REPO, "data", "paper_data"),
                     os.path.join(REPO, "data", "small_data_set"),
-                    os.path.join(MS_DLP_DIR, "docs"), "/tmp/bora_zombie_run",
+                    os.path.join(MS_DLP_DIR, "docs"), ZOMBIE_TMP_DIR,
                     "/tmp/bora", FLAG_DIR, "/tmp/bora_zombie_circ")
 _REAL_GUARD_SKIP = (os.path.join(CACHE_DIR, "logs") + os.sep,)
 _REAL_GUARD_BEFORE = None
@@ -7066,6 +7988,15 @@ class RunLeafDlpTest(unittest.TestCase):
             lambda rc, b_fail_scan=True, b_proof_ok=False: rc
         self.ctx.log_path.side_effect = \
             lambda n: "/lp/%s.log" % n
+        # DLP_T1001: stamp + same-sample hooks off; own tests cover them.
+        for name, kw in (("dlp_before", {}),
+                         ("dlp_after", {"side_effect":
+                                        lambda mode, ctx, rc: rc}),
+                         ("SAME_ONLY", None)):
+            p = (mock.patch.object(_MOD, name, False) if kw is None
+                 else mock.patch.object(_MOD, name, **kw))
+            p.start()
+            self.addCleanup(p.stop)
 
     def test_single_part_dry_wiring(self):
         with mock.patch.object(_MOD, "resolve_process_model",
@@ -7512,6 +8443,22 @@ class PlaceRawDataTest(unittest.TestCase):
                     self.assertEqual(f.read(), "v2")
 
 
+def _zombie_sandbox(root):
+    """DLP_T1001: un-started patches moving every path a zombie leaf
+    reads or writes (docs, partials, /tmp run dir, raw_data) under root,
+    so the suite never touches the real ones."""
+    ms = os.path.join(root, "ms_dlp")
+    os.makedirs(os.path.join(ms, "docs"), exist_ok=True)
+    zt = os.path.join(root, "bora_zombie_run")
+    return [mock.patch.object(_MOD, "MS_DLP_DIR", ms),
+            mock.patch.object(_MOD, "ZOMBIE_TMP_DIR", zt),
+            mock.patch.object(_MOD, "ZOMBIE_PARTIALS", (
+                os.path.join(zt, ZOMBIE_PARTIAL_NAME),
+                os.path.join(ms, "docs", ZOMBIE_PARTIAL_NAME))),
+            mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                              os.path.join(root, "raw_data"))]
+
+
 class RunLeafZombieTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -7526,27 +8473,38 @@ class RunLeafZombieTest(unittest.TestCase):
             mock.patch.object(_MOD, "RAW_DATA_ROOT",
                                os.path.join(self.tmp.name, "raw_data")),
             _sandbox_aborted(),
-        ]
+        ] + _zombie_sandbox(self.tmp.name)    # DLP_T1001: hermetic
         for p in patches:
             p.start()
             self.addCleanup(p.stop)
         os.makedirs(os.path.join(self.tmp.name, "job_logs"))
 
+    def _no_sample(self):
+        """DLP_T1001: the same-sample part stubbed out (own tests)."""
+        return mock.patch.multiple(
+            _MOD, place_same_zombie_outputs=mock.DEFAULT,
+            same_zombie_missing_success=mock.Mock(return_value=(None, [])))
+
     def test_dry_mode_uses_dry_script_and_perc_arg(self):
+        """DLP_T1001: dry runs same_zombie --dry <perc>; the sweep log is
+        placed under its .dry name (amend R3)."""
         ctx = JobHandle("zombie", "dry")
         with mock.patch.object(_MOD, "run_external_python",
                                 return_value=0) as rep, \
              mock.patch.object(_MOD, "zombie_missing_success",
-                                return_value=(None, None)):
+                                return_value=(None, None)), \
+             self._no_sample():
             with mock.patch.object(_MOD, "place_raw_data",
                                     return_value="/fake/dest") as prd:
                 result = run_leaf_zombie("dry", ctx)
         self.assertEqual(result.rc, 0)
         self.assertFalse(result.failed)
         script, args = rep.call_args[0][1], rep.call_args[0][2]
-        self.assertTrue(script.endswith("dry_run_zombie.py"))
-        self.assertEqual(args, [str(ZOMBIE_DRY_PERC)])
+        self.assertTrue(script.endswith("same_zombie.py"))
+        self.assertEqual(args[:2], ["--dry", str(ZOMBIE_DRY_PERC)])
         prd.assert_called_once()
+        self.assertEqual(prd.call_args[0][1],
+                         "run_zombie_regex_zombie_international.dry.log")
         self.assertEqual(ctx.raw_data, ["/fake/dest"])
 
     def test_full_mode_uses_real_script_no_args(self):
@@ -7554,14 +8512,16 @@ class RunLeafZombieTest(unittest.TestCase):
         with mock.patch.object(_MOD, "run_external_python",
                                 return_value=0) as rep, \
              mock.patch.object(_MOD, "zombie_missing_success",
-                                return_value=(None, None)):
+                                return_value=(None, None)), \
+             self._no_sample():
             with mock.patch.object(_MOD, "place_raw_data",
-                                    return_value="/fake/dest"):
+                                    return_value="/fake/dest") as prd:
                 run_leaf_zombie("full", ctx)
         script, args = rep.call_args[0][1], rep.call_args[0][2]
         self.assertTrue(script.endswith(
-            os.path.join("ms_dlp", "scripts", "run_zombie.py")))
-        self.assertEqual(args, [])
+            os.path.join("ms_dlp", "scripts", "same_zombie.py")))
+        self.assertEqual(args, zombie_args("full"))
+        self.assertEqual(prd.call_args[0][1], ZOMBIE_LOG_NAME)
 
     def test_nonzero_rc_skips_raw_data_placement(self):
         ctx = JobHandle("zombie", "dry")
@@ -7594,6 +8554,7 @@ class RunLeafZombieTest(unittest.TestCase):
                                 return_value=0), \
              mock.patch.object(_MOD, "zombie_missing_success",
                                 return_value=(None, "3 of 8 not ok")), \
+             self._no_sample(), \
              mock.patch.object(_MOD, "place_raw_data",
                                 return_value="/fake/dest") as prd:
             result = run_leaf_zombie("dry", ctx)
@@ -9890,9 +10851,9 @@ class DryCostRollupTest(unittest.TestCase):
         self.assertEqual(
             dict(LEAF_CHOICES)["clam"], "Clamav [dry ~8.7min, ~17.1GB]")
         self.assertEqual(dict(LEAF_CHOICES)["dlp"],
-                          "DLP [dry ~2.4min, ~6.5GB]")
+                          "DLP [dry ~4min, ~6.5GB]")
         self.assertEqual(dict(LEAF_CHOICES)["zombie"],
-                          "Zombie [dry ~15.5min cold, ~30.3GB]")
+                          "Zombie [dry ~18min cold, ~30.3GB]")
 
     def test_rollup_appears_on_layer_1_and_on_all(self):
         """The same rollup shows on the top menu's dry_run row and on
@@ -9912,7 +10873,7 @@ class DryCostRollupTest(unittest.TestCase):
             _show_submenu("full_run")
         out = buf.getvalue()
         self.assertIn("Dna [full ~5.8h, ~529GB]", out)
-        self.assertIn("DLP [full ~2.9d x2 parts, ~700GB]", out)
+        self.assertIn("DLP [full ~3.4d x2 parts, ~700GB]", out)
         self.assertIn("Clamav [full ~20.3h x2 parts, ~900GB]", out)
         self.assertIn("Analyze lkup [full ~1.8h, ~73GB]", out)
         self.assertIn("Effectiveness [full ~1.9h, ~73GB]", out)
@@ -10115,14 +11076,17 @@ class PreflightTest(unittest.TestCase):
     def test_zombie_and_reef_declare_the_script_they_launch(self):
         """Preflight and launch must name the SAME file in both modes --
         the drift this field exists to prevent."""
-        for key, fn in (("zombie", zombie_script),
-                         ("reef", reef_script)):
-            for mode in ("dry", "full"):
-                self.assertEqual(
-                    JOB_SPECS[key].required_files(mode), [fn(mode)])
-        self.assertTrue(
-            zombie_script("dry").endswith("dry_run_zombie.py"))
-        self.assertTrue(zombie_script("full").endswith("run_zombie.py"))
+        for mode in ("dry", "full"):
+            self.assertEqual(JOB_SPECS["reef"].required_files(mode),
+                             [reef_script(mode)])
+            # DLP_T1001: same_zombie first, then what it imports/reads.
+            req = JOB_SPECS["zombie"].required_files(mode)
+            self.assertEqual(req[0], zombie_script(mode))
+            self.assertIn(SAME_FX_REJECT, req)
+            self.assertEqual(any(p.endswith("dry_run_zombie.py")
+                                 for p in req), mode == "dry")
+        self.assertTrue(zombie_script("dry").endswith("same_zombie.py"))
+        self.assertTrue(zombie_script("full").endswith("same_zombie.py"))
         self.assertTrue(
             reef_script("dry").endswith("dry_run_eval_reef.py"))
         self.assertTrue(reef_script("full").endswith("eval_reef.py"))
@@ -10695,6 +11659,11 @@ class MainTest(unittest.TestCase):
         v = mock.patch.object(_MOD, "ensure_vma")
         self.vma = v.start()
         self.addCleanup(v.stop)
+        # DLP_T1001: a real full dlp stamp must not refuse dry plans here.
+        r = mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                              os.path.join(self.tmp.name, "raw_data"))
+        r.start()
+        self.addCleanup(r.stop)
 
     def _seed_summary(self):
         """A stale FAIL line from an earlier run, as SUMMARY.log would
@@ -10822,6 +11791,12 @@ class EndToEndWiringTest(unittest.TestCase):
                                os.path.join(self.tmp.name, "failed_tgz")),
             mock.patch.object(_MOD, "LOGS_DIR",
                                os.path.join(self.tmp.name, "job_logs")),
+            mock.patch.object(_MOD, "RAW_DATA_ROOT",   # DLP_T1001
+                               os.path.join(self.tmp.name, "raw_data")),
+            # DLP_T1001: never spawn same_zombie --check-start (preflight)
+            # nor re-exec the suite into a scope.
+            mock.patch.object(_MOD, "zombie_check_start", return_value=None),
+            mock.patch.object(_MOD, "ensure_same_scope", return_value=None),
         ]
         for p in patches:
             p.start()
@@ -12104,6 +13079,11 @@ class ZombieDryIsolationTest(unittest.TestCase):
         self.real = _REAL_ZOMBIE_PARTIALS    # import-time, pre-redirect
         self.tmp = os.path.join(self.d, "tmp.partial.jsonl")
         self.docs = os.path.join(self.d, "docs.partial.jsonl")
+        # DLP_T1001: docs, /tmp run dir and raw_data sandboxed too, so
+        # run_leaf_zombie never copies real docs outputs into raw_data.
+        self.sandbox = _zombie_sandbox(self.d)
+        for p in self.sandbox:
+            p.start()
         self.patch = mock.patch.object(
             sys.modules[__name__], "ZOMBIE_PARTIALS",
             (self.tmp, self.docs))
@@ -12111,6 +13091,8 @@ class ZombieDryIsolationTest(unittest.TestCase):
 
     def tearDown(self):
         self.patch.stop()
+        for p in reversed(self.sandbox):
+            p.stop()
         shutil.rmtree(self.d, ignore_errors=True)
 
     def _write(self, path, text):
@@ -12249,6 +13231,1304 @@ class ZombieDryIsolationTest(unittest.TestCase):
             self.assertRaises(RuntimeError, run_leaf_zombie, "dry", ctx)
         self.assertEqual(self._read(self.tmp), "REAL\n")
 
+
+# ---- DLP_T1001: same-sample job tests (d9 T10, T10b, P parts of T11b/T14)
+
+
+_REAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _fake_check_start(rc=0, out="SAME check-start PASS\n", calls=None):
+    """subprocess.run stand-in: a --check-start child exits rc with out
+    (never spawned); anything else (git) runs for real."""
+    def run(cmd, *a, **kw):
+        if "--check-start" in cmd:
+            if calls is not None:
+                calls.append(cmd)
+            return subprocess.CompletedProcess(cmd, rc, stdout=out)
+        return _REAL_SUBPROCESS_RUN(cmd, *a, **kw)
+    return run
+
+
+def _fresh(*paths):
+    """mtime 2 s ahead: the kernel's coarse file clock can stamp a file
+    written just after JobHandle._t0 with an mtime below it."""
+    t = time.time() + 2
+    for p in paths:
+        os.utime(p, (t, t))
+
+
+def _same_dlp_log(sizes, n, drop=None):
+    """A synthetic same_dlp log that passes same_dlp_missing_success;
+    drop names one marker to omit (negative cases)."""
+    out = ["SAME db path load dlp_neo_p0"]
+    for s in sizes:
+        for i in same_fx_ids(s, n):
+            if drop != "discharge":
+                out.append("SAME discharge %s fail false needs_max 3" % i)
+    out.append("SAME lookup check OFF, share 1")
+    for i, s in enumerate(sizes):
+        out.append("SAME fold begin i=%d size=%d n=%d" % (i, s, n))
+        out.append("PROBE DLP job %d n %d" % (i, n))
+        if drop != "fold":
+            out.append("Job 0 generating SNARK proof")
+        out.append("Verify Individual Proof")
+        out.append("VERIFY-FLAGS ind[final] i=0: idx=1 verdict=UNBOUND")
+        if drop != "end":
+            out.append("SAME fold end i=%d" % i)
+    return "\n".join(out) + "\n"
+
+
+class SameArgsEnvTest(unittest.TestCase):
+    """DLP_T1001 T10: argv, env, defaults, fixture files."""
+
+    def test_defaults_unchanged(self):
+        self.assertEqual(DLP_LEAF_ARGS["full"], ("100", "100", "4", "8", "0"))
+        self.assertEqual(dlp_argv("full", 1, "0"),
+                         ["full_dlp", "100", "100", "4", "8", "1", "0",
+                          "0", "0"])
+        self.assertFalse(SAME_1KB)
+        self.assertFalse(SAME_ONLY)
+
+    def test_same_dlp_argv(self):
+        self.assertEqual(same_dlp_argv("full"),
+                         ["same_dlp", "100", "4", "32", "0",
+                          "1000,2000,4000", "0"])
+        self.assertEqual(same_dlp_argv("dry"),
+                         ["same_dlp", "0.25", "2", "2", "1", "1000", "0"])
+        with mock.patch.object(_MOD, "SAME_1KB", True):
+            self.assertEqual(same_dlp_argv("full")[5], "1000")
+
+    def test_zombie_args(self):
+        with mock.patch.object(_MOD, "SERVER", "cl2x7542"):
+            self.assertEqual(zombie_args("full"),
+                             ["--sizes", "1000,2000,4000", "--n", "32",
+                              "--server", "cl2x7542"])
+            self.assertEqual(zombie_args("dry"),
+                             ["--dry", "4", "--sizes", "1000", "--n", "2",
+                              "--server", "cl2x7542", "--scalecal"])
+            with mock.patch.object(_MOD, "SAME_1KB", True):
+                self.assertEqual(zombie_args("full"),
+                                 ["--sizes", "1000", "--n", "32",
+                                  "--only-same", "--server", "cl2x7542"])
+                self.assertEqual(zombie_args("dry")[-1], "--only-same")
+                self.assertIn("--scalecal", zombie_args("dry"))
+
+    def test_same_1kb_flag_parses(self):
+        self.assertTrue(build_argparser().parse_args(
+            ["--same_1kb"]).same_1kb)
+        self.assertFalse(build_argparser().parse_args([]).same_1kb)
+
+    def test_same_env_strips_ladder_and_one_proof(self):
+        """Invariant 36: neo_env passes ZKR_NEO_LOAD_LADDER, same_env not."""
+        env = {"ZKR_NEO_LOAD_LADDER": "1", "ZKR_SAME_ONLY": "1",
+               "ZKR_SAME_MAX_WIDTH_CORES": "0", "PATH": "/bin"}
+        with mock.patch.dict(os.environ, env, clear=True), \
+             mock.patch.object(_MOD, "ONE_PROOF_PER_HALF", True):
+            ne, se = neo_env(), same_env()
+        self.assertIn("ZKR_NEO_LOAD_LADDER", ne)
+        self.assertIn(ONE_PROOF_ENV, ne)
+        self.assertNotIn("ZKR_NEO_LOAD_LADDER", se)
+        self.assertNotIn(ONE_PROOF_ENV, se)
+        for e in (ne, se):            # invariant 17
+            self.assertNotIn("ZKR_SAME_ONLY", e)
+            self.assertNotIn("ZKR_SAME_MAX_WIDTH_CORES", e)
+
+    def test_zombie_env_keeps_same_knobs(self):
+        ctx = mock.Mock(_t0=0.0, raw_data=[])
+        ctx.finish.side_effect = lambda rc: rc
+        ctx.log_path.return_value = "/nonexistent/run.log"
+        with mock.patch.dict(os.environ, {"ZKR_SAME_MAX_WIDTH_CORES": "0"}), \
+             mock.patch.object(_MOD, "SAME_1KB", True), \
+             mock.patch.object(_MOD, "run_external_python",
+                               return_value=1) as rep, \
+             mock.patch.object(_MOD, "place_same_zombie_outputs"):
+            run_leaf_zombie("full", ctx)
+        self.assertEqual(rep.call_args[0][3]["ZKR_SAME_MAX_WIDTH_CORES"],
+                         "0")
+
+    def test_expected_reject_file_header_only(self):
+        """Invariant 3 (m14), once the implementation commit adds it."""
+        if not os.path.isfile(SAME_FX_REJECT):
+            self.skipTest("FX/zombie_expected_reject.tsv not created yet")
+        lines = [ln for ln in open(SAME_FX_REJECT) if ln.strip()]
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(lines[0].split(),
+                         ["unit", "email_id", "size", "span"])
+
+    def test_fail_like_matches_fail_re(self):
+        """Invariant 28: same_zombie's FAIL_LIKE pins P's FAIL_RE."""
+        if not os.path.isfile(SAME_ZOMBIE_SCRIPT):
+            self.skipTest("same_zombie.py not present yet")
+        spec = importlib.util.spec_from_file_location(
+            "same_zombie_t", SAME_ZOMBIE_SCRIPT)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        fl = m.FAIL_LIKE
+        self.assertEqual(getattr(fl, "pattern", fl), FAIL_RE.pattern)
+
+
+class SameDlpPredicateTest(unittest.TestCase):
+    """DLP_T1001 T10 / invariant 7: the segment predicate."""
+
+    def _check(self, text, n, sizes):
+        with tempfile.NamedTemporaryFile("w", suffix=".log",
+                                         delete=False) as f:
+            f.write(text)
+        self.addCleanup(os.unlink, f.name)
+        return same_dlp_missing_success(f.name, n, sizes)
+
+    def test_passes_3x32_and_1x32(self):
+        sz = [1000, 2000, 4000]
+        self.assertIsNone(self._check(_same_dlp_log(sz, 32), 32, sz))
+        self.assertIsNone(self._check(_same_dlp_log([1000], 32), 32, [1000]))
+
+    def test_negatives(self):
+        sz = [1000, 2000]
+        good = _same_dlp_log(sz, 3)
+        self.assertIsNone(self._check(good, 3, sz))
+        cases = {
+            "n_mail": (good, 2, sz),
+            "sizes": (good, 3, [1000, 4000]),
+            "one size": (good, 3, [1000]),
+            "no fold": (_same_dlp_log(sz, 3, "fold"), 3, sz),
+            "no end": (_same_dlp_log(sz, 3, "end"), 3, sz),
+            "no discharge": (_same_dlp_log(sz, 3, "discharge"), 3, sz),
+            "fail true": (good.replace("1000_01 fail false",
+                                       "1000_01 fail true"), 3, sz),
+            "rejected": (good + "SAME discharge rejected 1000_01\n", 3, sz),
+            "PASS": (good + "VERIFY-FLAGS ind[final] verdict=PASS\n", 3, sz),
+            "VFAIL": (good + "PROOF VERIFICATION FAILED\n", 3, sz),
+            "2 folds": (good.replace("PROBE DLP job 1 n 3",
+                                     "PROBE DLP job 1 n 3\nJob 0 generating "
+                                     "SNARK proof"), 3, sz),
+            "cut": (good[:len(good) // 2], 3, sz),
+        }
+        for name, (text, n, s) in cases.items():
+            with self.subTest(case=name):
+                self.assertIsNotNone(self._check(text, n, s))
+
+    def test_fixture_check_passes_on_repo_fixture(self):
+        self.assertIsNone(same_fx_check([1000, 2000, 4000]))
+
+
+class RunSameDlpTest(unittest.TestCase):
+    """DLP_T1001: run_same_dlp wiring, skips, packing."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                              os.path.join(self.tmp.name, "raw"))
+        p.start()
+        self.addCleanup(p.stop)
+        self.log = os.path.join(self.tmp.name, "same_dlp.log")
+        self.ctx = mock.Mock(_ts="20261116_000000", raw_data=[])
+        self.ctx.log_path.return_value = self.log
+
+    def _run(self, mode, rc, text, rc_main=0):
+        def fake(ctx, ex, argv, env, log_name):
+            with open(self.log, "w") as f:
+                f.write(text)
+            return rc
+        with mock.patch.object(_MOD, "run_rust_example",
+                               side_effect=fake) as rre:
+            out = run_same_dlp(mode, self.ctx, rc_main)
+        return out, rre
+
+    def test_wiring_and_pass(self):
+        out, rre = self._run("full", 0, _same_dlp_log([1000, 2000, 4000], 32))
+        self.assertEqual(out, 0)
+        a = rre.call_args
+        self.assertEqual(a[0][1:3], ("bora_cli", same_dlp_argv("full")))
+        self.assertEqual(a[1], {"log_name": "same_dlp"})
+        self.assertEqual(self.ctx.raw_data, [raw_data_path("same_dlp.tgz")])
+
+    def test_dry_tgz_name(self):
+        out, _ = self._run("dry", 0, _same_dlp_log([1000], 2))
+        self.assertEqual(out, 0)
+        self.assertEqual(self.ctx.raw_data,
+                         [raw_data_path("same_dlp.dry.tgz")])
+
+    def test_failure_still_packs(self):
+        """Invariant 9: same_dlp.tgz on every outcome; rc kept."""
+        out, _ = self._run("full", 101, "panicked at x\n")
+        self.assertEqual(out, 101)
+        self.assertTrue(os.path.isfile(raw_data_path("same_dlp.tgz")))
+
+    def test_missing_markers_rc6(self):
+        out, _ = self._run("full", 0, _same_dlp_log([1000], 32))
+        self.assertEqual(out, 6)
+        self.assertTrue(os.path.isfile(raw_data_path("same_dlp.tgz")))
+
+    def test_skips(self):
+        """Invariant 37: --half 1 skips with a note; main rc != 0 too."""
+        with mock.patch.object(_MOD, "HALF", 1), \
+             mock.patch.object(_MOD, "run_rust_example") as rre:
+            self.assertEqual(run_same_dlp("full", self.ctx, 0), 0)
+            self.assertEqual(run_same_dlp("full", self.ctx, 3), 0)
+        rre.assert_not_called()
+        notes = " ".join(c[0][0] for c in self.ctx.note.call_args_list)
+        self.assertIn("--half 1", notes)
+        self.assertIn("main rc=3", notes)
+
+    def test_bad_fixture_refuses(self):
+        with mock.patch.object(_MOD, "same_fx_check", return_value="bad"), \
+             mock.patch.object(_MOD, "run_rust_example") as rre:
+            self.assertEqual(run_same_dlp("full", self.ctx, 0), 6)
+        rre.assert_not_called()
+
+
+class RunLeafFullNeoAfterTest(unittest.TestCase):
+    """DLP_T1001: after= runs after safe_pack_dump in every branch."""
+
+    def setUp(self):
+        self.ctx = mock.Mock(_ts="t", raw_data=[])
+        self.ctx.finish.side_effect = \
+            lambda rc, b_fail_scan=True, b_proof_ok=False: rc
+        self.ctx.log_path.side_effect = lambda n: "/lp/%s.log" % n
+        self.order = []
+        self.flag_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.flag_dir.cleanup)
+
+    def _after(self, mode, ctx, rc):
+        self.order.append(("after", mode, rc, list(ctx.raw_data)))
+        return 6
+
+    def _go(self, model, half=None):
+        with mock.patch.object(_MOD, "resolve_process_model",
+                               return_value=model), \
+             mock.patch.object(_MOD, "HALF", half), \
+             mock.patch.object(_MOD, "FLAG_DIR", self.flag_dir.name), \
+             mock.patch.object(_MOD, "neo_env", return_value={}), \
+             mock.patch.object(_MOD, "run_example_two_half", return_value=0), \
+             mock.patch.object(_MOD, "run_rust_example", return_value=0), \
+             mock.patch.object(_MOD, "dlp_missing_success",
+                               return_value=None), \
+             mock.patch.object(_MOD, "pack_full_dump",
+                               side_effect=lambda *a: self.order.append(
+                                   "pack") or ["/d/full_dlp.tgz"]):
+            if half is not None:
+                with mock.patch.object(_MOD, "FLAG", os.devnull), \
+                     mock.patch.object(_MOD, "FOLD_DONE", os.devnull):
+                    return run_leaf_full_neo("full", self.ctx, dlp_argv,
+                                             "full_dlp", 8, False,
+                                             after=self._after)
+            return run_leaf_full_neo("full", self.ctx, dlp_argv, "full_dlp",
+                                     8, False, after=self._after)
+
+    def test_two_half_single_and_half(self):
+        for model, half in ((ProcessModel(2, ["0-3", "4-7"]), None),
+                            (ProcessModel(1, [None]), None),
+                            (ProcessModel(2, ["0-3", "4-7"]), 0)):
+            with self.subTest(n_parts=model.n_parts, half=half):
+                self.order, self.ctx.raw_data = [], []
+                self.assertEqual(self._go(model, half), 6)
+                self.assertEqual(self.order, [
+                    "pack", ("after", "full", 0, ["/d/full_dlp.tgz"])])
+
+    def test_run_leaf_dlp_passes_dlp_after(self):
+        with mock.patch.object(_MOD, "SAME_ONLY", False), \
+             mock.patch.object(_MOD, "dlp_before") as db, \
+             mock.patch.object(_MOD, "run_leaf_full_neo",
+                               return_value=0) as rl:
+            run_leaf_dlp("full", self.ctx)
+        db.assert_called_once_with(self.ctx)
+        self.assertIs(rl.call_args[1]["after"], dlp_after)
+
+    def test_same_only_skips_main(self):
+        with mock.patch.object(_MOD, "SAME_ONLY", True), \
+             mock.patch.object(_MOD, "same_only_refusal", return_value=None), \
+             mock.patch.object(_MOD, "dlp_before") as db, \
+             mock.patch.object(_MOD, "run_leaf_full_neo") as rl, \
+             mock.patch.object(_MOD, "run_same_dlp", return_value=0) as rs:
+            self.assertEqual(run_leaf_dlp("full", self.ctx), 0)
+        db.assert_not_called()
+        rl.assert_not_called()
+        rs.assert_called_once_with("full", self.ctx, 0)
+        self.ctx.finish.assert_called_once_with(0, b_fail_scan=False)
+        with mock.patch.object(_MOD, "SAME_ONLY", True), \
+             mock.patch.object(_MOD, "same_only_refusal",
+                               return_value="HEAD moved"), \
+             mock.patch.object(_MOD, "run_same_dlp") as rs:
+            self.assertEqual(run_leaf_dlp("full", self.ctx), 6)
+        rs.assert_not_called()
+
+
+class FindRunDirSameSkipTest(unittest.TestCase):
+    """DLP_T1001 invariant 15: same_*.log-only dirs are not run dirs."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        p = mock.patch.object(_MOD, "JOB_LOG_DIR", self.tmp.name)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _dir(self, ts, logs):
+        d = os.path.join(self.tmp.name, "dlp_full_%s" % ts)
+        os.makedirs(d)
+        for lg in logs:
+            open(os.path.join(d, lg), "w").close()
+        return d
+
+    def test_skip_same_only(self):
+        old = self._dir("20261101_000000", ["run.log", "same_dlp.log"])
+        self._dir("20261110_000000", ["same_dlp.log"])
+        self.assertEqual(find_run_dir("dlp"), (old, "full"))
+        both = self._dir("20261111_000000", ["part1.log", "same_dlp.log"])
+        self.assertEqual(find_run_dir("dlp"), (both, "full"))
+
+
+class SamePlanCheckTest(unittest.TestCase):
+    """DLP_T1001 T10: same_plan_check (m3, m4, m8, R3, invariant 16)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for name, val in (("RAW_DATA_ROOT", os.path.join(self.tmp.name,
+                                                          "raw")),
+                          ("SERVER", "jet1tb"), ("SAME_1KB", False)):
+            p = mock.patch.object(_MOD, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+        env = {k: v for k, v in os.environ.items()
+               if k not in (SAME_ONLY_ENV, SAME_CAP_ENV)}
+        p = mock.patch.dict(os.environ, env, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
+        self.calls = []
+        p = mock.patch.object(_MOD.subprocess, "run",
+                              side_effect=_fake_check_start(calls=self.calls))
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _plan(self, run, items):
+        return resolve_plan(run, items)
+
+    def _stamp(self, mode="full"):
+        os.makedirs(os.path.dirname(dlp_stamp_path(mode)), exist_ok=True)
+        with open(dlp_stamp_path(mode), "w") as f:
+            json.dump({"kind": "dlp_main", "mode": mode, "commit": "abc",
+                       "written": "2026-11-16T00:00:00"}, f)
+
+    def test_same_only_values(self):
+        for v in ("true", "yes", "0"):
+            with self.subTest(v=v), \
+                 mock.patch.dict(os.environ, {SAME_ONLY_ENV: v}):
+                r = same_plan_check(self._plan("full_run", "dlp"))
+                self.assertIn("must be 1 or unset", r)
+
+    def test_same_only_needs_full_dlp_alone(self):
+        with mock.patch.dict(os.environ, {SAME_ONLY_ENV: "1"}), \
+             mock.patch.object(_MOD, "zombie_check_start") as zc:
+            for plan in (self._plan("dry_run", "dlp"),
+                         self._plan("full_run", "dlp,zombie"),
+                         self._plan("full_run", "clam"),
+                         resolve_plan("small", None)):
+                with self.subTest(plan=plan):
+                    self.assertIn("needs --run full_run --items dlp",
+                                  same_plan_check(plan))
+        zc.assert_not_called()
+
+    def test_same_only_stamp(self):
+        with mock.patch.dict(os.environ, {SAME_ONLY_ENV: "1"}):
+            r = same_plan_check(self._plan("full_run", "dlp"))
+            self.assertIn("no full dlp stamp", r)
+            self._stamp("dry")
+            self.assertIn("only a dry stamp",
+                          same_plan_check(self._plan("full_run", "dlp")))
+            with mock.patch.object(_MOD, "stamp_check", return_value=None):
+                self._stamp("full")
+                self.assertIsNone(
+                    same_plan_check(self._plan("full_run", "dlp")))
+
+    def test_dry_dlp_refused_while_full_stamp_exists(self):
+        """amend R3, invariant 40."""
+        self._stamp("dry")
+        self.assertIsNone(same_plan_check(self._plan("dry_run", "dlp")))
+        self._stamp("full")
+        r = same_plan_check(self._plan("dry_run", "dlp,zombie"))
+        self.assertIn("a full dlp result exists for jet1tb", r)
+        self.assertIn("A full run does its own zombie speed check", r)
+        self.assertIn("--run dry_run --items zombie", r)
+        self.assertIsNone(same_plan_check(self._plan("dry_run", "zombie")))
+        self.assertIsNone(same_plan_check(self._plan("full_run", "dlp")))
+
+    def test_dry_dlp_refused_over_unstamped_dump(self):
+        """review2 minor 9: a full_dlp.tgz with no stamp (pre-stamp full
+        run) refuses a dry dlp; one the dry stamp wrote does not."""
+        os.makedirs(os.path.dirname(raw_data_path("x")), exist_ok=True)
+        d = raw_data_path("full_dlp.tgz")
+        open(d, "w").close()
+        r = same_plan_check(self._plan("dry_run", "dlp"))
+        self.assertIn("%s has no stamp from a dry run" % d, r)
+        self.assertRegex(r, re.escape("mv '%s' '%s.aside_" % (d, d)))
+        self.assertIsNone(same_plan_check(self._plan("dry_run", "zombie")))
+        with open(dlp_stamp_path("dry"), "w") as f:
+            json.dump({"kind": "dlp_main", "mode": "dry", "dumps": [d]}, f)
+        self.assertIsNone(same_plan_check(self._plan("dry_run", "dlp")))
+        t = time.time() + 5                     # rewritten after the stamp
+        os.utime(d, (t, t))
+        self.assertIn("no stamp", same_plan_check(self._plan("dry_run",
+                                                             "dlp")))
+        p2 = raw_data_path("full_dlp.part2.tgz")
+        open(p2, "w").close()
+        os.utime(d, (1, 1))
+        self.assertIn("full_dlp.part2.tgz", same_plan_check(
+            self._plan("dry_run", "dlp")))
+
+    def test_bad_cap_refused(self):
+        for v in ("-1", "x", ""):
+            with self.subTest(v=v), \
+                 mock.patch.dict(os.environ, {SAME_CAP_ENV: v}), \
+                 mock.patch.object(_MOD, "zombie_check_start") as zc:
+                self.assertIn(SAME_CAP_ENV, same_plan_check(
+                    self._plan("dry_run", "zombie")))
+            zc.assert_not_called()
+        with mock.patch.dict(os.environ, {SAME_CAP_ENV: "0"}):
+            self.assertIsNone(same_plan_check(self._plan("dry_run",
+                                                         "zombie")))
+
+    def test_check_start_for_every_zombie_plan(self):
+        """Review item 3: dry and full plans with zombie both run
+        --check-start (rules + preflight) with the leaf's own argv."""
+        self.assertIsNone(same_plan_check(self._plan("full_run", "dlp,dna")))
+        self.assertEqual(self.calls, [])
+        for run, mode in (("dry_run", "dry"), ("full_run", "full")):
+            del self.calls[:]
+            self.assertIsNone(same_plan_check(
+                self._plan(run, "dlp,dna,clam,zombie")))
+            self.assertEqual(self.calls, [
+                [sys.executable, "-I", SAME_ZOMBIE_SCRIPT]
+                + zombie_args(mode) + ["--check-start"]])
+        with mock.patch.object(_MOD, "SAME_1KB", True):
+            del self.calls[:]
+            same_plan_check(self._plan("full_run", "zombie"))
+        self.assertIn("--only-same", self.calls[0])
+
+    def test_check_start_nonzero_refuses(self):
+        """m3: rc 6 is a rule refusal, rc 1 a crash; both refuse with
+        the child's last 20 lines."""
+        tb = "\n".join(["line %d" % i for i in range(30)]
+                       + ["Traceback (most recent call last):",
+                          "ZeroDivisionError: x"])
+        for (rc, word), run in __import__('itertools').product(
+                ((1, "crashed (rc 1)"), (6, "start check refused")),
+                ("dry_run", "full_run")):
+            with self.subTest(rc=rc, run=run), \
+                 mock.patch.object(_MOD.subprocess, "run",
+                                   side_effect=_fake_check_start(rc, tb)):
+                r = same_plan_check(self._plan(run, "zombie"))
+            self.assertIn(word, r)
+            self.assertIn("ZeroDivisionError", r)
+            self.assertNotIn("line 5\n", r)
+
+
+class SameScopeTest(unittest.TestCase):
+    """DLP_T1001: one-key launch, re-exec into an oomd-omit scope."""
+
+    ARGV = ["--run", "full_run", "--items", "dlp,zombie"]
+
+    def setUp(self):
+        env = {k: v for k, v in os.environ.items() if k != SAME_SCOPE_ENV}
+        p = mock.patch.dict(os.environ, env, clear=True)
+        p.start()
+        self.addCleanup(p.stop)
+        self.plan = resolve_plan("full_run", "dlp,zombie")
+
+    def _go(self, why, run_rc=0, run_exc=None, plan=None):
+        run = mock.Mock(return_value=subprocess.CompletedProcess(
+            [], run_rc, stdout="", stderr="Failed to start transient scope"))
+        if run_exc:
+            run.side_effect = run_exc
+        with mock.patch.object(_MOD, "same_oomd_refusal",
+                               return_value=why) as orf, \
+             mock.patch.object(_MOD.subprocess, "run", run), \
+             mock.patch.object(_MOD.os, "execvpe") as ex:
+            r = ensure_same_scope(plan or self.plan, self.ARGV)
+        return r, run, ex, orf
+
+    def test_not_in_scope_reexecs(self):
+        r, run, ex, _ = self._go("pressure-monitored without omit")
+        self.assertIsNone(r)
+        self.assertEqual(run.call_args[0][0][-2:], ["--", "true"])
+        cmd, env = ex.call_args[0][1], ex.call_args[0][2]
+        self.assertEqual(cmd[:4], ["systemd-run", "--user", "--scope",
+                                   "--quiet"])
+        self.assertIn("ManagedOOMPreference=omit", cmd)
+        self.assertEqual(cmd[-len(self.ARGV) - 3:],
+                         ["--", sys.executable, os.path.abspath(__file__)]
+                         + self.ARGV)
+        self.assertEqual(env[SAME_SCOPE_ENV],
+                         cmd[4].split("=", 1)[1] + ".scope")
+
+    def test_in_good_scope_no_reexec(self):
+        r, run, ex, _ = self._go(None)
+        self.assertIsNone(r)
+        run.assert_not_called()
+        ex.assert_not_called()
+
+    def test_marker_set_never_loops(self):
+        with mock.patch.dict(os.environ, {SAME_SCOPE_ENV: "x.scope"}):
+            r, run, ex, _ = self._go("still monitored")
+        self.assertIn("still fails the oomd check", r)
+        self.assertIn("systemd-run --user --scope -p "
+                      "ManagedOOMPreference=omit python3 scripts/"
+                      "PAPER_DATA.py --run full_run", r)
+        run.assert_not_called()
+        ex.assert_not_called()
+
+    def test_systemd_run_missing_or_failing_refuses(self):
+        for kw in ({"run_exc": FileNotFoundError("systemd-run")},
+                   {"run_rc": 1}):
+            with self.subTest(**{k: str(v) for k, v in kw.items()}):
+                r, _, ex, _ = self._go("monitored", **kw)
+                self.assertIn("cannot create an oomd-omit scope", r)
+                self.assertIn("ManagedOOMPreference=omit python3", r)
+                ex.assert_not_called()
+
+    def test_check_crash_refuses_not_unprotected(self):
+        with mock.patch.dict(os.environ, {SAME_SCOPE_ENV: "x.scope"}), \
+             mock.patch.object(_MOD, "same_oomd_refusal",
+                               side_effect=ImportError("no same_zombie")):
+            r = ensure_same_scope(self.plan, self.ARGV)
+        self.assertIn("oomd check failed to run", r)
+
+    def test_only_zombie_dry_full_plans(self):
+        for plan in (resolve_plan("full_run", "dlp,dna"),
+                     resolve_plan("small", None)):
+            r, run, ex, orf = self._go("monitored", plan=plan)
+            self.assertIsNone(r)
+            orf.assert_not_called()
+            ex.assert_not_called()
+        r, _, ex, _ = self._go("monitored",
+                               plan=resolve_plan("dry_run", "zombie"))
+        ex.assert_called_once()
+
+    def test_oomd_refusal_reuses_same_zombie_read_only(self):
+        """The real same_zombie oomd_check(repair=False) runs."""
+        if not os.path.isfile(SAME_ZOMBIE_SCRIPT):
+            self.skipTest("same_zombie.py not present")
+        with mock.patch.object(_MOD.subprocess, "run") as run:
+            run.return_value = subprocess.CompletedProcess(
+                [], 0, stdout="inactive\n", stderr="")
+            self.assertIsNone(same_oomd_refusal())
+        self.assertFalse(any("set-property" in c[0][0]
+                             for c in run.call_args_list))
+
+    def test_main_passes_menu_choice_on(self):
+        """An interactive pick is re-exec'd as --run/--items."""
+        with mock.patch("sys.argv", ["prog"]), \
+             mock.patch.object(_MOD, "ensure_vma"), \
+             mock.patch.object(_MOD, "check_thp"), \
+             mock.patch.object(_MOD, "interactive_select",
+                               return_value=self.plan), \
+             mock.patch.object(_MOD, "ensure_same_scope",
+                               return_value="REFUSED: x") as es:
+            self.assertEqual(main(), 2)
+        self.assertEqual(es.call_args[0][1], self.ARGV)
+
+
+class ZombieLeafIsolationGuardTest(unittest.TestCase):
+    """DLP_T1001: the zombie-leaf test classes leave the REAL raw_data,
+    docs and /tmp/bora_zombie_run untouched (mtime and size).  A live
+    zombie run on this box would trip it."""
+
+    def test_zombie_leaf_tests_touch_no_real_file(self):
+        roots = (RAW_DATA_ROOT, os.path.join(MS_DLP_DIR, "docs"),
+                 ZOMBIE_TMP_DIR)
+        before = _tree_state(*roots)
+        suite = unittest.TestSuite(
+            unittest.defaultTestLoader.loadTestsFromTestCase(c)
+            for c in (RunLeafZombieTest, ZombieDryIsolationTest,
+                      SameZombieLeafTest, SameScopeTest))
+        res = unittest.TextTestRunner(stream=io.StringIO()).run(suite)
+        self.assertTrue(res.wasSuccessful(), res.failures + res.errors)
+        after = _tree_state(*roots)
+        changed = sorted(p for p in set(before) | set(after)
+                         if before.get(p) != after.get(p))
+        self.assertEqual(changed, [])
+
+
+class SameZombieLeafTest(unittest.TestCase):
+    """DLP_T1001: zombie leaf sweep/sample parts and the TSV predicate."""
+
+    SIG_OLD = hashlib.sha256(b"old launch").hexdigest()
+    SIG_NEW = hashlib.sha256(b"new launch").hexdigest()
+    COLS = ["unit", "size", "email_id", "attempt", "mode", "accepted",
+            "expected_reject", "rc", "verify_ok", "cons", "class",
+            "gate_id", "launch_sig"]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        t = self.tmp.name
+        for name, val in (("RAW_DATA_ROOT", os.path.join(t, "raw")),
+                          ("MS_DLP_DIR", os.path.join(t, "ms")),
+                          ("SAME_FX_REJECT", os.path.join(t, "rej.tsv")),
+                          ("ZOMBIE_PARTIAL_NAME", "none.partial.jsonl"),
+                          ("ZOMBIE_TMP_DIR", os.path.join(t, "zrun")),
+                          ("SAME_1KB", False)):
+            p = mock.patch.object(_MOD, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+        os.makedirs(os.path.join(t, "ms", "docs"))
+        self.tsv = os.path.join(t, "ms", "docs", SAME_ZOMBIE_BASE + ".tsv")
+        self.log = os.path.join(t, "run.log")
+        open(self.log, "w").close()
+
+    def _tsv(self, rows, path=None):
+        with open(path or self.tsv, "w") as f:
+            f.write("\t".join(self.COLS) + "\n")
+            for r in rows:
+                f.write("\t".join(str(r.get(c, "")) for c in self.COLS)
+                        + "\n")
+
+    def _rows(self, sizes, n, unit="u1", mode="packed"):
+        return [dict(unit=unit, size=s, email_id=e, attempt=1, mode=mode,
+                     accepted=1, expected_reject=0, rc=0, verify_ok="true",
+                     cons=7, launch_sig=self.SIG_OLD,
+                     **{"class": "ok", "gate_id": "g1"})
+                for s in sizes for e in same_fx_ids(s, n)]
+
+    def test_predicate_pass_and_fail(self):
+        rows = self._rows([1000], 2)
+        self._tsv(rows)
+        self.assertIsNone(same_zombie_missing_success(
+            self.tsv, self.log, 0, "dry")[0])
+        rows[1]["accepted"] = 0
+        self._tsv(rows)
+        self.assertIn("incomplete", same_zombie_missing_success(
+            self.tsv, self.log, 0, "dry")[0])
+        rows[1].update({"class": "verify_false"})
+        self._tsv(rows)
+        self.assertIn("verify_false", same_zombie_missing_success(
+            self.tsv, self.log, 0, "dry")[0])
+        rows[1].update({"expected_reject": 1})
+        self._tsv(rows)
+        r, notes = same_zombie_missing_success(self.tsv, self.log, 0, "dry")
+        self.assertIsNone(r)
+        self.assertIn("expected-reject pairs 1", " ".join(notes))
+        rows = self._rows([1000], 2)
+        rows[0]["gate_id"] = ""
+        self._tsv(rows)
+        self.assertIn("covering gate", same_zombie_missing_success(
+            self.tsv, self.log, 0, "dry")[0])
+        rows[0]["mode"] = "serial"
+        self._tsv(rows)
+        self.assertIsNone(same_zombie_missing_success(
+            self.tsv, self.log, 0, "dry")[0])
+        with open(self.log, "w") as f:
+            f.write("SAME STOP at 2000: gate fail\n")
+        self.assertIn("SAME STOP at 2000", same_zombie_missing_success(
+            self.tsv, self.log, 0, "dry")[0])
+
+    def test_predicate_launch_sig_history(self):
+        """DLP_T1001: old-launch_sig rows are history; the current sig
+        (from the topology line) judges."""
+        with open(self.log, "w") as f:
+            f.write("SAME topology C_cores=4 tpc=2 nodes=1 launch_sig=%s "
+                    "cap=4\nSAME topology C_cores=4 tpc=2 nodes=1 "
+                    "launch_sig=%s cap=4\n" % (self.SIG_OLD, self.SIG_NEW))
+        old = self._rows([1000], 2)
+        old[0].update({"class": "verify_false", "accepted": 0,
+                       "verify_ok": "false", "rc": 3})
+        new = dict(old[0], launch_sig=self.SIG_NEW, attempt=2, accepted=1,
+                   verify_ok="true", rc=0, **{"class": "ok"})
+
+        def judge(rows):
+            self._tsv(rows)
+            return same_zombie_missing_success(self.tsv, self.log, 0,
+                                               "dry")[0]
+        self.assertIsNone(judge(old + [new]))                   # (a)
+        bad = dict(new, accepted=0, verify_ok="false", rc=3,
+                   **{"class": "verify_false"})
+        self.assertIn("verify_false", judge(old[1:] + [bad, new]))  # (b)
+        self.assertIn("incomplete", judge(old))                 # (c)
+        # review W1: rows carry the full sig; a 12-hex log prefix must
+        # fail loudly, never mask a current verify_false.
+        with open(self.log, "w") as f:
+            f.write("SAME topology C_cores=4 tpc=2 nodes=1 launch_sig=%s "
+                    "cap=4\n" % self.SIG_NEW[:12])
+        self.assertIn("not a full sha256", judge(old[1:] + [bad, new]))
+        with open(self.log, "w") as f:
+            f.write("SAME failing pair: u1 1000_01 1000 verify_false\n")
+        self.assertIn("SAME failing pair", judge(old + [new]))
+
+    def test_predicate_torn_partial_and_scalecal_rows(self):
+        """review2 minors 3 and 7: a torn last sweep-partial line is
+        dropped with a note; a bad middle line fails; in-run scalecal
+        rows do not make their unit a sample unit."""
+        docs = os.path.join(self.tmp.name, "ms", "docs")
+        part = os.path.join(docs, ZOMBIE_PARTIAL_NAME)
+        ok = json.dumps({"regex_name": "u1", "str_len": 1000,
+                         "status": "ok"})
+        rows = self._rows([1000, 2000, 4000], 32)
+        rows += [dict(r, unit="u9", mode=m) for r in rows[:2]
+                 for m in ("scalecal", "gate_serial")]
+        self._tsv(rows)
+        with open(part, "w") as f:
+            f.write(ok + "\n" + '{"regex_na')
+        r, notes = same_zombie_missing_success(self.tsv, self.log, 0, "full")
+        self.assertIsNone(r)
+        self.assertIn("torn last line dropped", " ".join(notes))
+        with open(part, "w") as f:
+            f.write('{"bad\n' + ok + "\n")
+        self.assertIn("line 1 bad", same_zombie_missing_success(
+            self.tsv, self.log, 0, "full")[0])
+
+    def test_dry_scalecal_name_preferred(self):
+        """review2 minor 1: a dry run places same_zombie_scalecal.dry.tsv
+        when same_zombie writes it, else the plain name."""
+        os.makedirs(os.path.dirname(raw_data_path("x")), exist_ok=True)
+        dry = raw_data_path("same_zombie_scalecal.dry.tsv")
+        plain = raw_data_path(SAME_ZOMBIE_SCALECAL)
+        for p in (dry, plain):
+            open(p, "w").close()
+            _fresh(p)
+        ctx = mock.Mock(_t0=time.time(), raw_data=[])
+        place_same_zombie_outputs("dry", ctx)
+        self.assertEqual([p for p in ctx.raw_data if "scalecal" in p], [dry])
+        ctx = mock.Mock(_t0=time.time(), raw_data=[])
+        place_same_zombie_outputs("full", ctx)
+        self.assertEqual([p for p in ctx.raw_data if "scalecal" in p],
+                         [plain])
+
+    def test_predicate_full_sizes_and_stale(self):
+        self._tsv(self._rows([1000, 2000], 32))
+        self.assertIn("no sample rows at size 4000",
+                      same_zombie_missing_success(self.tsv, self.log, 0,
+                                                  "full")[0])
+        self.assertIn("stale", same_zombie_missing_success(
+            self.tsv, self.log, time.time() + 60, "full")[0])
+
+    def _leaf(self, mode, rc, same_1kb=False, rows=(), scalecal=None):
+        """The child (mocked) writes the sample TSV and log, and the
+        speed-check TSV when scalecal names it."""
+        # same_zombie's dry docs outputs wear .dry (DLP_T1001).
+        t = self.tsv if mode == "full" else self.tsv[:-4] + ".dry.tsv"
+
+        def child(*a):
+            self._tsv(rows, t)
+            open(t[:-4] + ".log", "w").close()
+            _fresh(t, t[:-4] + ".log")
+            if scalecal:
+                with open(scalecal, "w") as f:
+                    f.write("w\tverdict\n1\tPASS\n")
+                _fresh(scalecal)
+            return rc
+        ctx = JobHandle("zombie", mode)
+        with mock.patch.object(_MOD, "SAME_1KB", same_1kb), \
+             mock.patch.object(_MOD, "zombie_recover_dry"), \
+             mock.patch.object(_MOD, "zombie_isolate_dry"), \
+             mock.patch.object(_MOD, "zombie_resume_rows",
+                               return_value=(None, 0)), \
+             mock.patch.object(_MOD, "run_external_python",
+                               side_effect=child), \
+             mock.patch.object(_MOD, "zombie_missing_success",
+                               return_value=(None, None)) as zms:
+            res = run_leaf_zombie(mode, ctx)
+        return ctx, res, zms
+
+    def test_outputs_placed_on_failure_with_dry_names(self):
+        """Invariants 9, 40: the sample outputs on rc != 0, .dry names."""
+        ctx, res, _ = self._leaf("dry", 1, rows=self._rows([1000], 2))
+        self.assertTrue(res.failed)
+        self.assertEqual(sorted(os.path.basename(p) for p in ctx.raw_data),
+                         [SAME_ZOMBIE_BASE + ".dry.log",
+                          SAME_ZOMBIE_BASE + ".dry.tsv"])
+        self.assertFalse(os.path.exists(raw_data_path(SAME_ZOMBIE_BASE
+                                                      + ".tsv")))
+
+    def test_full_run_places_in_run_scalecal_only(self):
+        """A full run with no prior dry run: same_zombie's in-run speed
+        check TSV is placed; an older one is not reported as new."""
+        sc = raw_data_path(SAME_ZOMBIE_SCALECAL)
+        os.makedirs(os.path.dirname(sc), exist_ok=True)
+        open(sc, "w").close()
+        os.utime(sc, (1, 1))                       # a previous run's
+        open(os.path.join(self.tmp.name, "ms", "docs", ZOMBIE_LOG_NAME),
+             "w").close()                           # the sweep's log
+        rows = self._rows([1000, 2000, 4000], 32)
+        ctx, res, _ = self._leaf("full", 0, rows=rows)
+        self.assertNotIn(sc, ctx.raw_data)
+        ctx, res, _ = self._leaf("full", 0, rows=rows, scalecal=sc)
+        self.assertEqual(res.rc, 0, res.note)
+        self.assertIn(sc, ctx.raw_data)
+
+    def test_dry_reads_only_dry_named_docs_outputs(self):
+        """Dry places docs/<base>.dry.{tsv,log} under the same names and
+        never reads or touches the full-named docs outputs."""
+        docs = os.path.join(self.tmp.name, "ms", "docs")
+        full = [os.path.join(docs, SAME_ZOMBIE_BASE + e)
+                for e in (".tsv", ".log")]
+        for p in full:
+            with open(p, "w") as f:
+                f.write("FULL\n")
+            _fresh(p)
+        before = _tree_state(*full)
+        dry = [os.path.join(docs, SAME_ZOMBIE_BASE + ".dry" + e)
+               for e in (".tsv", ".log")]
+        for p in dry:
+            open(p, "w").close()
+            _fresh(p)
+        ctx = mock.Mock(_t0=time.time(), raw_data=[])
+        with mock.patch.object(_MOD, "stale_artifact",
+                               wraps=stale_artifact) as sa:
+            tsv = place_same_zombie_outputs("dry", ctx)
+        self.assertEqual(tsv, dry[0])
+        self.assertEqual(sorted(os.path.basename(p) for p in ctx.raw_data),
+                         sorted(os.path.basename(p) for p in dry))
+        self.assertFalse(any(c[0][0] in full for c in sa.call_args_list))
+        self.assertEqual(_tree_state(*full), before)
+        for p in full:
+            self.assertFalse(os.path.exists(raw_data_path(
+                os.path.basename(p))))
+
+    def _rc6_leaf(self, run_log):
+        """A full leaf whose child exits 6 after writing run_log."""
+        ctx = JobHandle("zombie", "full")
+        docs = os.path.join(self.tmp.name, "ms", "docs")
+
+        def child(*a):
+            with open(ctx.log_path("run"), "w") as f:
+                f.write(run_log)
+            open(os.path.join(docs, ZOMBIE_LOG_NAME), "w").close()
+            _fresh(os.path.join(docs, ZOMBIE_LOG_NAME))
+            return 6
+        with mock.patch.object(_MOD, "zombie_recover_dry"), \
+             mock.patch.object(_MOD, "zombie_resume_rows",
+                               return_value=(None, 0)), \
+             mock.patch.object(_MOD, "run_external_python",
+                               side_effect=child), \
+             mock.patch.object(_MOD, "same_zombie_missing_success") as sms:
+            res = run_leaf_zombie("full", ctx)
+        sms.assert_not_called()
+        return ctx, res
+
+    def test_rc6_after_sweep_keeps_sweep_data(self):
+        """review3 N1: a 2/4 KB refusal after the 43.5 h sweep fails the
+        leaf but still places the sweep log, quoting the STOP lines."""
+        ctx, res = self._rc6_leaf(
+            "[run_zombie] regex_zombie_international : 194 results, 190 "
+            "ok\nSAME STOP at 2000: no valid PASS for 2000\n")
+        self.assertEqual(res.rc, 6)
+        self.assertTrue(res.failed)
+        self.assertIn(ZOMBIE_LOG_NAME,
+                      [os.path.basename(p) for p in ctx.raw_data])
+        self.assertIn("sample sizes refused: SAME STOP at 2000: no valid "
+                      "PASS for 2000", res.note)
+
+    def test_rc6_still_judges_the_sizes_that_ran(self):
+        """review4 M4: on rc 6 the 1 KB rows are still checked, so a 1 KB
+        verify_false shows in the notes; the refused size is skipped."""
+        rows = self._rows([1000], 32)
+        rows[3].update({"class": "verify_false", "accepted": 0,
+                        "verify_ok": "false", "rc": 3})
+        ctx = JobHandle("zombie", "full")
+
+        def child(*a):
+            with open(ctx.log_path("run"), "w") as f:
+                f.write("SAME STOP at 2000: no valid PASS for 2000\n")
+            self._tsv(rows)
+            _fresh(self.tsv)
+            return 6
+        with mock.patch.object(_MOD, "SAME_1KB", False), \
+             mock.patch.object(_MOD, "zombie_recover_dry"), \
+             mock.patch.object(_MOD, "zombie_resume_rows",
+                               return_value=(None, 0)), \
+             mock.patch.object(_MOD, "run_external_python",
+                               side_effect=child):
+            res = run_leaf_zombie("full", ctx)
+        self.assertEqual(res.rc, 6)
+        self.assertIn("sample check on sizes 1000: verify_false", res.note)
+        rows[3].update({"class": "ok", "accepted": 1, "verify_ok": "true",
+                        "rc": 0})
+        self._tsv(rows)
+        with open(self.log, "w") as f:
+            f.write("SAME STOP at 2000: x\n")
+        self.assertEqual(_same_sizes_ran(self.tsv, self.log, "full"), [1000])
+        self.assertIsNone(same_zombie_missing_success(
+            self.tsv, self.log, 0, "full", only=[1000])[0])
+
+    def test_only_ignores_failures_at_refused_sizes(self):
+        """review5 F3: with only=[1000], a verify_false row or failing-pair
+        line at a refused size is not quoted; one at 1000 still is."""
+        rows = self._rows([1000], 32) + self._rows([2000], 32)
+        rows[-1].update({"class": "verify_false", "accepted": 0,
+                         "verify_ok": "false", "rc": 3})
+        self._tsv(rows)
+        with open(self.log, "w") as f:
+            f.write("SAME STOP at 2000: x\nSAME failing pair: verify_false "
+                    "u1 2000_32 2000\n")
+        r = same_zombie_missing_success(self.tsv, self.log, 0, "full",
+                                        only=[1000])[0]
+        self.assertIsNone(r)
+        self.assertIn("2000", same_zombie_missing_success(
+            self.tsv, self.log, 0, "dry")[0])
+        with open(self.log, "a") as f:
+            f.write("SAME failing pair: reproduced crash u1 1000_02 1000\n")
+        self.assertIn("reproduced crash u1 1000_02 1000",
+                      same_zombie_missing_success(self.tsv, self.log, 0,
+                                                  "full", only=[1000])[0])
+
+    def test_tree_state_sees_empty_dirs(self):
+        """review4 M5(b): an empty dir made or removed is a change."""
+        root = os.path.join(self.tmp.name, "g")
+        os.makedirs(root)
+        before = _tree_state(root)
+        os.makedirs(os.path.join(root, "empty"))
+        self.assertNotEqual(_tree_state(root), before)
+
+    def test_rc6_without_sweep_places_no_sweep_log(self):
+        ctx, res = self._rc6_leaf("SAME refuse at start: run the dry\n")
+        self.assertEqual(res.rc, 6)
+        self.assertNotIn(ZOMBIE_LOG_NAME,
+                         [os.path.basename(p) for p in ctx.raw_data])
+        self.assertIn("sample sizes refused: SAME refuse at start", res.note)
+
+    def test_same_1kb_skips_sweep_part(self):
+        ctx, res, zms = self._leaf("full", 0, same_1kb=True,
+                                   rows=self._rows([1000], 32))
+        zms.assert_not_called()
+        self.assertEqual(res.rc, 0, res.note)
+        self.assertNotIn(ZOMBIE_LOG_NAME,
+                         [os.path.basename(p) for p in ctx.raw_data])
+        self.assertIn("sweep predicate and sweep log skipped", res.note)
+
+
+class StampRealGitTest(unittest.TestCase):
+    """DLP_T1001 T10b: REAL dlp_before/dlp_after around a REAL
+    safe_pack_dump, in a scratch git repo."""
+
+    GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+           "-c", "commit.gpgsign=false"]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.repo = os.path.join(self.tmp.name, "repo")
+        for f in ("crates/zkregplus/src/bora_data_driver.rs",
+                  "crates/zkregplus/src/same_dlp.rs", "vendor/v.rs",
+                  "Cargo.toml", "data/paper_data/dlp/a.txt", "TODO.md",
+                  "scripts/PAPER_DATA.py"):
+            self._w(f, "x\n")
+        self._git("init", "-q")
+        self._commit("base")
+        for name, val in (("REPO", self.repo),
+                          ("RAW_DATA_ROOT", os.path.join(self.tmp.name,
+                                                          "raw")),
+                          ("SERVER", "jet1tb"), ("HALF", None)):
+            p = mock.patch.object(_MOD, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+        for name, kw in (("resolve_process_model",
+                          {"return_value": ProcessModel(1, [None])}),
+                         ("run_same_dlp", {"return_value": 0})):
+            p = mock.patch.object(_MOD, name, **kw)
+            self.mocks = getattr(self, "mocks", {})
+            self.mocks[name] = p.start()
+            self.addCleanup(p.stop)
+
+    def _w(self, rel, text):
+        p = os.path.join(self.repo, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a") as f:
+            f.write(text)
+
+    def _git(self, *a):
+        return subprocess.run(self.GIT + ["-C", self.repo] + list(a),
+                              check=True, capture_output=True,
+                              text=True).stdout.strip()
+
+    def _commit(self, msg):
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", msg)
+
+    def _leaf(self, rc=0, between=None, logs=("run",)):
+        """dlp_before, a fake run log, safe_pack_dump, dlp_after."""
+        ctx = JobHandle("dlp", "full")
+        dlp_before(ctx)
+        lps = []
+        for n in logs:
+            lp = ctx.log_path(n)
+            with open(lp, "w") as f:
+                f.write("Job 0 generating SNARK proof\n")
+            lps.append(lp)
+        if between:
+            between()
+        ctx.raw_data.extend(safe_pack_dump(ctx, "full_dlp", lps, rc))
+        self.assertEqual(dlp_after("full", ctx, rc), rc)
+        return ctx
+
+    def _check(self):
+        return stamp_check(load_stamp("full"), "dlp_main")
+
+    def test_valid_cases(self):
+        self._leaf()
+        self.assertIsNone(self._check())                    # (a)
+        self._w("TODO.md", "y\n")
+        self._w("scripts/PAPER_DATA.py", "y\n")
+        self._commit("b")
+        self.assertIsNone(self._check())                    # (b)
+        self._w("crates/zkregplus/src/same_dlp.rs", "y\n")
+        self._commit("c")
+        self.assertIsNone(self._check())                    # (c) git part
+        self.mocks["run_same_dlp"].assert_called()
+
+    def test_refused_cases(self):
+        self._leaf()
+        self._w("crates/zkregplus/src/bora_data_driver.rs", "y\n")
+        self._commit("d")
+        self.assertIn("committed changes", self._check())   # (d)
+        self._git("reset", "-q", "--hard", "HEAD~1")
+        self.assertIsNone(self._check())
+        self._w("vendor/v.rs", "y\n")
+        self.assertIn("uncommitted", self._check())         # (e)
+        self._git("checkout", "-q", "--", "vendor/v.rs")
+        self._w("data/paper_data/dlp/new.txt", "n\n")
+        self.assertIn("new.txt", self._check())             # (e2)
+        os.unlink(os.path.join(self.repo, "data/paper_data/dlp/new.txt"))
+        self.assertIsNone(self._check())
+        st = load_stamp("full")
+        for field, val, word in (
+                ("commit", self._git("commit-tree", "HEAD^{tree}", "-m",
+                                     "orphan"), "not an ancestor"),   # (f)
+                ("commit", "f" * 40, "unknown"),
+                ("rc", 1, "rc 1"),                                    # (g)
+                ("dumps", [], "no dumps"),                            # m2
+                ("host", "elsewhere", "host"),
+                ("mode", "dry", "mode")):
+            with self.subTest(field=field, val=val):
+                bad = dict(st, **{field: val})
+                self.assertIn(word, stamp_check(bad, "dlp_main"))
+        with mock.patch.dict(DLP_LEAF_ARGS,
+                             {"full": ("100", "100", "4", "16", "0")}):
+            self.assertIn("argv", self._check())            # (h)
+
+    def test_head_moved_and_dirty_start(self):
+        def move():
+            self._w("TODO.md", "z\n")
+            self._commit("moved")
+        self._leaf(between=move)
+        self.assertIn("HEAD moved", self._check())          # (h2)
+        self._w("vendor/v.rs", "dirty\n")
+        with mock.patch.object(_MOD, "_summary_line") as sl:
+            self._leaf()
+        self.assertIn("DIRTY TREE", sl.call_args[0][0])     # m5
+        self._git("checkout", "-q", "--", "vendor/v.rs")
+        self.assertIn("dirty", self._check())
+
+    def test_half_mtime_covers_only_this_leafs_dump(self):
+        """(h3): --half 0 with an old part2 beside a fresh part1."""
+        os.makedirs(os.path.dirname(raw_data_path("x")), exist_ok=True)
+        p2 = raw_data_path("full_dlp.part2.tgz")
+        open(p2, "w").close()
+        os.utime(p2, (1, 1))
+        with mock.patch.object(_MOD, "HALF", 0):
+            self._leaf(logs=("part1",))
+            self.assertEqual(
+                [os.path.basename(d) for d in load_stamp("full")["dumps"]],
+                ["full_dlp.part1.tgz"])
+            self.assertIsNone(self._check())
+        self.assertIn("--half", self._check())
+
+    def test_never_raise(self):
+        """Invariant 41 (m4): a failing git and a raising serializer
+        give an invalid stamp, and the sample still runs."""
+        with mock.patch.object(_MOD, "_git", return_value=(128, "")):
+            self._leaf()
+        self.assertIn("marked invalid", self._check())
+        self.assertEqual(self.mocks["run_same_dlp"].call_count, 1)
+        with mock.patch.object(_MOD, "asdict",
+                               side_effect=TypeError("boom")):
+            self._leaf()
+        self.assertIn("boom", self._check())
+        self.assertEqual(self.mocks["run_same_dlp"].call_count, 2)
+
+    def test_same_only_accepts_valid_stamp_in_clean_repo(self):
+        """T11b(4b), coordinator round 1: a clean committed scratch repo,
+        a REAL full stamp, then ZKR_SAME_ONLY passes the plan check and
+        the leaf runs only the sample."""
+        self._leaf()
+        self._w("TODO.md", "later\n")
+        self._commit("descendant, outside the list")
+        self.assertEqual(self._git("status", "--porcelain"), "")
+        plan = resolve_plan("full_run", "dlp")
+        with mock.patch.dict(os.environ, {SAME_ONLY_ENV: "1"}):
+            self.assertIsNone(same_plan_check(plan))
+        ctx = JobHandle("dlp", "full")
+        with mock.patch.object(_MOD, "SAME_ONLY", True), \
+             mock.patch.object(_MOD, "run_rust_example") as rre:
+            res = run_leaf_dlp("full", ctx)
+        self.assertEqual(res.rc, 0, res.note)
+        rre.assert_not_called()
+        self.mocks["run_same_dlp"].assert_called_with("full", ctx, 0)
+        self._w("vendor/v.rs", "dirty\n")
+        with mock.patch.dict(os.environ, {SAME_ONLY_ENV: "1"}):
+            self.assertIn("uncommitted", same_plan_check(plan))
+
+    def test_dry_stamp_never_touches_full(self):
+        self._leaf()
+        before = open(dlp_stamp_path("full")).read()
+        ctx = JobHandle("dlp", "dry")
+        dlp_before(ctx)
+        self.assertEqual(dlp_after("dry", ctx, 0), 0)
+        self.assertEqual(open(dlp_stamp_path("full")).read(), before)
+        self.assertEqual(load_stamp("dry")["mode"], "dry")
+        self.assertIn("mode", stamp_check(load_stamp("dry"), "dlp_main"))
+
+    def test_banner(self):
+        """Invariant 14 content: commit range, diff --stat, status."""
+        self._leaf()
+        self._w("TODO.md", "q\n")
+        self._commit("next")
+        self._w("vendor/v.rs", "w\n")
+        with mock.patch.object(_MOD, "_summary_line") as sl:
+            restricted_run_banner()
+        text = "\n".join(c[0][0] for c in sl.call_args_list)
+        self.assertIn("RESTRICTED RUN: ZKR_SAME_ONLY=1", text)
+        self.assertIn("(1 commits back)", text)
+        self.assertIn("diff:  TODO.md", text)
+        self.assertIn("status:  M vendor/v.rs", text)
+
+
+class SameMainTest(unittest.TestCase):
+    """DLP_T1001: P parts of T11b (4, 4b, 5, 6, 7) and T14 via main()."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        t = self.tmp.name
+        env = {k: v for k, v in os.environ.items()
+               if k not in (SAME_ONLY_ENV, SAME_CAP_ENV)}
+        for p in (mock.patch.dict(os.environ, env, clear=True),
+                  mock.patch.object(_MOD, "SUMMARY_LOG",
+                                    os.path.join(t, "SUMMARY.log")),
+                  mock.patch.object(_MOD, "RAW_DATA_ROOT",
+                                    os.path.join(t, "raw")),
+                  mock.patch.object(_MOD, "JOB_LOG_DIR",
+                                    os.path.join(t, "jobs")),
+                  mock.patch.object(_MOD, "ensure_vma"),
+                  mock.patch.object(_MOD, "check_thp"),
+                  mock.patch.object(_MOD, "_preflight", return_value=0),
+                  mock.patch.object(_MOD, "go_background"),
+                  mock.patch.object(_MOD, "install_signal_handlers"),
+                  mock.patch.object(_MOD, "clear_db_cache", return_value=[]),
+                  mock.patch.object(_MOD, "SAME_ONLY", False),
+                  mock.patch.object(_MOD, "SAME_1KB", False),
+                  mock.patch.object(_MOD, "SERVER", "jet1tb"),
+                  mock.patch.object(_MOD, "HALF", None),
+                  mock.patch.object(_MOD, "ONE_PROOF_PER_HALF", False),
+                  mock.patch.object(_MOD.subprocess, "run",
+                                    side_effect=_fake_check_start()),
+                  mock.patch.object(_MOD, "ensure_same_scope",
+                                    return_value=None)):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _main(self, *argv, env=None):
+        with mock.patch("sys.argv", ["prog"] + list(argv)), \
+             mock.patch.dict(os.environ, env or {}):
+            return main()
+
+    def test_t14_full_plan_refused_before_any_leaf(self):
+        """T14 + review item 3: a non-zero --check-start (rules or
+        preflight) refuses dry and full plans at hour 0, message shown."""
+        msg = "SAME refuse: our cgroup is pressure-monitored, no omit\n"
+        for run in ("full_run", "dry_run"):
+            buf = io.StringIO()
+            with self.subTest(run=run), \
+                 mock.patch.object(_MOD.subprocess, "run",
+                                   side_effect=_fake_check_start(6, msg)), \
+                 mock.patch.object(_MOD, "Sequencer") as seq, \
+                 mock.patch.object(_MOD, "reset_summary_log") as rs, \
+                 mock.patch("sys.stdout", buf):
+                self.assertEqual(self._main("--run", run, "--items",
+                                            "dlp,dna,clam,zombie"), 2)
+            seq.assert_not_called()
+            rs.assert_not_called()
+            self.assertIn("pressure-monitored", buf.getvalue())
+
+    def test_t11b_4_5_6_refused(self):
+        with mock.patch.object(_MOD, "Sequencer") as seq:
+            os.makedirs(os.path.dirname(dlp_stamp_path("dry")))
+            with open(dlp_stamp_path("dry"), "w") as f:
+                json.dump({"kind": "dlp_main", "mode": "dry"}, f)
+            for argv in (("--run", "full_run", "--items", "dlp",
+                          "--same_1kb"),
+                         ("--run", "full_run", "--items", "dlp,zombie"),
+                         ("--run", "dry_run", "--items", "dlp")):
+                with self.subTest(argv=argv):
+                    self.assertEqual(self._main(*argv, env={
+                        SAME_ONLY_ENV: "1"}), 2)
+        seq.assert_not_called()
+
+    def test_t11b_4b_restricted_run(self):
+        os.makedirs(os.path.dirname(dlp_stamp_path("full")))
+        with open(dlp_stamp_path("full"), "w") as f:
+            json.dump({"kind": "dlp_main", "mode": "full",
+                       "commit": "HEAD"}, f)
+        buf = io.StringIO()
+        with mock.patch.object(_MOD, "stamp_check", return_value=None), \
+             mock.patch.object(_MOD, "run_rust_example") as rre, \
+             mock.patch.object(_MOD, "run_same_dlp", return_value=0) as rs, \
+             mock.patch("sys.stdout", buf):
+            rc = self._main("--run", "full_run", "--items", "dlp",
+                            env={SAME_ONLY_ENV: "1"})
+        self.assertEqual(rc, 0)
+        rre.assert_not_called()
+        rs.assert_called_once()
+        self.assertIn("RESTRICTED RUN: ZKR_SAME_ONLY=1", buf.getvalue())
+        with open(_MOD.SUMMARY_LOG) as f:
+            txt = f.read()
+        self.assertLess(txt.index("=== NEW RUN"), txt.index("RESTRICTED RUN"))
+
+    def test_t11b_7_dry_never_touches_full_results(self):
+        """amend R3: a full stamp + dump + run dir; dry dlp refused, dry
+        zombie runs and leaves full outputs and find_run_dir alone."""
+        os.makedirs(os.path.dirname(dlp_stamp_path("full")))
+        for name in ("full_dlp.tgz", "full_dlp.stamp.json",
+                     ZOMBIE_LOG_NAME, SAME_ZOMBIE_BASE + ".tsv",
+                     SAME_ZOMBIE_BASE + ".log"):
+            with open(raw_data_path(name), "w") as f:
+                f.write(json.dumps({"kind": "dlp_main", "mode": "full",
+                                    "commit": "c"}) if "stamp" in name
+                        else "full " + name)
+        files = {n: open(raw_data_path(n)).read()
+                 for n in os.listdir(os.path.dirname(raw_data_path("x")))}
+        rd = os.path.join(_MOD.JOB_LOG_DIR, "dlp_full_20261101_000000")
+        os.makedirs(rd)
+        open(os.path.join(rd, "run.log"), "w").close()
+        self.assertEqual(self._main("--run", "dry_run", "--items",
+                                    "dlp,zombie"), 2)
+        ms = os.path.join(self.tmp.name, "ms")
+        os.makedirs(os.path.join(ms, "docs"))
+
+        def child(*a):
+            for n in (ZOMBIE_LOG_NAME, SAME_ZOMBIE_BASE + ".dry.tsv",
+                      SAME_ZOMBIE_BASE + ".dry.log"):
+                with open(os.path.join(ms, "docs", n), "w") as f:
+                    f.write("dry\n")
+                _fresh(os.path.join(ms, "docs", n))
+            return 0
+        with mock.patch.object(_MOD, "MS_DLP_DIR", ms), \
+             mock.patch.object(_MOD, "zombie_recover_dry"), \
+             mock.patch.object(_MOD, "zombie_isolate_dry"), \
+             mock.patch.object(_MOD, "run_external_python",
+                               side_effect=child), \
+             mock.patch.object(_MOD, "zombie_missing_success",
+                               return_value=(None, None)), \
+             mock.patch.object(_MOD, "same_zombie_missing_success",
+                               return_value=(None, [])):
+            self.assertEqual(self._main("--run", "dry_run", "--items",
+                                        "zombie"), 0)
+        for name, text in files.items():
+            self.assertEqual(open(raw_data_path(name)).read(), text, name)
+        self.assertTrue(os.path.isfile(raw_data_path(
+            SAME_ZOMBIE_BASE + ".dry.tsv")))
+        self.assertEqual(find_run_dir("dlp"), (rd, "full"))
 
 if __name__ == "__main__":
     sys.exit(main())

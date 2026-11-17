@@ -52,6 +52,10 @@ type CS1E = KZG<'static, Bn254>;
 type CS2 = Pedersen<C2>;
 type S = Groth16<Bn254>;
 
+// DLP_T1001: same-sample BORA job, compiled from src/same_dlp.rs.
+#[path = "same_dlp.rs"] mod same_dlp;
+pub use same_dlp::same_dlp_neo;
+
 /// RAII guard: removes its temp config dir on drop, even on panic.
 struct TmpConfigDir(PathBuf);
 
@@ -3868,6 +3872,9 @@ pub const USAGE: &str = "bora_cli: backend of \
 	 small_full_dlp <same 8 args as full_dlp>\n \
 	   (entire DB, pre-cut ~5% corpus, fold cost only -- no snark;\n \
 	    pass perc_samples=100, the list IS the sample)\n \
+	 same_dlp <perc_db> <num_circs> <n> <dry 0|1> <s1,s2,...> \
+	<ladder_only 0|1>\n \
+	   (DLP_T1001 same-sample job; sizes from {1000,2000,4000})\n \
 	 scale_dlp <corpus_idx> <c1,c2,...> <dry 0|1>\n \
 	   (no arm token: DLP is aggressive and never reads b_tune_v2)\n \
 	 scale_clam <corpus_idx> <c1,c2,...> <dry 0|1>\n \
@@ -3903,6 +3910,9 @@ pub enum Cmd {
 		b_dry_run: bool,
 		/// tuner arm; same contract as FullClam::tune_v2.
 		tune_v2: Option<bool> },
+	/// DLP_T1001: same-sample BORA job.
+	SameDlp { perc_db: f64, num_circs: usize, n: usize, b_dry_run: bool,
+		sizes: Vec<usize>, b_ladder_only: bool },
 }
 
 fn arg_usize(args: &[String], i: usize, name: &str) -> usize {
@@ -4040,6 +4050,7 @@ pub fn parse_args(args: &[String]) -> Cmd {
 				b_dry_run: arg_bool(args, 3, "dry"),
 				tune_v2: arm_of(sub) }
 		}
+		Some("same_dlp") => same_dlp::parse_same_dlp(args), // DLP_T1001
 		other => panic!(
 			"bora_data_driver: unknown subcommand {:?}\n{}",
 			other, USAGE),
