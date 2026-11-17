@@ -42,6 +42,16 @@ impl SWCurveConfig for GrumpkinConfig {
     fn mul_by_a(_: Self::BaseField) -> Self::BaseField {
         Self::BaseField::zero()
     }
+
+    //ALL_T1008: speed only, same results. Grumpkin has prime order (cofactor 1),
+    //so every on-curve point is in the group and the ark-ec default check
+    //[order]P == 0 is always true. Callers test is_on_curve first. Skipping
+    //that 254-bit scalar mul makes Affine::new cheap, which the r1cs-std
+    //constant doubling calls once per bit (CyclePair Pedersen ~10x faster).
+    #[inline(always)]
+    fn is_in_correct_subgroup_assuming_on_curve(_: &Affine) -> bool {
+        true
+    }
 }
 
 /// G_GENERATOR_X = 1
