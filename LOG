@@ -32254,6 +32254,13 @@ Goal 3. improve decider
 	[c] P2: re-use the bits in implementation (avoid range-check
 		the same bits again) and 2-bit window to improve
 		the constraints count.
+	[d] P3-lite: cyclepair checks
+		gt2 = gt1 * e(a,b)
+			if b is a free witness, it need curve_in_group
+				check but b is one of the
+				QA-NIZK pubkey points, so need for the check every time.
+			so new_witness simply skip that check.
+		it cuts from 2^28 to 2^27.
 	
 
 

@@ -452,7 +452,12 @@ ConstraintSynthesizer<CF2<C1>> for CyclePairCircuit<E,P, C1, C2G2>
     fn generate_constraints(self, cs: ConstraintSystemRef<CF2<E::G1>>) -> Result<(), SynthesisError> {
 		//1. get the points in var
 		let a_var = P::G1Var::new_witness(cs.clone(), || Ok(self.a.clone()))?;
-		let b_var = P::G2Var::new_witness(cs.clone(), || Ok(self.b.clone()))?;
+		//ALL_T1012 P3-lite: no in-circuit G2 subgroup check on b (11,198 of
+		//26,352 cs). b is in x, the step circuit chains x row by row into
+		//hc_b, and the decider checks hc_b against the QA-NIZK key hash
+		//(full mode), so every b is an honest key point. On-curve check stays.
+		let b_var = P::G2Var::new_variable_omit_prime_order_check(
+			cs.clone(), || Ok(self.b.clone()), AllocationMode::Witness)?;
 		let gt1_var = P::GTVar::new_witness(cs.clone(),||Ok(self.gt1.clone()))?;
 		let gt2_var = P::GTVar::new_witness(cs.clone(),||Ok(self.gt2.clone()))?;
 		let a_p = P::prepare_g1(&a_var)?;
@@ -667,6 +672,26 @@ pub mod tests_cyclepair {
         let cs2 = ConstraintSystem::<Fq>::new_ref();
 		circ2.generate_constraints(cs2.clone()).unwrap();
     }
+
+	//ALL_T1012: without the G2 subgroup check the cp circuit is about 15.2k
+	//constraints, and the setup circuit empty() has the same R1CS as a real one.
+	#[test]
+	fn test_cyclepair_no_subgroup_check() {
+		use crate::arith::r1cs::extract_r1cs;
+		let (gt1, a, b, gt2, x) = rand_real_inst();
+		let cs = ConstraintSystem::<Fq>::new_ref();
+		CyclePairCircuit::<Bn254, PairingVar, Bn254G1, Bn254G2> { _p: PhantomData, gt1, a, b, gt2, x }
+			.generate_constraints(cs.clone()).unwrap();
+		assert!(cs.is_satisfied().unwrap());
+		assert!(cs.num_constraints() < 16_000, "subgroup check is back: {}", cs.num_constraints());
+		cs.finalize();
+		let r1 = extract_r1cs::<Fq>(&cs.into_inner().unwrap());
+		let cs0 = ConstraintSystem::<Fq>::new_ref();
+		CyclePairCircuit::<Bn254, PairingVar, Bn254G1, Bn254G2>::empty().generate_constraints(cs0.clone()).unwrap();
+		cs0.finalize();
+		let r0 = extract_r1cs::<Fq>(&cs0.into_inner().unwrap());
+		assert!(r0.A == r1.A && r0.B == r1.B && r0.C == r1.C);
+	}
 
 	#[test]
 	fn test_cyclepair_from_to(){
