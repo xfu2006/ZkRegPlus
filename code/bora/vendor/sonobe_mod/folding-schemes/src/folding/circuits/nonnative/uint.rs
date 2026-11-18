@@ -199,6 +199,19 @@ impl<F: PrimeField> NonNativeUintVar<F> {
         // optimal value based on the modulus size
         55
     }
+
+    /// ALL_T1016: constant x in 55-bit limbs, each limb bound equal to its value
+    /// (one zero limb for x = 0). The bound is computed from the KNOWN CONSTANT
+    /// itself, not from any witness. An exact bound is sound for a constant: the
+    /// value is fixed at synthesis and no prover can change it. Tighter bounds
+    /// shrink every product and sum built from it, hence the congruence cost.
+    pub fn constant_exact(x: &BigUint) -> Self {
+        let w = Self::bits_per_limb();
+        let mask = (BigUint::one() << w) - 1u32;
+        Self((0..(x.bits() as usize).div_ceil(w).max(1))
+            .map(|k| LimbVar::constant(F::from((x >> (w * k)) & &mask)))
+            .collect())
+    }
 }
 
 pub struct BoundedBigUint(pub BigUint, pub usize);
@@ -386,6 +399,32 @@ impl<F: PrimeField> NonNativeUintVar<F> {
         Ok(())
     }
 
+    /// ALL_T1016: bit length allowed for the carry out of a group of width step.
+    /// A group x - y + c_in is a multiple of 2^step and c_out is that value over
+    /// 2^step, so |c_out| <= (max(ub_x, ub_y) + |c_in|) / 2^step. The range check
+    /// uses bits(max ub) - step bits, the same width as upstream Sonobe. It ignores
+    /// c_in, which only matters for completeness (an honest group whose bound is
+    /// within |c_in| of 2^bits(max ub)), never for soundness.
+    fn carry_bits(x: &LimbVar<F>, y: &LimbVar<F>, step: usize) -> usize {
+        (max(&x.ub, &y.ub).bits() as usize).saturating_sub(step)
+    }
+
+    /// ALL_T1016: true if x - y + c_prev = 2^step c in F forces it over the
+    /// integers: M + 2^bits(M) + 2^prev < |F|, M the larger group bound.
+    /// Why (break B2): the circuit only proves the group equation modulo the native
+    /// field order |F|. The carry range checks give |2^step c| < 2^bits(M) and
+    /// |c_prev| < 2^prev, so |x - y + c_prev - 2^step c| < M + 2^prev + 2^bits(M).
+    /// If this is below |F|, the only multiple of |F| it can equal is 0, so the
+    /// field equation is also an integer equation (the condition is sufficient,
+    /// not necessary). With the tighter P8 bounds
+    /// the old grouping could add one limb too many, a group close to |F| whose
+    /// carry wraps, and an honest-looking but false integer equation would pass.
+    /// The grouping loop stops before that limb.
+    fn carry_lifts(x: &LimbVar<F>, y: &LimbVar<F>, prev: usize) -> bool {
+        let m = max(&x.ub, &y.ub);
+        m + (BigUint::one() << m.bits()) + (BigUint::one() << prev) < F::MODULUS.into()
+    }
+
     /// Enforce `self` to be equal to `other`, where `self` and `other` are not
     /// necessarily aligned.
     ///
@@ -418,6 +457,11 @@ impl<F: PrimeField> NonNativeUintVar<F> {
             // `y_grouped` stores the grouped limbs of `other`.
             let mut y_grouped = vec![];
             let mut i = 0;
+            //ALL_T1016: bit length of the carry coming into the current group.
+            //The first group has no incoming carry. Each later group gets the
+            //carry_bits of the group before it, which is the same width that
+            //the carry range check below enforces.
+            let mut prev = 0;
             while i < len {
                 let mut j = i;
                 // The current grouped limbs of `self` and `other`.
@@ -433,7 +477,8 @@ impl<F: PrimeField> NonNativeUintVar<F> {
                         other.0[j].mul(&shift).and_then(|y| yy.add(&y)),
                     ) {
                         // Update the result if successful.
-                        (Some(x), Some(y)) => (xx, yy) = (x, y),
+                        //ALL_T1016: and only while the carry still lifts (break B2)
+                        (Some(x), Some(y)) if Self::carry_lifts(&x, &y, prev) => (xx, yy) = (x, y),
                         // Break the loop if the upper bound of the result exceeds
                         // the maximum capacity.
                         _ => break,
@@ -441,7 +486,15 @@ impl<F: PrimeField> NonNativeUintVar<F> {
                     j += 1;
                 }
                 // Store the grouped limbs and their size.
+                //ALL_T1016: a group must hold at least one limb. That fails only
+                //if a single limb bound M is so large (about |F|/3 or more) that
+                //M + 2^bits(M) + 2^prev reaches |F|, so even its own carry could
+                //wrap. Synthesis then stops here instead of building an unsound
+                //check. The decider circuits (tested in setup and prove) never
+                //reach it, since their limb bounds are far smaller.
+                assert!(j > i, "ALL_T1016: limb bound too large for a sound carry");
                 steps.push((j - i) * Self::bits_per_limb());
+                prev = Self::carry_bits(&xx, &yy, (j - i) * Self::bits_per_limb());
                 x_grouped.push(xx);
                 y_grouped.push(yy);
                 // Start the next group
@@ -491,12 +544,7 @@ impl<F: PrimeField> NonNativeUintVar<F> {
                 // Unlike the code mentioned above which add some offset to the
                 // diff `x_i - y_i + c` to make it always positive, we directly
                 // check if the absolute value of the diff is small.
-                Self::enforce_abs_bit_length(
-                    &c,
-                    (max(&x[i].ub, &y[i].ub).bits() as usize)
-                        .checked_sub(step)
-                        .unwrap_or_default(),
-                )?;
+                Self::enforce_abs_bit_length(&c, Self::carry_bits(&x[i], &y[i], step))?; //ALL_T1016
             } else {
                 // For the final carry, we need to ensure that it equals the
                 // remaining limb `rest`.
@@ -918,7 +966,7 @@ impl<F: PrimeField, CF: PrimeField> MatrixGadget<NonNativeUintVar<CF>>
                     .iter()
                     .map(|(value, col_i)| value.0.len() + v[*col_i].0.len() - 1)
                     .max()
-                    .unwrap_or(0);
+                    .unwrap_or(1); //ALL_T1016: empty row = one zero limb, not an empty vector
                 // This is a combination of `mul_no_align` and `add_no_align`
                 // that results in more flattened `LinearCombination`s.
                 // Consequently, `ConstraintSystem::inline_all_lcs` costs less
@@ -1064,5 +1112,52 @@ mod tests {
 
         assert!(cs.is_satisfied()?);
         Ok(())
+    }
+
+    /// ALL_T1016: SAT of x == y (enforce_equal_unaligned), limbs as witnesses with these bounds.
+    fn equal_sat<F: PrimeField>(bounds: &[BigUint], x: &[BigUint], y: &[BigUint]) -> bool {
+        let cs = ConstraintSystem::<F>::new_ref();
+        let var = |v: &[BigUint]| NonNativeUintVar(v.iter().zip(bounds).map(|(v, ub)| LimbVar {
+            v: FpVar::new_witness(cs.clone(), || Ok(F::from(v.clone()))).unwrap(), ub: ub.clone() }).collect());
+        var(x).enforce_equal_unaligned(&var(y)).unwrap();
+        cs.is_satisfied().unwrap()
+    }
+
+    /// ALL_T1016: [bounds, x] of a break-B2 forgery over F, with y = 0 and
+    /// t = bits((|F| - 1) / 2). Bounds [2^55, B, 2^(t-110)], B the largest that
+    /// keeps limbs 0 and 1 in one old group (bits(M) = t). x = |F| over the
+    /// integers. Its old field carry out of limbs 0 and 1 is -(2^(t-110) - 1),
+    /// which limb 2 cancels.
+    fn b2_forgery<F: PrimeField>() -> [[BigUint; 3]; 2] {
+        let half: BigUint = F::MODULUS_MINUS_ONE_DIV_TWO.into();
+        let t = half.bits() as usize;
+        let p = |k: usize| BigUint::one() << k;
+        let m: BigUint = F::MODULUS.into();
+        let d = m - p(t) + p(110);
+        [[p(55), (&half - p(55) - 1u32) >> 55, p(t - 110)], [&d % p(55), &d >> 55, p(t - 110) - 1u32]]
+    }
+
+    /// ALL_T1016 T7: the carry cap, over Pallas and over BN254 (the decider's
+    /// field). The cap sits near 2^cap, the B2 forgery fails, and an honest pair
+    /// with the same bounds passes.
+    #[test]
+    fn test_t1016_carry_cap() {
+        fn check<F: PrimeField>(cap: usize) {
+            let p = |k: usize| BigUint::one() << k;
+            let lifts = |m: BigUint| NonNativeUintVar::<F>::carry_lifts(&LimbVar { v: FpVar::zero(), ub: m }, &LimbVar::zero(), 0);
+            assert!(lifts(p(cap) - 1u32) && !lifts(p(cap) + p(cap - 5)), "cap is not near 2^{}", cap);
+            let [bounds, forged] = b2_forgery::<F>();
+            assert!(forged.iter().zip(&bounds).all(|(v, ub)| v <= ub));
+            assert_eq!(&forged[0] + (&forged[1] << 55) + (&forged[2] << 110), F::MODULUS.into());
+            let rng = &mut test_rng();
+            let x = [rng.gen_biguint(54), rng.gen_biguint(bounds[1].bits() - 1), rng.gen_biguint(bounds[2].bits() - 2)];
+            let v = &x[0] + (&x[1] << 55) + (&x[2] << 110);
+            let mask = p(55) - 1u32;
+            assert!(equal_sat::<F>(&bounds, &x, &[&v & &mask, (&v >> 55) & &mask, &v >> 110]), "honest pair rejected");
+            let zero = BigUint::zero;
+            assert!(!equal_sat::<F>(&bounds, &forged, &[zero(), zero(), zero()]), "B2 forgery accepted");
+        }
+        check::<Fr>(253);
+        check::<ark_bn254::Fr>(252);
     }
 }

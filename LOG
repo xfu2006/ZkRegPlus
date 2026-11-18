@@ -32263,6 +32263,15 @@ Goal 3. improve decider
 		it cuts from 2^28 to 2^27.
 	[e] #22 part 2: done. cut another 15% memory.
 	[f] CHECK the /tmp issue!!!. checked
+	[g] P8: split A into A+ - A-
+		so that small negatives co-efficients
+			in cp constraints become small bit width.
+
+Wed 11/18/2026
+Goal 1. Impl
+	[a] P8 improvement
+	[b] add exepriemnt automatically
+	[c] dynamic rolling of admitting instance
 
 	
 

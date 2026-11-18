@@ -55,9 +55,11 @@ use crate::arith::r1cs::R1CS;
 use crate::utils::vec::SparseMatrix; //ALL_T1014
 use crate::commitment::{pedersen::Params as PedersenParams, CommitmentScheme};
 use crate::folding::circuits::{
-    nonnative::{affine::NonNativeAffineVar, uint::NonNativeUintVar},
+    nonnative::{affine::NonNativeAffineVar, uint::{LimbVar, NonNativeUintVar}}, //ALL_T1016: +LimbVar
     CF1, CF2,CF3,
 };
+use num_bigint::BigUint; //ALL_T1016
+use std::cmp::max; //ALL_T1016
 use crate::folding::{
 	nova::{CommittedInstance, Witness},
 };
@@ -93,25 +95,134 @@ impl RelaxedR1CSGadget {
     }
 
     /// performs the RelaxedR1CS check for non-native variables (Az∘Bz==uCz+E)
+    //ALL_T1016 (P8): same relation, cheaper congruence, via a signed split.
+    //Idea. The values are BN254 base-field (q) integers held in 55-bit limbs,
+    //and a row check proves L - R = k q over the integers. Its cost grows with
+    //the bit bounds of L and R. A coefficient -c is stored as q - c, a 254-bit
+    //value whose constant limbs get full-width bounds (about 256 bits). About
+    //half of the cp coefficients are such small negatives, so today the row
+    //bounds reach 1,033 bits. Split each constant matrix
+    //M = M+ - M- (mod q) with small nonnegative M+, M- and move the minus terms
+    //to the other side:
+    //  (A+z)(B+z) + (A-z)(B-z) + u(C-z) == (A+z)(B-z) + (A-z)(B+z) + u(C+z) + E.
+    //Left minus right is (A+ - A-)z (B+ - B-)z - u(C+ - C-)z - E, which is
+    //Az o Bz - u Cz - E mod q, so the check is the same relation.
+    //Example: the row A = [1, q - 1] (that is [1, -1]) becomes A+ = [1, 0] and
+    //A- = [0, 1], 1-bit coefficients instead of 254-bit ones.
+    //Effect on the cp R1CS: max bound 1,033 -> 777 bits, 3,453 -> 540
+    //constraints per row (Step 10 52.4M -> 8.2M).
+    //Bounds are COMPUTED FROM KNOWN CONSTANTS, never from witness values: the
+    //matrix coefficients are circuit constants fixed at setup, and the witness
+    //limbs only enter through their range-check widths.
+    //Bounds. Every limb carries a static upper bound ub (LimbVar::ub). Witness
+    //limbs of z, E, u are range checked at allocation (ub = 2^55 - 1, or 2^36 - 1
+    //for the top limb). Constants get their exact value (constant_exact). add and
+    //mul propagate ub1 + ub2 and sum ub1 ub2 and refuse any limb bound at or above
+    //(r - 1)/2, r the native field order, so no limb wraps around r. The bounds
+    //depend only on the circuit structure and the constant matrices, never on the
+    //witness: they hold for every prover and are the same in setup and prove. For
+    //any A, B, C the circuit is either built with true bounds (sound) or synthesis
+    //stops at an assert. Only the cost depends on how small the coefficients are.
     pub fn check_nonnative<F: PrimeField, CF: PrimeField>(
         r1cs: R1CSVar<F, CF, NonNativeUintVar<CF>>,
         E: Vec<NonNativeUintVar<CF>>,
         u: NonNativeUintVar<CF>,
         z: Vec<NonNativeUintVar<CF>>,
     ) -> Result<(), SynthesisError> {
-        // First we do addition and multiplication without mod F's order
-        let Az = r1cs.A.mul_vector(&z)?;
-        let Bz = r1cs.B.mul_vector(&z)?;
-        let Cz = r1cs.C.mul_vector(&z)?;
-        let uCzE = Cz.mul_scalar(&u)?.add(&E)?;
-        let AzBz = Az.hadamard(&Bz)?;
-
-        // Then we compare the results by checking if they are congruent
-        // modulo the field order
-        AzBz.into_iter()
-            .zip(uCzE)
-            .try_for_each(|(a, b)| a.enforce_congruent::<F>(&b))
+        //Shape check. The old code got this from mul_vector and hadamard. The
+        //row loop below indexes E, ap, bp, ... by row, so a mismatch must stop
+        //synthesis instead of silently checking fewer rows.
+        let R1CSVar { A, B, C, .. } = r1cs;
+        if [A.n_rows, B.n_rows, C.n_rows] != [E.len(); 3] || [A.n_cols, B.n_cols, C.n_cols] != [z.len(); 3] {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        let [ap, an] = signed_mul_vector(A, &z)?;
+        let [bp, bn] = signed_mul_vector(B, &z)?;
+        let [cp, cn] = signed_mul_vector(C, &z)?;
+        //One congruence per row i. Both sides are sums of nonnegative terms, so
+        //their integer bounds are the sums of the term bounds and no side can
+        //go negative. l holds the terms that carry a plus sign in
+        //Az o Bz - u Cz, r holds the minus terms and E. Then l - r equals
+        //Az o Bz - u Cz - E mod q, and enforce_congruent proves l - r = k q over
+        //the integers, so the row holds mod q. The cost of that proof grows with
+        //max(bits(ub(l)), bits(ub(r))), which is what the split shrinks.
+        for (i, e) in E.iter().enumerate() {
+            let l = sum_of_products(&[(&ap[i], &bp[i]), (&an[i], &bn[i]), (&u, &cn[i])])?;
+            let r = sum_of_products(&[(&ap[i], &bn[i]), (&an[i], &bp[i]), (&u, &cp[i])])?.add_no_align(e);
+            enforce_congruent_same_len::<F, CF>(r, l)?;
+        }
+        Ok(())
     }
+}
+
+/// ALL_T1016: a sparse matrix of non-native constants.
+type NNMatrix<F, CF> = SparseMatrixVar<F, CF, NonNativeUintVar<CF>>;
+
+/// ALL_T1016: (M+ z, M- z) for the signed split of the constant matrix M.
+/// Each product is computed over the integers, without reduction mod q. Its
+/// limb bounds are sum over the row of (exact coefficient) x (range-check
+/// bound of z_j), so they depend only on the matrix constants and on the
+/// widths z was range checked to, not on the value of z.
+fn signed_mul_vector<F: PrimeField, CF: PrimeField>(
+    m: NNMatrix<F, CF>, z: &[NonNativeUintVar<CF>],
+) -> Result<[Vec<NonNativeUintVar<CF>>; 2], SynthesisError> {
+    let [p, n] = split_signed(m);
+    Ok([p.mul_vector(z)?, n.mul_vector(z)?])
+}
+
+/// ALL_T1016: split a constant matrix into exact-bound parts [M+, M-] with
+/// M+ - M- == M (mod |F|) entrywise. Each entry lands on exactly one side (the
+/// other side gets 0), so the identity holds for every entry whatever its value.
+/// The parts are built with constant_exact, so their bounds are the true values.
+fn split_signed<F: PrimeField, CF: PrimeField>(mut m: NNMatrix<F, CF>) -> [NNMatrix<F, CF>; 2] {
+    let rows = std::mem::take(&mut m.coeffs); // drops the full-width constants row by row
+    let mut parts = [m.clone(), m];
+    for row in rows {
+        let mut halves = [vec![], vec![]];
+        for (c, j) in row {
+            let (side, v) = signed_part::<F, CF>(&c);
+            halves[side].push((NonNativeUintVar::constant_exact(&v), j));
+        }
+        for (p, h) in parts.iter_mut().zip(halves) {
+            p.coeffs.push(h);
+        }
+    }
+    parts
+}
+
+/// ALL_T1016: side (0 = plus with c, 1 = minus with |F| - c) of an R1CS
+/// constant c, whichever value is shorter. For c = q - 1 (that is -1) this
+/// gives (1, 1): a 1-bit coefficient on the minus side instead of a 254-bit one.
+/// min(c, q - c) is never larger than the full width, so no bound gets worse.
+fn signed_part<F: PrimeField, CF: PrimeField>(c: &NonNativeUintVar<CF>) -> (usize, BigUint) {
+    use ark_r1cs_std::R1CSVar as _; // is_constant and value (this file has its own R1CSVar)
+    assert!(c.is_constant(), "ALL_T1016: R1CS coefficients must be constants");
+    let (q, c): (BigUint, BigUint) = (F::MODULUS.into(), c.value().unwrap());
+    let neg = &q - &c;
+    if neg.bits() < c.bits() { (1, neg) } else { (0, c) }
+}
+
+/// ALL_T1016: sum of x_k * y_k over the integers (no reduction).
+/// The bound of the result is the sum of the products of the operand bounds
+/// (mul_no_align and add_no_align propagate ub). No reduction is done here,
+/// since the single congruence check at the end of the row covers it.
+fn sum_of_products<CF: PrimeField>(
+    pairs: &[(&NonNativeUintVar<CF>, &NonNativeUintVar<CF>)],
+) -> Result<NonNativeUintVar<CF>, SynthesisError> {
+    pairs.iter().try_fold(NonNativeUintVar(vec![]), |s, (x, y)| Ok(s.add_no_align(&x.mul_no_align(y)?)))
+}
+
+/// ALL_T1016: x == y (mod |M|), both padded with zero limbs to one length, so
+/// enforce_equal_unaligned never takes its self-longer branch. x must hold a witness.
+/// Zero limbs are constants with bound 0, so padding adds no constraint and
+/// changes no bound.
+fn enforce_congruent_same_len<M: PrimeField, CF: PrimeField>(
+    mut x: NonNativeUintVar<CF>, mut y: NonNativeUintVar<CF>,
+) -> Result<(), SynthesisError> {
+    let n = max(x.0.len(), y.0.len());
+    x.0.resize(n, LimbVar::zero());
+    y.0.resize(n, LimbVar::zero());
+    x.enforce_congruent::<M>(&y)
 }
 
 #[derive(Debug, Clone)]
@@ -4653,5 +4764,263 @@ pub mod tests_decider_eth_circuit_super {
 		z2[d0 + dims.0] += Fr::one();
 		assert!(!unsat(&m, &z).contains(&pin) && unsat(&m, &z2).contains(&pin),
 			"test 15: Stage-2 u pin does not reject a moved D.u");
+	}
+
+	// ---------------------------------------------------------------
+	// ALL_T1016 (P8): the signed-split non-native RelaxedR1CS check (Step 10)
+	// on the CyclePair and CycleFold R1CS the decider checks. The tests
+	// run without prints.
+	// ---------------------------------------------------------------
+	mod t1016 {
+		use super::*;
+		use std::{cmp::min, collections::HashMap, iter::successors, ops::Range};
+		use rayon::prelude::*;
+		use ark_bn254::{Bn254, Fq, constraints::{GVar, PairingVar}, G1Projective as G1, G2Projective as G2};
+		use ark_relations::r1cs::SynthesisMode;
+		use ark_std::rand::{rngs::StdRng, SeedableRng};
+		use crate::folding::circuits::{cyclefold::CycleFoldCircuit, nonnative::uint::BoundedBigUint};
+		use crate::folding::foldpot::{cyclepair::CyclePairCircuit, FOLDPOT_CF_N_POINTS};
+		use crate::utils::vec::mat_vec_mul;
+
+		type NV = NonNativeUintVar<Fr>;
+		type Gadget = fn(R1CSVar<Fq, Fr, NV>, Vec<NV>, NV, Vec<NV>) -> Result<(), SynthesisError>;
+		const NEW: Gadget = RelaxedR1CSGadget::check_nonnative::<Fq, Fr>;
+		const CHUNK: usize = 2000;
+
+		/// A relaxed instance as integers: z = [u, x, W] and E.
+		#[derive(Clone)]
+		struct Inst { z: Vec<BigUint>, e: Vec<BigUint> }
+
+		fn q() -> BigUint { Fq::MODULUS.into() }
+
+		fn r1cs_of(c: impl ConstraintSynthesizer<Fq>) -> R1CS<Fq> {
+			let cs = ConstraintSystem::<Fq>::new_ref();
+			c.generate_constraints(cs.clone()).unwrap();
+			cs.finalize();
+			extract_r1cs::<Fq>(&cs.into_inner().unwrap())
+		}
+		fn cp_r1cs() -> R1CS<Fq> { r1cs_of(CyclePairCircuit::<Bn254, PairingVar, G1, G2>::empty()) }
+		fn cf_r1cs() -> R1CS<Fq> { r1cs_of(CycleFoldCircuit::<G1, GVar>::empty(FOLDPOT_CF_N_POINTS)) }
+
+		/// Honest instance: random z (z[0] = u), E = Az o Bz - u Cz in Fq.
+		fn honest(r: &R1CS<Fq>, seed: u64) -> Inst {
+			let rng = &mut StdRng::seed_from_u64(seed);
+			let z: Vec<Fq> = (0..r.A.n_cols).map(|_| Fq::rand(rng)).collect();
+			let m = |a: &SparseMatrix<Fq>| mat_vec_mul(a, &z).unwrap();
+			let (a, b, c) = (m(&r.A), m(&r.B), m(&r.C));
+			let e = (0..r.A.n_rows).map(|i| (a[i] * b[i] - z[0] * c[i]).into()).collect();
+			Inst { z: z.into_iter().map(Into::into).collect(), e }
+		}
+
+		/// Rows `rows` of (r, inst), keeping only the columns they use (and u).
+		fn restrict(r: &R1CS<Fq>, inst: &Inst, rows: Range<usize>) -> (R1CS<Fq>, Inst) {
+			let mut cols: Vec<usize> = [&r.A, &r.B, &r.C].iter()
+				.flat_map(|m| m.coeffs[rows.clone()].iter().flatten().map(|&(_, j)| j)).chain([0]).collect();
+			cols.sort_unstable();
+			cols.dedup();
+			let pos: HashMap<usize, usize> = cols.iter().enumerate().map(|(k, &j)| (j, k)).collect();
+			let sub = |m: &SparseMatrix<Fq>| SparseMatrix { n_rows: rows.len(), n_cols: cols.len(),
+				coeffs: m.coeffs[rows.clone()].iter().map(|row| row.iter().map(|&(c, j)| (c, pos[&j])).collect()).collect() };
+			(R1CS { l: 0, A: sub(&r.A), B: sub(&r.B), C: sub(&r.C) },
+				Inst { z: cols.iter().map(|&j| inst.z[j].clone()).collect(), e: inst.e[rows.clone()].to_vec() })
+		}
+
+		/// Allocate z, u = z[0] and E as Step 10's callers do (witness limbs of 55, 55,
+		/// 55, 55 and 36 bits, as new_witness of an Fq element) and run gadget.
+		/// Returns its result and its constraint count.
+		fn synth(cs: ConstraintSystemRef<Fr>, r: &R1CS<Fq>, inst: &Inst, gadget: Gadget)
+			-> (Result<(), SynthesisError>, usize) {
+			let alloc = |v: &[BigUint]| v.iter()
+				.map(|x| NV::new_witness(cs.clone(), || Ok(BoundedBigUint(x.clone(), 256))).unwrap()).collect::<Vec<_>>();
+			let (z, e) = (alloc(&inst.z), alloc(&inst.e));
+			let r1cs = R1CSVar::<Fq, Fr, NV>::new_witness(cs.clone(), || Ok(r.clone())).unwrap();
+			let c0 = cs.num_constraints();
+			let res = gadget(r1cs, e, z[0].clone(), z);
+			(res, cs.num_constraints() - c0)
+		}
+
+		/// (SAT, constraint count) of gadget on (r, inst) in a fresh cs.
+		fn sat(r: &R1CS<Fq>, inst: &Inst, gadget: Gadget) -> (bool, usize) {
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let (res, n) = synth(cs.clone(), r, inst, gadget);
+			res.unwrap();
+			(cs.is_satisfied().unwrap(), n)
+		}
+
+		/// [A, B, C] of r as constants, each split into [M+, M-].
+		fn splits(r: &R1CS<Fq>) -> [[NNMatrix<Fq, Fr>; 2]; 3] {
+			let R1CSVar { A, B, C, .. } = R1CSVar::<Fq, Fr, NV>::new_constant(ConstraintSystemRef::None, r.clone()).unwrap();
+			[A, B, C].map(split_signed::<Fq, Fr>)
+		}
+
+		/// T1: each entry c lands on exactly one side, plus == c or q - minus == c,
+		/// the side value has min(bits(c), bits(q - c)) bits, and every limb bound
+		/// equals its limb value.
+		fn check_split(r: &R1CS<Fq>) {
+			let q = q();
+			for (m, parts) in [&r.A, &r.B, &r.C].into_iter().zip(splits(r)) {
+				for p in &parts { assert!(p.n_rows == m.n_rows && p.n_cols == m.n_cols && p.coeffs.len() == m.coeffs.len()); }
+				for (i, row) in m.coeffs.iter().enumerate() {
+					let mut left: HashMap<usize, BigUint> = row.iter().map(|&(c, j)| (j, c.into())).collect();
+					assert_eq!(left.len(), row.len(), "T1016 T1: repeated column in row {}", i);
+					for (side, part) in parts.iter().enumerate() {
+						for (v, j) in &part.coeffs[i] {
+							let c = left.remove(j).expect("T1016 T1: entry on both sides");
+							let val = v.value().unwrap();
+							assert_eq!(if side == 0 { val.clone() } else { &q - &val }, c, "T1016 T1: row {} col {}", i, j);
+							assert_eq!(val.bits(), min(c.bits(), (&q - &c).bits()), "T1016 T1: not the shorter side");
+							assert!(v.0.iter().all(|l| l.ub == BigUint::from(l.value().unwrap())), "T1016 T1: bound != value");
+						}
+					}
+					assert!(left.is_empty(), "T1016 T1: entry lost in row {}", i);
+				}
+			}
+		}
+
+		/// T5: rows whose two sides differ in limb count before padding. Lengths do
+		/// not depend on values, so z, u and E are constant zeros (free products).
+		fn unequal_rows(r: &R1CS<Fq>) -> usize {
+			let zero = || NV::new_constant(ConstraintSystemRef::None, Fq::zero()).unwrap();
+			let (u, z) = (zero(), vec![zero(); r.A.n_cols]);
+			let [[ap, an], [bp, bn], [cp, cn]] = splits(r).map(|s| s.map(|m| m.mul_vector(&z).unwrap()));
+			(0..r.A.n_rows).filter(|&i| {
+				let lhs = sum_of_products(&[(&ap[i], &bp[i]), (&an[i], &bn[i]), (&u, &cn[i])]).unwrap();
+				let rhs = sum_of_products(&[(&ap[i], &bn[i]), (&an[i], &bp[i]), (&u, &cp[i])]).unwrap().add_no_align(&zero());
+				lhs.0.len() != rhs.0.len()
+			}).count()
+		}
+
+		/// T3: each arm alone is UNSAT on the rows window(i) around its target row i.
+		fn red_arms(r: &R1CS<Fq>, window: impl Fn(usize) -> Range<usize>) {
+			let (inst, n) = (honest(r, 1), r.A.n_rows);
+			let [[_, an], [_, bn], _] = splits(r);
+			let width = |i: usize| [&r.A, &r.B, &r.C].iter().flat_map(|m| m.coeffs[i].iter())
+				.map(|&(c, _)| { let c: BigUint = c.into(); min(c.bits(), (q() - c).bits()) }).max().unwrap_or(0);
+			let big = (0..n).max_by_key(|&i| width(i)).unwrap();
+			let no_minus = (0..n).find(|&i| an.coeffs[i].is_empty() && bn.coeffs[i].is_empty()).expect("no row without A- and B-");
+			let (w_row, w_col) = (0..n).find_map(|i| r.A.coeffs[i].iter().find(|e| e.1 > r.l).map(|e| (i, e.1))).unwrap();
+			let u_row = (0..n).find(|&i| !r.C.coeffs[i].is_empty()).unwrap();
+			let s_row = (0..n).find(|&i| !an.coeffs[i].is_empty()).unwrap();
+			let s_k = r.A.coeffs[s_row].iter().position(|e| e.1 == an.coeffs[s_row][0].1).unwrap();
+			type Arm = Box<dyn Fn(&mut R1CS<Fq>, &mut Inst)>;
+			let e_plus = |i: usize| -> Arm { Box::new(move |_: &mut R1CS<Fq>, s: &mut Inst| s.e[i] += 1u32) };
+			let arms: Vec<(&str, usize, Arm)> = vec![
+				("E_0 + 1", 0, e_plus(0)),
+				("E_7 + 1", 7, e_plus(7)),
+				("E_last + 1", n - 1, e_plus(n - 1)),
+				("E + 1 at the largest coefficient", big, e_plus(big)),
+				("E + 1 where A- and B- are empty", no_minus, e_plus(no_minus)),
+				("W entry + 1", w_row, Box::new(move |_: &mut R1CS<Fq>, s: &mut Inst| s.z[w_col] += 1u32)),
+				("u + 1, E unchanged", u_row, Box::new(|_: &mut R1CS<Fq>, s: &mut Inst| s.z[0] += 1u32)),
+				("A- coefficient changed by 1", s_row,
+					Box::new(move |m: &mut R1CS<Fq>, _: &mut Inst| m.A.coeffs[s_row][s_k].0 += Fq::one())),
+			];
+			for (name, i, arm) in arms {
+				let (mut r2, mut s) = (r.clone(), inst.clone());
+				arm(&mut r2, &mut s);
+				let (rr, ss) = restrict(&r2, &s, window(i));
+				assert!(!sat(&rr, &ss, NEW).0, "T1016 T3 {} (row {}): SAT", name, i);
+			}
+		}
+
+		/// T4: z_j + q and E_0 + q (non-canonical, below 2^256) stay SAT.
+		fn noncanonical(r: &R1CS<Fq>, rows: Range<usize>) {
+			let (rr, mut s) = restrict(r, &honest(r, 1), rows);
+			let j = s.z.len() - 1;
+			s.z[j] += q();
+			s.e[0] += q();
+			assert!(s.z[j].bits() <= 256 && s.e[0].bits() <= 256);
+			assert!(sat(&rr, &s, NEW).0, "T1016 T4: non-canonical limbs rejected");
+		}
+
+		/// T6: Setup mode and two prove-mode instances build identical matrices.
+		fn setup_vs_prove(r: &R1CS<Fq>, rows: Range<usize>) {
+			let (rr, i1) = restrict(r, &honest(r, 1), rows.clone());
+			let (_, i2) = restrict(r, &honest(r, 2), rows);
+			let mats = |inst: &Inst, setup: bool| synth_mats(|cs| {
+				if setup { cs.set_mode(SynthesisMode::Setup); }
+				synth(cs, &rr, inst, NEW).0.unwrap();
+			}).0;
+			let m = mats(&i1, true);
+			assert!(m == mats(&i1, false) && m == mats(&i2, false), "T1016 T6: setup and prove shapes differ");
+		}
+
+		/// T8 (break B2), each row alone: E_i + r or E_i - r (mod q, r = |Fr|), and
+		/// each lift of it by q below 2^256. The honest quotient then leaves exactly
+		/// +r or -r for enforce_equal_unaligned. Its field carries take the small
+		/// wrong solution where a group bound has 253 bits and its low part fits.
+		/// Returns the rows where some forged E_i is SAT.
+		fn b2_sat_rows(r: &R1CS<Fq>, gadget: Gadget) -> Vec<usize> {
+			let (inst, q, rm) = (honest(r, 1), q(), BigUint::from(Fr::MODULUS));
+			(0..r.A.n_rows).into_par_iter().filter(|&i| {
+				let (sub, s) = restrict(r, &inst, i..i + 1);
+				[&s.e[0] + &rm, &s.e[0] + &q - &rm].into_iter()
+					.flat_map(|e| successors(Some(e % &q), |e| Some(e + &q)).take_while(|e| e.bits() <= 256))
+					.any(|e| sat(&sub, &Inst { e: vec![e], ..s.clone() }, gadget).0)
+			}).collect()
+		}
+
+		#[test]
+		fn test_t1016_split(){
+			check_split(&cf_r1cs());
+			check_split(&cp_r1cs());
+		}
+
+		#[test]
+		fn test_t1016_cf_red(){
+			let r = cf_r1cs();
+			let n = r.A.n_rows;
+			red_arms(&r, |_| 0..n);
+			noncanonical(&r, 0..n);
+		}
+
+		#[test]
+		fn test_t1016_cp_red(){
+			let r = cp_r1cs();
+			red_arms(&r, |i| i..i + 1);
+			noncanonical(&r, 0..CHUNK);
+		}
+
+		#[test]
+		fn test_t1016_b2_red(){
+			for r in [cf_r1cs(), cp_r1cs()] {
+				let bad = b2_sat_rows(&r, NEW);
+				assert!(bad.is_empty(), "T1016 T8: B2 forgery SAT on {} rows, such as {:?}", bad.len(), &bad[..min(bad.len(), 5)]);
+			}
+		}
+
+		#[test]
+		fn test_t1016_shapes(){
+			let r = cf_r1cs();
+			let inst = honest(&r, 1);
+			let short = |cut: fn(&mut Inst)| { let mut s = inst.clone(); cut(&mut s); synth(ConstraintSystem::<Fr>::new_ref(), &r, &s, NEW).0 };
+			assert!(matches!(short(|s| { s.e.pop(); }), Err(SynthesisError::Unsatisfiable)), "T1016 T5: short E accepted");
+			assert!(matches!(short(|s| { s.z.pop(); }), Err(SynthesisError::Unsatisfiable)), "T1016 T5: short z accepted");
+			// one row, A = B = (q - 1) / 2 (plus side, 5 limbs), C = 1: L has 17 limbs, R 9
+			let row = |c: Fq, j: usize| SparseMatrix { n_rows: 1, n_cols: 3, coeffs: vec![vec![(c, j)]] };
+			let half = Fq::from(q() / 2u32);
+			let h = R1CS { l: 0, A: row(half, 1), B: row(half, 2), C: row(Fq::one(), 0) };
+			assert_eq!(unequal_rows(&h), 1);
+			let mut s = honest(&h, 1);
+			assert!(sat(&h, &s, NEW).0, "T1016 T5: honest one-row instance not SAT");
+			s.e[0] += 1u32;
+			assert!(!sat(&h, &s, NEW).0, "T1016 T5: one-row E + 1 SAT");
+			// the test allocation has the caller's limb bounds
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let bounds = |x: NV| x.0.iter().map(|l| l.ub.clone()).collect::<Vec<_>>();
+			let v = Fq::from(5u32);
+			assert_eq!(bounds(NV::new_witness(cs.clone(), || Ok(v)).unwrap()),
+				bounds(NV::new_witness(cs, || Ok(BoundedBigUint(v.into(), 256))).unwrap()));
+		}
+
+		#[test]
+		fn test_t1016_setup_vs_prove(){
+			let r = cf_r1cs();
+			setup_vs_prove(&r, 0..r.A.n_rows);
+			let cp = cp_r1cs();
+			for s in (0..cp.A.n_rows).step_by(CHUNK) {
+				setup_vs_prove(&cp, s..min(s + CHUNK, cp.A.n_rows));
+			}
+		}
 	}
 }
