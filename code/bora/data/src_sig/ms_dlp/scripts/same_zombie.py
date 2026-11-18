@@ -30,6 +30,24 @@ sys.path.insert(0, HERE)
 import run_zombie as rz  # noqa: E402
 import dry_run_zombie as dz  # noqa: E402
 
+# ALL_T1009: test-only redirect of every Zombie /tmp path (unset in real runs)
+TMP_ROOT_ENV = "ZKR_ZOMBIE_TMP_ROOT"
+TMP_ROOT = os.environ.get(TMP_ROOT_ENV)
+if TMP_ROOT:
+    TMP_ROOT = os.path.abspath(TMP_ROOT)
+    rz.PARTIAL_DIR = os.path.join(TMP_ROOT, "run")
+    rz.PARTIAL = os.path.join(rz.PARTIAL_DIR, "run_zombie.partial.jsonl")
+    rz.BUILD_ROOT = os.path.join(TMP_ROOT, "circ")
+    rz.CIRC_BUILD = os.path.join(rz.BUILD_ROOT, "circ")
+    rz.BUILD_RS = os.path.join(rz.CIRC_BUILD, "src", "zkmb.rs")
+    rz.BUILD_RS_ORIG = rz.BUILD_RS + ".orig"
+    rz.ZKMB_DIR = os.path.join(rz.CIRC_BUILD, "zkmb")
+    rz.KEYS_DIR = os.path.join(rz.CIRC_BUILD, "keys")
+    rz.CIRC_BIN = os.path.join(rz.CIRC_BUILD, "target", "release",
+                               "circ_executable")
+    rz.PAR_ROOT = os.path.join(TMP_ROOT, "par")
+    rz._pick_scratch_base = lambda: rz.PAR_ROOT
+
 # --- paths (DLP_T1001: module globals so tests can redirect them) ----------
 MS_DLP = os.path.dirname(HERE)
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(MS_DLP)))
@@ -159,11 +177,17 @@ def say(msg, caveat=False):
             pass
 
 
+def _stamp():
+    return time.strftime("%m-%d %H:%M:%S")
+
+
 def _rz_print(*a, **k):
     # DLP_T1001: RZ's own prints go through say()
     if k.get("file") not in (None, sys.stdout):
         return print(*a, **k)
-    say(k.get("sep", " ").join(str(x) for x in a))
+    text, st = k.get("sep", " ").join(str(x) for x in a), _stamp()
+    say("\n".join("[%s] %s" % (st, ln) if ln.strip() else ln
+                   for ln in text.split("\n")))   # ALL_T1009: stamp lines
 
 
 def _excepthook(t, v, tb):
@@ -241,10 +265,26 @@ def fingerprint():
                             meminfo("MemTotal") // 1024 // 2 ** 20)
 
 
+def git_version():
+    try:
+        out = subprocess.run(["git", "--version"], capture_output=True,
+                             text=True, timeout=30).stdout
+        return tuple(int(x) for x in re.findall(r"(\d+)\.(\d+)", out)[0])
+    except (OSError, subprocess.TimeoutExpired, IndexError, ValueError):
+        return (0, 0)
+
+
+GIT_SAFE_OK = git_version() >= (2, 38)  # ALL_T1009: -c safe.directory needs it
+
+
+def git_safe_args():
+    return ["-c", "safe.directory=" + REPO] if GIT_SAFE_OK else []
+
+
 def git(*a):
     try:
-        r = subprocess.run(["git", "-C", REPO] + list(a), capture_output=True,
-                           text=True, timeout=120)
+        r = subprocess.run(["git"] + git_safe_args() + ["-C", REPO] + list(a),
+                           capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired):
         return None
     return r
@@ -952,6 +992,16 @@ def preflight():
 
 def launcher_probe():
     """6a steps 1-6. Returns (launcher, props, note)."""
+    st = {}
+    try:
+        return _launcher_probe(st)
+    finally:
+        if st.get("slice"):                   # ALL_T1009: never leave it capped
+            sctl("set-property", "--runtime", "bora-same.slice",
+                 "MemoryMax=infinity")
+
+
+def _launcher_probe(st):
     uid = os.getuid()
     props = ["MemorySwapMax=0", "OOMPolicy=kill", "ManagedOOMPreference=omit"]
     r = sctl("show", "-p", "Version")
@@ -984,6 +1034,7 @@ def launcher_probe():
         if oomd and "ManagedOOMPreference=omit" in props and (
                 cg is None or not has_omit(cg)):
             return "prlimit", props, "probe A: no user.oomd_omit"
+        st["slice"] = True                    # ALL_T1009: restore in finally
         sctl("set-property", "--runtime", "bora-same.slice",
              "MemoryMax=1073741824")
         scg = unit_cgroup("bora-same.slice")
@@ -998,7 +1049,8 @@ def launcher_probe():
     try:
         p.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        _kill_quiet(p)
+        pass
+    _kill_quiet(p)                            # ALL_T1009: also closes stderr
     res = bus_result(unit + ".scope")
     if p.returncode != -9 or res != "oom-kill":
         return "prlimit", props, "probe B rc=%s Result=%s" % (p.returncode, res)
@@ -1010,7 +1062,8 @@ def launcher_probe():
     try:
         p.wait(timeout=30)
     except subprocess.TimeoutExpired:
-        _kill_quiet(p)
+        pass
+    _kill_quiet(p)                            # ALL_T1009: also closes stderr
     if _read(plog("probe_c.out")) != "2147483648":
         note = "slice cap off"
     return "systemd", props, note
@@ -1020,6 +1073,11 @@ def _kill_quiet(p):
     try:
         p.kill()
         p.wait(timeout=5)
+    except Exception:
+        pass
+    try:
+        if p.stderr is not None:              # ALL_T1009: no ResourceWarning
+            p.stderr.close()
     except Exception:
         pass
 
@@ -1061,6 +1119,230 @@ def systemd_startup():
 # ===========================================================================
 def _pids():
     return [int(d) for d in os.listdir("/proc") if d.isdigit()]
+
+
+# ALL_T1009 A1: one driver per box (abstract socket lock + hand-run scan)
+DRIVER_LOCK = "bora_zombie_driver_%d" % os.getuid()
+_REAL_DRIVER_LOCK = DRIVER_LOCK
+LOCK_POLL_S = 10
+LOCK_LOG_S = 300                 # ALL_T1009: at most 6 wait lines per run
+LOCK_WAIT_RUN_S = 1800
+CHECK_LOCK_WAIT_S = 120          # ALL_T1009: a quick PD restart is not refused
+SCAN_DRIVERS = ("run_zombie.py", "dry_run_zombie.py")
+_LOCK = {}
+
+
+def driver_lock_held(name):
+    """ALL_T1009: read only: is @name bound (/proc/net/unix)?"""
+    try:
+        with open("/proc/net/unix") as f:
+            return any(ln.split()[-1] == "@" + name for ln in f
+                       if len(ln.split()) >= 8)
+    except OSError:
+        return False
+
+
+def lock_holders(name):
+    """ALL_T1009: pids of this user holding the socket @name."""
+    ino = set()
+    try:
+        with open("/proc/net/unix") as f:
+            for ln in f:
+                p = ln.split()
+                if len(p) >= 8 and p[-1] == "@" + name:
+                    ino.add("socket:[%s]" % p[6])
+    except OSError:
+        return []
+    out = []
+    for pid in _pids():
+        if pid == os.getpid() or not _owned(pid):
+            continue
+        try:
+            fds = os.listdir("/proc/%d/fd" % pid)
+        except OSError:
+            continue
+        for fd in fds:
+            try:
+                if os.readlink("/proc/%d/fd/%s" % (pid, fd)) in ino:
+                    out.append(pid)
+                    break
+            except OSError:
+                continue
+    return out
+
+
+def _script_of(argv):
+    """ALL_T1009: the script a python argv runs (None for -c, -m)."""
+    i = 1
+    while i < len(argv):
+        x = argv[i]
+        if x in (b"-c", b"-m"):
+            return None
+        i += 2 if x in (b"-W", b"-X", b"-Q") else 1
+        if not x.startswith(b"-"):
+            return x
+    return None
+
+
+def other_zombie_pids(names=None):
+    """ALL_T1009: this user's python processes whose script is in names."""
+    names, out = names or SCAN_DRIVERS, []
+    for pid in _pids():
+        if pid == os.getpid() or not _owned(pid):
+            continue
+        try:
+            argv = open("/proc/%d/cmdline" % pid, "rb").read().split(b"\0")
+        except OSError:
+            continue
+        if not os.path.basename(argv[0]).startswith(b"python"):
+            continue
+        sc = _script_of([x for x in argv if x])
+        if sc and os.path.basename(sc).decode(errors="replace") in names:
+            out.append(pid)
+    return out
+
+
+def driver_lock(wait_s):
+    """ALL_T1009: take the box-wide driver lock; None or a refusal."""
+    if _LOCK.get("sock") is not None:
+        return None
+    t0 = t_log = time.time()
+    while True:
+        s = socket.socket(socket.AF_UNIX, socket.SOCK_DGRAM)
+        try:
+            s.bind("\0" + DRIVER_LOCK)
+            _LOCK["sock"] = s
+            return None
+        except OSError:
+            s.close()
+        now = time.time()
+        if now - t0 >= wait_s:
+            return ("another Zombie driver holds the driver lock @%s (pids %s)"
+                    % (DRIVER_LOCK, lock_holders(DRIVER_LOCK) or "unknown"))
+        if now - t0 >= LOCK_POLL_S and now - t_log >= LOCK_LOG_S:
+            t_log = now
+            print("SAME wait lock @%s, %.0f s of %d s" % (
+                DRIVER_LOCK, now - t0, wait_s), flush=True)
+        time.sleep(max(0.0, min(LOCK_POLL_S, wait_s - (now - t0))))
+
+
+def driver_guard(wait_s):
+    """ALL_T1009: the lock, then hand runs of RZ / dry RZ; None or why."""
+    why = driver_lock(wait_s)
+    if why:
+        return why
+    pids = other_zombie_pids()
+    if pids:
+        return ("a hand run of run_zombie.py or dry_run_zombie.py is active "
+                "(pids %s); stop it first" % pids)
+    return None
+
+
+# ALL_T1009 A3: circ_executable left by a dead driver
+ZOMBIE_DIRS = ("bora_zombie_scratch", "bora_zombie_par")
+
+
+def _stat_of(pid):
+    """(state, ppid) from /proc/PID/stat, or None."""
+    try:
+        with open("/proc/%d/stat" % pid) as f:
+            f2 = f.read().rsplit(")", 1)[1].split()
+        return f2[0], int(f2[1])
+    except (OSError, IndexError, ValueError):
+        return None
+
+
+def _exe_base(pid):
+    """ALL_T1009: basename of /proc/PID/exe, else of argv[0]."""
+    try:
+        p = os.readlink("/proc/%d/exe" % pid)
+        return os.path.basename(p[:-10] if p.endswith(" (deleted)") else p)
+    except OSError:
+        try:
+            a0 = open("/proc/%d/cmdline" % pid, "rb").read().split(b"\0")[0]
+            return os.path.basename(a0.decode(errors="replace"))
+        except OSError:
+            return ""
+
+
+def _live_python_ancestor(pid):
+    st, seen = _stat_of(pid), set()
+    p = st[1] if st else 0
+    while p > 1 and p not in seen:
+        seen.add(p)
+        st = _stat_of(p)
+        if st is None:
+            return True                       # ALL_T1009: unsure, so spare it
+        if st[0] != "Z" and _exe_base(p).startswith("python"):
+            return True
+        p = st[1]
+    return False
+
+
+def _owned(pid):
+    try:
+        return os.stat("/proc/%d" % pid).st_uid == os.getuid()
+    except OSError:
+        return False
+
+
+def _cwd_of(pid):
+    try:
+        return os.readlink("/proc/%d/cwd" % pid)
+    except OSError:
+        return ""
+
+
+def _zombie_cwd(cwd):
+    if cwd.endswith(" (deleted)"):
+        cwd = cwd[:-10]
+    root = os.path.abspath(rz.PAR_ROOT)
+    return (any(x in ZOMBIE_DIRS for x in cwd.split("/")) or cwd == root
+            or cwd.startswith(root + "/"))
+
+
+def orphan_circ(kill, pids=None):
+    """ALL_T1009: [(pid, cwd)] of orphan circ_executable; kill=True kills."""
+    out = []
+    for pid in (sorted(pids) if pids is not None else _pids()):
+        if pid == os.getpid() or not _owned(pid):
+            continue
+        if _exe_base(pid) != "circ_executable":
+            continue
+        cwd = _cwd_of(pid)
+        if not cwd or not _zombie_cwd(cwd) or _live_python_ancestor(pid):
+            continue
+        out.append((pid, cwd))
+        if kill:
+            _sigkill(pid)
+            say("SAME note: killed orphan circ_executable pid %d (cwd %s)"
+                % (pid, cwd))
+    return out
+
+
+def orphan_text(orph):
+    return ("orphan circ_executable of a dead driver: %s. Kill them first: "
+            "kill -9 %s" % ("; ".join("pid %d cwd %s" % o for o in orph),
+                            " ".join(str(p) for p, _ in orph)))
+
+
+# ALL_T1009 A4: die with PAPER_DATA
+def bind_parent():
+    """ALL_T1009: SIGTERM us when ZKR_SAME_PARENT (PAPER_DATA) dies."""
+    want = os.environ.pop("ZKR_SAME_PARENT", None)
+    if not want:
+        return
+    import ctypes
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(1, signal.SIGTERM, 0, 0, 0) != 0:   # ALL_T1009: PDEATHSIG
+        say("SAME note: PR_SET_PDEATHSIG failed errno %d" % ctypes.get_errno())
+    try:
+        gone = os.getppid() != int(want)
+    except ValueError:
+        gone = False
+    if gone:
+        say("SAME refuse: parent %s already gone" % want)
+        raise SystemExit(143)
 
 
 def descendants(root):
@@ -1881,7 +2163,7 @@ def load_partial_wrapped():
     a = ARGS
     sweep = Pair(rz.PARTIAL, rz.PARTIAL_DOCS)
     sample = pair_names(a)[1]
-    if rule2(sweep, sample):
+    if not S.get("rule2_done") and rule2(sweep, sample):   # ALL_T1009: once
         say("SAME rule 2: sweep partial absent, deleting %s and %s"
             % (sample.tmp, sample.docs))
         sample.delete()
@@ -1920,6 +2202,7 @@ def render_wrapped(orig, sizes):
 
 def run_pipeline_wrapped(binp, str_len, names, done):
     S["binp"] = binp
+    S["cur_size"] = str_len                   # ALL_T1009: for batch lines
     res = _ORIG["pipeline"](binp, str_len, names, done)
     flush()
     if ARGS.scalecal and str_len == 1000:
@@ -1932,16 +2215,233 @@ def run_pipeline_wrapped(binp, str_len, names, done):
     return res
 
 
+# ALL_T1009 N1/O2: rayon thread arena + stack room in the keygen AS cap
+AS_THREAD_B = 66 * 2 ** 20     # ALL_T1009: 8.2 GiB at 128 threads [M laptop]
+AS_THREAD_MAX = 4 * AS_THREAD_B
+
+
+def arena_room():
+    return len(os.sched_getaffinity(0)) * S.get("arena_b", AS_THREAD_B)
+
+
+def as_cap_wrapped(est_rss, full_mem):
+    """ALL_T1009 N1: RZ's keygen cap plus the arena room of its prove."""
+    cap = _ORIG["as_cap"](est_rss, full_mem)
+    if not cap:
+        return cap
+    S["cap_room"] = room = arena_room()       # ALL_T1009: room used at cap time
+    return int(min(full_mem, cap + room))
+
+
+class BatchTPE(ThreadPoolExecutor):
+    """ALL_T1009 N2: rz.ThreadPoolExecutor that records the batch size."""
+
+    def __init__(self, *args, **kw):
+        n = kw.get("max_workers", args[0] if args else None)
+        S["batch_n"] = n
+        S["batch_seq"] = S.get("batch_seq", 0) + 1
+        try:
+            say("SAME batch t=%s size=%s jobs=%s" % (
+                _stamp(), S.get("cur_size", "-"), n))
+        except Exception:
+            pass
+        super().__init__(*args, **kw)
+
+    def __exit__(self, *exc):
+        S.pop("batch_n", None)
+        r = super().__exit__(*exc)            # ALL_T1009: all keygens returned
+        if exc[0] is None:                    # ALL_T1009 A4: sync before timing
+            t0 = time.time()
+            os.sync()
+            say("SAME sync t=%s wall=%.1fs" % (_stamp(), time.time() - t0))
+        return r
+
+
+# ALL_T1009: rayon pool-build failure texts inside RZ's err[-300:] tail
+_ARENA_SIG = ("ThreadPoolBuildError", "Resource temporarily unavailable")
+_ARENA_LOCK = threading.Lock()
+
+
+def arena_failure(err):
+    """ALL_T1009: a rayon pool failure, not a plain large allocation."""
+    return "rayon-core" in err and any(x in err for x in _ARENA_SIG)
+
+
+def tasks_short():
+    """ALL_T1009: free tasks below twice a full batch of keygen threads."""
+    av = tasks_free()
+    jobs = S.get("batch_n") or 1
+    return av is not None and av < 2 * jobs * (len(os.sched_getaffinity(0)) + 4)
+
+
+def _gib(v):
+    return "%.1fGiB" % (v / GIB) if v else "-"
+
+
+def _est_txt(mem, room, lone):
+    """ALL_T1009: the RAM reservation read back from RZ's cap rule."""
+    if not mem or lone:
+        return "-"
+    if mem >= (S.get("full_mem") or float("inf")):
+        return "full"
+    part = mem - room
+    if part <= 8 * GIB:
+        return "<=%.1fGiB" % (8 / rz.EST_AS_MARGIN)
+    return _gib(part / rz.EST_AS_MARGIN)
+
+
+def _after_build(b, name, str_len, mem, lone, room, wall):
+    """ALL_T1009 B1/O2/m4: log one keygen, learn the arena room."""
+    st, err = b.get("status"), b.get("err") or ""
+    say("SAME build t=%s size=%d %s -> %s wall=%.0fs rss=%s res=%s cap=%s%s%s"
+        % (_stamp(), str_len, name, st, wall, _gib(b.get("peak_rss")),
+           _est_txt(mem, room, lone), _gib(mem), " lone" if lone else "",
+           "" if st == "built" else " err=" + err[-80:].replace("\n", " ")))
+    if not mem or lone or b.get("as_cap") != mem or st == "built":
+        return
+    rss_part = max(1, mem - room)
+    rss = b.get("peak_rss")
+    if arena_failure(err) and rss and rss < rss_part and not tasks_short():
+        with _ARENA_LOCK:                     # ALL_T1009: once per batch
+            old = S.get("arena_b", AS_THREAD_B)
+            if S.get("arena_seq") != S.get("batch_seq") and old < AS_THREAD_MAX:
+                S["arena_b"], S["arena_seq"] = min(AS_THREAD_MAX, 2 * old), \
+                    S.get("batch_seq")
+                say("SAME note: arena room raised to %d MiB per thread"
+                    % (S["arena_b"] >> 20))
+    b["as_cap"] = rss_part      # ALL_T1009: RZ's retry backs off from RSS only
+
+
+def build_one_wrapped(binp, idx, name, str_len, mem_bytes=None,
+                      timeout=rz.PROVE_TIMEOUT):
+    """ALL_T1009 B1/N2: full headroom when alone, then log the keygen."""
+    lone = S.get("batch_n") == 1 and bool(S.get("full_mem"))
+    if lone:
+        mem_bytes = S["full_mem"]
+    room, t0 = S.get("cap_room", arena_room()), time.time()
+    b = _ORIG["build"](binp, idx, name, str_len, mem_bytes, timeout)
+    try:
+        _after_build(b, name, str_len, mem_bytes, lone, room, time.time() - t0)
+    except Exception:
+        pass
+    return b
+
+
+# ALL_T1009 B2/N3/B3: growth-aware keygen estimates and job count
+GROWTH_K_DEFAULT = math.log2(5.0)  # ALL_T1009: top laptop 1->2 KB RSS ratio [M]
+K_MIN, K_MAX = 1.0, 3.0            # ALL_T1009: 2x to 8x per doubling
+
+
+def _okv(r, vkey):
+    return bool(r) and r.get("status") == "ok" and bool(r.get(vkey))
+
+
+def _pooled_k(done, vkey, s, L):
+    """ALL_T1009: exponent k in v(L)/v(s) = (L/s)**k over measured units."""
+    key = (id(done), vkey, s, L, len(done))
+    memo = S.setdefault("k_memo", {})
+    if key in memo:
+        return memo[key]
+
+    def ks(a, b):
+        out = []
+        for r in list(done.values()):
+            q = done.get("%s|%d" % (r.get("regex_name"), a))
+            if r.get("str_len") == b and _okv(r, vkey) and _okv(q, vkey):
+                out.append(math.log(r[vkey] / q[vkey]) / math.log(b / a))
+        return out
+    k = ks(s, L)
+    if len(k) < 3:
+        vs = sorted(rz.VEC_SIZE)
+        k = [x for a, b in zip(vs, vs[1:]) for x in ks(a, b)]
+    if len(k) < 3:
+        v = GROWTH_K_DEFAULT if vkey == "peak_rss" else 1.0
+    elif vkey == "peak_rss":                  # ALL_T1009: max(median, p75)
+        sk = sorted(k)
+        v = max(statistics.median(sk), sk[int(math.ceil(0.75 * len(sk))) - 1])
+    else:
+        v = statistics.median(k)
+    memo[key] = v = min(K_MAX, max(K_MIN, v))
+    return v
+
+
+def estimate_wrapped(name, str_len, done, slope, vkey, floor):
+    """ALL_T1009 B2: raise RZ's estimate by own or pooled growth, never lower."""
+    e = _ORIG["estimate"](name, str_len, done, slope, vkey, floor)
+    r = done.get("%s|%d" % (name, str_len))
+    if r and r.get(vkey):
+        return e
+    if (vkey == "peak_rss" and e == floor and _ORIG.get(
+            "median_at", rz._median_at)(done, str_len, vkey) is None):
+        e = max(e, rz_cold())                 # ALL_T1009 A5: RZ's own cold
+    smaller = sorted((x for x in rz.VEC_SIZE if x < str_len), reverse=True)
+    for i, s in enumerate(smaller):
+        rr = done.get("%s|%d" % (name, s))
+        if not (rr and rr.get(vkey)):
+            continue
+        k = None
+        if i + 1 < len(smaller):
+            q = done.get("%s|%d" % (name, smaller[i + 1]))
+            if _okv(rr, vkey) and _okv(q, vkey):
+                k = min(K_MAX, max(K_MIN, math.log(rr[vkey] / q[vkey])
+                                   / math.log(s / smaller[i + 1])))
+        if k is None:
+            k = _pooled_k(done, vkey, s, str_len)
+        return max(e, int(rr[vkey] * (str_len / s) ** k))
+    return e
+
+
+def median_at_wrapped(done, str_len, vkey):
+    """ALL_T1009 N3: nearest-rank p90 of the measured keygen RSS."""
+    if vkey != "peak_rss":
+        return _ORIG["median_at"](done, str_len, vkey)
+    vals = sorted(r[vkey] for r in list(done.values())
+                  if r.get("str_len") == str_len and r.get(vkey))
+    return vals[int(math.ceil(0.9 * len(vals))) - 1] if vals else None
+
+
+def cpu_max_jobs():
+    """ALL_T1009 B3: one keygen per 2 cpus of our affinity, task-capped."""
+    n = max(1, len(os.sched_getaffinity(0)) // rz.MIN_CPUS_PER_CIRC)
+    cap = S.get("jobs_cap")
+    return max(1, min(n, cap)) if cap else n
+
+
+_RZ_CPU_MAX_JOBS = rz._cpu_max_jobs     # ALL_T1009: RZ's own, before overrides
+_RZ_MIN_CPUS = rz.MIN_CPUS_PER_CIRC      # ALL_T1009: RZ's own 4 cpus per job
+
+
+def rz_cold():
+    """ALL_T1009 A5: RZ's own cold reservation (budget / (cpu_count // 4))."""
+    jobs = max(1, (os.cpu_count() or _RZ_MIN_CPUS) // _RZ_MIN_CPUS)
+    return max(int((rz._ram_budget_bytes() or 0) / jobs),
+               rz.COLD_RAM_FLOOR_BYTES)
+
+
+def _hook(name, key, wrapper):
+    """ALL_T1009: wrap rz.<name>; a second install keeps the first original."""
+    if getattr(rz, name) is not wrapper:
+        _ORIG[key] = getattr(rz, name)
+    setattr(rz, name, wrapper)
+
+
 def install_rz_hooks():
-    _ORIG.update(rmtree=shutil.rmtree, load=rz._load_partial,
-                 append=rz._append_partial, render=rz._render_zkmb,
-                 pipeline=rz.run_pipeline)
+    _ORIG.update(rmtree=shutil.rmtree)
     rz.shutil = ShutilProxy()
     rz._time_one = time_one
-    rz._load_partial = load_partial_wrapped
-    rz._append_partial = append_partial_wrapped
-    rz._render_zkmb = render_wrapped
-    rz.run_pipeline = run_pipeline_wrapped
+    # ALL_T1009: identity-guarded, so a second install never recurses
+    _hook("_load_partial", "load", load_partial_wrapped)
+    _hook("_append_partial", "append", append_partial_wrapped)
+    _hook("_render_zkmb", "render", render_wrapped)
+    _hook("run_pipeline", "pipeline", run_pipeline_wrapped)
+    _hook("_as_cap", "as_cap", as_cap_wrapped)          # ALL_T1009 N1
+    _hook("_build_one", "build", build_one_wrapped)     # ALL_T1009 B1/N2
+    rz.ThreadPoolExecutor = BatchTPE                    # ALL_T1009 N2
+    _hook("_estimate", "estimate", estimate_wrapped)    # ALL_T1009 B2
+    _hook("_median_at", "median_at", median_at_wrapped)  # ALL_T1009 N3
+    rz.MIN_CPUS_PER_CIRC = 2                  # ALL_T1009 B3: 1-thread keygen
+    if rz._cpu_max_jobs is _RZ_CPU_MAX_JOBS:  # ALL_T1009: override wins
+        rz._cpu_max_jobs = cpu_max_jobs
 
 
 # ===========================================================================
@@ -2218,21 +2718,181 @@ def same_units_running():
     return bool(r is not None and r.stdout.strip())
 
 
+# ALL_T1009 A6: hour-0 host checks (refuse or adapt there, never at hour 107)
+SCRATCH_REFUSE_GIB = rz.SCRATCH_MIN_FREE_GB  # ALL_T1009: 10x a 4 KB key set [M]
+SCRATCH_WARN_GIB = 250       # ALL_T1009: a full 4 KB batch writes 80-110 GiB [E]
+PIDS_SLACK = 2000                # ALL_T1009: d3 value
+
+
+def cores_refusal():
+    if S["topo"]["c_cores"] < 1 and S["cap"] != 0:
+        return ("no slot cores left after keep-free %d (C_cores 0); set "
+                "ZKR_SAME_MAX_WIDTH_CORES=0 for serial mode" % ARGS.keep_free)
+    return None
+
+
+def circ_rebuild_needed(a):
+    """ALL_T1009: RZ's own rebuild rule (RZ:565-571), read only."""
+    sizes = dz.DRY_VEC_SIZE if a.dry is not None else rz.VEC_SIZE
+    if not (os.path.isfile(rz.CIRC_BIN) and os.path.isfile(rz.BUILD_RS_ORIG)):
+        return True
+    if rz._render_zkmb is not render_wrapped:
+        _ORIG["render"] = rz._render_zkmb
+    try:
+        return rz._read(rz.BUILD_RS) != render_wrapped(
+            rz._read(rz.BUILD_RS_ORIG), sizes)
+    except (OSError, SystemExit):
+        return True
+
+
+def nightly_refusal(a):
+    from download_zombie import have_rust_nightly
+    ok, why = have_rust_nightly()
+    if ok:
+        return None
+    if not circ_rebuild_needed(a):            # ALL_T1009: no build at the leaf
+        say("CAVEAT: SAME check-start WARNING: the pinned Rust nightly is "
+            "missing (%s), but circ_executable needs no rebuild" % why)
+        return None
+    return ("the pinned Rust nightly for circ is missing (%s) and circ needs a "
+            "rebuild: run python3 scripts/INSTALL.py --data zombie" % why)
+
+
+def selftest_refusal():
+    try:
+        selftest()
+    except AssertionError as e:
+        return "selftest failed: %s" % e
+    return None
+
+
+def sweep_refusal(a):
+    """ALL_T1009: RZ's hour-107 resume load, read only, on PD's .hold view."""
+    sweep = pair_names(a)[0]
+    for p in (sweep.tmp, sweep.docs):
+        src = p + ".hold" if os.path.exists(p + ".hold") else p
+        if not os.path.isfile(src) or os.path.getsize(src) == 0:
+            continue
+        try:
+            rows = Pair(src, src).load()
+        except ValueError as e:
+            return "sweep partial %s has a bad line (%s): repair or delete it" % (
+                src, e)
+        bad = [r for r in rows if not isinstance(r, dict)
+               or "regex_name" not in r or "str_len" not in r
+               or r.get("zok_gen") != rz.ZOK_GEN]
+        if bad:
+            return ("sweep partial %s holds %d rows run_zombie cannot resume "
+                    "(no regex_name/str_len, or zok_gen not %s): delete %s and "
+                    "%s to re-measure" % (src, len(bad), rz.ZOK_GEN, sweep.tmp,
+                                          sweep.docs))
+    return None
+
+
+def scratch_free_gib():
+    base = rz._pick_scratch_base()
+    p = base
+    while p and not os.path.isdir(p):
+        p = os.path.dirname(p)
+    return shutil.disk_usage(p or "/").free / GIB, base
+
+
+def pids_avail():
+    """ALL_T1009: least pids.max - pids.current on our cgroup path."""
+    rel = _read("/proc/self/cgroup").split("::", 1)[-1].strip()
+    p, best = os.path.normpath("/sys/fs/cgroup" + rel), None
+    while p.startswith("/sys/fs/cgroup"):
+        mx = _read(os.path.join(p, "pids.max"))
+        cur = _read(os.path.join(p, "pids.current"))
+        if mx.isdigit() and cur.isdigit():
+            v = int(mx) - int(cur)
+            best = v if best is None else min(best, v)
+        if p == "/sys/fs/cgroup":
+            break
+        p = os.path.dirname(p)
+    return best
+
+
+def nproc_avail():
+    """ALL_T1009: RLIMIT_NPROC soft limit minus this uid's threads."""
+    import resource
+    soft = resource.getrlimit(resource.RLIMIT_NPROC)[0]
+    if soft == resource.RLIM_INFINITY:
+        return None
+    n = 0
+    for pid in _pids():
+        st = _read("/proc/%d/status" % pid)
+        uid = re.search(r"^Uid:\s+(\d+)", st, re.M)
+        thr = re.search(r"^Threads:\s+(\d+)", st, re.M)
+        if uid and thr and int(uid.group(1)) == os.getuid():
+            n += int(thr.group(1))
+    return soft - n
+
+
+def tasks_free():
+    """ALL_T1009: the tighter of the cgroup and the ulimit -u headroom."""
+    vals = [v for v in (pids_avail(), nproc_avail()) if v is not None]
+    return min(vals) if vals else None
+
+
+def jobs_fit():
+    """(keygen jobs that fit the task limits, B3 jobs, free tasks)."""
+    ncpu = len(os.sched_getaffinity(0))
+    want = max(1, ncpu // 2)
+    av = tasks_free()
+    if av is None:
+        return want, want, None
+    return max(0, min(want, (av - PIDS_SLACK) // (ncpu + 4))), want, av
+
+
+def host_views(a):
+    """ALL_T1009: (text, refusal) for the scratch drive and task limit."""
+    free, base = scratch_free_gib()
+    n, want, av = jobs_fit()
+    full = a.dry is None
+    txt = "scratch=%.0fGiB(%s) tasks_free=%s keygen_jobs=%d" % (
+        free, base, "max" if av is None else av, max(n, 0))
+    if n < 1:
+        return txt, ("the task limits (pids.max, ulimit -u) leave %s free "
+                     "tasks, too few for one keygen of %d threads"
+                     % (av, len(os.sched_getaffinity(0)) + 4))
+    left = (" A leftover %s from a killed run exists; delete it." % base
+            if os.path.isdir(base) else "")
+    if full and free < SCRATCH_REFUSE_GIB:
+        return txt, ("the scratch drive for %s has %.0f GiB free, below run_"
+                     "zombie's own %d GiB rule.%s" % (base, free,
+                                                      SCRATCH_REFUSE_GIB, left))
+    if free < (SCRATCH_WARN_GIB if full else SCRATCH_REFUSE_GIB):
+        say("CAVEAT: SAME check-start WARNING: the scratch drive for %s has "
+            "only %.0f GiB free; a full 4 KB batch writes 80 to 110 GiB of "
+            "keys, so batches will shrink.%s" % (base, free, left))
+    if n < want:
+        say("SAME check-start WARNING: the task limit lowers keygen jobs from "
+            "%d to %d" % (want, n))
+    return txt, None
+
+
 def check_start_main(a):
     """--check-start: cap, clone, oomd and launcher probes, rule 2, start
     check, STOP rule. No build, no keygen."""
+    why = driver_guard(CHECK_LOCK_WAIT_S)     # ALL_T1009: bounded wait
+    orph = [] if why else orphan_circ(kill=False)
+    if why or orph:
+        say("SAME check-start REFUSE: %s" % (why or orphan_text(orph)))
+        return 6
     if S["cap"] is None:
         say("SAME check-start REFUSE: ZKR_SAME_MAX_WIDTH_CORES must be a "
             "non-negative integer")
         return 6
-    why = clone_check()
+    why = (clone_check() or fx_check(a.sizes, a.n) or cores_refusal()
+           or nightly_refusal(a) or selftest_refusal())   # ALL_T1009: hour 0
     if why:
         say("SAME check-start REFUSE: %s" % why)
         return 6
     S["logdir"] = os.path.join(rz.PARTIAL_DIR, "same_logs", "check_%s_%d" % (
         time.strftime("%Y%m%d_%H%M%S"), os.getpid()))
     os.makedirs(S["logdir"], exist_ok=True)
-    why = oomd_check()                        # DLP_T1001 fix6: at hour 0
+    why = oomd_check(repair=False)            # ALL_T1009: never edit caller
     if why:
         say("SAME check-start REFUSE: %s" % why)
         return 6
@@ -2244,16 +2904,31 @@ def check_start_main(a):
             lch, _props, note = launcher_probe()
             say("SAME check-start launcher %s%s" % (lch, (" (%s)" % note)
                                                     if note else ""))
+    hv, why = host_views(a)                   # ALL_T1009: scratch, tasks
+    if why:
+        say("SAME check-start REFUSE: %s" % why)
+        return 6
     if a.dry is not None:
-        say("SAME check-start PASS (dry: no start check)")
+        say("SAME check-start PASS (dry: no start check) %s" % hv)
         return 0
+    why = sweep_refusal(a)                    # ALL_T1009: RZ resume at hour 0
+    if why:
+        say("SAME check-start REFUSE: %s" % why)
+        return 6
     rows = load_sample(a)
     pending = (not best_scalecal(a.server)[1]
                and S["topo"]["c_cores"] >= a.scalecal_min_cores)
     if pending:                               # an in-run stamp must be clean
         stt = git_status(LIST_TIMING)
         need = S["cap"] != 0 and any(x != 1000 for x in a.sizes)
-        if stt is None:
+        if stt is None and need:              # ALL_T1009: certain, so refuse
+            say("SAME check-start REFUSE: git status failed on the timing "
+                "list, so the in-run speed-check stamp would be invalid and "
+                "2 and 4 KB would be refused at the leaf. If git reports "
+                "dubious ownership, run: git config --global --add "
+                "safe.directory %s" % REPO)
+            return 6
+        elif stt is None:
             say("CAVEAT: SAME check-start WARNING: git status failed on the "
                 "timing list (dubious ownership?); the in-run stamp will be "
                 "invalid, so 2 and 4 KB samples will be refused at the leaf")
@@ -2275,8 +2950,8 @@ def check_start_main(a):
     if why:
         say("SAME check-start REFUSE: %s" % why)
         return 6
-    say("SAME check-start PASS sizes=%s serial=%s" % (
-        ",".join(map(str, a.sizes)), sorted(S["serial"]) or "none"))
+    say("SAME check-start PASS sizes=%s serial=%s %s" % (
+        ",".join(map(str, a.sizes)), sorted(S["serial"]) or "none", hv))
     return 0
 
 
@@ -2327,6 +3002,7 @@ def run_main(a):
         say("SAME rule 2: sweep partial absent, deleting %s and %s"
             % (sample.tmp, sample.docs))
         sample.delete()
+    S["rule2_done"] = True                    # ALL_T1009: RZ load skips it
     sweep.restore()
     sample.restore()
     if S["cap"] is None:
@@ -2338,10 +3014,16 @@ def run_main(a):
     if bad or (a.only_same and a.sizes != [1000]):
         say("SAME refuse: sizes %s not in the sweep" % a.sizes)
         return 6
-    why = fx_check(a.sizes, a.n) or clone_check()
+    why = fx_check(a.sizes, a.n) or clone_check() or cores_refusal()
     if why:
         say("SAME refuse: %s" % why)
         return 6
+    n, want, av = jobs_fit()                  # ALL_T1009: adapt, never refuse
+    S["jobs_cap"] = max(1, n)
+    free, base = scratch_free_gib()
+    say("SAME note: host scratch %.0f GiB free (%s), tasks free %s, keygen "
+        "jobs %d of %d" % (free, base, "max" if av is None else av,
+                           S["jobs_cap"], want))
     if a.launcher == "auto":
         S["launcher"], S["props"], note = preflight()
         say("SAME launcher %s%s" % (S["launcher"], (" (%s)" % note)
@@ -2394,15 +3076,25 @@ def main(argv=None):
     if a.selftest:
         return selftest()
     os.chdir(MS_DLP)
+    if TMP_ROOT:                              # ALL_T1009: never silent
+        say("SAME note: test redirect active, root %s" % TMP_ROOT)
     init_state(a)
     if a.check_start:
         return check_start_main(a)
+    why = driver_guard(LOCK_WAIT_RUN_S)      # ALL_T1009: before any file
+    if why:
+        say("SAME refuse: %s" % why)
+        return 6
     signal.signal(signal.SIGTERM, on_sigterm)
+    bind_parent()
     S["logdir"] = os.path.join(rz.PARTIAL_DIR, "same_logs",
                                time.strftime("%Y%m%d_%H%M%S") +
                                "_%d" % os.getpid())
     os.makedirs(S["logdir"], exist_ok=True)
-    LOG_FH = open(out_paths()[1], "w")
+    LOG_FH = open(out_paths()[1], "w" if a.dry is not None else "a")
+    say("SAME log start %s pid %d" % (time.strftime("%Y-%m-%d %H:%M:%S"),
+                                      os.getpid()))   # ALL_T1009: full appends
+    orphan_circ(kill=True)                    # ALL_T1009: lock held, so ours
     rc = 1
     try:
         rc = run_main(a)
@@ -2421,6 +3113,12 @@ def main(argv=None):
             for p in (pair_names(a)[1],) + ((pair_names(a)[0],)
                                             if a.only_same else ()):
                 p.delete()
+        if S.get("launcher") == "systemd":    # ALL_T1009: uncap the slice
+            try:
+                sctl("set-property", "--runtime", "bora-same.slice",
+                     "MemoryMax=infinity")
+            except Exception:
+                pass
         say("SAME exit %d" % rc)
         LOG_FH.close()
         LOG_FH = None
@@ -2430,9 +3128,18 @@ def main(argv=None):
 # ===========================================================================
 # selftest (pins)
 # ===========================================================================
+RZ_PINS = ("e = _estimate(n, str_len, done, slope",
+           "dk = _estimate(pending[i]", "max_jobs = _cpu_max_jobs()",
+           "ex.submit(_build_one, binp",
+           "caps = {idx: _as_cap(est_ram(n), full_mem)",
+           "with ThreadPoolExecutor(max_workers=len(batch))",
+           'default = _median_at(done, str_len, "peak_rss")',
+           "serial = len(batch) == 1", "// MIN_CPUS_PER_CIRC)")
+
+
 def selftest():
     import inspect
-    src = inspect.getsource(rz.run_pipeline)
+    src = inspect.getsource(_ORIG.get("pipeline", rz.run_pipeline))
     i_du = src.find("shutil.disk_usage(PAR_ROOT)")
     i_ex = src.find("ThreadPoolExecutor(")
     i_to = src.find("_time_one(binp, b, str_len")
@@ -2444,6 +3151,8 @@ def selftest():
     assert "finally:\n        shutil.rmtree(PAR_ROOT" in msrc, "RZ main finally"
     tsrc = open(RZ_PATH).read()            # RZ _time_one, unhooked text
     assert '"policy_%d" % str_len, "false",' in tsrc, "RZ base argv moved"
+    for pin in RZ_PINS:                    # ALL_T1009: hook anchors, file text
+        assert pin in tsrc, "RZ hook anchor moved: %s" % pin
     pd = os.path.join(REPO, "scripts", "PAPER_DATA.py")
     if os.path.isfile(pd):
         m = re.search(r'FAIL_RE = re\.compile\(\s*r"([^"]*)"\s*r"([^"]*)"\)',

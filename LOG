@@ -32245,6 +32245,15 @@ Goal 1. scripts prep
 Goal 2. writing
 	[a] 4.4 minors
 	[b] change 4.2
+
+Goal 3. improve decider
+	[a] quick improvement Grumpking (skip curve_in_group check) 
+		-> 30% improvement
+	[b] encoding constraints cutting from 3 to 1
+		sonobe issue #22. part 1.
+	[c] P2: re-use the bits in implementation (avoid range-check
+		the same bits again) and 2-bit window to improve
+		the constraints count.
 	
 
 

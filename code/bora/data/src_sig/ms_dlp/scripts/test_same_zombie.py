@@ -5,6 +5,8 @@ import json
 import shutil
 import signal
 import tempfile
+import time
+import threading
 import textwrap
 import unittest
 import subprocess
@@ -21,6 +23,10 @@ _REAL_GUARD_DIRS = (os.path.join(sz.REPO, "data", "cache"), sz.RAW_DATA_ROOT,
                     sz.DOCS, "/tmp/bora_zombie_run", "/tmp/snark_start")
 _REAL_GUARD_SKIP = os.path.join(sz.REPO, "data", "cache", "logs")
 _GUARD = {}
+# ALL_T1009: the real box-wide helpers, kept before setUpModule stubs them
+_REAL_SCAN = sz.other_zombie_pids
+_REAL_ORPHAN = sz.orphan_circ
+_RZ_PRISTINE = dict(vars(rz))           # ALL_T1009: before any hook install
 
 
 def _tree_state(*roots):
@@ -57,6 +63,16 @@ def setUpModule():
         _GUARD.setdefault("patches", []).append(p)
     for d in ("run", "docs", "raw", "par"):
         os.makedirs(os.path.join(tmp, d))
+    # ALL_T1009: private lock name; no real scan, kill or mount probe
+    for mod, name, val in (
+            (sz, "DRIVER_LOCK", "sz_test_lock_%d_%s" % (
+                os.getpid(), os.path.basename(tmp))),
+            (sz, "other_zombie_pids", lambda *a, **k: []),
+            (sz, "orphan_circ", lambda *a, **k: []),
+            (rz, "_pick_scratch_base", lambda: os.path.join(tmp, "par"))):
+        p = mock.patch.object(mod, name, val)
+        p.start()
+        _GUARD["patches"].append(p)
 
 
 def tearDownModule():
@@ -812,6 +828,9 @@ class PreflightRealTest(Base):
     """Fix 1: real probes, then a prove scope's argv (no MemoryMax=64M)."""
 
     def test_prove_argv_after_probes(self):
+        if (sz.driver_lock_held(sz._REAL_DRIVER_LOCK) or _REAL_SCAN()
+                or sz.same_units_running()):   # ALL_T1009: live run guard
+            self.skipTest("a live Zombie driver runs on this box")
         lch, props, note = sz.launcher_probe()
         self.assertTrue(all(not q.startswith("MemoryMax") for q in props))
         if lch != "systemd":
@@ -1317,6 +1336,9 @@ class Round6Test(StubSetup):
         self.assertIn("WARNING", log)
         self.assertEqual(self._cs("1000,2000,4000", 0, "?? x")[0], 0)
         rc, log = self._cs("1000,2000,4000", 16, None)  # git failed
+        self.assertEqual(rc, 6)                 # ALL_T1009: A6c refuses now
+        self.assertIn("SAME check-start REFUSE: git status failed", log)
+        rc, log = self._cs("1000", 16, None)    # no stamp needed: warn only
         self.assertEqual(rc, 0)
         self.assertIn("CAVEAT: SAME check-start WARNING: git status failed",
                       log)
@@ -1381,8 +1403,9 @@ class GateStopResumeTest(Base):
                            "--launcher", "prlimit"])
         sz.S["pair"].append([dict(sz.stamp(), **stop)])
         sweep = sz.pair_names(a)[0]
-        with open(sweep.docs, "w") as f:
-            f.write("{}\n")
+        with open(sweep.docs, "w") as f:          # ALL_T1009: a row RZ loads
+            f.write(json.dumps({"regex_name": "u", "str_len": 1000,
+                                "zok_gen": rz.ZOK_GEN}) + "\n")
         sc = {"w0": "4", "commit": "c"}
         with mock.patch.object(sz, "read_scalecal", return_value=sc), \
                 mock.patch.object(sz, "valid_timing",
@@ -1563,6 +1586,1269 @@ class SigtermSmoke(unittest.TestCase):
         self.assertEqual(p.wait(timeout=10), 143)
         self.assertFalse(os.path.exists("/proc/%d" % kid) and
                          open("/proc/%d/stat" % kid).read().split()[2] != "Z")
+
+
+# ===========================================================================
+# ALL_T1009 tests
+# ===========================================================================
+def _main_quiet(argv):
+    """ALL_T1009: sz.main with init_state kept from Base; restores cwd/SIGTERM."""
+    cwd, h = os.getcwd(), signal.getsignal(signal.SIGTERM)
+    try:
+        with mock.patch.object(sz, "init_state"):
+            return sz.main(argv)
+    finally:
+        os.chdir(cwd)
+        signal.signal(signal.SIGTERM, h)
+
+
+class T1009RedirectTest(unittest.TestCase):
+    """ALL_T1009 C1: ZKR_ZOMBIE_TMP_ROOT moves every Zombie /tmp path."""
+
+    PROG = ("import json, sys; sys.path.insert(0, %r); import same_zombie as sz;"
+            " rz = sz.rz; print(json.dumps([rz.PARTIAL_DIR, rz.PARTIAL,"
+            " rz.BUILD_ROOT, rz.CIRC_BUILD, rz.BUILD_RS, rz.BUILD_RS_ORIG,"
+            " rz.ZKMB_DIR, rz.KEYS_DIR, rz.CIRC_BIN, rz.PAR_ROOT%s]))")
+
+    def _paths(self, env, probe=False):
+        # ALL_T1009: only the redirected case calls _pick_scratch_base
+        prog = self.PROG % (HERE, ", rz._pick_scratch_base()" if probe else "")
+        r = subprocess.run([sys.executable, "-I", "-c", prog], env=env,
+                           capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+
+    def test_tmp_root_env_redirects_every_tmp_path(self):
+        root = tempfile.mkdtemp(prefix="sz_c1_", dir=os.environ.get("TMPDIR"))
+        try:
+            env = dict(os.environ, ZKR_ZOMBIE_TMP_ROOT=root)
+            for p in self._paths(env, probe=True):
+                self.assertTrue(p.startswith(root + "/"), p)
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def test_tmp_root_unset_keeps_defaults(self):
+        env = {k: v for k, v in os.environ.items()
+               if k != "ZKR_ZOMBIE_TMP_ROOT"}
+        p = self._paths(env)
+        self.assertEqual(p[0], "/tmp/bora_zombie_run")
+        self.assertEqual(p[2], "/tmp/bora_zombie_circ")
+        self.assertEqual(p[9], "/tmp/bora_zombie_par")
+
+
+class T1009SmallTest(Base):
+    """ALL_T1009 A7, A8, A10, git, B4 and the redirect note."""
+
+    def test_tmp_root_note_said(self):
+        out = []
+        with mock.patch.object(sz, "TMP_ROOT", "/x/root"), \
+                mock.patch.object(sz, "check_start_main", return_value=0), \
+                mock.patch.object(sz, "say", side_effect=out.append):
+            self.assertEqual(_main_quiet(["--sizes", "1000", "--server",
+                                          "t1", "--check-start"]), 0)
+        self.assertTrue(any("test redirect active, root /x/root" in m
+                            for m in out))
+
+    def test_selftest_fails_when_estimate_anchor_moves(self):
+        with mock.patch.object(sz, "RZ_PINS",
+                               sz.RZ_PINS + ("no_such_anchor_xyz(",)):
+            with self.assertRaises(AssertionError) as cm:
+                sz.selftest()
+        self.assertIn("no_such_anchor_xyz", str(cm.exception))
+
+    def test_rule2_not_rerun_after_run_main_writes(self):
+        sweep, sample = sz.pair_names(sz.ARGS)
+        sample.append([{"kind": "stop", "size": 2000, "launch_sig": "sig1"}])
+        sz.S["rule2_done"] = True
+        saved = sz._ORIG.get("load")
+        sz._ORIG["load"] = lambda: {}
+        out = []
+        try:
+            with mock.patch.object(sz, "say", side_effect=out.append):
+                sz.load_partial_wrapped()
+        finally:
+            if saved is None:
+                sz._ORIG.pop("load", None)
+            else:
+                sz._ORIG["load"] = saved
+        self.assertTrue(sample.present())
+        self.assertFalse(any("deleting" in m for m in out))
+
+    def test_full_log_appends_dry_truncates(self):
+        for argv, want in ((["--sizes", "1000", "--n", "2", "--server",
+                             "t1"], 2),
+                           (["--dry", "4", "--sizes", "1000", "--n", "2",
+                             "--server", "t1"], 1)):
+            sz.ARGS = sz.parse_args(argv)
+            path = sz.out_paths()[1]
+            for _ in range(2):
+                with mock.patch.object(sz, "run_main", return_value=0), \
+                        mock.patch.object(sz, "driver_guard",
+                                          return_value=None, create=True):
+                    _main_quiet(argv)
+            self.assertEqual(open(path).read().count("SAME log start"),
+                             want, argv)
+
+    def test_check_start_oomd_read_only(self):
+        a = sz.parse_args(["--dry", "4", "--sizes", "1000", "--n", "2",
+                           "--server", "t1", "--launcher", "prlimit"])
+        om = mock.Mock(return_value="refused")
+        with mock.patch.object(sz, "oomd_check", om), \
+                mock.patch.object(sz, "clone_check", return_value=None):
+            self.assertEqual(sz.check_start_main(a), 6)
+        om.assert_called_once_with(repair=False)
+
+    def test_git_passes_safe_directory(self):
+        seen = []
+
+        def run(cmd, **k):
+            seen.append(cmd)
+            return mock.Mock(returncode=0, stdout="", stderr="")
+        with mock.patch.object(sz.subprocess, "run", run):
+            sz.git("status")
+        self.assertEqual(seen[0][:5], ["git", "-c", "safe.directory=" +
+                                       sz.REPO, "-C", sz.REPO])
+
+
+def _hold_lock(name, secs=30):
+    """ALL_T1009: a child python that binds @name, prints ready, sleeps."""
+    p = subprocess.Popen([sys.executable, "-I", "-c",
+                          "import socket, time; s = socket.socket(socket."
+                          "AF_UNIX, socket.SOCK_DGRAM); s.bind('\\0' + %r); "
+                          "print('ready', flush=True); time.sleep(%d)"
+                          % (name, secs)], stdout=subprocess.PIPE, text=True)
+    assert p.stdout.readline().strip() == "ready"
+    return p
+
+
+class T1009LockTest(Base):
+    """ALL_T1009 A1: abstract-socket driver lock and hand-run scan."""
+
+    def setUp(self):
+        super().setUp()
+        self.name = "sz_t1009_%d_%s" % (os.getpid(), os.path.basename(
+            self.tmp))
+        for obj, attr, val in ((sz, "DRIVER_LOCK", self.name),
+                               (sz, "LOCK_POLL_S", 0.1)):
+            p = mock.patch.object(obj, attr, val)
+            p.start()
+            self.addCleanup(p.stop)
+        p = mock.patch.dict(sz._LOCK, {}, clear=True)
+        p.start()
+        self.addCleanup(self._release)
+        self.addCleanup(p.stop)
+        self.kids = []
+
+    def _release(self):
+        s = sz._LOCK.pop("sock", None)
+        if s is not None:
+            s.close()
+        for k in self.kids:
+            k.kill()
+            k.wait()
+
+    def _hold(self, secs=30):
+        k = _hold_lock(self.name, secs)
+        self.kids.append(k)
+        return k
+
+    def test_driver_lock_second_holder_refused_nowait(self):
+        k = self._hold()
+        why = sz.driver_lock(0)
+        self.assertIn("@" + self.name, why)
+        self.assertIn("pids [%d]" % k.pid, why)   # holder found by inode
+
+    def test_driver_lock_waits_then_gets_it(self):
+        self._hold(secs=1)
+        t0 = time.time()
+        self.assertIsNone(sz.driver_lock(10))
+        self.assertGreater(time.time() - t0, 0.3)
+
+    def test_driver_lock_released_on_sigkill(self):
+        k = self._hold()
+        self.assertIsNotNone(sz.driver_lock(0))
+        k.kill()
+        k.wait()
+        self.assertIsNone(sz.driver_lock(0))
+
+    def test_driver_lock_held_reads_proc_net_unix(self):
+        self.assertFalse(sz.driver_lock_held(self.name))
+        self.assertIsNone(sz.driver_lock(0))
+        self.assertTrue(sz.driver_lock_held(self.name))
+        self._release()
+        self.assertFalse(sz.driver_lock_held(self.name))
+
+    def test_main_refusal_touches_no_file(self):
+        argv = ["--dry", "4", "--sizes", "1000", "--n", "2", "--server", "t1"]
+        sz.ARGS = sz.parse_args(argv)
+        paths = list(sz.out_paths()) + [sz.pair_names(sz.ARGS)[1].tmp,
+                                        sz.pair_names(sz.ARGS)[1].docs]
+        for p in paths:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            with open(p, "w") as f:
+                f.write("live\n")
+        before = [(os.path.getsize(p), os.stat(p).st_mtime_ns) for p in paths]
+        self._hold()
+        with mock.patch.object(sz, "LOCK_WAIT_RUN_S", 0), \
+                mock.patch.object(sz, "run_main") as rm:
+            self.assertEqual(_main_quiet(argv), 6)
+            rm.assert_not_called()
+        self.assertEqual(before, [(os.path.getsize(p),
+                                   os.stat(p).st_mtime_ns) for p in paths])
+
+    def test_check_start_refuses_on_held_lock(self):
+        self._hold()
+        a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+        with mock.patch.object(sz, "launcher_probe") as lp, \
+                mock.patch.object(sz, "CHECK_LOCK_WAIT_S", 0):
+            self.assertEqual(sz.check_start_main(a), 6)
+            lp.assert_not_called()
+
+    def test_selftest_ignores_lock(self):
+        self._hold()
+        self.assertEqual(sz.main(["--selftest"]), 0)
+
+    def test_scan_argv_rules(self):
+        sa = sz._script_of
+        self.assertEqual(sa([b"python3", b"-u", b"/x/run_zombie.py"]),
+                         b"/x/run_zombie.py")
+        self.assertEqual(sa([b"python3", b"-W", b"ignore",
+                             b"dry_run_zombie.py", b"4"]),
+                         b"dry_run_zombie.py")
+        self.assertEqual(sa([b"python3", b"-X", b"dev", b"a.py"]), b"a.py")
+        self.assertIsNone(sa([b"python3", b"-c", b"import run_zombie"]))
+        self.assertIsNone(sa([b"python3", b"-m", b"unittest"]))
+        d = os.path.join(self.tmp, "scan")
+        os.makedirs(d)
+        kids = []
+        # ALL_T1009: names a real driver never scans for
+        for nm in ("zz_t1009_drv.py", "zz_t1009_other.py"):
+            with open(os.path.join(d, nm), "w") as f:
+                f.write("import time; time.sleep(30)\n")
+        try:
+            kids.append(subprocess.Popen([sys.executable, "-W", "ignore",
+                                          os.path.join(d, "zz_t1009_drv.py"),
+                                          "4"]))
+            kids.append(subprocess.Popen([sys.executable,
+                                          os.path.join(d, "zz_t1009_other.py"),
+                                          "--check-start"]))
+            time.sleep(0.5)
+            with mock.patch.object(sz, "SCAN_DRIVERS", ("zz_t1009_drv.py",)):
+                got = _REAL_SCAN()
+            self.assertIn(kids[0].pid, got)
+            self.assertNotIn(kids[1].pid, got)
+            self.assertNotIn(os.getpid(), got)
+        finally:
+            for k in kids:
+                k.kill()
+                k.wait()
+
+
+class T1009OrphanTest(Base):
+    """ALL_T1009 A3: orphan circ_executable rules."""
+
+    def test_zombie_cwd_component_rule(self):
+        zc = sz._zombie_cwd
+        with mock.patch.object(rz, "PAR_ROOT", "/r/par"):
+            self.assertTrue(zc("/d/bora_zombie_scratch/c00003"))
+            self.assertTrue(zc("/tmp/bora_zombie_par/c00000"))
+            self.assertTrue(zc("/tmp/bora_zombie_par/c1 (deleted)"))
+            self.assertTrue(zc("/r/par/c2"))
+            self.assertFalse(zc("/x/bora_zombie_par_t/c0"))
+            self.assertFalse(zc("/r/parx/c0"))
+            self.assertFalse(zc("/home/u/elsewhere"))
+
+    def test_live_python_ancestor_rules(self):
+        tree = {10: ("S", 9), 9: ("S", 1), 20: ("S", 19), 19: ("Z", 1),
+                30: ("S", 29), 29: ("S", 1)}
+        exe = {9: "python3.12", 19: "python3", 29: "time"}
+        with mock.patch.object(sz, "_stat_of", tree.get), \
+                mock.patch.object(sz, "_exe_base",
+                                  lambda p: exe.get(p, "x")):
+            self.assertTrue(sz._live_python_ancestor(10))
+            self.assertFalse(sz._live_python_ancestor(20))
+            self.assertFalse(sz._live_python_ancestor(30))
+
+    def test_orphan_rules_fake_proc(self):
+        cwd = {101: "/d/bora_zombie_scratch/c00003",
+               102: "/tmp/bora_zombie_par/c00000",
+               103: "/x/bora_zombie_par_t/c0", 104: "/home/u/elsewhere",
+               105: "/tmp/bora_zombie_par/c1 (deleted)", 106: "/tmp/x"}
+        live = {102}
+        killed = []
+        with mock.patch.object(sz, "_owned", return_value=True), \
+                mock.patch.object(sz, "_exe_base",
+                                  lambda p: "circ_executable" if p != 106
+                                  else "sleep"), \
+                mock.patch.object(sz, "_cwd_of", cwd.get), \
+                mock.patch.object(sz, "_live_python_ancestor",
+                                  lambda p: p in live), \
+                mock.patch.object(sz, "_sigkill", killed.append), \
+                mock.patch.object(rz, "PAR_ROOT", "/r/par"):
+            got = _REAL_ORPHAN(kill=False, pids=sorted(cwd))
+            self.assertEqual([p for p, _ in got], [101, 105])
+            self.assertEqual(killed, [])
+            _REAL_ORPHAN(kill=True, pids=sorted(cwd))
+            self.assertEqual(killed, [101, 105])
+
+    def test_orphan_kill_real_own_child_only(self):
+        d = os.path.join(self.tmp, "zz_t1009_par", "c0")  # ALL_T1009: no real
+        os.makedirs(d)
+        shutil.copy("/bin/sleep", os.path.join(d, "circ_executable"))
+        r = subprocess.run(["sh", "-c", "cd %s && ./circ_executable 30 "
+                            ">/dev/null 2>&1 </dev/null & echo $!" % d],
+                           capture_output=True, text=True, timeout=10)
+        pid = int(r.stdout.strip())
+        try:
+            time.sleep(0.3)
+            with mock.patch.object(sz, "ZOMBIE_DIRS", ("zz_t1009_par",)):
+                got = _REAL_ORPHAN(kill=True, pids={pid})
+            self.assertEqual([p for p, _ in got], [pid])
+            for _ in range(50):
+                st = sz._stat_of(pid)
+                if st is None or st[0] == "Z":
+                    break
+                time.sleep(0.1)
+            st = sz._stat_of(pid)
+            self.assertTrue(st is None or st[0] == "Z")
+        finally:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+
+    def test_check_start_lists_orphans_with_kill_command(self):
+        out = []
+        a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+        with mock.patch.object(sz, "orphan_circ",
+                               return_value=[(77, "/x/bora_zombie_par/c1")]), \
+                mock.patch.object(sz, "say", side_effect=out.append):
+            self.assertEqual(sz.check_start_main(a), 6)
+        self.assertTrue(any("kill -9 77" in m and "cwd /x/bora_zombie_par/c1"
+                            in m for m in out))
+
+
+class T1009ParentTest(Base):
+    """ALL_T1009 A4: parent-death signal."""
+
+    def test_bind_parent_noop_without_env(self):
+        with mock.patch.dict(os.environ, {}, clear=False), \
+                mock.patch("ctypes.CDLL") as cd:
+            os.environ.pop("ZKR_SAME_PARENT", None)
+            sz.bind_parent()
+            cd.assert_not_called()
+
+    def test_bind_parent_exits_when_parent_gone(self):
+        lib = mock.Mock()
+        lib.prctl.return_value = 0
+        with mock.patch.dict(os.environ, {"ZKR_SAME_PARENT": str(
+                os.getppid() + 100000)}), \
+                mock.patch("ctypes.CDLL", return_value=lib):
+            with self.assertRaises(SystemExit) as cm:
+                sz.bind_parent()
+            self.assertNotIn("ZKR_SAME_PARENT", os.environ)
+        self.assertEqual(cm.exception.code, 143)
+        self.assertEqual(lib.prctl.call_args[0][:2], (1, signal.SIGTERM))
+
+    def test_bind_parent_notes_prctl_failure(self):
+        lib = mock.Mock()
+        lib.prctl.return_value = -1
+        out = []
+        with mock.patch.dict(os.environ, {"ZKR_SAME_PARENT": str(
+                os.getppid())}), \
+                mock.patch("ctypes.CDLL", return_value=lib), \
+                mock.patch.object(sz, "say", side_effect=out.append):
+            sz.bind_parent()
+        self.assertTrue(any("PR_SET_PDEATHSIG failed" in m for m in out))
+
+    def test_bind_parent_pops_env(self):
+        lib = mock.Mock()
+        lib.prctl.return_value = 0
+        with mock.patch.dict(os.environ, {"ZKR_SAME_PARENT": str(
+                os.getppid())}), mock.patch("ctypes.CDLL", return_value=lib):
+            sz.bind_parent()
+            self.assertNotIn("ZKR_SAME_PARENT", os.environ)
+
+    def test_pdeathsig_real_sigkill(self):
+        mark = os.path.join(self.tmp, "term")
+        child = textwrap.dedent("""\
+            import os, sys, signal, time
+            sys.path.insert(0, %r)
+            import same_zombie as sz
+            def h(*a):
+                open(%r, "w").write("term")
+                os._exit(0)
+            signal.signal(signal.SIGTERM, h)
+            os.environ["ZKR_SAME_PARENT"] = str(os.getppid())
+            sz.bind_parent()
+            print("ready", flush=True)
+            time.sleep(30)
+            """ % (HERE, mark))
+        parent = ("import subprocess, sys, time; p = subprocess.Popen("
+                  "[sys.executable, '-I', '-c', %r]); time.sleep(30)" % child)
+        pp = subprocess.Popen([sys.executable, "-I", "-c", parent])
+        try:
+            for _ in range(100):
+                kids = [int(x) for x in open("/proc/%d/task/%d/children"
+                                             % (pp.pid, pp.pid)).read().split()]
+                if kids:
+                    break
+                time.sleep(0.1)
+            time.sleep(1.0)                    # child reached bind_parent
+            pp.kill()
+            pp.wait()
+            for _ in range(50):
+                if os.path.exists(mark):
+                    break
+                time.sleep(0.1)
+            self.assertTrue(os.path.exists(mark))
+        finally:
+            for k in kids if "kids" in dir() else []:
+                try:
+                    os.kill(k, signal.SIGKILL)
+                except OSError:
+                    pass
+
+
+class T1009ProbeTest(Base):
+    """ALL_T1009 A9: the probe restores bora-same.slice."""
+
+    def _run(self, fake):
+        calls = []
+        with mock.patch.object(sz, "_launcher_probe", fake), \
+                mock.patch.object(sz, "sctl",
+                                  side_effect=lambda *a, **k: calls.append(a)):
+            try:
+                sz.launcher_probe()
+            except RuntimeError:
+                pass
+        return calls
+
+    def test_probe_restores_slice_on_every_exit(self):
+        def ret(st):
+            st["slice"] = True
+            return ("prlimit", [], "probe B")
+
+        def boom(st):
+            st["slice"] = True
+            raise RuntimeError("x")
+
+        def early(st):
+            return ("prlimit", [], "linger off")
+        want = ("set-property", "--runtime", "bora-same.slice",
+                "MemoryMax=infinity")
+        self.assertEqual(self._run(ret)[-1], want)
+        self.assertEqual(self._run(boom)[-1], want)
+        self.assertEqual(self._run(early), [])
+        import inspect
+        src = inspect.getsource(sz._launcher_probe)
+        self.assertLess(src.index('st["slice"] = True'),
+                        src.index("MemoryMax=1073741824"))
+        self.assertLess(src.index("MemoryMax=1073741824"),
+                        src.index("MemoryMax=2G"))
+
+    def test_kill_quiet_closes_stderr(self):
+        p = mock.Mock()
+        sz._kill_quiet(p)
+        p.stderr.close.assert_called_once()
+
+
+
+class T1009HourZeroTest(Base):
+    """ALL_T1009 A6: hour-0 checks in --check-start."""
+
+    def _sweep(self, lines, copy="tmp", hold=False):
+        p = getattr(sz.pair_names(sz.ARGS)[0], copy) + (".hold" if hold
+                                                        else "")
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w") as f:
+            f.write("".join(lines))
+        return p
+
+    @staticmethod
+    def _row(**kw):
+        r = {"regex_name": "u", "str_len": 1000, "zok_gen": rz.ZOK_GEN}
+        r.update(kw)
+        return json.dumps(r) + "\n"
+
+    def _cs(self, argv=("--sizes", "1000", "--server", "t1"), **patches):
+        a = sz.parse_args(list(argv))
+        sz.ARGS = a
+        ps = [mock.patch.object(sz, "oomd_check", return_value=None),
+              mock.patch.object(sz, "same_units_running", return_value=False),
+              mock.patch.object(sz, "launcher_probe",
+                                return_value=("prlimit", [], "x"))]
+        ps += [mock.patch.object(sz, k, **v) for k, v in patches.items()]
+        out = []
+        ps.append(mock.patch.object(sz, "say", side_effect=out.append))
+        for p in ps:
+            p.start()
+        try:
+            return sz.check_start_main(a), "\n".join(out)
+        finally:
+            for p in ps:
+                p.stop()
+
+    def test_check_start_refuses_old_zok_gen_sweep(self):
+        self._sweep([self._row(), self._row(zok_gen="fix11")])
+        rc, out = self._cs()
+        self.assertEqual(rc, 6)
+        self.assertIn("cannot resume", out)
+
+    def test_check_start_refuses_bad_middle_line_sweep(self):
+        self._sweep([self._row(), "{bad\n", self._row()])
+        self.assertIn("bad line", sz.sweep_refusal(sz.ARGS))
+
+    def test_check_start_torn_last_sweep_line_passes(self):
+        self._sweep([self._row(), '{"regex_name": "u", "str'])
+        with mock.patch.object(sz, "say"):
+            self.assertIsNone(sz.sweep_refusal(sz.ARGS))
+        rc, out = self._cs()
+        self.assertNotIn("sweep partial", out)
+
+    def test_check_start_reads_parked_hold_sweep(self):
+        self._sweep([self._row()])
+        self._sweep([self._row(), "{bad\n", self._row()], hold=True)
+        self.assertIn(".hold", sz.sweep_refusal(sz.ARGS))
+
+    def test_check_start_reads_docs_copy_too(self):
+        self._sweep([self._row()])
+        self._sweep([self._row(zok_gen="old")], copy="docs")
+        self.assertIn("cannot resume", sz.sweep_refusal(sz.ARGS))
+
+    def test_check_start_refuses_fx_mismatch(self):
+        rc, out = self._cs(fx_check={"return_value": "FX e-mail x differs"})
+        self.assertEqual(rc, 6)
+        self.assertIn("FX e-mail x differs", out)
+
+    def test_check_start_git_status_failure_refuses_when_needed(self):
+        rc, out = self._cs(("--sizes", "1000,2000", "--server", "t1",
+                            "--scalecal-min-cores", "1"),
+                           git_status={"return_value": None})
+        self.assertEqual(rc, 6)
+        self.assertIn("REFUSE: git status failed", out)
+
+    def test_check_start_git_status_failure_warns_1kb_only(self):
+        rc, out = self._cs(("--sizes", "1000", "--server", "t1",
+                            "--scalecal-min-cores", "1"),
+                           git_status={"return_value": None})
+        self.assertIn("WARNING: git status failed", out)
+        self.assertNotIn("REFUSE: git", out)
+
+    def test_check_start_refuses_without_nightly(self):
+        import download_zombie
+        with mock.patch.object(download_zombie, "have_rust_nightly",
+                               return_value=(False, "toolchain missing")):
+            rc, out = self._cs(circ_rebuild_needed={"return_value": True})
+            self.assertEqual(rc, 6)
+            self.assertIn("Rust nightly", out)
+            rc, out = self._cs(circ_rebuild_needed={"return_value": False})
+            self.assertNotIn("REFUSE", out)   # ALL_T1009: no rebuild, warn
+            self.assertIn("needs no rebuild", out)
+
+    def test_zero_slot_cores_refused(self):
+        sz.S["topo"] = {"nodes": {0: []}, "tpc": 1, "c_cores": 0}
+        rc, out = self._cs()
+        self.assertEqual(rc, 6)
+        self.assertIn("no slot cores", out)
+
+    def test_zero_slot_cores_cap0_passes(self):
+        sz.S["topo"] = {"nodes": {0: []}, "tpc": 1, "c_cores": 0}
+        sz.S["cap"] = 0
+        self.assertIsNone(sz.cores_refusal())
+
+    def test_check_start_refuses_on_selftest_assert(self):
+        rc, out = self._cs(selftest={"side_effect": AssertionError("moved")})
+        self.assertEqual(rc, 6)
+        self.assertIn("selftest failed: moved", out)
+
+    def test_scratch_view_refuse_warn_pass(self):
+        full = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+        dry = sz.parse_args(["--dry", "4", "--sizes", "1000", "--server",
+                             "t1"])
+        out = []
+        with mock.patch.object(sz, "jobs_fit", return_value=(8, 8, 10 ** 6)), \
+                mock.patch.object(sz, "say", side_effect=out.append):
+            for free, a, want_ref, want_warn in ((50, full, True, False),
+                                                 (200, full, False, True),
+                                                 (300, full, False, False),
+                                                 (200, dry, False, False),
+                                                 (50, dry, False, True)):
+                del out[:]
+                with mock.patch.object(sz, "scratch_free_gib",
+                                       return_value=(free, "/b")):
+                    txt, why = sz.host_views(a)
+                self.assertEqual(bool(why), want_ref, (free, a.dry))
+                self.assertEqual(any("scratch drive" in m for m in out),
+                                 want_warn, (free, a.dry))
+                self.assertIn("scratch=%dGiB(/b)" % free, txt)
+
+    def test_pids_limit_fake_cgroup_tree(self):
+        fs = {"/proc/self/cgroup": "0::/a/b",
+              "/sys/fs/cgroup/a/b/pids.max": "max",
+              "/sys/fs/cgroup/a/b/pids.current": "5",
+              "/sys/fs/cgroup/a/pids.max": "5000",
+              "/sys/fs/cgroup/a/pids.current": "1000"}
+        rd = lambda p, d="": fs.get(p, d)
+        with mock.patch.object(sz, "_read", rd), \
+                mock.patch.object(sz, "nproc_avail", return_value=None), \
+                mock.patch.object(sz.os, "sched_getaffinity",
+                                  return_value=set(range(128))):
+            self.assertEqual(sz.pids_avail(), 4000)
+            self.assertEqual(sz.jobs_fit(), (15, 64, 4000))
+            fs["/sys/fs/cgroup/a/pids.max"] = "1100"
+            self.assertEqual(sz.jobs_fit()[0], 0)
+            with mock.patch.object(sz, "scratch_free_gib",
+                                   return_value=(900, "/b")):
+                self.assertIn("too few", sz.host_views(sz.ARGS)[1])
+            for k in list(fs):
+                if k.endswith("pids.max"):
+                    fs[k] = "max"
+            self.assertEqual(sz.jobs_fit(), (64, 64, None))
+
+    def test_run_main_sets_jobs_cap(self):
+        class Stop(Exception):
+            pass
+        with mock.patch.object(sz, "jobs_fit", return_value=(5, 8, 99)), \
+                mock.patch.object(sz, "install_rz_hooks", side_effect=Stop), \
+                mock.patch.object(sz, "say"):
+            with self.assertRaises(Stop):
+                sz.run_main(sz.ARGS)
+        self.assertEqual(sz.S["jobs_cap"], 5)
+
+
+
+_RZ_HOOKED = ("shutil", "_time_one", "_load_partial", "_append_partial",
+              "_render_zkmb", "run_pipeline", "_as_cap", "_build_one",
+              "ThreadPoolExecutor", "_estimate", "_median_at",
+              "_cpu_max_jobs", "MIN_CPUS_PER_CIRC")
+
+
+class HookBase(Base):
+    """ALL_T1009: save and restore every rz attribute install_rz_hooks sets."""
+
+    def setUp(self):
+        super().setUp()
+        self.rz_saved = {k: getattr(rz, k) for k in _RZ_HOOKED}
+        self.orig_saved = dict(sz._ORIG)
+        self.addCleanup(self._restore)
+        for k in _RZ_HOOKED:                  # start from RZ's own functions
+            setattr(rz, k, _RZ_PRISTINE[k])
+        sz._ORIG.clear()
+
+    def _restore(self):
+        for k, v in self.rz_saved.items():
+            setattr(rz, k, v)
+        sz._ORIG.clear()
+        sz._ORIG.update(self.orig_saved)
+
+
+class T1009BuildLogTest(HookBase):
+    """ALL_T1009 B1, N1, N2, O2, m4."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(sz, "say", side_effect=self.out.append)
+        p.start()
+        self.addCleanup(p.stop)
+        self.seen = []
+        self.res = []
+
+        def stub(binp, idx, name, str_len, mem=None, timeout=0):
+            self.seen.append(mem)
+            return self.res.pop(0)
+        sz._ORIG["build"] = stub
+        sz._ORIG["as_cap"] = _RZ_PRISTINE["_as_cap"]
+
+    def test_rz_print_stamped_and_pd_regexes_match(self):
+        sz._rz_print("[run_zombie] docs/x.log : 24 results, 24 ok across x")
+        sz._rz_print("\n=== run_zombie r (sizes [1000]) ===")
+        self.assertRegex(self.out[0], r"^\[\d\d-\d\d \d\d:\d\d:\d\d\] \[run_z")
+        first, second = self.out[1].split("\n")
+        self.assertEqual(first, "")
+        self.assertRegex(second, r"^\[\d\d-\d\d \d\d:\d\d:\d\d\] ===")
+        pd = open(os.path.join(sz.REPO, "scripts", "PAPER_DATA.py")).read()
+        import re
+        pat = re.search(r'ZOMBIE_OK_RE = re\.compile\(r"([^"]*)"\)', pd).group(1)
+        m = re.search(pat, self.out[0])
+        self.assertEqual(m.groups(), ("24", "24"))
+
+    def test_build_wrapper_logs_each_attempt(self):
+        cap = int(15 * sz.GIB + sz.arena_room())
+        self.res = [{"status": "built", "peak_rss": 2 * sz.GIB, "as_cap": cap},
+                    {"status": "oom_or_killed", "peak_rss": 3 * sz.GIB,
+                     "as_cap": cap, "err": "killed"},
+                    {"status": "built", "as_cap": 1}]
+        for mem in (cap, cap, int(8 * sz.GIB + sz.arena_room())):
+            sz.build_one_wrapped("b", 0, "u", 2000, mem)
+        lines = [m for m in self.out if m.startswith("SAME build")]
+        self.assertEqual(len(lines), 3)
+        self.assertIn("-> built", lines[0])
+        self.assertIn("rss=2.0GiB res=10.0GiB", lines[0])
+        self.assertIn("res=<=5.3GiB", lines[2])
+        self.assertIn("-> oom_or_killed", lines[1])
+        self.assertIn("err=killed", lines[1])
+
+    def test_build_wrapper_none_fields_and_say_failure(self):
+        d = {"name": "u", "prox": 1, "dir": None, "status": "codegen_fail"}
+        self.res = [d, dict(d)]
+        self.assertIs(sz.build_one_wrapped("b", 0, "u", 1000, None), d)
+        self.assertIn("rss=- res=- cap=-", self.out[-1])
+        with mock.patch.object(sz, "say", side_effect=RuntimeError("io")):
+            r = sz.build_one_wrapped("b", 0, "u", 1000, None)
+        self.assertEqual(r["status"], "codegen_fail")
+
+    def test_batch_line_once_per_batch(self):
+        sz.S["cur_size"] = 4000
+        with sz.BatchTPE(max_workers=3):
+            self.assertEqual(sz.S["batch_n"], 3)
+        lines = [m for m in self.out if m.startswith("SAME batch")]
+        self.assertEqual(len(lines), 1)
+        self.assertIn("size=4000 jobs=3", lines[0])
+
+    def test_batch_n_cleared_on_exit(self):
+        with sz.BatchTPE(2):
+            self.assertEqual(sz.S["batch_n"], 2)
+        self.assertNotIn("batch_n", sz.S)
+
+    def _fail(self, mem, rss, err="ThreadPoolBuildError { kind: IOError(Os "
+              "{ code: 11, message: \"Resource temporarily unavailable\" }) "
+              "}', /r/rayon-core-1.9.3/src/registry.rs:170:10"):
+        return {"status": "build_fail", "peak_rss": rss, "as_cap": mem,
+                "err": "panicked: " + err}
+
+    def test_build_wrapper_strips_arena_from_as_cap(self):
+        mem = 20 * sz.GIB
+        self.res = [self._fail(mem, 30 * sz.GIB, err="plain")]
+        b = sz.build_one_wrapped("b", 0, "u", 1000, mem)
+        self.assertEqual(b["as_cap"], mem - sz.arena_room())
+
+    def test_arena_learn_on_thread_pool_error(self):
+        mem = 20 * sz.GIB
+        sz.S["batch_seq"] = 1
+        self.res = [self._fail(mem, sz.GIB), self._fail(mem, sz.GIB)]
+        sz.build_one_wrapped("b", 0, "u", 1000, mem)
+        self.assertEqual(sz.S["arena_b"], 132 * 2 ** 20)
+        sz.build_one_wrapped("b", 0, "u", 1000, mem)   # same batch: once
+        self.assertEqual(sz.S["arena_b"], 132 * 2 ** 20)
+        self.assertTrue(any("arena room raised to 132 MiB" in m
+                            for m in self.out))
+
+    def test_arena_not_raised_on_rss_overrun(self):
+        mem = 20 * sz.GIB
+        self.res = [self._fail(mem, 19 * sz.GIB,
+                               err="memory allocation of 9 bytes failed")]
+        sz.build_one_wrapped("b", 0, "u", 1000, mem)
+        self.assertNotIn("arena_b", sz.S)
+
+    def test_arena_raise_capped_at_264_mib(self):
+        mem = 60 * sz.GIB
+        for seq in range(1, 6):
+            sz.S["batch_seq"] = seq
+            self.res = [self._fail(mem, sz.GIB)]
+            sz.build_one_wrapped("b", 0, "u", 1000, mem)
+        self.assertEqual(sz.S["arena_b"], 264 * 2 ** 20)
+
+    def test_as_cap_arena_room(self):
+        g = sz.GIB
+        with mock.patch.object(sz.os, "sched_getaffinity",
+                               return_value=set(range(128))):
+            self.assertEqual(sz.as_cap_wrapped(2 * g, 865 * g),
+                             8 * g + 128 * 66 * 2 ** 20)
+            self.assertEqual(sz.as_cap_wrapped(100 * g, 865 * g),
+                             150 * g + 128 * 66 * 2 ** 20)
+            self.assertEqual(sz.as_cap_wrapped(800 * g, 865 * g), 865 * g)
+            self.assertIsNone(sz.as_cap_wrapped(2 * g, None))
+
+    def test_lone_batch_gets_full_mem(self):
+        sz.S["full_mem"] = 100 * sz.GIB
+        self.res = [{"status": "built", "as_cap": 1}]
+        with sz.BatchTPE(max_workers=1):
+            sz.build_one_wrapped("b", 0, "u", 4000, 5 * sz.GIB)
+        self.assertEqual(self.seen, [100 * sz.GIB])
+        self.assertIn(" lone", [m for m in self.out
+                                if m.startswith("SAME build")][0])
+
+    def test_multi_batch_keeps_rz_cap(self):
+        sz.S["full_mem"] = 100 * sz.GIB
+        self.res = [{"status": "built", "as_cap": 1}]
+        with sz.BatchTPE(max_workers=2):
+            sz.build_one_wrapped("b", 0, "u", 4000, 5 * sz.GIB)
+        self.assertEqual(self.seen, [5 * sz.GIB])
+
+    def test_sz_bus_executor_unaffected(self):
+        sz.install_rz_hooks()
+        self.assertIs(rz.ThreadPoolExecutor, sz.BatchTPE)
+        self.assertIsNot(sz.ThreadPoolExecutor, sz.BatchTPE)
+        del self.out[:]
+        with sz.ThreadPoolExecutor(max_workers=1):
+            pass
+        self.assertFalse(any(m.startswith("SAME batch") for m in self.out))
+
+    def test_executor_subclass_install_twice_single_line(self):
+        sz.install_rz_hooks()
+        sz.install_rz_hooks()
+        self.assertIs(rz.ThreadPoolExecutor, sz.BatchTPE)
+        del self.out[:]
+        with rz.ThreadPoolExecutor(max_workers=2):
+            pass
+        self.assertEqual(len([m for m in self.out
+                              if m.startswith("SAME batch")]), 1)
+
+    def test_install_rz_hooks_twice_no_recursion(self):
+        sz.install_rz_hooks()
+        sz.install_rz_hooks()
+        self.assertIs(sz._ORIG["as_cap"], _RZ_PRISTINE["_as_cap"])
+        self.assertIs(sz._ORIG["estimate"], _RZ_PRISTINE["_estimate"])
+        self.assertGreater(rz._as_cap(2 * sz.GIB, 100 * sz.GIB), 8 * sz.GIB)
+        self.assertEqual(rz._estimate("u", 2000, {}, 1, "peak_rss", 7),
+                         max(7, sz.rz_cold()))
+
+    def test_selftest_pins_after_hooks_installed(self):
+        sz.install_rz_hooks()
+        self.assertEqual(sz.selftest(), 0)
+
+
+@unittest.skipUnless(os.environ.get("ZKR_T1009_REAL_BIN"),
+                     "set ZKR_T1009_REAL_BIN to a circ_executable (real run)")
+class T1009ArenaRealTest(Base):
+    """ALL_T1009 N1, real: 128 rayon threads need the arena room."""
+
+    def test_as_cap_arena_real(self):
+        binp = os.environ["ZKR_T1009_REAL_BIN"]
+        rs = rz.RULESETS[0]
+        rz.FULL_DIR = os.path.join(sz.MS_DLP, rs)
+        name = os.environ.get("ZKR_T1009_UNIT",
+                              "sit-defn-japan-my-number-corporate")
+        cwd = os.getcwd()
+        os.chdir(sz.MS_DLP)
+        try:
+            zok, prox, cg = rz._codegen_zok(name, 1000)
+        finally:
+            os.chdir(cwd)
+        self.assertEqual(cg, "ok")
+        res = {}
+        env = dict(os.environ, RAYON_NUM_THREADS="128")
+        g = sz.GIB
+        with mock.patch.object(sz.os, "sched_getaffinity",
+                               return_value=set(range(128))), \
+                mock.patch.dict(sz._ORIG, {"as_cap": _RZ_PRISTINE["_as_cap"]}):
+            hooked = sz.as_cap_wrapped(0.4 * g, 865 * g)
+        for tag, cap in (("6g", 6 * g), ("hooked", hooked)):
+            d = os.path.join(self.tmp, "c_" + tag)
+            os.makedirs(os.path.join(d, "zkmb"))
+            os.makedirs(os.path.join(d, "keys"))
+            with open(os.path.join(d, "zkmb", "policy1000.zok"), "w") as f:
+                f.write(zok)
+            os.symlink(os.path.join(os.path.dirname(os.path.dirname(
+                os.path.dirname(binp))), "third_party", "ZoKrates"),
+                os.path.join(d, "ZoKrates"))
+            cmd = ["prlimit", "--as=%d" % cap, binp, "policy_1000", "true",
+                   "prover"]
+            r = subprocess.run(cmd, cwd=d, env=env, capture_output=True,
+                               text=True, timeout=600)
+            res[tag] = (r.returncode, r.stderr[-300:])   # what RZ keeps
+            print("ALL_T1009 arena real: cap %.2f GiB rc %d" % (
+                cap / g, r.returncode), flush=True)
+        self.assertNotEqual(res["6g"][0], 0)
+        self.assertTrue(sz.arena_failure(res["6g"][1]), res["6g"][1])
+        self.assertEqual(res["hooked"][0], 0, res["hooked"][1])
+
+
+
+def _rec(name, size, rss, status="ok", vkey="peak_rss"):
+    return {"%s|%d" % (name, size): {"regex_name": name, "str_len": size,
+                                     "status": status, vkey: rss}}
+
+
+class T1009EstimateTest(HookBase):
+    """ALL_T1009 B2, N3, B3."""
+
+    def setUp(self):
+        super().setUp()
+        sz._ORIG["estimate"] = _RZ_PRISTINE["_estimate"]
+        sz._ORIG["median_at"] = _RZ_PRISTINE["_median_at"]
+        self.g = sz.GIB
+
+    def est(self, name, size, done, vkey="peak_rss"):
+        return sz.estimate_wrapped(name, size, done, 1, vkey, 7)
+
+    def rz_est(self, name, size, done, vkey="peak_rss"):
+        return _RZ_PRISTINE["_estimate"](name, size, done, 1, vkey, 7)
+
+    def _pairs(self, ratios, a=1000, b=2000, vkey="peak_rss"):
+        done = {}
+        for i, q in enumerate(ratios):
+            done.update(_rec("p%d" % i, a, 2 * self.g, vkey=vkey))
+            done.update(_rec("p%d" % i, b, int(q * 2 * self.g), vkey=vkey))
+        return done
+
+    def test_estimate_first_doubling_default(self):
+        done = _rec("u", 1000, 2 * self.g)
+        self.assertAlmostEqual(self.est("u", 2000, done) / self.g, 10.0, 6)
+        self.assertGreater(self.est("u", 2000, done),
+                           self.rz_est("u", 2000, done))
+
+    def test_estimate_uses_measured_median(self):
+        done = self._pairs([4, 4, 4])
+        done.update(_rec("u", 1000, 3 * self.g))
+        self.assertEqual(self.est("u", 2000, done), 12 * self.g)
+
+    def test_estimate_4kb_uses_1to2_ratio_before_any_4kb(self):
+        done = self._pairs([4, 4, 4])
+        done.update(_rec("t", 2000, 5 * self.g))
+        self.assertEqual(self.est("t", 4000, done), 20 * self.g)
+
+    def test_estimate_never_below_rz(self):
+        done = _rec("u", 1000, 2 * self.g)
+        done.update(_rec("u", 2000, 3 * self.g))
+        self.assertEqual(self.est("u", 4000, done),
+                         self.rz_est("u", 4000, done))
+
+    def test_estimate_same_size_unchanged_cold_is_rz_own(self):
+        done = _rec("u", 2000, 9 * self.g)
+        self.assertEqual(self.est("u", 2000, done), 9 * self.g)
+        self.assertEqual(self.est("v", 1000, done), max(7, sz.rz_cold()))
+
+    def test_estimate_key_bytes_linear_until_3_pairs(self):
+        done = self._pairs([4, 4], vkey="key_bytes")
+        done.update(_rec("u", 1000, self.g, vkey="key_bytes"))
+        self.assertEqual(self.est("u", 2000, done, "key_bytes"), 2 * self.g)
+        done.update(self._pairs([4, 4, 4], vkey="key_bytes"))
+        sz.S.pop("k_memo", None)
+        self.assertEqual(self.est("u", 2000, done, "key_bytes"), 4 * self.g)
+
+    def test_estimate_own_ratio_wins(self):
+        done = self._pairs([3.4, 3.5])
+        done.update(_rec("r", 1000, 2 * self.g))
+        done.update(_rec("r", 2000, int(4.6 * 2 * self.g)))
+        got = self.est("r", 4000, done)
+        self.assertAlmostEqual(got / (4.6 * 2 * self.g), 4.6, places=3)
+
+    def test_estimate_pooled_uses_p75(self):
+        done = self._pairs([3.0, 3.2, 4.0, 5.0])
+        done.update(_rec("u", 1000, self.g))
+        self.assertAlmostEqual(self.est("u", 2000, done) / self.g, 4.0,
+                               places=3)
+
+    def test_estimate_own_ratio_clamped(self):
+        done = _rec("r", 1000, self.g)
+        done.update(_rec("r", 2000, 20 * self.g))
+        self.assertEqual(self.est("r", 4000, done), 160 * self.g)
+
+    def test_estimate_memo_keyed_on_done_id(self):
+        d1, d2 = self._pairs([4, 4, 4]), self._pairs([3, 3, 3])
+        d1.update(_rec("u", 1000, self.g))
+        d2.update(_rec("u", 1000, self.g))
+        self.assertNotEqual(self.est("u", 2000, d1), self.est("u", 2000, d2))
+
+    def test_median_at_peak_rss_p90(self):
+        done = {}
+        for i in range(1, 11):
+            done.update(_rec("u%d" % i, 1000, i))
+        self.assertEqual(sz.median_at_wrapped(done, 1000, "peak_rss"), 9)
+
+    def test_median_at_one_and_two_values(self):
+        self.assertEqual(sz.median_at_wrapped(_rec("a", 1000, 5), 1000,
+                                              "peak_rss"), 5)
+        done = _rec("a", 1000, 3)
+        done.update(_rec("b", 1000, 7))
+        self.assertEqual(sz.median_at_wrapped(done, 1000, "peak_rss"), 7)
+        self.assertIsNone(sz.median_at_wrapped({}, 1000, "peak_rss"))
+
+    def test_median_at_key_bytes_unchanged(self):
+        done = self._pairs([3, 4, 5], vkey="key_bytes")
+        self.assertEqual(sz.median_at_wrapped(done, 2000, "key_bytes"),
+                         _RZ_PRISTINE["_median_at"](done, 2000, "key_bytes"))
+
+    def test_cpu_max_jobs_affinity_min2(self):
+        sz.install_rz_hooks()
+        self.assertIs(rz._cpu_max_jobs, sz.cpu_max_jobs)
+        for n, want in ((16, 8), (128, 64), (1, 1)):
+            with mock.patch.object(sz.os, "sched_getaffinity",
+                                   return_value=set(range(n))):
+                self.assertEqual(rz._cpu_max_jobs(), want)
+
+    def test_cpu_max_jobs_honors_jobs_cap(self):
+        sz.install_rz_hooks()
+        sz.S["jobs_cap"] = 5
+        with mock.patch.object(sz.os, "sched_getaffinity",
+                               return_value=set(range(128))):
+            self.assertEqual(rz._cpu_max_jobs(), 5)
+
+    def test_cpu_max_jobs_harness_override_kept(self):
+        rz._cpu_max_jobs = lambda: 3
+        sz.install_rz_hooks()
+        self.assertEqual(rz._cpu_max_jobs(), 3)
+
+
+class T1009PipelineGrowthTest(HookBase):
+    """ALL_T1009 B2+N1 through rz.run_pipeline: no resource retry."""
+
+    def _run(self, hooked):
+        stub = os.path.join(self.tmp, "circ_stub")
+        with open(stub, "w") as f:
+            f.write(STUB)
+        os.chmod(stub, 0o755)
+        full = os.path.join(self.tmp, "rules")
+        os.makedirs(full, exist_ok=True)
+        names = ["u1", "u2", "u3"]
+        for u in names:
+            open(os.path.join(full, u + ".regex"), "w").write(
+                "(a.{0,10}(b))|((b).{0,10}a)")
+        g = sz.GIB
+        calls = []
+
+        def build(binp, idx, name, str_len, mem=None, timeout=0):
+            calls.append(name)
+            true_rss = int(4.5 * 6 * g)
+            d = os.path.join(rz.PAR_ROOT, "c%05d" % idx)
+            os.makedirs(d, exist_ok=True)
+            if mem and true_rss > mem - sz.arena_room():
+                return {"name": name, "prox": 10, "dir": d, "status":
+                        "oom_or_killed", "peak_rss": mem, "as_cap": mem}
+            return {"name": name, "prox": 10, "dir": d, "status": "built",
+                    "peak_rss": true_rss, "key_bytes": 1, "as_cap": mem}
+        done = {}
+        for u in names:
+            done.update(_rec(u, 1000, 6 * g))
+        rz.FULL_DIR, rz.PAR_ROOT = full, os.path.join(self.tmp, "par")
+        rz.PARTIAL = os.path.join(self.tmp, "rz.jsonl")
+        rz.PARTIAL_DOCS = os.path.join(self.tmp, "rzd.jsonl")
+        rz._build_one = build
+        sz.S["binp"] = stub
+        sz.S["bus"] = None
+        sz.install_rz_hooks()
+        if not hooked:
+            rz._estimate = _RZ_PRISTINE["_estimate"]
+        saved = {k: getattr(rz, k) for k in ("FULL_DIR", "PAR_ROOT",
+                                             "PARTIAL", "PARTIAL_DOCS")}
+        try:
+            with mock.patch.object(sz, "say"):
+                res = rz.run_pipeline(stub, 2000, names, done)
+        finally:
+            for k, v in saved.items():
+                setattr(rz, k, v)
+        return calls, res
+
+    def test_pipeline_growth_no_resource_retry(self):
+        calls, res = self._run(True)
+        self.assertEqual(sorted(calls), ["u1", "u2", "u3"])
+        self.assertEqual([r["status"] for r in res], ["ok"] * 3)
+        calls, res = self._run(False)
+        self.assertEqual(len(calls), 6)          # RZ's linear estimate retries
+        self.assertEqual([r["status"] for r in res], ["ok"] * 3)
+
+
+
+class T1009FixRoundTest(HookBase):
+    """ALL_T1009 fix round 1 (code reviews A and B)."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(sz, "say", side_effect=self.out.append)
+        p.start()
+        self.addCleanup(p.stop)
+        sz._ORIG["as_cap"] = _RZ_PRISTINE["_as_cap"]
+        sz._ORIG["estimate"] = _RZ_PRISTINE["_estimate"]
+        sz._ORIG["median_at"] = _RZ_PRISTINE["_median_at"]
+        self.g = sz.GIB
+
+    def _build(self, res, mem):
+        sz._ORIG["build"] = lambda *a, **k: res
+        return sz.build_one_wrapped("b", 0, "u", 1000, mem)
+
+    def test_check_start_lock_wait_bounded(self):
+        self.assertEqual(sz.CHECK_LOCK_WAIT_S, 120)
+        a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+        with mock.patch.object(sz, "driver_guard", return_value="held") as dg:
+            self.assertEqual(sz.check_start_main(a), 6)
+        dg.assert_called_once_with(120)
+
+    def test_lock_wait_lines_rate_limited(self):
+        name = "sz_t1009w_%d" % os.getpid()
+        k = _hold_lock(name, secs=2)
+        lines = []
+        try:
+            with mock.patch.object(sz, "DRIVER_LOCK", name), \
+                    mock.patch.dict(sz._LOCK, {}, clear=True), \
+                    mock.patch.object(sz, "LOCK_POLL_S", 0.1), \
+                    mock.patch.object(sz, "LOCK_LOG_S", 0.5), \
+                    mock.patch("builtins.print",
+                               side_effect=lambda *a, **kw: lines.append(a[0])):
+                self.assertIsNone(sz.driver_lock(10))
+                sz._LOCK.pop("sock").close()
+        finally:
+            k.kill()
+            k.wait()
+        self.assertTrue(lines)
+        self.assertTrue(all(x.startswith("SAME wait lock") for x in lines))
+        self.assertLessEqual(len(lines), 5)
+
+    def test_arena_plain_alloc_not_learned(self):
+        """Review A2: a plain 20 GiB realloc failure is not an arena miss."""
+        mem = int(30 * self.g + sz.arena_room())
+        self._build({"status": "oom_or_killed", "peak_rss": 20 * self.g,
+                     "as_cap": mem, "err": "memory allocation of "
+                     "21474836480 bytes failed"}, mem)
+        self.assertNotIn("arena_b", sz.S)
+
+    def test_arena_not_raised_when_tasks_short(self):
+        mem = int(30 * self.g + sz.arena_room())
+        err = ("ThreadPoolBuildError Resource temporarily unavailable "
+               "/r/rayon-core-1.9.3/src/registry.rs")
+        with mock.patch.object(sz, "tasks_short", return_value=True):
+            self._build({"status": "build_fail", "peak_rss": self.g,
+                         "as_cap": mem, "err": err}, mem)
+        self.assertNotIn("arena_b", sz.S)
+        with mock.patch.object(sz, "tasks_free", return_value=100), \
+                mock.patch.object(sz.os, "sched_getaffinity",
+                                  return_value=set(range(128))):
+            sz.S["batch_n"] = 2
+            self.assertTrue(sz.tasks_short())
+        with mock.patch.object(sz, "tasks_free", return_value=None):
+            self.assertFalse(sz.tasks_short())
+
+    def test_arena_raise_locked_threads(self):
+        mem = int(30 * self.g + sz.arena_room())
+        err = ("ThreadPoolBuildError Resource temporarily unavailable "
+               "/r/rayon-core-1.9.3/src/registry.rs")
+        sz.S["batch_seq"] = 7
+        res = {"status": "build_fail", "peak_rss": self.g, "as_cap": mem,
+               "err": err}
+        sz._ORIG["build"] = lambda *a, **k: dict(res)
+        with mock.patch.object(sz, "tasks_short", return_value=False):
+            ts = [threading.Thread(target=sz.build_one_wrapped,
+                                   args=("b", i, "u", 1000, mem))
+                  for i in range(8)]
+            for t in ts:
+                t.start()
+            for t in ts:
+                t.join()
+        self.assertEqual(sz.S["arena_b"], 132 * 2 ** 20)
+
+    def test_cold_estimate_not_below_rz_own(self):
+        """Review A5: the first-batch 1 KB cap stays at least 38 GiB."""
+        g = self.g
+        with mock.patch.object(rz, "_ram_budget_bytes",
+                               return_value=int(0.85 * 961 * g)), \
+                mock.patch.object(sz.os, "cpu_count", return_value=128), \
+                mock.patch.object(sz.os, "sched_getaffinity",
+                                  return_value=set(range(128))):
+            b3_cold = int(0.85 * 961 * g / 64)
+            e = sz.estimate_wrapped("u", 1000, {}, 1, "peak_rss", b3_cold)
+            self.assertAlmostEqual(e / g, 0.85 * 961 / 32, places=2)
+            self.assertGreaterEqual(_RZ_PRISTINE["_as_cap"](e, 865 * g),
+                                    38 * g)
+            self.assertGreaterEqual(sz.as_cap_wrapped(e, 865 * g), 46 * g)
+            done = _rec("m", 1000, 2 * g)    # a measured median: RZ's own
+            self.assertEqual(sz.estimate_wrapped("u", 1000, done, 1,
+                                                 "peak_rss", 2 * g), 2 * g)
+
+    def test_res_uses_room_at_cap_time(self):
+        mem = int(15 * self.g + 2 * self.g)
+        sz.S["cap_room"] = 2 * self.g
+        sz.S["arena_b"] = 264 * 2 ** 20       # a later raise: not this cap
+        self._build({"status": "built", "peak_rss": self.g, "as_cap": mem}, mem)
+        self.assertIn("res=10.0GiB", [m for m in self.out
+                                      if m.startswith("SAME build")][0])
+
+    def test_live_python_ancestor_unreadable_spares(self):
+        tree = {10: ("S", 9)}
+        with mock.patch.object(sz, "_stat_of", tree.get):
+            self.assertTrue(sz._live_python_ancestor(10))
+
+    def test_jobs_fit_honors_nproc(self):
+        with mock.patch.object(sz, "pids_avail", return_value=None), \
+                mock.patch.object(sz, "nproc_avail", return_value=4000), \
+                mock.patch.object(sz.os, "sched_getaffinity",
+                                  return_value=set(range(128))):
+            self.assertEqual(sz.jobs_fit(), (15, 64, 4000))
+        self.assertEqual(sz.PIDS_SLACK, 2000)
+
+    def test_nproc_avail_counts_uid_threads(self):
+        import resource
+        with mock.patch.object(resource, "getrlimit",
+                               return_value=(10 ** 6, resource.RLIM_INFINITY)):
+            v = sz.nproc_avail()
+        self.assertTrue(0 < v < 10 ** 6)
+        with mock.patch.object(resource, "getrlimit", return_value=(
+                resource.RLIM_INFINITY, resource.RLIM_INFINITY)):
+            self.assertIsNone(sz.nproc_avail())
+
+    def test_circ_rebuild_needed_rules(self):
+        d = os.path.join(self.tmp, "cb")
+        os.makedirs(os.path.join(d, "src"))
+        orig = open(os.path.join(sz.ZOMBIE_TREE, "circ", "src",
+                                 "zkmb.rs")).read()
+        a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+        sz._ORIG["render"] = _RZ_PRISTINE["_render_zkmb"]
+        with mock.patch.object(rz, "CIRC_BIN", os.path.join(d, "bin")), \
+                mock.patch.object(rz, "BUILD_RS", os.path.join(d, "src",
+                                                               "zkmb.rs")), \
+                mock.patch.object(rz, "BUILD_RS_ORIG", os.path.join(
+                    d, "src", "zkmb.rs.orig")):
+            self.assertTrue(sz.circ_rebuild_needed(a))
+            open(rz.CIRC_BIN, "w").close()
+            open(rz.BUILD_RS_ORIG, "w").write(orig)
+            open(rz.BUILD_RS, "w").write(sz.render_wrapped(orig, rz.VEC_SIZE))
+            self.assertFalse(sz.circ_rebuild_needed(a))
+            open(rz.BUILD_RS, "a").write("// edited\n")
+            self.assertTrue(sz.circ_rebuild_needed(a))
+
+    def test_git_safe_dir_skipped_on_old_git(self):
+        seen = []
+        with mock.patch.object(sz, "GIT_SAFE_OK", False), \
+                mock.patch.object(sz.subprocess, "run",
+                                  lambda cmd, **k: seen.append(cmd) or
+                                  mock.Mock(returncode=0, stdout="")):
+            sz.git("status")
+        self.assertEqual(seen[0][:3], ["git", "-C", sz.REPO])
+
+    def test_scratch_refusal_names_leftover(self):
+        base = os.path.join(self.tmp, "bora_zombie_scratch")
+        os.makedirs(base)
+        a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+        with mock.patch.object(sz, "scratch_free_gib",
+                               return_value=(40, base)), \
+                mock.patch.object(sz, "jobs_fit", return_value=(8, 8, 9999)):
+            txt, why = sz.host_views(a)
+        self.assertIn("leftover", why)
+        self.assertIn("60 GiB", why)
+        self.assertIn("scratch=40GiB", txt)
+
+    def test_slice_reset_at_exit(self):
+        sz.S["launcher"] = "systemd"
+        calls = []
+        with mock.patch.object(sz, "run_main", return_value=0), \
+                mock.patch.object(sz, "driver_guard", return_value=None), \
+                mock.patch.object(sz, "sctl",
+                                  side_effect=lambda *a, **k: calls.append(a)):
+            _main_quiet(["--sizes", "1000", "--n", "2", "--server", "t1"])
+        self.assertIn(("set-property", "--runtime", "bora-same.slice",
+                       "MemoryMax=infinity"), calls)
+
+    def test_batch_exit_syncs_after_builds(self):
+        """Review A4: one os.sync after every keygen of a batch returned."""
+        order = []
+        with mock.patch.object(sz.os, "sync",
+                               side_effect=lambda: order.append("sync")):
+            with sz.BatchTPE(max_workers=2) as ex:
+                fs = [ex.submit(lambda i=i: (time.sleep(0.2),
+                                             order.append("build"))[1])
+                      for i in range(2)]
+            self.assertEqual(order, ["build", "build", "sync"])
+            del order[:]
+            try:
+                with sz.BatchTPE(max_workers=1):
+                    raise RuntimeError("x")
+            except RuntimeError:
+                pass
+        self.assertEqual(order, [])
+        self.assertTrue(any(m.startswith("SAME sync") for m in self.out))
+        self.assertTrue(all(f.done() for f in fs))
 
 
 if __name__ == "__main__":

@@ -246,6 +246,58 @@ def install_run_apt_deps():
         print("  " + _RUN_TOOLS_WARN)
 
 
+# ALL_T1009: Linger keeps the user manager past logout; warn-only, --skip-linger
+_LINGER_WARN = ""
+
+
+def _linger_user():
+    import pwd
+    if os.geteuid() == 0 and os.environ.get("SUDO_USER"):
+        return os.environ["SUDO_USER"]
+    return pwd.getpwuid(os.getuid()).pw_name
+
+
+def linger_on(user):
+    try:
+        r = subprocess.run(["loginctl", "show-user", user, "-p", "Linger"],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "Linger=yes" in r.stdout
+
+
+def enable_linger():
+    """ALL_T1009: sudo -n loginctl enable-linger; success = probe after."""
+    global _LINGER_WARN, _LINGER_DONE
+    if _SKIP_LINGER or _LINGER_DONE:          # ALL_T1009: once per INSTALL run
+        return
+    _LINGER_DONE = True
+    user = _linger_user()
+    if linger_on(user):
+        print("  linger already on for %s" % user)
+        return
+    rc = 127
+    for argv in ([["loginctl", "--no-ask-password", "enable-linger",
+                   user]]                     # ALL_T1009: plain, no prompt
+                 + ([] if os.geteuid() == 0 else
+                    [["sudo", "-n", "loginctl", "enable-linger", user]])):
+        print("  $ " + " ".join(argv))
+        try:
+            rc = subprocess.run(argv, timeout=60).returncode
+        except (OSError, subprocess.TimeoutExpired) as e:
+            print("  (%s)" % e)
+            rc = 127
+        if linger_on(user):
+            return
+    if not linger_on(user):
+        _LINGER_WARN = (
+            "WARN: could not enable Linger for %s (rc %d). PAPER_DATA.py "
+            "will warn and run without a user scope, so a desktop launch "
+            "ends at logout. Enable it by hand (loginctl enable-linger %s), "
+            "or pass --skip-linger to silence this." % (user, rc, user))
+        print("  " + _LINGER_WARN)
+
+
 # pip-install gdown (Ubuntu 24 is PEP-668 managed -> retry w/ override).
 # NO LIVE CALLER: gdown backed only gdrive_download, which has no live
 # caller either (see its comment).  Kept so re-enabling a retired Drive
@@ -325,6 +377,7 @@ def install_toolchain(with_zombie=False):
     install_apt_deps()
     if not _SKIP_RUN_TOOLS:
         install_run_apt_deps()
+    enable_linger()                           # ALL_T1009: warn-only
     install_rust()
     if with_zombie:
         print("=== zombie baseline build deps (rust %s) ==="
@@ -440,6 +493,7 @@ def have_zombie_rust():
 # probed and installed only when that baseline is actually being set up.
 def ensure_toolchain(selected=()):
     want_z = "zombie" in selected
+    enable_linger()                           # ALL_T1009: warn-only
     ok_apt, ok_rust = apt_tools_present(), have_rust()
     ok_run = (True if (_SKIP_RUN_TOOLS or _RUN_TOOLS_WARN)
               else run_tools_present())
@@ -658,6 +712,8 @@ _SKIP_REEF_BUILD = False
 _FORCE_ZOMBIE = False
 _BUILD_ZOMBIE = False
 _SKIP_RUN_TOOLS = False
+_SKIP_LINGER = False                          # ALL_T1009: --skip-linger
+_LINGER_DONE = False
 
 
 def sha256_file(path):
@@ -1666,11 +1722,16 @@ def main():
                          "already installed them, or without sudo. "
                          "Without numactl a two-socket machine runs "
                          "PAPER_DATA.py as one unpinned process")
+    ap.add_argument("--skip-linger", action="store_true",
+                    help="do not run `sudo -n loginctl enable-linger $USER` "
+                         "(ALL_T1009). Without Linger PAPER_DATA.py warns, "
+                         "and a desktop launch ends at logout")
     args = ap.parse_args()
 
     global _VERIFY_ALL, _SKIP_REEF_BUILD, _FORCE_ZOMBIE, _BUILD_ZOMBIE
-    global _SKIP_RUN_TOOLS
+    global _SKIP_RUN_TOOLS, _SKIP_LINGER
     _SKIP_RUN_TOOLS = args.skip_run_tools
+    _SKIP_LINGER = args.skip_linger
     _VERIFY_ALL = args.verify_download
     _SKIP_REEF_BUILD = args.skip_reef_build
     _BUILD_ZOMBIE = args.build_zombie
@@ -1732,6 +1793,8 @@ def main():
     print("INSTALL complete: %s" % ", ".join(selected))
     if _RUN_TOOLS_WARN:
         print(_RUN_TOOLS_WARN)
+    if _LINGER_WARN:                          # ALL_T1009
+        print(_LINGER_WARN)
 
 
 if __name__ == "__main__":

@@ -2122,10 +2122,27 @@ STAMP_LISTS = {
 }   # zombie_timing validity is owned by same_zombie.py alone
 
 
+def _git_version():
+    try:
+        out = subprocess.run(["git", "--version"], capture_output=True,
+                             text=True, timeout=30).stdout
+        return tuple(int(x) for x in re.findall(r"(\d+)\.(\d+)", out)[0])
+    except (OSError, subprocess.TimeoutExpired, IndexError, ValueError):
+        return (0, 0)
+
+
+_GIT_SAFE_OK = _git_version() >= (2, 38)   # ALL_T1009: -c safe.directory needs it
+
+
+def _git_safe(repo):
+    return ["-c", "safe.directory=" + repo] if _GIT_SAFE_OK else []
+
+
 def _git(args, repo=None):
     """(rc, stdout) of `git -C repo args`; rc 127 when git is missing."""
     try:
-        p = subprocess.run(["git", "-C", repo or REPO] + list(args),
+        p = subprocess.run(["git"] + _git_safe(repo or REPO)
+                           + ["-C", repo or REPO] + list(args),
                            capture_output=True, text=True, timeout=120)
     except (OSError, subprocess.TimeoutExpired) as e:
         return 127, str(e)
@@ -3416,8 +3433,12 @@ ZOMBIE_PARTIAL_NAME = ZOMBIE_LOG_NAME[:-len(".log")] + ".partial.jsonl"
 # The two copies run_zombie writes in lockstep (:692).  Order matters:
 # _load_partial (:678) reads the /tmp primary when non-empty and only
 # then the docs mirror, so this tuple is in preference order.
+# ALL_T1009: follow same_zombie's test redirect of its /tmp paths (C1)
+ZOMBIE_TMP_ROOT = os.environ.get("ZKR_ZOMBIE_TMP_ROOT")
+_ZOMBIE_RUN = (os.path.join(os.path.abspath(ZOMBIE_TMP_ROOT), "run")
+               if ZOMBIE_TMP_ROOT else "/tmp/bora_zombie_run")
 ZOMBIE_PARTIALS = (
-    os.path.join("/tmp/bora_zombie_run", ZOMBIE_PARTIAL_NAME),
+    os.path.join(_ZOMBIE_RUN, ZOMBIE_PARTIAL_NAME),
     os.path.join(MS_DLP_DIR, "docs", ZOMBIE_PARTIAL_NAME),
 )
 # Suffix the real partial wears while a dry leaf borrows its path.  Its
@@ -3555,7 +3576,38 @@ def zombie_out_name(name, mode):
     return root + ".dry" + ext
 
 
-ZOMBIE_TMP_DIR = "/tmp/bora_zombie_run"   # run_zombie PARTIAL_DIR
+ZOMBIE_TMP_DIR = _ZOMBIE_RUN   # run_zombie PARTIAL_DIR (ALL_T1009: or C1's)
+# ALL_T1009: same_zombie's driver lock (abstract socket), read only here
+ZOMBIE_DRIVER_LOCK = "bora_zombie_driver_%d" % os.getuid()
+ZOMBIE_LOCK_WAIT_S = 1800
+ZOMBIE_LOCK_POLL_S = 10
+
+
+def zombie_lock_held():
+    """ALL_T1009: is a Zombie driver running (its socket in /proc/net/unix)?"""
+    try:
+        with open("/proc/net/unix") as f:
+            return any(ln.split()[-1] == "@" + ZOMBIE_DRIVER_LOCK for ln in f
+                       if len(ln.split()) >= 8)
+    except OSError:
+        return False
+
+
+def zombie_lock_wait():
+    """ALL_T1009: wait for a running driver to end; None or a refusal."""
+    t0 = t_log = time.time()
+    while zombie_lock_held():
+        now = time.time()
+        if now - t0 >= ZOMBIE_LOCK_WAIT_S:
+            return ("another Zombie driver holds @%s after %d s; the resume "
+                    "partials were left untouched" % (ZOMBIE_DRIVER_LOCK,
+                                                      ZOMBIE_LOCK_WAIT_S))
+        if now - t_log >= 600:
+            t_log = now
+            log("zombie: waiting for another Zombie driver (%.0f s)" % (
+                now - t0))
+        time.sleep(ZOMBIE_LOCK_POLL_S)
+    return None
 
 
 def _partial_pair_rows(name):
@@ -3771,6 +3823,60 @@ def same_oomd_refusal():
     return m.oomd_check(repair=False)
 
 
+# ALL_T1009 A5: Linger and logind never block the one command
+_LOGOUT = {}
+
+
+def logout_note():
+    """ALL_T1009: banner text, honest about the logout risk."""
+    return _LOGOUT.get("note") or "survives logout; no nohup needed"
+
+
+def linger_state():
+    """ALL_T1009: True/False from loginctl, else the linger file; None."""
+    try:
+        r = subprocess.run(["loginctl", "show-user", str(os.getuid()), "-p",
+                            "Linger"], capture_output=True, text=True,
+                           timeout=30)
+        if r.returncode == 0 and "Linger=" in r.stdout:
+            return "Linger=yes" in r.stdout
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        import pwd
+        return os.path.exists("/var/lib/systemd/linger/"
+                              + pwd.getpwuid(os.getuid()).pw_name)
+    except (ImportError, KeyError):
+        return None
+
+
+def _logind_prop(name):
+    try:
+        r = subprocess.run(["busctl", "get-property", "org.freedesktop.login1",
+                            "/org/freedesktop/login1",
+                            "org.freedesktop.login1.Manager", name],
+                           capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return r.stdout.split() if r.returncode == 0 else None
+
+
+def kill_user_applies():
+    """ALL_T1009: logind ends our session at logout? None when unknown."""
+    kup = _logind_prop("KillUserProcesses")
+    if not kup or kup[0] != "b" or len(kup) < 2:
+        return None
+    if kup[1] != "true":
+        return False
+    import pwd
+    user = pwd.getpwuid(os.getuid()).pw_name
+    names = lambda v: [x.strip('"') for x in (v or [])[2:]]
+    if user in names(_logind_prop("KillExcludeUsers")):
+        return False
+    only = names(_logind_prop("KillOnlyUsers"))
+    return not only or user in only
+
+
 def ensure_same_scope(plan, argv):
     """DLP_T1001: dry/full plans with zombie need a scope that passes
     same_zombie's oomd_check.  Returns None to go on, or a refusal;
@@ -3785,14 +3891,51 @@ def ensure_same_scope(plan, argv):
         why = same_oomd_refusal()
     except Exception as e:
         why = "oomd check failed to run: %r" % e
+    cg = open("/proc/self/cgroup").read().strip().split("::")[-1]
+    linger, kill = linger_state(), kill_user_applies()   # ALL_T1009: hour 0
+    logind = False
+    log("scope check: linger=%s kill_user=%s cgroup=%s" % (linger, kill, cg))
+    session = re.search(r"/session-[^/]+\.scope$", cg) is not None
     if why is None:
         if unit:
-            log("re-launched inside scope %s (%s)" % (unit, open(
-                "/proc/self/cgroup").read().strip().split("::")[-1]))
-        return None
-    if unit:                     # already re-exec'd once: never loop
+            log("re-launched inside scope %s (%s)" % (unit, cg))
+            return None
+        if not (kill and session):
+            return None
+        if linger is False:                   # ALL_T1009: warn, never refuse
+            _LOGOUT["note"] = ("ends when your last login session closes: "
+                               "logind KillUserProcesses is on, Linger off")
+            log("WARNING: logind KillUserProcesses is on and Linger is off, "
+                "so this run ends when your last login session closes")
+            return None
+        why = "logind KillUserProcesses ends this session scope at logout"
+        logind = True                 # ALL_T1009: a failed probe only warns
+    elif unit:                   # already re-exec'd once: never loop
         return ("REFUSED: scope %s still fails the oomd check (%s). Run "
                 "by hand: %s" % (unit, why, manual))
+    elif linger is False:        # ALL_T1009: no user scope; omit our own unit
+        own = os.path.basename(cg)
+        try:
+            subprocess.run(["systemctl", "--user", "set-property", "--runtime",
+                            own, "ManagedOOMPreference=omit"],
+                           capture_output=True, text=True, timeout=60)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        try:
+            why2 = same_oomd_refusal()
+        except Exception as e:
+            why2 = "oomd check failed to run: %r" % e
+        if why2 is None:
+            _LOGOUT["note"] = ("ends when your last login session closes: "
+                               "Linger is off")
+            log("WARNING: Linger is off, so no scope re-exec; set the oomd "
+                "omit on your own launch scope %s (the terminal or app scope "
+                "you started from). This run ends when your last login "
+                "session closes." % own)
+            return None
+        return ("REFUSED: %s. Linger is off, so there is no scope re-exec, "
+                "and setting the oomd omit on %s did not help. Run `loginctl "
+                "enable-linger`, or run by hand: %s" % (why2, own, manual))
     unit = "paperdata-%d-%d" % (os.getpid(), int(time.time()))
     try:
         r = subprocess.run(same_scope_argv(unit + "-probe", [])[:-2]
@@ -3801,6 +3944,13 @@ def ensure_same_scope(plan, argv):
         ok, err = r.returncode == 0, (r.stderr or "").strip()
     except (OSError, subprocess.TimeoutExpired) as e:
         ok, err = False, str(e)
+    if not ok and logind:              # ALL_T1009: never refuse for logind
+        _LOGOUT["note"] = ("ends when your last login session closes: "
+                           "logind KillUserProcesses is on, no user scope")
+        log("WARNING: logind KillUserProcesses is on and no user scope could "
+            "be made (%s), so this run ends when your last login session "
+            "closes" % (err or "systemd-run failed"))
+        return None
     if not ok:
         return ("REFUSED: cannot create an oomd-omit scope (%s). Run by "
                 "hand: %s" % (err or "systemd-run failed", manual))
@@ -3820,12 +3970,21 @@ def run_leaf_zombie(mode, ctx):
     The dry leaf runs hermetic -- see zombie_isolate_dry.
     Verdict = rc + a fresh docs log with >=1 ok measurement (the child
     exits 0 after a total failure)."""
-    env = dict(os.environ)
+    env = dict(os.environ, ZKR_SAME_PARENT=str(os.getpid()))   # ALL_T1009
     args = zombie_args(mode)          # DLP_T1001: same_zombie argv
     b_dry = mode == "dry"
+    why = zombie_lock_wait()           # ALL_T1009: never park beside a driver
+    if why:
+        ctx.note(why)
+        return ctx.finish(6)
     zombie_recover_dry()               # undo any interrupted dry leaf
     if b_dry:
         zombie_isolate_dry(True)       # park the real resume cache
+        if zombie_lock_held():         # ALL_T1009: a driver won the race
+            zombie_isolate_dry(False)
+            ctx.note("another Zombie driver took @%s during the dry park; "
+                     "unparked, partials untouched" % ZOMBIE_DRIVER_LOCK)
+            return ctx.finish(6)
     else:
         src_p, n_rows = zombie_resume_rows()
         if n_rows:
@@ -4511,6 +4670,10 @@ def _unvouched_dlp_dumps():
 def same_plan_check(plan):
     """DLP_T1001: plan-start refusals for the same-sample job, before the
     run lock and before any leaf.  Returns the refusal, or None."""
+    if (plan.mode == "full" and "zombie" in plan.leaf_keys
+            and os.environ.get("ZKR_ZOMBIE_TMP_ROOT")):   # ALL_T1009: test-only
+        return ("REFUSED: ZKR_ZOMBIE_TMP_ROOT is set (a test redirect of the "
+                "Zombie /tmp paths); unset it for a full run")
     if plan.mode == "dry" and "dlp" in plan.leaf_keys:
         st = load_stamp("full")
         if st is not None and st.get("mode") == "full":
@@ -6836,7 +6999,7 @@ def main():
         # bundle tgz, so no terminal needs to stay attached.
         ts = _ts()
         print("[paper_data %s] detaching into the background "
-              "(survives logout; no nohup needed)." % ts)
+              "(%s)." % (ts, logout_note()))
         print("[paper_data %s]   summary log:    tail -F %s"
               % (ts, SUMMARY_LOG))
         print("[paper_data %s]   current job:    tail -F %s"
@@ -6858,7 +7021,7 @@ def main():
         # lost when stdio goes to /dev/null.
         ts = _ts()
         print("[paper_data %s] detaching into the background "
-              "(survives logout; no nohup needed)." % ts)
+              "(%s)." % (ts, logout_note()))
         print("[paper_data %s]   summary log:    tail -F %s"
               % (ts, SUMMARY_LOG))
         print("[paper_data %s]   current job:    tail -F %s"
@@ -6875,7 +7038,7 @@ def main():
         # that nobody watches it: detach like small_full_dlp.
         ts = _ts()
         print("[paper_data %s] detaching into the background "
-              "(survives logout; no nohup needed)." % ts)
+              "(%s)." % (ts, logout_note()))
         print("[paper_data %s]   summary log:    tail -F %s"
               % (ts, SUMMARY_LOG))
         print("[paper_data %s]   current job:    tail -F %s"
@@ -6903,7 +7066,7 @@ def main():
         # small_full_dlp: one CURRENT_JOB.log, no part2.
         ts = _ts()
         print("[paper_data %s] detaching into the background "
-              "(survives logout; no nohup needed)." % ts)
+              "(%s)." % (ts, logout_note()))
         print("[paper_data %s]   summary log:    tail -F %s"
               % (ts, SUMMARY_LOG))
         print("[paper_data %s]   current job:    tail -F %s"
@@ -6926,7 +7089,7 @@ def main():
         # small_full_snark: one CURRENT_JOB.log, no part2.
         ts = _ts()
         print("[paper_data %s] detaching into the background "
-              "(survives logout; no nohup needed)." % ts)
+              "(%s)." % (ts, logout_note()))
         print("[paper_data %s]   summary log:    tail -F %s"
               % (ts, SUMMARY_LOG))
         print("[paper_data %s]   current job:    tail -F %s"
@@ -6945,7 +7108,7 @@ def main():
 
     ts = _ts()
     print("[paper_data %s] detaching into the background "
-          "(survives logout; no nohup needed)." % ts)
+          "(%s)." % (ts, logout_note()))
     print("[paper_data %s]   summary log:    tail -F %s" % (ts, SUMMARY_LOG))
     print("[paper_data %s]   current job:    tail -F %s"
           % (ts, CURRENT_JOB_LOG))
@@ -7056,6 +7219,10 @@ def setUpModule():
     p = mock.patch.object(_MOD, "ZOMBIE_PARTIALS", tuple(
         os.path.join(_TEST_TMP.name, d, ZOMBIE_PARTIAL_NAME)
         for d in ("bora_zombie_run", os.path.join("ms_dlp", "docs"))))
+    p.start()
+    _TEST_PATCHES.append(p)
+    p = mock.patch.object(_MOD, "zombie_lock_held",   # ALL_T1009: no real wait
+                          return_value=False)
     p.start()
     _TEST_PATCHES.append(p)
     os.makedirs(os.path.join(_TEST_TMP.name, "job_logs"), exist_ok=True)
@@ -13737,14 +13904,26 @@ class SameScopeTest(unittest.TestCase):
         self.addCleanup(p.stop)
         self.plan = resolve_plan("full_run", "dlp,zombie")
 
-    def _go(self, why, run_rc=0, run_exc=None, plan=None):
+    def _go(self, why, run_rc=0, run_exc=None, plan=None, linger=True,
+            kill=False, cgroup=None):
         run = mock.Mock(return_value=subprocess.CompletedProcess(
             [], run_rc, stdout="", stderr="Failed to start transient scope"))
         if run_exc:
             run.side_effect = run_exc
-        with mock.patch.object(_MOD, "same_oomd_refusal",
-                               return_value=why) as orf, \
+        orf = mock.Mock(side_effect=list(why) if isinstance(why, list)
+                        else None, return_value=why)
+        real_open = open
+
+        def fake_open(p, *a, **k):            # ALL_T1009: chosen cgroup
+            if cgroup is not None and p == "/proc/self/cgroup":
+                return io.StringIO("0::" + cgroup + "\n")
+            return real_open(p, *a, **k)
+        _LOGOUT.clear()
+        with mock.patch.object(_MOD, "same_oomd_refusal", orf), \
              mock.patch.object(_MOD.subprocess, "run", run), \
+             mock.patch.object(_MOD, "linger_state", return_value=linger), \
+             mock.patch.object(_MOD, "kill_user_applies", return_value=kill), \
+             mock.patch("builtins.open", fake_open), \
              mock.patch.object(_MOD.os, "execvpe") as ex:
             r = ensure_same_scope(plan or self.plan, self.ARGV)
         return r, run, ex, orf
@@ -13828,6 +14007,229 @@ class SameScopeTest(unittest.TestCase):
                                return_value="REFUSED: x") as es:
             self.assertEqual(main(), 2)
         self.assertEqual(es.call_args[0][1], self.ARGV)
+
+
+class T1009PdTest(unittest.TestCase):
+    """ALL_T1009: PD side of the Zombie driver change set."""
+
+    def test_git_helper_passes_safe_directory(self):
+        seen = []
+
+        def run(cmd, **k):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="x\n")
+        with mock.patch.object(_MOD.subprocess, "run", run):
+            self.assertEqual(_git(["rev-parse", "HEAD"]), (0, "x\n"))
+        self.assertEqual(seen[0][:5], ["git", "-c", "safe.directory=" + REPO,
+                                       "-C", REPO])
+
+    def test_leaf_env_carries_parent_pid(self):
+        RunLeafZombieTest.setUp(self)
+        ctx = JobHandle("zombie", "full")
+        with mock.patch.object(_MOD, "run_external_python",
+                               return_value=1) as rep:
+            run_leaf_zombie("full", ctx)
+        self.assertEqual(rep.call_args[0][3]["ZKR_SAME_PARENT"],
+                         str(os.getpid()))
+        self.assertNotIn("ZKR_SAME_PARENT", os.environ)
+
+    def _scope(self, *a, **k):
+        t = SameScopeTest("test_in_good_scope_no_reexec")
+        t.setUp()
+        try:
+            return t._go(*a, **k)
+        finally:
+            t.doCleanups()
+
+    def test_linger_off_skips_reexec_sets_own_omit(self):
+        cg = "/user.slice/user-1000.slice/user@1000.service/app.slice/vte.scope"
+        r, run, ex, orf = self._scope(["monitored", None], linger=False,
+                                      cgroup=cg)
+        self.assertIsNone(r)
+        ex.assert_not_called()
+        self.assertEqual(run.call_args[0][0][:4], ["systemctl", "--user",
+                                                   "set-property",
+                                                   "--runtime"])
+        self.assertEqual(run.call_args[0][0][4], "vte.scope")
+        self.assertIn("Linger is off", logout_note())
+
+    def test_linger_off_omit_still_fails_refuses_oomd(self):
+        r, run, ex, _ = self._scope(["monitored", "still monitored"],
+                                    linger=False)
+        self.assertIn("still monitored", r)
+        self.assertIn("enable-linger", r)
+        ex.assert_not_called()
+
+    def test_linger_on_reexecs_as_today(self):
+        r, run, ex, _ = self._scope("monitored", linger=True)
+        self.assertIsNone(r)
+        ex.assert_called_once()
+
+    def test_linger_loginctl_missing_uses_file(self):
+        import pwd
+        user = pwd.getpwuid(os.getuid()).pw_name
+        with mock.patch.object(_MOD.subprocess, "run",
+                               side_effect=FileNotFoundError("loginctl")), \
+             mock.patch.object(_MOD.os.path, "exists",
+                               side_effect=lambda p: p.endswith("/" + user)):
+            self.assertTrue(linger_state())
+        with mock.patch.object(_MOD.subprocess, "run",
+                               side_effect=subprocess.TimeoutExpired("x", 30)), \
+             mock.patch.object(_MOD.os.path, "exists", return_value=False):
+            self.assertFalse(linger_state())
+
+    def test_kill_user_session_linger_on_reexecs(self):
+        r, run, ex, _ = self._scope(None, linger=True, kill=True,
+                                    cgroup="/user.slice/user-1000.slice/"
+                                    "session-3.scope")
+        self.assertIsNone(r)
+        ex.assert_called_once()
+
+    def test_kill_user_session_linger_off_warns(self):
+        r, run, ex, _ = self._scope(None, linger=False, kill=True,
+                                    cgroup="/user.slice/user-1000.slice/"
+                                    "session-3.scope")
+        self.assertIsNone(r)
+        ex.assert_not_called()
+        self.assertIn("KillUserProcesses", logout_note())
+
+    def test_kill_user_excluded_user_ignored(self):
+        import pwd
+        user = pwd.getpwuid(os.getuid()).pw_name
+        out = {"KillUserProcesses": "b true", "KillExcludeUsers":
+               'as 2 "root" "%s"' % user, "KillOnlyUsers": "as 0"}
+
+        def run(cmd, **k):
+            return subprocess.CompletedProcess(cmd, 0, stdout=out[cmd[-1]])
+        with mock.patch.object(_MOD.subprocess, "run", run):
+            self.assertFalse(kill_user_applies())
+            out["KillExcludeUsers"] = 'as 1 "root"'
+            self.assertTrue(kill_user_applies())
+            out["KillOnlyUsers"] = 'as 1 "someone"'
+            self.assertFalse(kill_user_applies())
+            out["KillUserProcesses"] = "b false"
+            self.assertFalse(kill_user_applies())
+
+    def test_kill_user_busctl_failure_passes(self):
+        with mock.patch.object(_MOD.subprocess, "run",
+                               side_effect=FileNotFoundError("busctl")):
+            self.assertIsNone(kill_user_applies())
+        r, run, ex, _ = self._scope(None, linger=True, kill=None,
+                                    cgroup="/user.slice/user-1000.slice/"
+                                    "session-3.scope")
+        self.assertIsNone(r)
+        ex.assert_not_called()
+
+    def test_banner_names_logout_risk(self):
+        _LOGOUT.clear()
+        self.assertEqual(logout_note(), "survives logout; no nohup needed")
+        _LOGOUT["note"] = "ends when your last login session closes: x"
+        try:
+            self.assertIn("ends when", logout_note())
+        finally:
+            _LOGOUT.clear()
+
+    def test_zombie_paths_follow_tmp_root(self):
+        prog = ("import importlib.util, json, sys; s = importlib.util."
+                "spec_from_file_location('pdz', %r); m = importlib.util."
+                "module_from_spec(s); sys.modules['pdz'] = m; "
+                "s.loader.exec_module(m); print(json.dumps([m.ZOMBIE_TMP_DIR,"
+                " m.ZOMBIE_PARTIALS[0]]))" % os.path.abspath(__file__))
+        for root, want in (("/x/zr", "/x/zr/run"),
+                           (None, "/tmp/bora_zombie_run")):
+            env = {k: v for k, v in os.environ.items()
+                   if k != "ZKR_ZOMBIE_TMP_ROOT"}
+            if root:
+                env["ZKR_ZOMBIE_TMP_ROOT"] = root
+            r = _REAL_SUBPROCESS_RUN([sys.executable, "-I", "-c", prog],
+                                     env=env, capture_output=True, text=True,
+                                     timeout=120)
+            got = json.loads(r.stdout.strip().splitlines()[-1])
+            self.assertEqual(got[0], want)
+            self.assertTrue(got[1].startswith(want + "/"))
+
+    def test_zombie_driver_lock_name_matches_same_zombie(self):
+        spec = importlib.util.spec_from_file_location("sz_lockname",
+                                                      SAME_ZOMBIE_SCRIPT)
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        self.assertEqual(ZOMBIE_DRIVER_LOCK, m._REAL_DRIVER_LOCK)
+
+    def test_leaf_leaves_partials_when_lock_held(self):
+        RunLeafZombieTest.setUp(self)
+        ctx = JobHandle("zombie", "dry")
+        with mock.patch.object(_MOD, "zombie_lock_held", return_value=True), \
+             mock.patch.object(_MOD, "ZOMBIE_LOCK_WAIT_S", 0), \
+             mock.patch.object(_MOD, "zombie_recover_dry") as rec, \
+             mock.patch.object(_MOD, "zombie_isolate_dry") as iso, \
+             mock.patch.object(_MOD, "run_external_python") as rep:
+            res = run_leaf_zombie("dry", ctx)
+        self.assertEqual(res.rc, 6)
+        rec.assert_not_called()
+        iso.assert_not_called()
+        rep.assert_not_called()
+        self.assertTrue(any("left untouched" in n for n in ctx._notes))
+
+    def test_dry_park_race_unparks_and_refuses(self):
+        RunLeafZombieTest.setUp(self)
+        real = ZOMBIE_PARTIALS[0]
+        os.makedirs(os.path.dirname(real), exist_ok=True)
+        with open(real, "w") as f:
+            f.write('{"live": 1}\n')
+        ctx = JobHandle("zombie", "dry")
+        with mock.patch.object(_MOD, "zombie_lock_held",
+                               side_effect=[False, True]), \
+             mock.patch.object(_MOD, "run_external_python") as rep:
+            res = run_leaf_zombie("dry", ctx)
+        self.assertEqual(res.rc, 6)
+        rep.assert_not_called()
+        self.assertEqual(open(real).read(), '{"live": 1}\n')
+        self.assertFalse(os.path.exists(real + ZOMBIE_HOLD_SUFFIX))
+        self.assertTrue(any("during the dry park" in n for n in ctx._notes))
+
+    def test_leaf_waits_then_runs_when_lock_frees(self):
+        RunLeafZombieTest.setUp(self)
+        ctx = JobHandle("zombie", "full")
+        with mock.patch.object(_MOD, "zombie_lock_held",
+                               side_effect=[True, False]), \
+             mock.patch.object(_MOD, "ZOMBIE_LOCK_POLL_S", 0), \
+             mock.patch.object(_MOD, "run_external_python",
+                               return_value=1) as rep:
+            run_leaf_zombie("full", ctx)
+        rep.assert_called_once()
+
+    def test_kill_user_probe_failure_warns(self):
+        r, run, ex, _ = self._scope(None, run_rc=1, linger=True, kill=True,
+                                    cgroup="/user.slice/user-1000.slice/"
+                                    "session-3.scope")
+        self.assertIsNone(r)
+        ex.assert_not_called()
+        self.assertIn("no user scope", logout_note())
+
+    def test_linger_off_warning_names_scope(self):
+        cg = "/user.slice/user-1000.slice/user@1000.service/app.slice/vte.scope"
+        with mock.patch.object(_MOD, "log") as lg:
+            self._scope(["monitored", None], linger=False, cgroup=cg)
+        self.assertTrue(any("own launch scope vte.scope" in c[0][0]
+                            for c in lg.call_args_list))
+
+    def test_git_helper_skips_safe_directory_on_old_git(self):
+        seen = []
+
+        def run(cmd, **k):
+            seen.append(cmd)
+            return subprocess.CompletedProcess(cmd, 0, stdout="x\n")
+        with mock.patch.object(_MOD, "_GIT_SAFE_OK", False), \
+             mock.patch.object(_MOD.subprocess, "run", run):
+            _git(["rev-parse", "HEAD"])
+        self.assertEqual(seen[0][:3], ["git", "-C", REPO])
+
+    def test_same_plan_check_refuses_full_with_tmp_root(self):
+        with mock.patch.dict(os.environ, {"ZKR_ZOMBIE_TMP_ROOT": "/x"}), \
+             mock.patch.object(_MOD.subprocess, "run",
+                               side_effect=_fake_check_start()):
+            r = same_plan_check(resolve_plan("full_run", "zombie"))
+        self.assertIn("ZKR_ZOMBIE_TMP_ROOT", r)
 
 
 class ZombieLeafIsolationGuardTest(unittest.TestCase):
