@@ -32261,6 +32261,7 @@ Goal 3. improve decider
 				QA-NIZK pubkey points, so need for the check every time.
 			so new_witness simply skip that check.
 		it cuts from 2^28 to 2^27.
+	[e] CHECK the /tmp issue!!!.
 	
 
 
