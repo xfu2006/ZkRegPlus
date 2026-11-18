@@ -2824,8 +2824,19 @@ def _hook(name, key, wrapper):
     setattr(rz, name, wrapper)
 
 
+def parse_time_wrapped(stderr):
+    """ALL_T1018: GNU time prints its signal line before the timed block,
+    which RZ missed, so a signal death read as build_fail."""
+    child, rss, sig = _ORIG["parse_time"](stderr)
+    m = re.search(r"Command terminated by signal (\d+)\n?\Z", child)
+    if sig is None and m and "\tCommand being timed:" in stderr:
+        return child[:m.start()], rss, int(m.group(1))
+    return child, rss, sig
+
+
 def install_rz_hooks():
     _ORIG.update(rmtree=shutil.rmtree)
+    _hook("_parse_time", "parse_time", parse_time_wrapped)    # ALL_T1018
     rz.shutil = ShutilProxy()
     rz._time_one = time_one
     # ALL_T1009: identity-guarded, so a second install never recurses

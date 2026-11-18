@@ -4089,5 +4089,34 @@ class T1017KillWaitTest(Base):
             self.assertLess(self._kill(lambda p: True), 2.0)
 
 
+class TestParseTimeSignal(unittest.TestCase):
+    """ALL_T1018: a signal death must read as a negative rc."""
+    REP = ("\tCommand being timed: \"circ\"\n"
+           "\tMaximum resident set size (kbytes): 2048\n")
+
+    def setUp(self):
+        sz.install_rz_hooks()
+
+    def test_signal_before_block(self):
+        err = ("memory allocation of 25104 bytes failed\n"
+               "Command terminated by signal 6\n" + self.REP)
+        child, rss, sig = rz._parse_time(err)
+        self.assertEqual((child, rss, sig),
+                         ("memory allocation of 25104 bytes failed\n",
+                          2048 * 1024, 6))
+
+    def test_clean_exit_and_child_text(self):
+        self.assertIsNone(rz._parse_time("x\n" + self.REP)[2])
+        err = "Command terminated by signal 9 (child echo)\n" + self.REP
+        self.assertIsNone(rz._parse_time(err)[2])
+
+    def test_keygen_status(self):
+        fake = mock.Mock(returncode=134, stdout="", stderr=(
+            "Command terminated by signal 6\n" + self.REP))
+        with mock.patch.object(rz, "_GNU_TIME", "/usr/bin/time"), \
+                mock.patch.object(rz.subprocess, "run", return_value=fake):
+            self.assertEqual(rz._run_keygen(["x"], "/")[0], -6)
+
+
 if __name__ == "__main__":
     unittest.main()
