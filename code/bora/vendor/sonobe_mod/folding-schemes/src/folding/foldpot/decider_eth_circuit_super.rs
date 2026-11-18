@@ -81,8 +81,13 @@ impl RelaxedR1CSGadget {
         let Bz = r1cs.B.mul_vector(&z)?;
         let Cz = r1cs.C.mul_vector(&z)?;
         let uCzE = Cz.mul_scalar(&u)?.add(&E)?;
-        let AzBz = Az.hadamard(&Bz)?;
-        AzBz.enforce_equal(&uCzE)?;
+        //ALL_T1010: same relation, one constraint per row (was product + equality).
+        if Az.len() != Bz.len() || Az.len() != uCzE.len() {
+            return Err(SynthesisError::Unsatisfiable);
+        }
+        for ((a, b), c) in Az.iter().zip(Bz.iter()).zip(uCzE.iter()) {
+            a.mul_equals(b, c)?;
+        }
         Ok(())
     }
 
