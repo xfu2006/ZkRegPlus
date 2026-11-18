@@ -238,24 +238,37 @@ impl<F: PrimeField, G: Field> AllocVar<G, F> for NonNativeUintVar<F> {
         f: impl FnOnce() -> Result<T, SynthesisError>,
         mode: AllocationMode,
     ) -> Result<Self, SynthesisError> {
+        Self::new_variable_with_bits(cs, || f().map(|v| *v.borrow()), mode).map(|(x, _)| x)
+    }
+}
+
+impl<F: PrimeField> NonNativeUintVar<F> {
+    //ALL_T1011 P2(a): allocate as AllocVar does and also return the range-check
+    //bits (little endian, same as to_bits_le), so callers need not split again.
+    pub fn new_variable_with_bits<G: Field>(
+        cs: impl Into<Namespace<F>>,
+        f: impl FnOnce() -> Result<G, SynthesisError>,
+        mode: AllocationMode,
+    ) -> Result<(Self, Vec<Boolean<F>>), SynthesisError> {
         let cs = cs.into().cs();
         let v = f()?;
         assert_eq!(G::extension_degree(), 1);
-        let v = v.borrow().to_base_prime_field_elements().next().unwrap();
+        let v = v.to_base_prime_field_elements().next().unwrap();
 
         let mut limbs = vec![];
+        let mut bits = vec![];
 
         for chunk in v.into_bigint().to_bits_le().chunks(Self::bits_per_limb()) {
             let limb = F::from_bigint(F::BigInt::from_bits_le(chunk)).unwrap();
             let limb = FpVar::new_variable(cs.clone(), || Ok(limb), mode)?;
-            Self::enforce_bit_length(&limb, chunk.len())?;
+            bits.extend(Self::enforce_bit_length(&limb, chunk.len())?);
             limbs.push(LimbVar {
                 v: limb,
                 ub: (BigUint::one() << chunk.len()) - BigUint::one(),
             });
         }
 
-        Ok(Self(limbs))
+        Ok((Self(limbs), bits))
     }
 }
 

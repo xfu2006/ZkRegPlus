@@ -235,6 +235,34 @@ where
     }
 }
 
+impl<C> CycleFoldWitnessVar<C>
+where
+    C: CurveGroup,
+    <C as ark_ec::CurveGroup>::BaseField: PrimeField,
+{
+    //ALL_T1011 P2(a): same allocation (order E, rE, W, rW, same constraints)
+    //as new_witness, also returning the range-check bits of E and W for the
+    //Pedersen checks, instead of a second bit decomposition.
+    pub fn new_witness_with_bits(
+        cs: impl Into<Namespace<CF2<C>>>,
+        w: &Witness<C>,
+    ) -> Result<(Self, Vec<Vec<Boolean<CF2<C>>>>, Vec<Vec<Boolean<CF2<C>>>>), SynthesisError> {
+        let cs = cs.into().cs();
+        let many = |v: &[C::ScalarField]| -> Result<(Vec<_>, Vec<_>), SynthesisError> {
+            Ok(v.iter()
+                .map(|x| NonNativeUintVar::new_variable_with_bits(cs.clone(), || Ok(*x), AllocationMode::Witness))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .unzip())
+        };
+        let (E, E_bits) = many(&w.E)?;
+        let rE = NonNativeUintVar::new_witness(cs.clone(), || Ok(w.rE))?;
+        let (W, W_bits) = many(&w.W)?;
+        let rW = NonNativeUintVar::new_witness(cs.clone(), || Ok(w.rW))?;
+        Ok((Self { E, rE, W, rW }, E_bits, W_bits))
+    }
+}
+
 /// In-circuit representation of the Witness associated 
 /// to the CommittedInstance.
 #[derive(Debug, Clone)]
@@ -1177,14 +1205,13 @@ where
 		if !b_light_test
         {
             use super::FOLDPOT_CF_N_POINTS;
-            use crate::commitment::pedersen::PedersenGadget;
+            use crate::commitment::pedersen::FixedBasePedersenGadget;
             use crate::folding::circuits::{
 				cyclefold::{cf_io_len, CycleFoldCommittedInstanceVar}
 			};
 			use crate::folding::foldpot::{
 				circuits::{ChallengeGadgetFoldPot, NIFSGadgetFoldPot},
 			};
-            use ark_r1cs_std::ToBitsGadget;
 			// 8. compute NIFS.V and KZG challenges.
 			// NOTE: unlike sonobe which performs the folding of 3 commitments
 			// outside of circuit. We treat running and incoming instances
@@ -1242,31 +1269,21 @@ where
 			::new_witness(cs.clone(), || {
                 Ok(self.cf_U_i.clone().unwrap_or_else(|| cf_u_dummy_native.clone()))
             })?;
-            let cf_W_i = CycleFoldWitnessVar::<C2>::new_witness(cs.clone(), || {
-                Ok(self.cf_W_i.clone().unwrap_or(w_dummy_native.clone()))
-            })?;
+            //ALL_T1011 P2(a): keep the range-check bits of E and W.
+            let (cf_W_i, cf_E_bits, cf_W_bits) = CycleFoldWitnessVar::<C2>::new_witness_with_bits(
+                cs.clone(), self.cf_W_i.as_ref().unwrap_or(&w_dummy_native))?;
             let (cf_u_i_x, _) = cf_U_i.clone().hash(&sponge, pp_hash.clone())?;
             (u_i.x[1]).enforce_equal(&cf_u_i_x)?;
 			gadget_sat_check(&cs, "decider::p1s9a_cf_hash"); //DEBUG USE 69801
 
             //9. check Pedersen commitments of cf_U_i.{cmE, cmW}
-            let H2 = GC2::new_constant(cs.clone(), 
-				self.cf_pedersen_params.h)?;
-            let G = Vec::<GC2>::new_constant(cs.clone(), 
-				self.cf_pedersen_params.generators.clone())?;
-            let cf_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
-            let cf_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cf_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
-            let computed_cmE = PedersenGadget::<C2, GC2>::commit(
-                H2.clone(),
-                G.clone(),
-                cf_W_i_E_bits?,
-                cf_W_i.rE.to_bits_le()?,
-            )?;
-			
+            //ALL_T1011 P2(b): constant bases, 2-bit windows (no blinding, H = false).
+            assert!(!H, "FixedBasePedersenGadget has no blinding term");
+            let (computed_cmE, computed_cmW) = FixedBasePedersenGadget::<C2, GC2>::commit_pair(
+                cs.clone(), &self.cf_pedersen_params.generators, &cf_E_bits, &cf_W_bits)?;
+            drop((cf_E_bits, cf_W_bits));
             cf_U_i.cmE.enforce_equal(&computed_cmE)?;
 			gadget_sat_check(&cs, "decider::p1s9b_cmE"); //DEBUG USE 69801
-            let computed_cmW =
-                PedersenGadget::<C2, GC2>::commit(H2, G, cf_W_i_W_bits?, cf_W_i.rW.to_bits_le()?)?;
             cf_U_i.cmW.enforce_equal(&computed_cmW)?;
 			log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 9: check cf_W_i commits to cf_U_i. INCREASED r1cs: {}, RAM: {} GB.", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
@@ -1585,9 +1602,8 @@ where
 		//let part2_enable = false;
 		if !b_light_test
         {
-            use crate::commitment::pedersen::PedersenGadget;
+            use crate::commitment::pedersen::FixedBasePedersenGadget;
             use crate::folding::circuits::cyclefold::{CycleFoldCommittedInstanceVar};
-            use ark_r1cs_std::ToBitsGadget;
 			//5. Verify cyclepair instance
 			//(1) u_i.x[2] = cp_U_i.hash()
 			//(2) cp_W_i satisfies the cyclepair R1CS
@@ -1602,9 +1618,9 @@ where
 			::new_witness(cs.clone(), || { 
 				Ok(self.main_circ.cp_U_i.unwrap())
             })?;
-            let cp_W_i = CycleFoldWitnessVar::<C2>::new_witness(cs.clone(), || {
-                Ok(self.main_circ.cp_W_i.unwrap())
-            })?;
+            //ALL_T1011 P2(a): keep the range-check bits of E and W.
+            let (cp_W_i, cp_E_bits, cp_W_bits) = CycleFoldWitnessVar::<C2>::new_witness_with_bits(
+                cs.clone(), self.main_circ.cp_W_i.as_ref().expect("cp_W_i"))?;
             let (cp_u_i_x, _) = cp_U_i.clone().hash(&sponge, pp_hash.clone())?;
             (my_phase1_ret.u_i.x[2]).enforce_equal(&cp_u_i_x)?;
 			if B_DEBUG2{
@@ -1621,38 +1637,20 @@ where
 			//TOTAL: 217M constraints now!!!!. (about 1hr to this point)
 			//*** set the debug_disable to true on real server
 
-            let H2 = GC2::new_constant(cs.clone(), 
-				self.main_circ.cp_pedersen_params.h)?;
-            let G = Vec::<GC2>::new_constant(cs.clone(), 
-				self.main_circ.cp_pedersen_params.generators)?;
-			//if part1_enable{
-				let cp_W_i_E_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cp_W_i.E.iter().map(|E_i| E_i.to_bits_le()).collect();
-				let computed_cmE = PedersenGadget::<C2, GC2>::commit(
-					H2.clone(),
-					G.clone(),
-					cp_W_i_E_bits?,
-					cp_W_i.rE.to_bits_le()?,
-				)?;
-				cp_U_i.cmE.enforce_equal(&computed_cmE)?;
-				if B_DEBUG2{
-					if cp_U_i.cmE.value().is_ok(){
-					assert!(cp_U_i.cmE.value()?== computed_cmE.value()?);
-				} }
-			//}
-			log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 6.1: check cp_W_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
-			c1 = cs.num_constraints();
-
-			//if part2_enable{
-				let cp_W_i_W_bits: Result<Vec<Vec<Boolean<CF1<C1>>>>, SynthesisError> = cp_W_i.W.iter().map(|W_i| W_i.to_bits_le()).collect();
-				let computed_cmW =
-					PedersenGadget::<C2, GC2>::commit(H2, G, cp_W_i_W_bits?, cp_W_i.rW.to_bits_le()?)?;
-				cp_U_i.cmW.enforce_equal(&computed_cmW)?;
-				if B_DEBUG2{
-					if cp_U_i.cmW.value().is_ok(){
-					assert!(cp_U_i.cmW.value()?== computed_cmW.value()?);
-				} }
-			//}
-			log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 6.2: check cp_E_i commits to cp_U_i. r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
+            //ALL_T1011 P2(b): constant bases, 2-bit windows (no blinding, H = false).
+            //Steps 6.1 and 6.2 run together, sharing each generator's table.
+            assert!(!H, "FixedBasePedersenGadget has no blinding term");
+            let (computed_cmE, computed_cmW) = FixedBasePedersenGadget::<C2, GC2>::commit_pair(
+                cs.clone(), &self.main_circ.cp_pedersen_params.generators, &cp_E_bits, &cp_W_bits)?;
+            drop((cp_E_bits, cp_W_bits)); // free before Step 10
+            cp_U_i.cmE.enforce_equal(&computed_cmE)?;
+            cp_U_i.cmW.enforce_equal(&computed_cmW)?;
+			if B_DEBUG2{
+				if cp_U_i.cmE.value().is_ok(){
+				assert!(cp_U_i.cmE.value()?== computed_cmE.value()?);
+				assert!(cp_U_i.cmW.value()?== computed_cmW.value()?);
+			} }
+			log_perf(self.job_id, log_level, &format!("Phase2 Circ gen_cs: Step 6: check cp_W_i commits to cp_U_i (cmE and cmW). r1cs: {}, RAM: {} GB", cs.num_constraints()-c1, get_mem_usage()), &mut t1);
 			c1 = cs.num_constraints();
 
 			//10. check cyclepair witness satisfy its r1cs

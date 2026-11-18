@@ -3,6 +3,9 @@ use ark_ec::CurveGroup;
 use ark_ff::Field;
 use ark_r1cs_std::{boolean::Boolean, groups::GroupOpsBounds, prelude::CurveVar};
 use ark_relations::r1cs::SynthesisError;
+use ark_ff::PrimeField; //ALL_T1011
+use ark_r1cs_std::{alloc::AllocVar, eq::EqGadget, fields::{fp::FpVar, FieldVar}, R1CSVar, ToConstraintFieldGadget};
+use ark_relations::{lc, r1cs::{ConstraintSystemRef, LinearCombination, Variable}};
 use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_std::Zero;
 use ark_std::{rand::RngCore, UniformRand};
@@ -272,8 +275,294 @@ where
     }
 }
 
+//ALL_T1011 P2(b): FixedBasePedersenGadget checks a Pedersen commitment
+//sum_i v_i G_i whose bases G_i are CONSTANTS (the public Pedersen key). It
+//gives the same point as PedersenGadget::commit with H = false (no blinding)
+//at about 545 constraints per 256-bit scalar instead of 1,574.
+//
+//Idea. Read each scalar v two bits at a time (a digit d in 0..3) and add one
+//precomputed constant point per digit, chosen by a 2-bit table lookup. A
+//constant table costs 1 constraint per lookup (the product b0 b1) and one
+//cheap affine addition costs 3, so 4 constraints per 2 bits. The old gadget
+//spends 5 constraints per single bit.
+//
+//The cheap addition A + T is wrong when A = T or A = -T, and cannot add the
+//point at infinity. To rule both out for ANY bits, window w adds
+//(d + 2) 4^w G instead of d 4^w G. Then every added point is nonzero, and the
+//running sum s G is always smaller than the next term t G as an integer:
+//s <= (5/3) 4^w < 2 4^w <= t, and s + t < q. So A = +-T never happens. The
+//extra 2 4^w G per window is a known constant c G, subtracted once at the end.
+//
+//Concrete example, v = 45 = 0b10_11_01, 3 windows, digits d = 1, 3, 2
+//(45 = 1 + 3*4 + 2*16):
+//  window 0: table {2,3,4,5} G,     d = 1 -> acc = 3G
+//  window 1: table {8,12,16,20} G,  d = 3 -> acc = 3G + 20G = 23G  (3 < 20)
+//  window 2: table {32,48,64,80} G, d = 2 -> acc = 23G + 64G = 87G (23 < 64)
+//  offset c = 2 (1 + 4 + 16) = 42, and 87G - 42G = 45G.
+//
+//Ranges for the real 256-bit scalars:
+//  bits 0..251:   126 windows in the cheap chain (the bound s + t < q holds
+//                 up to window 125 for a 254-bit group order q)
+//  bits 252, 253: choose one of the constants {0, 1, 2, 3} 2^252 G and add it
+//                 with the complete (always correct) addition
+//  bits 254, 255: forced to 0, since inputs are canonical (v < q < 2^254)
+pub struct FixedBasePedersenGadget<C, GC>(PhantomData<(C, GC)>);
+
+const FB_LOW: usize = 252; // bits in the incomplete chain
+const FB_WIN: usize = FB_LOW / 2; // 2-bit windows
+const FB_TOP: usize = FB_LOW + 2; // = order bits, asserted in commit_pair
+
+impl<C, GC> FixedBasePedersenGadget<C, GC>
+where
+    C: CurveGroup,
+    C::BaseField: PrimeField,
+    GC: CurveVar<C, C::BaseField> + ToConstraintFieldGadget<C::BaseField>,
+{
+    /// Returns (sum_i v1_i G_i, sum_i v2_i G_i) for the bits of two vectors
+    /// that share the generators G_i (cmE and cmW of one CycleFold witness).
+    /// For each G_i it builds the constant table once and runs scalar_mul for
+    /// v1_i and v2_i. Every scalar adds its point to r1 or r2 and returns its
+    /// constant offset c G_i. The offsets are summed natively (o1, o2) and
+    /// subtracted once at the end, which costs one addition per vector.
+    /// Panics if there are fewer generators than values (no value may go
+    /// unchecked) or if the group order does not have 254 bits.
+    pub fn commit_pair(
+        cs: ConstraintSystemRef<C::BaseField>,
+        g: &[C::Affine],
+        v1: &[Vec<Boolean<C::BaseField>>],
+        v2: &[Vec<Boolean<C::BaseField>>],
+    ) -> Result<(GC, GC), SynthesisError> {
+        assert!(g.len() >= v1.len() && g.len() >= v2.len(), "fewer generators than values");
+        assert_eq!(<C::ScalarField as PrimeField>::MODULUS_BIT_SIZE as usize, FB_TOP, "group order bits");
+        let (mut r1, mut r2) = (GC::zero(), GC::zero());
+        let (mut o1, mut o2) = (C::zero(), C::zero());
+        for (i, gi) in g.iter().enumerate().take(v1.len().max(v2.len())) {
+            let tab = FixedBaseTable::<C, GC>::new(gi.into_group());
+            if let Some(bits) = v1.get(i) { o1 += Self::scalar_mul(cs.clone(), &tab, bits, &mut r1)?; }
+            if let Some(bits) = v2.get(i) { o2 += Self::scalar_mul(cs.clone(), &tab, bits, &mut r2)?; }
+        }
+        Ok((r1 - o1, r2 - o2))
+    }
+
+    /// Adds (v + c) G to res for one scalar v given by its little-endian bits,
+    /// and returns the constant c G. Steps:
+    /// 1. Force bits 254 and up to 0 (2 constraints).
+    /// 2. Cheap chain over bits 0..251: acc = T_0[d_0], then
+    ///    acc = acc + T_w[d_w] for w = 1..125 (4 constraints per window).
+    ///    acc ends as (L + c) G, L = bits 0..251 of v, c = sum 2 4^w.
+    /// 3. Turn acc (raw x, y) into a GC point p: allocate p as a witness and
+    ///    require its encoding [x, y, infinity] to equal [acc.x, acc.y, 0]
+    ///    (15 constraints), then res += p (complete addition, 12).
+    /// 4. Bits 252, 253: select d 2^252 G among 4 constants (3 constraints)
+    ///    and res += it (complete addition, 12, correct also for d = 0).
+    fn scalar_mul(
+        cs: ConstraintSystemRef<C::BaseField>,
+        tab: &FixedBaseTable<C, GC>,
+        bits: &[Boolean<C::BaseField>],
+        res: &mut GC,
+    ) -> Result<C, SynthesisError> {
+        for b in bits.iter().skip(FB_TOP) {
+            b.enforce_equal(&Boolean::FALSE)?;
+        }
+        let nw = (bits.len().min(FB_LOW) + 1) / 2;
+        if nw == 0 {
+            return Ok(C::zero());
+        }
+        let bit = |i: usize| if i < FB_LOW { bits.get(i).cloned().unwrap_or(Boolean::FALSE) } else { Boolean::FALSE };
+        let digits = (0..nw).map(|w| (bit(2 * w), bit(2 * w + 1))).collect::<Vec<_>>();
+        let mut acc = fixed_base_lookup::<C>(&tab.low[0], &digits[0].0, &digits[0].1)?;
+        for w in 1..nw {
+            let t = fixed_base_lookup::<C>(&tab.low[w], &digits[w].0, &digits[w].1)?;
+            acc = add_incomplete(&cs, &acc, &t)?;
+        }
+        // bind acc to a GC point through its encoding [x, y, inf] = [x, y, 0]
+        let p = GC::new_witness(cs.clone(), || {
+            let mut s = C::zero();
+            for (w, (b0, b1)) in digits.iter().enumerate() {
+                s += tab.low[w][b0.value()? as usize + 2 * b1.value()? as usize];
+            }
+            Ok(s)
+        })?;
+        let enc = p.to_constraint_field()?;
+        assert_eq!(enc.len(), 3, "short Weierstrass encoding [x, y, inf] expected");
+        cs.enforce_constraint(fp_lc(&enc[0]) - &acc.0, lc!() + Variable::One, lc!())?;
+        cs.enforce_constraint(fp_lc(&enc[1]) - &acc.1, lc!() + Variable::One, lc!())?;
+        enc[2].enforce_equal(&FpVar::zero())?;
+        *res += p;
+        if bits.len() > FB_LOW {
+            let q = &tab.high;
+            let lo = bit_at(bits, FB_LOW).select(&q[1], &q[0])?; // constants: free
+            let hi = bit_at(bits, FB_LOW).select(&q[3], &q[2])?;
+            *res += bit_at(bits, FB_LOW + 1).select(&hi, &lo)?;
+        }
+        Ok(tab.offs[nw - 1])
+    }
+}
+
+fn bit_at<F: PrimeField>(bits: &[Boolean<F>], i: usize) -> Boolean<F> {
+    bits.get(i).cloned().unwrap_or(Boolean::FALSE)
+}
+
+/// Native constant tables of one base G, computed outside the circuit.
+/// low[w][d] = (d + 2) 4^w G for the 126 windows, in affine form (the lookup
+/// needs x and y). offs[w] = sum_{i <= w} 2 4^i G is the offset after w + 1
+/// windows. high[d] = d 2^252 G for bits 252, 253, as circuit constants.
+/// new() walks p = 4^w G with two doublings per window and converts all 504
+/// points to affine with one batch inversion, so it does no per-point
+/// inversion and no subgroup check.
+struct FixedBaseTable<C: CurveGroup, GC> {
+    low: Vec<[C::Affine; 4]>, // low[w][d] = (d + 2) 4^w G
+    offs: Vec<C>,             // offs[w] = sum_{i <= w} 2 4^i G
+    high: [GC; 4],            // d 2^252 G as circuit constants
+}
+
+impl<C: CurveGroup, GC: CurveVar<C, C::BaseField>> FixedBaseTable<C, GC>
+where
+    C::BaseField: PrimeField,
+{
+    fn new(base: C) -> Self {
+        let mut pts = Vec::with_capacity(4 * FB_WIN);
+        let mut offs = Vec::with_capacity(FB_WIN);
+        let (mut p, mut off) = (base, C::zero()); // p = 4^w G
+        for _ in 0..FB_WIN {
+            let two = p.double();
+            let four = two.double();
+            pts.extend([two, two + p, four, four + p]);
+            off += two;
+            offs.push(off);
+            p = four;
+        }
+        let aff = C::normalize_batch(&pts); // one inversion per base
+        let low = aff.chunks(4).map(|c| [c[0], c[1], c[2], c[3]]).collect();
+        let h = p; // 4^126 G = 2^252 G
+        let high = [C::zero(), h, h.double(), h.double() + h].map(GC::constant);
+        Self { low, offs, high }
+    }
+}
+
+/// A point (x, y) whose coordinates are linear combinations of circuit
+/// variables, plus their values (None in setup mode). Using linear
+/// combinations directly, instead of FpVar arithmetic, creates no symbolic
+/// variables, which keeps the prover memory small.
+type LcPoint<F> = (LinearCombination<F>, LinearCombination<F>, Option<(F, F)>);
+
+/// The linear combination of an FpVar (a constant or one variable).
+fn fp_lc<F: PrimeField>(v: &FpVar<F>) -> LinearCombination<F> {
+    match v {
+        FpVar::Constant(c) => lc!() + (*c, Variable::One),
+        FpVar::Var(a) => lc!() + a.variable,
+    }
+}
+
+/// Table lookup of the point t[d], d = b0 + 2 b1, for 4 constant points.
+/// Each coordinate is the unique polynomial in the bits that hits the 4
+/// table values:
+///   x = x0 + (x1 - x0) b0 + (x2 - x0) b1 + (x3 - x2 - x1 + x0) b0 b1
+/// (same for y). Example: b0 = 1, b1 = 1 gives x0 + x1 - x0 + x2 - x0
+/// + x3 - x2 - x1 + x0 = x3. Only b0 b1 needs a constraint (1 total,
+/// shared by x and y). The rest is a linear combination with constant
+/// coefficients.
+fn fixed_base_lookup<C: CurveGroup>(
+    t: &[C::Affine; 4],
+    b0: &Boolean<C::BaseField>,
+    b1: &Boolean<C::BaseField>,
+) -> Result<LcPoint<C::BaseField>, SynthesisError>
+where
+    C::BaseField: PrimeField,
+{
+    let p = b0.and(b1)?;
+    let c = |k: usize| {
+        let (x, y) = t[k].xy().expect("nonzero table point");
+        [*x, *y]
+    };
+    let (t0, t1, t2, t3) = (c(0), c(1), c(2), c(3));
+    let coord = |j: usize| {
+        b0.lc() * (t1[j] - t0[j]) + &(b1.lc() * (t2[j] - t0[j]))
+            + &(p.lc() * (t3[j] - t2[j] - t1[j] + t0[j])) + (t0[j], Variable::One)
+    };
+    let val = b0.value().and_then(|a| Ok(c(a as usize + 2 * b1.value()? as usize))).ok();
+    Ok((coord(0), coord(1), val.map(|v| (v[0], v[1]))))
+}
+
+/// Cheap affine addition c = a + b, valid only when a != +-b and neither
+/// is the point at infinity (the window offsets guarantee this). With the
+/// slope lam = (y2 - y1) / (x2 - x1) it enforces 3 constraints:
+///   lam (x2 - x1) = y2 - y1
+///   lam lam       = x1 + x2 + x3       (x3 = lam^2 - x1 - x2)
+///   lam (x1 - x3) = y1 + y3            (y3 = lam (x1 - x3) - y1)
+/// Each constraint fixes one new variable uniquely because x2 - x1 != 0.
+/// x3 and y3 are new variables, so the chain of 125 additions keeps every
+/// linear combination short.
+fn add_incomplete<F: PrimeField>(
+    cs: &ConstraintSystemRef<F>,
+    a: &LcPoint<F>,
+    b: &LcPoint<F>,
+) -> Result<LcPoint<F>, SynthesisError> {
+    let (x1, y1, va) = a;
+    let (x2, y2, vb) = b;
+    let v = match (va, vb) {
+        (Some((x1, y1)), Some((x2, y2))) => {
+            let lam = (*y2 - y1) * (*x2 - x1).inverse().ok_or(SynthesisError::Unsatisfiable)?;
+            let x3 = lam.square() - x1 - x2;
+            Some((lam, x3, lam * (*x1 - x3) - y1))
+        }
+        _ => None,
+    };
+    let get = |k: usize| move || v.map(|t| [t.0, t.1, t.2][k]).ok_or(SynthesisError::AssignmentMissing);
+    let lam = cs.new_witness_variable(get(0))?;
+    let x3 = cs.new_witness_variable(get(1))?;
+    let y3 = cs.new_witness_variable(get(2))?;
+    cs.enforce_constraint(lc!() + lam, x2.clone() - x1, y2.clone() - y1)?;
+    cs.enforce_constraint(lc!() + lam, lc!() + lam, x1.clone() + x2 + x3)?;
+    cs.enforce_constraint(lc!() + lam, x1.clone() - x3, y1.clone() + y3)?;
+    Ok((lc!() + x3, lc!() + y3, v.map(|t| (t.1, t.2))))
+}
+
 #[cfg(test)]
 mod tests {
+
+    //ALL_T1011: FixedBasePedersenGadget equals the native MSM (edge and random
+    //scalars, unequal lengths), setup and prove give the same constraint
+    //count, and a set bit 254 (non-canonical input) is rejected.
+    #[test]
+    fn test_fixed_base_pedersen() {
+        use super::FixedBasePedersenGadget;
+        use crate::folding::circuits::nonnative::uint::NonNativeUintVar;
+        use ark_bn254::{Fq, Fr};
+        use ark_ec::{CurveGroup, VariableBaseMSM};
+        use ark_ff::Field;
+        use ark_grumpkin::{constraints::GVar, Affine, Projective};
+        use ark_r1cs_std::{alloc::{AllocVar, AllocationMode}, boolean::Boolean, R1CSVar};
+        use ark_relations::r1cs::{ConstraintSystem, ConstraintSystemRef, SynthesisMode};
+        use ark_std::{One, UniformRand, Zero};
+
+        let mut rng = ark_std::test_rng();
+        let p252 = Fq::from(2u64).pow([252u64]);
+        let mut v1 = vec![Fq::zero(), Fq::one(), -Fq::one(), p252 - Fq::one(), p252, p252 * Fq::from(3u64)];
+        v1.extend((0..10).map(|_| Fq::rand(&mut rng)));
+        let v2 = v1[..3].to_vec();
+        let g: Vec<Affine> = (0..v1.len()).map(|_| Projective::rand(&mut rng).into_affine()).collect();
+        let build = |mode: Option<SynthesisMode>, bit254: bool| {
+            let cs: ConstraintSystemRef<Fr> = ConstraintSystem::new_ref();
+            if let Some(m) = mode { cs.set_mode(m); }
+            let bits = |v: &[Fq]| v.iter().map(|x| NonNativeUintVar::<Fr>::new_variable_with_bits(
+                cs.clone(), || Ok(*x), AllocationMode::Witness).unwrap().1).collect::<Vec<_>>();
+            let (mut b1, b2) = (bits(&v1), bits(&v2));
+            if bit254 { b1[1][254] = Boolean::new_witness(cs.clone(), || Ok(true)).unwrap(); }
+            let (r1, r2) = FixedBasePedersenGadget::<Projective, GVar>::commit_pair(cs.clone(), &g, &b1, &b2).unwrap();
+            let vals = r1.value().ok().zip(r2.value().ok());
+            (cs, vals)
+        };
+        let (cs, vals) = build(None, false);
+        assert!(cs.is_satisfied().unwrap());
+        let (r1, r2) = vals.unwrap();
+        assert_eq!(r1, Projective::msm(&g, &v1).unwrap());
+        assert_eq!(r2, Projective::msm(&g[..3], &v2).unwrap());
+        let (cs_setup, _) = build(Some(SynthesisMode::Setup), false);
+        assert_eq!(cs_setup.num_constraints(), cs.num_constraints());
+        let (cs_bad, _) = build(None, true);
+        assert!(!cs_bad.is_satisfied().unwrap());
+    }
     use ark_crypto_primitives::sponge::{poseidon::PoseidonSponge, CryptographicSponge};
     use ark_ff::{BigInteger, PrimeField};
     use ark_pallas::{constraints::GVar, Fq, Fr, Projective};
