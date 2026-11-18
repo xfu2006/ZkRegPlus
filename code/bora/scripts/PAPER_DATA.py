@@ -7442,6 +7442,14 @@ PDF_DIR = os.path.join(REPO, "data", "paper_data", "pdf")
 PDF_PATH = os.path.join(PDF_DIR, "list_figures.pdf")
 
 
+def pdf_path(server):
+    """ALL_T1019: jet1tb (the paper) keeps list_figures.pdf; any other
+    --server gets list_figures.<server>.pdf, never the paper's PDF."""
+    if server == "jet1tb":
+        return PDF_PATH
+    return os.path.join(PDF_DIR, "list_figures.%s.pdf" % server)
+
+
 def _wipe_generated(root):
     """Delete every file under root except the tracked .gitkeep /
     .gitignore markers, then prune emptied subdirs.  Returns
@@ -7544,18 +7552,32 @@ def stage_corpus_tgz():
     return True
 
 
-def run_figs():
+def run_figs(server=None):
     """Menu item #6: regenerate every figs/*.tex fragment from whatever
     is currently in raw_data/ (RUNALL.sh tolerates per-generator
     failures -- an ungenerated table just keeps its prior content),
     then compile list_figures.pdf. Runs in the foreground: this takes
-    seconds, unlike a Sequencer leaf, so no daemonizing."""
+    seconds, unlike a Sequencer leaf, so no daemonizing.
+    ALL_T1019: the generators read raw_data/<server>/ (default: the
+    --server of this run) via BORA_FIG_SERVER (common.SERVER_TO_USE)."""
+    server = server or SERVER
     stage_corpus_tgz()
-    log("figs: running RUNALL.sh (per-generator failures are non-fatal)")
-    rc = subprocess.run(["bash", "RUNALL.sh"], cwd=EVAL_DIR).returncode
+    log("figs: running RUNALL.sh for server %s (per-generator failures "
+        "are non-fatal)" % server)
+    p = subprocess.run(["bash", "RUNALL.sh"], cwd=EVAL_DIR,
+                       env=dict(os.environ, BORA_FIG_SERVER=server),
+                       stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                       text=True)
+    sys.stdout.write(p.stdout or "")
+    rc = p.returncode
     if rc != 0:
         log("figs: RUNALL.sh reported %d failing generator(s); "
             "continuing with whatever fragments exist" % rc)
+    failed = re.findall(r"^\[FAIL\]\s+(\S+)", p.stdout or "", re.M)
+    if failed and server != "jet1tb":
+        log("figs: server %s: %s failed, so their fragments keep their "
+            "previous content (not this server's data)"
+            % (server, ", ".join(failed)))
 
     log("figs: compiling list_figures.tex")
     out = None
@@ -7572,9 +7594,28 @@ def run_figs():
         return 1
 
     os.makedirs(PDF_DIR, exist_ok=True)
-    shutil.copy2(built, PDF_PATH)
-    log("figs: wrote %s" % PDF_PATH)
+    dest = pdf_path(server)
+    shutil.copy2(built, dest)
+    log("figs: wrote %s" % dest)
     return 0
+
+
+def figs_after_run(plan):
+    """ALL_T1019: a dry or full run ends with its own figures and PDF
+    (for its --server). Not after a signal abort. A figs failure is
+    reported in SUMMARY.log but never changes the run's rc. Its words
+    (built/error) never match a leaf's OK/FAIL line parsers."""
+    if plan.top not in ("dry_run", "full_run") or aborted():
+        return
+    try:
+        rc = run_figs()
+    except Exception as e:   # the data is already placed: report only
+        _summary_line("FIGS   error  %r" % (e,))
+        return
+    if rc == 0:
+        _summary_line("FIGS   built  %s" % pdf_path(SERVER))
+    else:
+        _summary_line("FIGS   error  pdflatex made no PDF (rc %d)" % rc)
 
 
 def main():
@@ -7839,7 +7880,9 @@ def main():
 
     seq = Sequencer(plan, dry_run=(plan.mode == "dry"), kept=kept)
     install_signal_handlers()
-    return seq.run()
+    rc = seq.run()
+    figs_after_run(plan)
+    return rc
 
 
 # =====================================================================
@@ -7847,6 +7890,7 @@ def main():
 # =====================================================================
 
 _MOD = sys.modules[__name__]
+_REAL_FIGS_AFTER_RUN = figs_after_run   # ALL_T1019: setUpModule stubs it
 
 # The suite must be runnable WHILE a production job is live.  Every
 # spawn helper repoints the CURRENT_JOB symlinks, and JobHandle globs
@@ -7942,6 +7986,9 @@ def setUpModule():
     _TEST_PATCHES.append(p)
     p = mock.patch.object(_MOD, "zombie_lock_held",   # ALL_T1009: no real wait
                           return_value=False)
+    p.start()
+    _TEST_PATCHES.append(p)
+    p = mock.patch.object(_MOD, "figs_after_run")   # ALL_T1019: no real figs
     p.start()
     _TEST_PATCHES.append(p)
     os.makedirs(os.path.join(_TEST_TMP.name, "job_logs"), exist_ok=True)
@@ -11507,6 +11554,43 @@ class RunFigsTest(unittest.TestCase):
                 copy2.call_args_list[1].args,
                 (os.path.join(RUN_DATA_DIR, "list_figures.pdf"),
                  PDF_PATH))
+
+    def test_server_env_and_pdf_name(self):
+        # ALL_T1019: RUNALL reads raw_data/<server>/; non-paper PDF name
+        with mock.patch("subprocess.run") as run, \
+             mock.patch("os.path.isfile", return_value=True), \
+             mock.patch("os.makedirs"), \
+             mock.patch("shutil.copy2") as copy2:
+            run.return_value.returncode = 1
+            run.return_value.stdout = "[FAIL] gen_zombie_table.py\n"
+            self.assertEqual(run_figs("cl2x7542"), 0)
+            env = run.call_args_list[0].kwargs["env"]
+            self.assertEqual(env["BORA_FIG_SERVER"], "cl2x7542")
+            self.assertEqual(copy2.call_args_list[-1].args[1],
+                             os.path.join(PDF_DIR,
+                                          "list_figures.cl2x7542.pdf"))
+            self.assertEqual(pdf_path("jet1tb"), PDF_PATH)
+
+    def test_figs_after_run_only_dry_full(self):
+        class _P:
+            def __init__(self, top):
+                self.top = top
+        with mock.patch.object(_MOD, "run_figs", return_value=0) as rf, \
+             mock.patch.object(_MOD, "_summary_line") as sl:
+            _REAL_FIGS_AFTER_RUN(_P("dry_run"))
+            _REAL_FIGS_AFTER_RUN(_P("full_run"))
+            _REAL_FIGS_AFTER_RUN(_P("small"))
+            self.assertEqual(rf.call_count, 2)
+            self.assertIn("FIGS   built", sl.call_args_list[0].args[0])
+        with mock.patch.object(_MOD, "run_figs",
+                               side_effect=RuntimeError("x")), \
+             mock.patch.object(_MOD, "_summary_line") as sl:
+            _REAL_FIGS_AFTER_RUN(_P("full_run"))   # never raises
+            self.assertIn("FIGS   error", sl.call_args_list[0].args[0])
+        with mock.patch.object(_MOD, "aborted", return_value=True), \
+             mock.patch.object(_MOD, "run_figs") as rf:
+            _REAL_FIGS_AFTER_RUN(_P("full_run"))
+            rf.assert_not_called()
 
     def test_runall_failure_is_nonfatal(self):
         with mock.patch("subprocess.run") as run, \

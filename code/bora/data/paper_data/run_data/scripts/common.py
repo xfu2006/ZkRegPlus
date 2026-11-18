@@ -70,7 +70,12 @@ def get_proj_root() -> Path:
 # data/raw_data/<server>/; machine-independent inputs live under
 # data/raw_data/any_server/. Flip this one constant to re-point every
 # generator at the other machine's logs.
-SERVER_TO_USE = "jet1tb"         # alternative: "gcpm1"
+# ALL_T1019: PAPER_DATA.py --run figs (and the end of a dry/full run) sets
+# BORA_FIG_SERVER to its --server; unset = jet1tb, the paper's data.
+SERVER_TO_USE = os.environ.get("BORA_FIG_SERVER", "jet1tb")  # or "gcpm1"
+if SERVER_TO_USE not in ("jet1tb", "gcpm1", "cl2x7542"):
+    raise ValueError("BORA_FIG_SERVER=%r: no such raw_data server folder"
+                     % SERVER_TO_USE)
 # NB: the raw_data README/spec calls the 1 TB machine's folder "jet1t", but
 # on-disk directory is "jet1tb"; this constant must match the directory name.
 
@@ -910,6 +915,9 @@ def resolve_server_dump(name, dest_dir=None) -> Path:
         return server_file(name)
     base = name[:-len(".tgz")]
     server_dir = raw_data_root() / SERVER_TO_USE
+    if dest_dir is not None and SERVER_TO_USE != "jet1tb":
+        # ALL_T1019: a shared extracted/ cache would serve jet1tb's logs
+        dest_dir = Path(dest_dir) / SERVER_TO_USE
     parts = sorted(server_dir.glob(base + ".part*.tgz"),
                    key=lambda p: _part_index(p.name))
     if parts:
