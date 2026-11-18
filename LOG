@@ -32262,9 +32262,8 @@ Goal 3. improve decider
 			so new_witness simply skip that check.
 		it cuts from 2^28 to 2^27.
 	[e] #22 part 2: done. cut another 15% memory.
-	[f] Similarl IDEA: P7 like #22 for CyclePair circuit
-		but simpler, no evaluation of poly change.
-	[e] CHECK the /tmp issue!!!.
+	[f] CHECK the /tmp issue!!!. checked
+
 	
 
 

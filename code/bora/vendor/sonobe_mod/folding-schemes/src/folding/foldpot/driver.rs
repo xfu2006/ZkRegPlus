@@ -3746,9 +3746,9 @@ where
 
 				//T934 D5 (ruling B): all_w rebuilt after the wait. D_1
 				//first, then r_2 = H(tag, C_WE, D_1), its opening, finalize.
-				let all_w = main_circ.circ1.all_w();
 				let kappa = C1::ScalarField::rand(&mut rng);
-				let d_1 = S::cp_commit(g16_pk, &all_w, kappa);
+				let d_1 = S::cp_commit(g16_pk, &main_circ.circ1.cp_w(), kappa); //ALL_T1014
+				let all_w = main_circ.circ1.all_w();
 				let kzg_all_com_ch = kzg_ch(&driver1.poseidon_config,
 					KZG_CH_TAG_S1, com_all_w, d_1);
 				let prf_kzg = CS1E::prove_with_challenge(
@@ -3950,9 +3950,9 @@ set; exit(0) before Phase 2.");
 		log(job_id, log_level, &format!("PERF 1006: Job Step 6 {}", get_rss_usage()));
 
 		//T934 D5 Stage 2: D_2, r' = H(tag, C_W'E', D_2), its opening.
-		let all_w = cp_circuit.circ2.main_circ.all_w();
 		let kappa = C1::ScalarField::rand(&mut rng);
-		let d_2 = S::cp_commit(g16_pk, &all_w, kappa);
+		let d_2 = S::cp_commit(g16_pk, &cp_circuit.circ2.main_circ.cp_w(), kappa); //ALL_T1014
+		let all_w = cp_circuit.circ2.main_circ.all_w();
 		let r_p = kzg_ch(&driver2.poseidon_config, KZG_CH_TAG_S2,
 			nova2_com_all_w, d_2);
 		let nova2_prf_kzg = CS1E::prove_with_challenge(

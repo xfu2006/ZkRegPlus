@@ -52,6 +52,7 @@ use crate::folding::{
 	},
 };
 use crate::arith::r1cs::R1CS;
+use crate::utils::vec::SparseMatrix; //ALL_T1014
 use crate::commitment::{pedersen::Params as PedersenParams, CommitmentScheme};
 use crate::folding::circuits::{
     nonnative::{affine::NonNativeAffineVar, uint::NonNativeUintVar},
@@ -785,13 +786,28 @@ where
         })
     }
 
-	/// T934: the committed vector [W_1..W_k, E_1..E_k, o_1, o_2] (s9 order).
+	/// T934: the KZG vector [W_1..W_k, E_1..E_k, o_1, o_2] (s9 order).
+	/// ALL_T1014: Groth16 commits cp_w() instead.
 	pub fn all_w(&self) -> Vec<C1::ScalarField> {
 		let w = &self.W_i1.as_ref().expect("W_i1 null").vec_wit;
 		let (o1, o2) = self.r_all_w.expect("r_all_w null");
 		w.iter().flat_map(|x| x.W.iter()).chain(w.iter().flat_map(|x| x.E.iter()))
 			.copied().chain([o1, o2]).collect()
 	}
+
+	/// ALL_T1014: the Groth16 committed range D, every slot rescaled to u = 1.
+	pub fn committed_range(&self) -> CommittedRange<C1::ScalarField> {
+		let us = &self.U_i1.as_ref().expect("U_i1 null").vec_inst;
+		let ws = &self.W_i1.as_ref().expect("W_i1 null").vec_wit;
+		let (o1, o2) = self.r_all_w.expect("r_all_w null");
+		assert!(us.len() == ws.len() && ws.len() == self.r1cs.len(), "ALL_T1014: slot count");
+		let (x, w, e) = self.r1cs.iter().zip(us).zip(ws)
+			.map(|((r, i), w)| scaled_slot(r, i.u, &i.x, &w.W, &w.E)).multiunzip();
+		CommittedRange{ w, e, o: vec![o1, o2], u: us.iter().map(|i| i.u).collect(), x }
+	}
+
+	/// ALL_T1014: D flattened, the cp_commit vector of Stage 1 and Stage 2.
+	pub fn cp_w(&self) -> Vec<C1::ScalarField> { self.committed_range().parts().flatten().collect() }
 
 	/// In addition to generate constraints, for stage 1 circuit
 	/// return the <<com_E, com_W, com_F>>; for stage 2 circuit
@@ -855,19 +871,10 @@ where
         let U_i1 = CommittedInstanceVarFoldPotSuper::<C1>::new_witness(
 			cs.clone(), || { Ok(self.U_i1.clone().unwrap())
         })?;
-		//T934 D1: all_w is ONE contiguous witness range, recorded in cs
-		//for the Groth16 commitment D; W_i1 views slices of it.
-		let s0 = cs.num_witness_variables();
-		let all_w = Vec::<FpVar<CF1<C1>>>::new_witness(cs.clone(), || Ok(self.all_w()))?;
-		cs.set_committed(s0, all_w.len());
-		let w_nat = &self.W_i1.as_ref().unwrap().vec_wit;
-		let (mut ow, mut oe) = (0, w_nat.iter().map(|x| x.W.len()).sum::<usize>());
-		let W_i1 = WitnessVarFoldPotSuper::<C1>{ vec_wit: w_nat.iter().map(|x| {
-			let v = WitnessVarFoldPot{ W: all_w[ow..ow + x.W.len()].to_vec(),
-				E: all_w[oe..oe + x.E.len()].to_vec(), rE: new_var(&cs, x.rE),
-				rW: new_var(&cs, x.rW), size_F: x.size_F, rF: new_var(&cs, x.rF) };
-			ow += x.W.len(); oe += x.E.len(); v
-		}).collect() };
+		//T934 D1 + ALL_T1014: D is ONE contiguous committed range,
+		//tied to U_i1 here, above the !b_light_test gate.
+		let d = CommittedRange::alloc(&cs, self.committed_range())?;
+		d.bind(&U_i1.vec_inst)?;
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 2: igen Ui, Wi, Ui1, Wi1 witness: INCREASED {} constraints", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		gadget_sat_check(&cs, "decider::p1s2"); //DEBUG USE 69801
@@ -881,17 +888,17 @@ where
 		let kzg_all_com_ch = FpVar::<CF1<C1>>::new_witness(cs.clone(),
 			|| Ok(self.kzg_ch.expect("kzg_ch not set")))?;
 		let kzg_all_com_ch_clone= kzg_all_com_ch.clone();
-		let len_all_w_e = all_w.len();
+		let len_all_w_e = d.unscaled_len();
 		//DEBUG USE 69801.8: all_w_e layout so a step-4 UNSAT row maps
 		//to a W (witness) vs E (error) region of a specific circuit.
 		if std::env::var("ZKR_MAIN_SNARK_PROBE").is_ok(){
-			let lens: Vec<(usize,usize)> = W_i1.vec_wit.iter()
-				.map(|w| (w.W.len(), w.E.len())).collect();
+			let lens: Vec<(usize,usize)> = d.w.iter().zip(&d.e)
+				.map(|(w, e)| (w.len(), e.len())).collect();
 			println!("DEBUG USE 69801.8: all_w_e layout: per-circ \
 (W,E) lens {:?}, total {}", lens, len_all_w_e);
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 3: collect all_w_e. len: {}, : INCREASED: {} constraints.", 
-			all_w.len(), cs.num_constraints()-c1), &mut t1);
+			len_all_w_e, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		gadget_sat_check(&cs, "decider::p1s3"); //DEBUG USE 69801
 		if B_DEBUG3{check_cs(&cs, "phase1 step 2");}
@@ -899,7 +906,7 @@ where
 		let one= FpVar::<C1::ScalarField>::new_witness(cs.clone(),  || 
 			Ok(C1::ScalarField::from(1u32)) ).unwrap();
 		one.enforce_equal(&FpVar::one())?; //T934 D3 (F1c)
-        let eval_w_e= evaluate_gadget::<CF1<C1>>(all_w, kzg_all_com_ch, one)?;
+		let eval_w_e = d.eval_unscaled(&kzg_all_com_ch, &one)?; //ALL_T1014
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 4: eval all_w_e. INCREASED {} constrains.", cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
 		gadget_sat_check(&cs, "decider::p1s4"); //DEBUG USE 69801
@@ -1104,14 +1111,7 @@ where
         //7. check RelaxedR1CS of U_{i+1} for each circuit
 		let n_circ = field_to_usize(&self.n_circ);
 		for i in 0..n_circ{
-        	let z_U1: Vec<FpVar<CF1<C1>>> =
-            [vec![U_i1.vec_inst[i].u.clone()],
-				U_i1.vec_inst[i].x.to_vec(), 
-				W_i1.vec_wit[i].W.to_vec()].concat();
-        	RelaxedR1CSGadget::check_native((&vec_r1cs)[i].clone(), 
-				W_i1.vec_wit[i].E.clone(), 
-				U_i1.vec_inst[i].u.clone(), 
-				z_U1)?;
+			d.check_slot(i, vec_r1cs[i].clone())?; //ALL_T1014: rescaled, 1 cs per row
 		}
 		log_perf(self.job_id, log_level, &format!("Phase1 Circ gen_cs: Step 7: check {} circs. INCREASED r1cs: {}", self.n_circ, cs.num_constraints()-c1), &mut t1);
 		c1 = cs.num_constraints();
@@ -1691,23 +1691,128 @@ where
 /// addresses the stack overflow issue. 
 /// See <https://github.com/privacy-scaling-explorations/sonobe/issues/80>
 
-#[allow(unused)] // unused while check 7 is disabled
-fn evaluate_gadget<F: PrimeField>(
-    v: Vec<FpVar<F>>,
-    point: FpVar<F>,
-	one: FpVar<F>,
-) -> Result<FpVar<F>, SynthesisError> {
+/// Horner evaluation sum_i v_i point^i. `one` is a witness wire pinned to 1
+/// (one == FpVar::one() is enforced by the caller). Every 1024 steps
+/// eval * one adds one real constraint and a fresh variable with the same
+/// value, which cuts the growing chain of symbolic linear combinations.
+/// Without the cut, inlining that chain over about 10^8 entries overflows
+/// the stack (sonobe issue 80). The constant 1 would be free and would not cut.
+fn evaluate_gadget<F: PrimeField>(v: &[FpVar<F>], point: &FpVar<F>, one: &FpVar<F>)
+	-> Result<FpVar<F>, SynthesisError> {
 	let mut eval = FpVar::<F>::zero();
-	let mut prod = FpVar::<F>::one();
-	let mut v2 = v.clone();
-	v2.reverse();
-	for i in 0..v2.len(){
-		eval= &eval* &point + &v2[i];
-		if i%1024==0{
-			eval= &eval* &one;
-		}
+	for (i, x) in v.iter().rev().enumerate() {
+		eval = &eval * point + x;
+		if i % 1024 == 0 { eval = &eval * one; }
 	}
 	Ok(eval)
+}
+
+/// ALL_T1014: sum_s w_s r^{off_s} H_s(r), H_s = evaluate_gadget of segment s,
+/// off_s = total length of the segments before s.
+fn weighted_horner<F: PrimeField>(segs: &[(&[FpVar<F>], FpVar<F>)], r: &FpVar<F>, one: &FpVar<F>)
+	-> Result<FpVar<F>, SynthesisError> {
+	segs.iter().rev().try_fold(FpVar::zero(), |acc, (v, w)|
+		Ok(acc * r.pow_by_constant([v.len() as u64])? + w * evaluate_gadget(v, r, one)?))
+}
+
+/// ALL_T1014: one slot (u, x, W, E) rescaled to u = 1, i.e. (x/u, W/u, E/u^2).
+/// A u = 0 slot must be a never-folded dummy (x = W = E = 0) and keeps
+/// x' = W' = 0 with E' = dummy_residual.
+pub fn scaled_slot<F: PrimeField>(r1cs: &R1CS<F>, u: F, x: &[F], w: &[F], e: &[F])
+	-> (Vec<F>, Vec<F>, Vec<F>) {
+	let scale = |v: &[F], s: F| v.iter().map(|a| *a * s).collect::<Vec<F>>();
+	match u.inverse() {
+		Some(i) => (scale(x, i), scale(w, i), scale(e, i.square())),
+		None => {
+			assert!(x.iter().chain(w).chain(e).all(F::is_zero), "ALL_T1014: u = 0 slot is not a dummy");
+			(x.to_vec(), w.to_vec(), dummy_residual(r1cs))
+		}
+	}
+}
+
+/// ALL_T1014: E' of a u = 0 dummy slot at z' = (1, 0..0), i.e. A0 o B0 - C0
+/// with M0 the column 0 of M.
+pub fn dummy_residual<F: PrimeField>(r1cs: &R1CS<F>) -> Vec<F> {
+	let col0 = |m: &SparseMatrix<F>| m.coeffs.iter().map(|row| row.iter()
+		.filter(|(_, c)| *c == 0).map(|(a, _)| *a).sum::<F>()).collect::<Vec<F>>();
+	let (a, b, c) = (col0(&r1cs.A), col0(&r1cs.B), col0(&r1cs.C));
+	a.iter().zip(&b).zip(&c).map(|((a, b), c)| *a * b - c).collect()
+}
+
+/// ALL_T1014: the Groth16 committed range D in D order: W'_1..W'_k,
+/// E'_1..E'_k, (o_1, o_2), (u_1..u_k), x'_1..x'_k. W', E', x' are the
+/// slots rescaled to u = 1. The first 2k + 1 parts unscale to all_w().
+#[derive(Clone, Debug)]
+pub struct CommittedRange<T> {
+	pub w: Vec<Vec<T>>,
+	pub e: Vec<Vec<T>>,
+	pub o: Vec<T>,
+	pub u: Vec<T>,
+	pub x: Vec<Vec<T>>,
+}
+
+impl<T> CommittedRange<T> {
+	/// The parts in D order.
+	pub fn parts(self) -> impl Iterator<Item = Vec<T>> {
+		self.w.into_iter().chain(self.e).chain([self.o, self.u]).chain(self.x)
+	}
+
+	/// Maps every part by f, calling f in D order.
+	pub fn try_map<S, Er>(self, mut f: impl FnMut(Vec<T>) -> Result<Vec<S>, Er>)
+		-> Result<CommittedRange<S>, Er> {
+		let w = self.w.into_iter().map(&mut f).collect::<Result<_, _>>()?;
+		let e = self.e.into_iter().map(&mut f).collect::<Result<_, _>>()?;
+		let (o, u) = (f(self.o)?, f(self.u)?);
+		let x = self.x.into_iter().map(&mut f).collect::<Result<_, _>>()?;
+		Ok(CommittedRange{ w, e, o, u, x })
+	}
+
+	/// Length of the unscaled all_w() (the W, E and o parts).
+	pub fn unscaled_len(&self) -> usize {
+		self.o.len() + self.w.iter().chain(&self.e).map(Vec::len).sum::<usize>()
+	}
+}
+
+impl<F: PrimeField> CommittedRange<FpVar<F>> {
+	/// ALL_T1014: allocates D as ONE contiguous committed witness range.
+	pub fn alloc(cs: &ConstraintSystemRef<F>, d: CommittedRange<F>) -> Result<Self, SynthesisError> {
+		let s0 = cs.num_witness_variables();
+		let v = d.try_map(|p| Vec::<FpVar<F>>::new_witness(cs.clone(), || Ok(p)))?;
+		cs.set_committed(s0, cs.num_witness_variables() - s0);
+		Ok(v)
+	}
+
+	/// ALL_T1014: ties D to the instance on every slot: u_j = U_j.u and
+	/// U_j.x = u_j x'_j.
+	pub fn bind<C: CurveGroup<ScalarField = F>>(&self, inst: &[CommittedInstanceVarFoldPot<C>])
+		-> Result<(), SynthesisError> where C::BaseField: PrimeField {
+		assert_eq!(inst.len(), self.u.len(), "ALL_T1014: slot count");
+		for ((i, u), xp) in inst.iter().zip(&self.u).zip(&self.x) {
+			assert_eq!(i.x.len(), xp.len(), "ALL_T1014: |x|");
+			u.enforce_equal(&i.u)?;
+			for (x, q) in i.x.iter().zip(xp) { q.mul_equals(u, x)?; }
+		}
+		Ok(())
+	}
+
+	/// ALL_T1014: P(r) of the unscaled all_w(), with W_j = u_j W'_j and
+	/// E_j = u_j^2 E'_j, then (o_1, o_2). `one` is the pinned witness 1 that
+	/// evaluate_gadget uses to cut its linear-combination chain.
+	pub fn eval_unscaled(&self, r: &FpVar<F>, one: &FpVar<F>) -> Result<FpVar<F>, SynthesisError> {
+		let u2 = self.u.iter().map(FieldVar::square).collect::<Result<Vec<_>, _>>()?;
+		let segs = self.w.iter().zip(self.u.iter().cloned()).chain(self.e.iter().zip(u2))
+			.map(|(v, s)| (v.as_slice(), s))
+			.chain([(self.o.as_slice(), FpVar::one())]).collect::<Vec<_>>();
+		weighted_horner(&segs, r, one)
+	}
+
+	/// ALL_T1014: Step 7 on slot j, (A z')(B z') = C z' + E' with
+	/// z' = (1, x'_j, W'_j). One constraint per row. Here 1 is the R1CS
+	/// constant (FpVar::one()), never a witness, and u = 1 makes u Cz free.
+	pub fn check_slot(&self, j: usize, r1cs: R1CSVar<F, F, FpVar<F>>) -> Result<(), SynthesisError> {
+		let z = [vec![FpVar::one()], self.x[j].clone(), self.w[j].clone()].concat();
+		RelaxedR1CSGadget::check_native(r1cs, self.e[j].clone(), FpVar::one(), z)
+	}
 }
 
 /// T934 D2 / ruling D: Fiat-Shamir tags of r_2 (Stage 1) and r' (Stage 2).
@@ -2610,7 +2715,7 @@ pub mod tests_decider_eth_circuit_super {
         let challengeVar = FpVar::<Fr>::new_witness(cs.clone(), || Ok(challenge)).unwrap();
 		let one= FpVar::<Fr>::new_witness(cs.clone(),  ||
 			Ok(Fr::from(1u32)) ).unwrap();
-        let evalVar = evaluate_gadget::<Fr>(vVar, challengeVar, one)
+        let evalVar = evaluate_gadget::<Fr>(&vVar, &challengeVar, &one)
 			.unwrap();
 
         use ark_r1cs_std::R1CSVar;
@@ -3302,7 +3407,7 @@ pub mod tests_decider_eth_circuit_super {
 
 	/// S126: the step-8 commitment fold now CONSTRAINS -- an ACTIVE-slot
 	/// cmW swap is rejected in full mode, and accepted in light mode.
-	#[test]
+		#[test]
 	fn test_s126_active_slot_bound(){
 		//b_light_test is a PROCESS-WIDE RwLock and step 8 lives under
 		//`if !b_light_test`, so this test owns the flag for its whole
@@ -3401,28 +3506,63 @@ pub mod tests_decider_eth_circuit_super {
 		m
 	}
 
-	/// W[0] += dw and E := Az o Bz - u Cz (dw = 0 repairs the toy's own
-	/// step-7 row, see S119 ARM 0). With Some((r, e2)), o_2 is solved so
-	/// that all_w still evaluates to e2 at r (T934-2 F1).
+	/// W_1[0] += dw and E_j := Az_j o Bz_j - u_j Cz_j on every slot (dw = 0
+	/// repairs the toy's own step-7 row, see S119 ARM 0, and keeps a u = 0
+	/// dummy at E = 0). With Some((r, e2)), o_2 is solved so that all_w
+	/// still evaluates to e2 at r (T934-2 F1).
 	fn t934_forge(circ: &S119Circ, dw: Fr, re: Option<(Fr, Fr)>) -> S119Circ{
-		use crate::utils::vec::mat_vec_mul;
 		let mut f = circ.clone();
-		{
-			let inst = &f.U_i1.as_ref().unwrap().vec_inst[0];
-			let w = &mut f.W_i1.as_mut().unwrap().vec_wit[0];
-			w.W[0] += dw;
-			let z = [vec![inst.u], inst.x.clone(), w.W.clone()].concat();
-			let m = |a| mat_vec_mul(a, &z).unwrap();
-			let (az, bz, cz) = (m(&f.r1cs[0].A), m(&f.r1cs[0].B), m(&f.r1cs[0].C));
-			w.E = az.iter().zip(&bz).zip(&cz).map(|((a, b), c)| *a * b - inst.u * c).collect();
+		let ws = &mut f.W_i1.as_mut().unwrap().vec_wit;
+		ws[0].W[0] += dw;
+		for ((inst, w), r) in f.U_i1.as_ref().unwrap().vec_inst.iter().zip(ws).zip(&f.r1cs) {
+			w.E = t1014_residual(r, inst.u, &inst.x, &w.W, &vec![Fr::zero(); w.E.len()]);
 		}
-		if let Some((r, e2)) = re {
-			let v = f.all_w();
-			let (o1, o2) = f.r_all_w.unwrap();
-			f.r_all_w = Some((o1, o2 + (e2 - eval_all_w(&v, r)) / r.pow([v.len() as u64 - 1])));
-			f.kzg_ch = Some(r);
-		}
+		if let Some((r, e2)) = re { t934_resolve_o2(&mut f, r, e2); }
 		f
+	}
+
+	/// o_2 solved so that all_w() evaluates to e2 at r, and kzg_ch = r (T934-2 F1).
+	fn t934_resolve_o2(f: &mut S119Circ, r: Fr, e2: Fr){
+		let v = f.all_w();
+		let (o1, o2) = f.r_all_w.unwrap();
+		f.r_all_w = Some((o1, o2 + (e2 - eval_all_w(&v, r)) / r.pow([v.len() as u64 - 1])));
+		f.kzg_ch = Some(r);
+	}
+
+	/// ALL_T1014: D = cp_commit(c.cp_w()) and r = H(tag, com_all, D) of c.
+	fn t1014_d_r(pk: &ark_groth16::ProvingKey<Bn254>, c: &S119Circ, kappa: Fr) -> (Projective, Fr){
+		let d = G16::cp_commit(pk, &c.cp_w(), kappa);
+		(d, kzg_ch(&c.poseidon_config, KZG_CH_TAG_S1, c.com_all_w.unwrap(), d))
+	}
+
+	/// ALL_T1014: Groth16 proof of c finalized at r under the precommitted D.
+	/// Returns (it verifies on [res_hash, total_words], res_hash).
+	fn t1014_g16_ok(pk: &ark_groth16::ProvingKey<Bn254>, c: &S119Circ, (d, r): (Projective, Fr),
+		kappa: Fr, rng: &mut impl ark_std::rand::RngCore) -> (bool, Fr){
+		let m = t934_main(c.clone(), r);
+		let (h, n) = (m.res_hash, c.zi_part2_inst.as_ref().unwrap().total_words);
+		let p = <G16 as CpSnark<Bn254>>::prove_cp(pk, m, kappa, Some(d), rng).unwrap();
+		(G16::verify_proof(&ark_groth16::prepare_verifying_key(&pk.vk), &p, &[h, n]).unwrap(), h)
+	}
+
+	/// ALL_T1014 arm (c) on slot j of c, honest (D, r): E_j[0] += 1 with o_2
+	/// re-solved. The weighted Horner still gives e2 and the statement is
+	/// unchanged, yet Step 7 rejects, Groth16 rejects under the honest D, and
+	/// a D over the forged cp_w() moves r.
+	fn t1014_forged_e_arm(pk: &ark_groth16::ProvingKey<Bn254>, c: &S119Circ, j: usize,
+		(d, r): (Projective, Fr), kappa: Fr, rng: &mut impl ark_std::rand::RngCore){
+		let e2 = eval_all_w(&c.all_w(), r);
+		let mut f = c.clone();
+		f.W_i1.as_mut().unwrap().vec_wit[j].E[0] += Fr::one();
+		t934_resolve_o2(&mut f, r, e2);
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let eval = f.generate_constraints_adv(0, cs.clone(), Fr::zero()).unwrap().val().eval_w_e;
+		assert!(eval == e2 && !cs.is_satisfied().unwrap(),
+			"ALL_T1014 (c) slot {}: forged E SAT or weighted Horner != e2", j);
+		let (ok, h) = t1014_g16_ok(pk, &f, (d, r), kappa, rng);
+		assert!(h == t934_main(c.clone(), r).res_hash && !ok,
+			"ALL_T1014 (c) slot {}: statement changed or forged E accepted under the honest D", j);
+		assert!(t1014_d_r(pk, &f, kappa).1 != r, "ALL_T1014 (c) slot {}: r does not follow D", j);
 	}
 
 	/// T934-2 (+ ruling C check, T934-7 Stage 1). Pre-T934 the same
@@ -3440,8 +3580,7 @@ pub mod tests_decider_eth_circuit_super {
 		let n = circ.zi_part2_inst.as_ref().unwrap().total_words;
 		let v = |p: &ark_groth16::Proof<Bn254>, h: Fr| G16::verify_proof(&pvk, p, &[h, n]).unwrap();
 		let kappa = Fr::rand(&mut rng);
-		let d = G16::cp_commit(&pk, &all_w, kappa);
-		let r2 = kzg_ch(&cfg, KZG_CH_TAG_S1, com, d);
+		let (d, r2) = t1014_d_r(&pk, &circ, kappa); //ALL_T1014
 		assert!(kzg_ch(&cfg, KZG_CH_TAG_S1, d, d) != r2 && kzg_ch(&cfg, KZG_CH_TAG_S2, com, d) != r2,
 			"T934: r_2 ignores C_WE/tag");
 		let main = t934_main(circ.clone(), r2);
@@ -3451,8 +3590,12 @@ pub mod tests_decider_eth_circuit_super {
 			"T934 ruling C: finalize != re-synthesis at r_2");
 		let (s0, m) = cs.borrow().unwrap().committed.unwrap();
 		let (o1, o2) = circ.r_all_w.unwrap();
-		assert!(cs.borrow().unwrap().witness_assignment[s0..s0 + m] == all_w[..]
-			&& all_w[m - 2..] == [o1, o2], "T934-7: Stage-1 committed range != all_w || o_1 || o_2");
+		//ALL_T1014: D = cp_w(), with (o_1, o_2) at N - 2 and the u tail at N.
+		let (cp, n_aw) = (circ.cp_w(), all_w.len());
+		let us = circ.U_i1.as_ref().unwrap().vec_inst.iter().map(|i| i.u).collect::<Vec<_>>();
+		assert!(cs.borrow().unwrap().witness_assignment[s0..s0 + m] == cp[..]
+			&& cp[n_aw - 2..n_aw] == [o1, o2] && cp[n_aw..n_aw + us.len()] == us[..],
+			"T934-7: Stage-1 committed range != cp_w()");
 		let h = main.res_hash;
 		let p = <G16 as CpSnark<Bn254>>::prove_cp(&pk, main, kappa, Some(d), &mut rng).unwrap();
 		assert!(v(&p, h), "T934-2: honest proof rejected");
@@ -3460,16 +3603,38 @@ pub mod tests_decider_eth_circuit_super {
 			"T933 K2-min: honest proof verifies at word count n + 1");
 		//(a) forged W||E, same statement, honest D_1
 		let forged = t934_forge(&circ, Fr::one(), Some((r2, eval_all_w(&all_w, r2))));
-		let fa = forged.all_w();
+		let (fa, fcp) = (forged.all_w(), forged.cp_w());
 		assert_eq!(s119_synth(&forged).1, None, "T934-2: forged witness not SAT");
 		let mf = t934_main(forged, r2);
 		assert_eq!(mf.res_hash, h, "T934-2: forgery changed the statement");
 		let pf = <G16 as CpSnark<Bn254>>::prove_cp(&pk, mf, kappa, Some(d), &mut rng).unwrap();
 		assert!(!v(&pf, h), "T934-2(a): forged W||E accepted under the honest D_1");
 		//(b) D_1 recomputed over the forged W||E moves r_2 off e2
-		let r2f = kzg_ch(&cfg, KZG_CH_TAG_S1, com, G16::cp_commit(&pk, &fa, kappa));
+		let r2f = kzg_ch(&cfg, KZG_CH_TAG_S1, com, G16::cp_commit(&pk, &fcp, kappa));
 		assert!(r2f != r2 && eval_all_w(&fa, r2f) != eval_all_w(&all_w, r2f),
 			"T934-2(b): r_2 does not follow D_1");
+		//(c) ALL_T1014: forged E[0], o_2 re-solved
+		t1014_forged_e_arm(&pk, &circ, 0, (d, r2), kappa, &mut rng);
+	}
+
+	/// ALL_T1014: one Groth16 key from setup on s103 [1,0,1,0,1] (k = 2).
+	/// Honest proofs of both s103 fixtures verify under it ([0; 5] has a
+	/// u = 0 slot), and arm (c) rejects on slot 0 and slot 1 (slot 1 checks
+	/// the weighted Horner offset after the first slot).
+	#[test]
+	fn test_t1014_g16_s103(){
+		let fx = [s103_fold(5, 2, &[1, 0, 1, 0, 1]), s103_fold(5, 2, &[0; 5])]
+			.map(|c| t934_forge(&c, Fr::zero(), None));
+		let mut rng = ark_std::test_rng();
+		let pk = G16::generate_random_parameters_with_reduction(t934_main(fx[0].clone(), Fr::zero()),
+			&mut rng).unwrap();
+		let kappa = Fr::rand(&mut rng);
+		for (f, c) in fx.iter().enumerate() {
+			assert!(t1014_g16_ok(&pk, c, t1014_d_r(&pk, c, kappa), kappa, &mut rng).0,
+				"ALL_T1014: honest s103 fixture {} rejected", f);
+		}
+		let dr = t1014_d_r(&pk, &fx[0], kappa);
+		(0..2).for_each(|j| t1014_forged_e_arm(&pk, &fx[0], j, dr, kappa, &mut rng));
 	}
 
 	/// T933 K2-min: main decider public input 2 is the fold's word count
@@ -3544,8 +3709,8 @@ pub mod tests_decider_eth_circuit_super {
 		let run = |cp: S119Cp| { let (m, z, r) = synth_mats(|cs| cp.generate_constraints(cs).unwrap());
 			(unsat(&m, &z), z, r, m.num_instance_variables) };
 		let (base, z, (s0, k), n_in) = run(t934_cp(&circ, &res));
-		assert!(z[n_in + s0..n_in + s0 + k] == circ.all_w()[..],
-			"T934-7: Stage-2 committed range != main_circ2 all_w");
+		assert!(z[n_in + s0..n_in + s0 + k] == circ.cp_w()[..],
+			"T934-7: Stage-2 committed range != main_circ2 cp_w"); //ALL_T1014
 		let grows = |cp: S119Cp| { let b = run(cp).0;
 			b.len() > base.len() && base.iter().all(|r| b.contains(r)) };
 		let mut cp = t934_cp(&circ, &res);
@@ -3558,8 +3723,8 @@ pub mod tests_decider_eth_circuit_super {
 		assert!(grows(cp), "T934-3: decider r_2 != verifier r_2 accepted");
 	}
 
-	/// B1: W_i1 views the committed wires, so every committed E column is
-	/// read by its Horner row and by the relaxed-R1CS check (>= 2 rows).
+	/// B1: every committed E column is read by its Horner row and by the
+	/// relaxed-R1CS check (>= 2 rows). ALL_T1014: so is every u and x' column.
 	#[test]
 	fn test_t934_committed_read(){
 		let circ = s119_fold(5);
@@ -3575,6 +3740,7 @@ pub mod tests_decider_eth_circuit_super {
 			cols.into_iter().for_each(|i| cnt[i - c0] += 1);
 		}
 		assert!(cnt[nw..nw + ne].iter().all(|&c| c >= 2), "T934 B1: a committed E column is read by its Horner row only");
+		assert!(cnt[nw + ne + 2..].iter().all(|&c| c >= 2), "ALL_T1014: a committed u or x' column is read by < 2 rows");
 	}
 
 	// ---------------------------------------------------------------
@@ -4073,9 +4239,19 @@ pub mod tests_decider_eth_circuit_super {
 	// T934 K4 (pp_hash a decider constant) and F71 (Stage-2 pp_hash
 	// covers the CyclePair R1CS dims and key).
 	// ---------------------------------------------------------------
-	/// T934 K4, light: the matrices follow pp_hash and no witness holds
-	/// it. The cp decider's own copy (Step 5) is gated out in light mode
-	/// (R8b covers it).
+	/// ALL_T1014: (hits inside W', hits outside W') of v in the witness
+	/// vector w, with W' the first |W| entries of the committed range at s0.
+	/// A step-circuit wire that is v in every instance is u v in W, so
+	/// W' = W/u holds v. No other witness may.
+	fn t1014_pp_hits(w: &[Fr], s0: usize, wit: &WitnessFoldPotSuper<Projective>, v: Fr) -> (usize, usize){
+		let wp = s0..s0 + wit.vec_wit.iter().map(|x| x.W.len()).sum::<usize>();
+		let (a, b): (Vec<usize>, Vec<usize>) = (0..w.len()).filter(|&i| w[i] == v).partition(|i| wp.contains(i));
+		(a.len(), b.len())
+	}
+
+	/// T934 K4, light: the matrices follow pp_hash and no witness outside
+	/// W' holds it (ALL_T1014). The cp decider's own copy (Step 5) is gated
+	/// out in light mode (R8b covers it).
 	#[test]
 	fn test_t934_k4_pp_hash_const(){
 		let circ = s119_fold(5);
@@ -4084,11 +4260,13 @@ pub mod tests_decider_eth_circuit_super {
 		let with = |h: Fr| { let mut c = circ.clone(); c.pp_hash = Some(h); c };
 		let main = |h: Fr| synth_mats(|cs| { with(h).generate_constraints_adv(0, cs, Fr::zero()).unwrap(); });
 		let cp = |h: Fr| synth_mats(|cs| t934_cp(&with(h), &res).generate_constraints(cs).unwrap());
-		for (name, (mx, z, _), my) in [("main", main(x), main(x + Fr::one()).0),
+		for (name, (mx, z, (s0, _)), my) in [("main", main(x), main(x + Fr::one()).0),
 			("cp", cp(x), cp(x + Fr::one()).0)] {
 			emit_stdout(format!("T934 K4 {}: cs {}, witness {}", name, mx.num_constraints, mx.num_witness_variables));
 			assert!(mx != my, "T934 K4 {}: pp_hash X and X + 1 give the same matrices", name);
-			assert!(!z[mx.num_instance_variables..].contains(&x), "T934 K4 {}: a witness holds pp_hash", name);
+			let (inw, out) = t1014_pp_hits(&z[mx.num_instance_variables..], s0, circ.W_i1.as_ref().unwrap(), x);
+			emit_stdout(format!("T934 K4 {}: pp_hash in {} W' wires, {} other witnesses", name, inw, out));
+			assert_eq!(out, 0, "T934 K4 {}: a witness outside W' holds pp_hash", name);
 		}
 	}
 
@@ -4102,8 +4280,7 @@ pub mod tests_decider_eth_circuit_super {
 		utils::consts::get_global_config().b_light_test = false;
 		let fold = |pp: Option<Fr>| t934_forge(&s119_fold_pp(5, None, pp).0, Fr::zero(), None);
 		let circ = fold(None);
-		let (cfg, x) = (circ.poseidon_config.clone(), circ.pp_hash.unwrap());
-		let circ_y = fold(Some(x + Fr::one()));
+		let circ_y = fold(Some(circ.pp_hash.unwrap() + Fr::one()));
 		let sat = |c: &S119Circ| { let cs = ConstraintSystem::<Fr>::new_ref();
 			t934_main(c.clone(), Fr::zero()).generate_constraints(cs.clone()).unwrap();
 			cs.is_satisfied().unwrap() };
@@ -4111,23 +4288,16 @@ pub mod tests_decider_eth_circuit_super {
 		let mut rng = ark_std::test_rng();
 		let pk = G16::generate_random_parameters_with_reduction(t934_main(circ.clone(), Fr::zero()),
 			&mut rng).unwrap();
-		let pvk = ark_groth16::prepare_verifying_key(&pk.vk);
 		let kappa = Fr::rand(&mut rng);
-		let mut run = |c: S119Circ| {
-			let d = G16::cp_commit(&pk, &c.all_w(), kappa);
-			let m = t934_main(c.clone(), kzg_ch(&cfg, KZG_CH_TAG_S1, c.com_all_w.unwrap(), d));
-			let (h, n) = (m.res_hash, c.zi_part2_inst.as_ref().unwrap().total_words);
-			let p = <G16 as CpSnark<Bn254>>::prove_cp(&pk, m, kappa, Some(d), &mut rng).unwrap();
-			G16::verify_proof(&pvk, &p, &[h, n]).unwrap()
-		};
+		let mut run = |c: S119Circ| t1014_g16_ok(&pk, &c, t1014_d_r(&pk, &c, kappa), kappa, &mut rng).0; //ALL_T1014
 		assert!(run(circ), "T934 K4: X/X control rejected");
 		assert!(!run(circ_y), "T934 K4: key for pp_hash X accepts an X + 1 proof");
 	}
 
 	/// T934 K4 (R8b, jet1tb, run alone with --ignored): one full-mode cp
 	/// decider synthesis over the T931 fixture. It is SAT and no witness
-	/// holds pp_hash. This covers Step 5's copy (:1575), which only full
-	/// mode synthesizes.
+	/// outside W' holds pp_hash (ALL_T1014). This covers Step 5's copy
+	/// (:1575), which only full mode synthesizes.
 	#[test]
 	#[ignore]
 	fn test_t934_k4_cp_full_scan(){
@@ -4138,8 +4308,11 @@ pub mod tests_decider_eth_circuit_super {
 		let cs = ConstraintSystem::<Fr>::new_ref();
 		t931_cp(&t934_main(circ, Fr::from(7u64)), &c2, &rows, vk).generate_constraints(cs.clone()).unwrap();
 		assert!(cs.is_satisfied().unwrap(), "T934 K4: honest full cp decider not SAT");
-		assert!(!cs.borrow().unwrap().witness_assignment.contains(&c2.pp_hash.unwrap()),
-			"T934 K4: a cp decider witness holds pp_hash");
+		let g = cs.borrow().unwrap();
+		let (inw, out) = t1014_pp_hits(&g.witness_assignment, g.committed.unwrap().0,
+			c2.W_i1.as_ref().unwrap(), c2.pp_hash.unwrap());
+		emit_stdout(format!("T934 K4 cp full: pp_hash in {} W' wires, {} other witnesses", inw, out));
+		assert_eq!(out, 0, "T934 K4: a cp decider witness outside W' holds pp_hash");
 	}
 
 	/// T934 F71: Stage 1 keeps the pre-F71 pp_hash. Stage 2 also hashes
@@ -4208,5 +4381,277 @@ pub mod tests_decider_eth_circuit_super {
 			assert!(nb_rows.len() == 1 && bz.contains(&nb_rows[0]),
 				"T971: B new rows {:?}, i = 0 unsat {:?}", nb_rows, bz);
 		}
+	}
+
+	// ---------------------------------------------------------------
+	// ALL_T1014 (sonobe#22 part 2): Step 7 runs on the slots rescaled to
+	// u = 1. Unit arms on a random R1CS, then decider arms on s119 (k = 1),
+	// s103 [1,0,1,0,1] (k = 2, distinct u) and s103 [0; 5] (slot 1 is a
+	// u = 0 dummy).
+	// ---------------------------------------------------------------
+	use ark_r1cs_std::R1CSVar as _;
+
+	fn t1014_rv<R: ark_std::rand::Rng>(rng: &mut R, n: usize) -> Vec<Fr>{
+		(0..n).map(|_| Fr::rand(rng)).collect()
+	}
+
+	/// Az o Bz - u Cz - E of the slot (u, x, W, E) of r.
+	fn t1014_residual(r: &R1CS<Fr>, u: Fr, x: &[Fr], w: &[Fr], e: &[Fr]) -> Vec<Fr>{
+		use crate::utils::vec::mat_vec_mul;
+		let z = [vec![u], x.to_vec(), w.to_vec()].concat();
+		let m = |a| mat_vec_mul(a, &z).unwrap();
+		let (a, b, c) = (m(&r.A), m(&r.B), m(&r.C));
+		(0..a.len()).map(|t| a[t] * b[t] - u * c[t] - e[t]).collect()
+	}
+
+	/// Indices of the nonzero entries of v.
+	fn t1014_nz(v: &[Fr]) -> Vec<usize>{ (0..v.len()).filter(|&t| !v[t].is_zero()).collect() }
+
+	/// Unsat rows of check_native alone. u = None is the rescaled check (u the constant 1).
+	fn t1014_check(r: &R1CS<Fr>, u: Option<Fr>, x: &[Fr], w: &[Fr], e: &[Fr]) -> Vec<usize>{
+		let (m, z, _) = synth_mats(|cs| {
+			let rv = R1CSVar::<Fr, Fr, FpVar<Fr>>::new_witness(cs.clone(), || Ok(r.clone())).unwrap();
+			let v = |a: &[Fr]| Vec::<FpVar<Fr>>::new_witness(cs.clone(), || Ok(a.to_vec())).unwrap();
+			let uv = u.map_or(FpVar::one(), |u| FpVar::new_witness(cs.clone(), || Ok(u)).unwrap());
+			RelaxedR1CSGadget::check_native(rv, v(e), uv.clone(), [vec![uv], v(x), v(w)].concat()).unwrap();
+		});
+		unsat(&m, &z)
+	}
+
+	/// A random D over slots of (|W|, |E|), |x| = 2 and u != 0, with its
+	/// unscaled all_w() and the instance (u_j, x_j).
+	fn t1014_range<R: ark_std::rand::Rng>(rng: &mut R, lens: &[(usize, usize)])
+		-> (CommittedRange<Fr>, Vec<Fr>, Vec<(Fr, Vec<Fr>)>){
+		let r1cs = R1CS::<Fr>::rand(rng, 1, 1); //read only when u = 0
+		let slots = lens.iter().map(|&(nw, ne)| (Fr::rand(rng), t1014_rv(rng, 2),
+			t1014_rv(rng, nw), t1014_rv(rng, ne))).collect::<Vec<_>>();
+		let o = t1014_rv(rng, 2);
+		let (x, w, e) = slots.iter().map(|(u, x, w, e)| scaled_slot(&r1cs, *u, x, w, e)).multiunzip();
+		let d = CommittedRange{ w, e, o: o.clone(), u: slots.iter().map(|s| s.0).collect(), x };
+		let aw = slots.iter().flat_map(|s| s.2.clone()).chain(slots.iter().flat_map(|s| s.3.clone()))
+			.chain(o).collect();
+		(d, aw, slots.into_iter().map(|(u, x, _, _)| (u, x)).collect())
+	}
+
+	/// ALL_T1014 tests 1-3 and 7. scaled_slot round trip. The rescaled
+	/// check accepts exactly when the relaxed one does, and rejects the same
+	/// rows. A u = 0 dummy needs E' = dummy_residual. Rescaled Step 7 costs
+	/// exactly 1 constraint and 0 variables per row.
+	#[test]
+	fn test_t1014_scaled_slot(){
+		let mut rng = ark_std::test_rng();
+		let r = R1CS::<Fr>::rand(&mut rng, 24, 12);
+		let (nx, nw, nr) = (r.l, r.A.n_cols - 1 - r.l, r.A.n_rows);
+		let mul = |a: &[Fr], s: Fr| a.iter().map(|v| *v * s).collect::<Vec<Fr>>();
+		for k in 0..20 {
+			let (u, x, w) = (Fr::rand(&mut rng), t1014_rv(&mut rng, nx), t1014_rv(&mut rng, nw));
+			let e = t1014_residual(&r, u, &x, &w, &vec![Fr::zero(); nr]);
+			let (xp, wp, ep) = scaled_slot(&r, u, &x, &w, &e);
+			assert!(mul(&xp, u) == x && mul(&wp, u) == w && mul(&ep, u * u) == e, "test 1: round trip");
+			assert!(t1014_check(&r, Some(u), &x, &w, &e).is_empty()
+				&& t1014_check(&r, None, &xp, &wp, &ep).is_empty(), "test 2: honest slot UNSAT");
+			let (mut x2, mut w2, mut e2) = (x.clone(), w.clone(), e.clone());
+			match k % 3 { 0 => w2[k % nw] += Fr::one(), 1 => e2[k % nr] += Fr::one(), _ => x2[0] += Fr::one() }
+			let want = t1014_nz(&t1014_residual(&r, u, &x2, &w2, &e2));
+			let (xq, wq, eq) = scaled_slot(&r, u, &x2, &w2, &e2);
+			assert_eq!(t1014_check(&r, None, &xq, &wq, &eq), want, "test 2: rescaled unsat rows");
+			assert_eq!(t1014_check(&r, Some(u), &x2, &w2, &e2).len(), want.len(), "test 2: relaxed unsat rows");
+		}
+		let (zx, zw, ze) = (vec![Fr::zero(); nx], vec![Fr::zero(); nw], vec![Fr::zero(); nr]);
+		let (xp, wp, ep) = scaled_slot(&r, Fr::zero(), &zx, &zw, &ze);
+		assert!(xp == zx && wp == zw && ep == dummy_residual(&r) && ep.iter().any(|a| !a.is_zero()),
+			"test 3: dummy slot is not (0, 0, nonzero dummy_residual)");
+		assert!(t1014_check(&r, None, &xp, &wp, &ep).is_empty(), "test 3: dummy slot UNSAT");
+		assert!(!t1014_check(&r, None, &xp, &wp, &ze).is_empty(), "test 3: dummy slot with E' = 0 SAT");
+		let cost = |u: Option<Fr>| { let cs = ConstraintSystem::<Fr>::new_ref();
+			let rv = R1CSVar::<Fr, Fr, FpVar<Fr>>::new_witness(cs.clone(), || Ok(r.clone())).unwrap();
+			let v = |a: &[Fr]| Vec::<FpVar<Fr>>::new_witness(cs.clone(), || Ok(a.to_vec())).unwrap();
+			let uv = u.map_or(FpVar::one(), |u| FpVar::new_witness(cs.clone(), || Ok(u)).unwrap());
+			let z = [vec![uv.clone()], v(&zx), v(&zw)].concat();
+			let ev = v(&ze);
+			let (c0, w0) = (cs.num_constraints(), cs.num_witness_variables());
+			RelaxedR1CSGadget::check_native(rv, ev, uv, z).unwrap();
+			(cs.num_constraints() - c0, cs.num_witness_variables() - w0) };
+		let c_rows = r.C.coeffs.iter().filter(|row| !row.is_empty()).count();
+		assert_eq!(cost(None), (nr, 0), "test 7: rescaled Step 7 cost");
+		assert_eq!(cost(Some(Fr::one())), (nr + c_rows, c_rows), "test 7: relaxed Step 7 cost");
+	}
+
+	/// ALL_T1014 test 4: a u = 0 slot that is not a dummy panics.
+	#[test]
+	#[should_panic(expected = "u = 0 slot is not a dummy")]
+	fn test_t1014_scaled_slot_u0_live(){
+		let r = R1CS::<Fr>::rand(&mut ark_std::test_rng(), 4, 4);
+		let x = [vec![Fr::one()], vec![Fr::zero(); r.l - 1]].concat();
+		scaled_slot(&r, Fr::zero(), &x, &[Fr::zero(); 2], &[Fr::zero(); 4]);
+	}
+
+	/// ALL_T1014 test 5: weighted_horner with weights 1 is evaluate_gadget of
+	/// the concatenation, with random weights the native sum, and
+	/// eval_unscaled of a random D is P(r) of its unscaled all_w().
+	#[test]
+	fn test_t1014_weighted_horner(){
+		let mut rng = ark_std::test_rng();
+		let cs = ConstraintSystem::<Fr>::new_ref();
+		let wit = |v: Fr| FpVar::new_witness(cs.clone(), || Ok(v)).unwrap();
+		let rn = Fr::rand(&mut rng);
+		let (r, one) = (wit(rn), wit(Fr::one()));
+		let vals = [5usize, 1, 1100, 3].iter().map(|&n| t1014_rv(&mut rng, n)).collect::<Vec<_>>();
+		let vars = vals.iter().map(|v| Vec::<FpVar<Fr>>::new_witness(cs.clone(), || Ok(v.clone())).unwrap())
+			.collect::<Vec<_>>();
+		let ws = t1014_rv(&mut rng, vals.len());
+		let horner = |w: &dyn Fn(usize) -> FpVar<Fr>| { let segs = vars.iter().enumerate()
+			.map(|(s, v)| (v.as_slice(), w(s))).collect::<Vec<_>>();
+			weighted_horner(&segs, &r, &one).unwrap().value().unwrap() };
+		let cat = evaluate_gadget(&vars.concat(), &r, &one).unwrap().value().unwrap();
+		assert!(horner(&|_| FpVar::one()) == cat && cat == eval_all_w(&vals.concat(), rn), "test 5: weights 1");
+		let mut off = 0u64;
+		let want = vals.iter().zip(&ws).map(|(v, w)| { let t = *w * rn.pow([off]) * eval_all_w(v, rn);
+			off += v.len() as u64; t }).sum::<Fr>();
+		assert_eq!(horner(&|s| wit(ws[s])), want, "test 5: random weights");
+		let (d, aw, _) = t1014_range(&mut rng, &[(3, 5), (4, 7)]);
+		let dv = CommittedRange::alloc(&cs, d).unwrap();
+		assert_eq!(dv.eval_unscaled(&r, &one).unwrap().value().unwrap(), eval_all_w(&aw, rn), "test 5: eval_unscaled");
+		assert!(cs.is_satisfied().unwrap(), "test 5: honest Horner UNSAT");
+	}
+
+	/// ALL_T1014 test 6: bind rejects D.u != U.u (either side moved),
+	/// x != u x', and u = 0 with x != 0 for any x'.
+	#[test]
+	fn test_t1014_bind_arms(){
+		let (d0, _, inst0) = t1014_range(&mut ark_std::test_rng(), &[(2, 3), (2, 3)]);
+		let sat = |d: &CommittedRange<Fr>, inst: &[(Fr, Vec<Fr>)]| {
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let iv = inst.iter().map(|(u, x)| { let mut c = CommittedInstanceFoldPot::<Projective>::dummy(2);
+				(c.u, c.x) = (*u, x.clone());
+				CommittedInstanceVarFoldPot::<Projective>::new_witness(cs.clone(), || Ok(c)).unwrap() })
+				.collect::<Vec<_>>();
+			CommittedRange::alloc(&cs, d.clone()).unwrap().bind(&iv).unwrap();
+			cs.is_satisfied().unwrap() };
+		assert!(sat(&d0, &inst0), "test 6: honest bind UNSAT");
+		let mut d = d0.clone();
+		d.u[1] += Fr::one();
+		assert!(!sat(&d, &inst0), "test 6: D.u != U.u accepted");
+		let mut i = inst0.clone();
+		i[0].0 += Fr::one();
+		assert!(!sat(&d0, &i), "test 6: moved U.u accepted");
+		let mut i = inst0.clone();
+		i[1].1[1] += Fr::one();
+		assert!(!sat(&d0, &i), "test 6: x != u x' accepted");
+		let (mut d, mut i) = (d0.clone(), inst0.clone());
+		(d.u[0], i[0].0) = (Fr::zero(), Fr::zero());
+		assert!(!sat(&d, &i), "test 6: u = 0 with x != 0 accepted");
+	}
+
+	/// ALL_T1014 test 8: alloc commits parts() in D order, as one range of
+	/// exactly the part lengths, starting at the first new witness.
+	#[test]
+	fn test_t1014_alloc_order(){
+		let mut n = 0u64;
+		let mut seq = |k: usize| (0..k).map(|_| { n += 1; Fr::from(n) }).collect::<Vec<Fr>>();
+		let d = CommittedRange{ w: vec![seq(3), seq(2)], e: vec![seq(4), seq(1)], o: seq(2), u: seq(2),
+			x: vec![seq(2), seq(2)] };
+		let (m, z, (s0, k)) = synth_mats(|cs| { let _ = FpVar::new_witness(cs.clone(), || Ok(Fr::zero())).unwrap();
+			CommittedRange::alloc(&cs, d.clone()).unwrap(); });
+		let c0 = m.num_instance_variables + s0;
+		assert!(s0 == 1 && k == 18 && z[c0..c0 + k] == d.parts().flatten().collect::<Vec<_>>()[..]
+			&& (0..k).all(|t| z[c0 + t] == Fr::from(t as u64 + 1)), "test 8: committed range out of D order");
+	}
+
+	/// The three decider fixtures. s119 is repaired (t934_forge) so it is SAT.
+	fn t1014_fixtures() -> [S119Circ; 3]{
+		[t934_forge(&s119_fold(5), Fr::zero(), None), s103_fold(5, 2, &[1, 0, 1, 0, 1]), s103_fold(5, 2, &[0; 5])]
+	}
+
+	/// (N = |all_w()|, k, |x|) of a fixture.
+	fn t1014_dims(c: &S119Circ) -> (usize, usize, usize){
+		let inst = &c.U_i1.as_ref().unwrap().vec_inst;
+		(c.all_w().len(), inst.len(), inst[0].x.len())
+	}
+
+	/// The bind rows of slot j: (u pin row, x-binding rows), with D at column d0.
+	fn t1014_bind_rows(m: &ark_relations::r1cs::ConstraintMatrices<Fr>, d0: usize,
+		(n, k, nx): (usize, usize, usize), j: usize) -> (usize, Vec<usize>){
+		let (cu, one) = (d0 + n + j, Fr::one());
+		let pin = (0..m.num_constraints).filter(|&r| m.b[r] == [(one, 0)] && m.c[r].is_empty()
+			&& m.a[r].len() == 2 && m.a[r].iter().any(|&(c, i)| i == cu && (c == one || c == -one)))
+			.collect::<Vec<_>>();
+		assert_eq!(pin.len(), 1, "ALL_T1014: u pin row of slot {} not unique", j);
+		let xr = (0..nx).map(|t| (0..m.num_constraints).find(|&r| m.a[r] == [(one, d0 + n + k + j * nx + t)]
+			&& m.b[r] == [(one, cu)]).expect("ALL_T1014: no x-binding row")).collect();
+		(pin[0], xr)
+	}
+
+	/// ALL_T1014 tests 9-12 and 14 on the three fixtures. 9: eval_w_e is
+	/// P(r) of all_w(). 10: the unsat rows are exactly the Step 7 rows whose
+	/// native relaxed residual is nonzero, none in a u = 0 slot. 11: the
+	/// committed range is cp_w() with the o and u tails in place. 12: moving
+	/// D.u_j, U_j.u or D.x'_j breaks a bind row. 14: setup-mode and
+	/// prove-mode synthesis, and the two s103 fixtures, share one shape.
+	#[test]
+	fn test_t1014_decider_rescale(){
+		let fx = t1014_fixtures();
+		let mut shapes = vec![];
+		for (f, c) in fx.iter().enumerate() {
+			let (aw, cp, dims) = (c.all_w(), c.cp_w(), t1014_dims(c));
+			let (n, k, nx) = dims;
+			let inst = &c.U_i1.as_ref().unwrap().vec_inst;
+			let wit = &c.W_i1.as_ref().unwrap().vec_wit;
+			let cs = ConstraintSystem::<Fr>::new_ref();
+			let ret = c.generate_constraints_adv(0, cs.clone(), Fr::zero()).unwrap().val();
+			assert_eq!(ret.eval_w_e, eval_all_w(&aw, c.kzg_ch.unwrap()), "test 9: fixture {}", f);
+			let (m, z, (s0, len)) = synth_mats(|cs| { c.generate_constraints_adv(0, cs, Fr::zero()).unwrap(); });
+			let d0 = m.num_instance_variables + s0;
+			let us = inst.iter().map(|i| i.u).collect::<Vec<_>>();
+			assert!(len == n + k * (1 + nx) && z[d0..d0 + len] == cp[..] && cp[n - 2..n] == aw[n - 2..]
+				&& cp[n..n + k] == us[..], "test 11: fixture {} committed range != cp_w()", f);
+			//An unsat honest row is a Step 7 row. Row (j, t) reads E'_j[t] in C,
+			//or in A when it is an enforce_equal (Az' or Bz' constant).
+			let mut e_col = std::collections::HashMap::new();
+			let mut col = d0 + wit.iter().map(|w| w.W.len()).sum::<usize>();
+			for (j, w) in wit.iter().enumerate() { for t in 0..w.E.len() { e_col.insert(col, (j, t)); col += 1; } }
+			let got = unsat(&m, &z).iter().map(|&r| m.c[r].iter().chain(&m.a[r]).find_map(|(_, i)| e_col.get(i).copied())
+				.expect("test 10: an unsat row outside Step 7")).collect::<std::collections::BTreeSet<_>>();
+			let want = (0..k).flat_map(|j| t1014_nz(&t1014_residual(&c.r1cs[j], inst[j].u, &inst[j].x,
+				&wit[j].W, &wit[j].E)).into_iter().map(move |t| (j, t))).collect::<std::collections::BTreeSet<_>>();
+			assert_eq!(got, want, "test 10: fixture {} unsat Step 7 rows", f);
+			assert!(got.iter().all(|&(j, _)| !us[j].is_zero()), "test 10: unsat row in a u = 0 slot");
+			assert_eq!(f == 2, us.iter().any(|u| u.is_zero()), "fixture {}: u = 0 slot expected only in [0; 5]", f);
+			for j in 0..k {
+				let (pin, xr) = t1014_bind_rows(&m, d0, dims, j);
+				let cu_inst = m.a[pin].iter().map(|&(_, i)| i).find(|&i| i != d0 + n + j).unwrap();
+				//x' is free when u_j = 0 (x = u x' = 0 for every x').
+				let x_arm = (!us[j].is_zero()).then(|| (d0 + n + k + j * nx, xr[0]));
+				for (cl, row) in [(d0 + n + j, pin), (cu_inst, pin)].into_iter().chain(x_arm) {
+					let mut z2 = z.clone();
+					z2[cl] += Fr::one();
+					assert!(unsat(&m, &z2).contains(&row), "test 12: fixture {} slot {}: column {} moved, row {} SAT", f, j, cl, row);
+				}
+			}
+			let (ms, _, rs) = synth_mats(|cs| { cs.set_mode(ark_relations::r1cs::SynthesisMode::Setup);
+				c.generate_constraints_adv(0, cs, Fr::zero()).unwrap(); });
+			let shape = |m: &ark_relations::r1cs::ConstraintMatrices<Fr>, r| (m.a.clone(), m.b.clone(), m.c.clone(),
+				m.num_instance_variables, m.num_witness_variables, r);
+			assert!(shape(&ms, rs) == shape(&m, (s0, len)), "test 14: fixture {} setup shape != prove shape", f);
+			shapes.push(shape(&m, (s0, len)));
+		}
+		assert!(shapes[1] == shapes[2], "test 14: s103 [1,0,1,0,1] and [0; 5] differ in shape");
+	}
+
+	/// ALL_T1014 test 15: through the CyclePair synthesis, the Stage-2
+	/// committed range is the main circuit's cp_w() and a moved D.u breaks its pin.
+	#[test]
+	fn test_t1014_cp_bind(){
+		let circ = s119_fold(5);
+		let res = t934_main(circ.clone(), Fr::from(7u64)).res;
+		let (m, z, (s0, len)) = synth_mats(|cs| t934_cp(&circ, &res).generate_constraints(cs).unwrap());
+		let d0 = m.num_instance_variables + s0;
+		assert!(z[d0..d0 + len] == circ.cp_w()[..], "test 15: Stage-2 committed range != cp_w()");
+		let dims = t1014_dims(&circ);
+		let (pin, _) = t1014_bind_rows(&m, d0, dims, 0);
+		let mut z2 = z.clone();
+		z2[d0 + dims.0] += Fr::one();
+		assert!(!unsat(&m, &z).contains(&pin) && unsat(&m, &z2).contains(&pin),
+			"test 15: Stage-2 u pin does not reject a moved D.u");
 	}
 }
