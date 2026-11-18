@@ -35,6 +35,7 @@
 # ---------------------------------------------------------------------
 
 import argparse
+import fcntl
 import hashlib
 import os
 import shutil
@@ -266,6 +267,32 @@ def linger_on(user):
     return "Linger=yes" in r.stdout
 
 
+def sudo_status():
+    """ALL_T1013 K14d: None when root or passwordless sudo works, else the
+    cause in one line.  Never prompts for a password."""
+    if os.geteuid() == 0:
+        return None
+    try:
+        r = subprocess.run(["sudo", "-n", "true"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        return "sudo is not installed"
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    if r.returncode == 0:
+        return None
+    out = "".join(x for x in (r.stderr, r.stdout) if isinstance(x, str))
+    out = out.strip().splitlines()
+    return out[-1] if out else "exit code %d" % r.returncode
+
+
+def sudo_fix_line(user):
+    """ALL_T1013 K14d: the one-time passwordless sudo fix."""
+    f = "/etc/sudoers.d/90-bora-run"
+    return ("sudo sh -c \"echo '%s ALL=(ALL) NOPASSWD:ALL' > %s && chmod 440 "
+            "%s && visudo -cf %s\"" % (user, f, f, f))
+
+
 def enable_linger():
     """ALL_T1009: sudo -n loginctl enable-linger; success = probe after."""
     global _LINGER_WARN, _LINGER_DONE
@@ -290,11 +317,14 @@ def enable_linger():
         if linger_on(user):
             return
     if not linger_on(user):
+        nosudo = sudo_status()                # ALL_T1013 K14d: name the cause
         _LINGER_WARN = (
-            "WARN: could not enable Linger for %s (rc %d). PAPER_DATA.py "
+            "WARN: could not enable Linger for %s (rc %d%s). PAPER_DATA.py "
             "will warn and run without a user scope, so a desktop launch "
             "ends at logout. Enable it by hand (loginctl enable-linger %s), "
-            "or pass --skip-linger to silence this." % (user, rc, user))
+            "or pass --skip-linger to silence this." % (
+                user, rc, "; passwordless sudo is missing: %s" % nosudo
+                if nosudo else "", user))
         print("  " + _LINGER_WARN)
 
 
@@ -703,6 +733,7 @@ ZOMBIE_REGEX    = os.path.join(ZOMBIE_DIR, "regex")
 ZOMBIE_CIRC     = os.path.join(ZOMBIE_DIR, "circ")
 ZOMBIE_UPSTREAM = os.path.join(ZOMBIE_DIR, "UPSTREAM.txt")
 ZOMBIE_DOWNLOAD = os.path.join(MS_DLP_DIR, "scripts", "download_zombie.py")
+ZOMBIE_SAME     = os.path.join(MS_DLP_DIR, "scripts", "same_zombie.py")
 
 # Set by main() from --verify / --skip-reef-build / --force-zombie /
 # --build-zombie / --skip-run-tools; the DATASETS registry
@@ -713,6 +744,7 @@ _FORCE_ZOMBIE = False
 _BUILD_ZOMBIE = False
 _SKIP_RUN_TOOLS = False
 _SKIP_LINGER = False                          # ALL_T1009: --skip-linger
+_SKIP_ZOMBIE_BUILD = False                    # ALL_T1013 S9: --skip-zombie-build
 _LINGER_DONE = False
 
 
@@ -1158,6 +1190,250 @@ def cleanup_temp():
     shutil.rmtree(TMP_DIR, ignore_errors=True)
 
 
+# ---- ALL_T1013 K15: a small /tmp gets its big INSTALL dirs from the clone's
+# disk (same rule and helper as PAPER_DATA.py K14). bora_zombie_circ is bound
+# here too, so S9's prebuild lands where the leaf later looks.
+TMP_BIND_TMP = "/tmp"
+TMP_BIND_NAMES = ("bora_install", "bora_zombie_circ")
+TMP_BIND_FREE_GIB = 250      # same_zombie's warn level (4 KB batch: 80-110 GiB)
+TMP_BIND_DIR = ".bora_tmp"   # under the git root, git-ignored
+TMP_BIND_HAND_GIB = 10       # below this, print the hand commands loudly
+
+
+def _free_gib(path):
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize / 2 ** 30
+
+
+def tmp_bind_names(root, tmp=None):
+    """ALL_T1013 K14 trigger: bind only when /tmp is another filesystem
+    than the clone, has under TMP_BIND_FREE_GIB free, and the clone's
+    filesystem has more.  K14b M4: a name whose <root>/.bora_tmp/<name>
+    exists is bound whatever the free space.  Mounted targets are left alone."""
+    tmp = tmp or TMP_BIND_TMP
+    src = lambda n: os.path.isdir(os.path.join(root, TMP_BIND_DIR, n))
+    try:
+        if os.stat(tmp).st_dev == os.stat(root).st_dev:
+            return []
+        ft, fr = _free_gib(tmp), _free_gib(root)
+    except OSError:
+        return []
+    small = ft < TMP_BIND_FREE_GIB and fr > ft
+    return [n for n in TMP_BIND_NAMES
+            if (small or src(n)) and not os.path.ismount(os.path.join(tmp, n))]
+
+
+def _writes(fdinfo):
+    """K14b R2: an fd opened for writing (O_WRONLY or O_RDWR in its flags)."""
+    try:
+        for ln in open(fdinfo):
+            if ln.startswith("flags:"):
+                return int(ln.split()[1], 8) & 3 != 0
+    except (OSError, ValueError, IndexError):
+        pass
+    return True                               # unsure: count it
+
+
+def _dir_users(path):
+    """pids (other than ours) whose cwd, exe or a mapped file is under path,
+    or that hold a write fd there (K14b R2, M7: read fds do not count)."""
+    under = lambda t: t == path or t.startswith(path + os.sep)
+    users = set()
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        if int(pid) == os.getpid():
+            continue
+        d = os.path.join("/proc", pid)
+        for ln in ("cwd", "exe"):
+            try:
+                if under(os.readlink(os.path.join(d, ln))):
+                    users.add(int(pid))
+            except OSError:
+                pass
+        try:
+            for ln in open(os.path.join(d, "maps")):
+                f = ln.split(None, 5)
+                if len(f) == 6 and under(f[5].strip()):
+                    users.add(int(pid))
+                    break
+        except OSError:
+            pass
+        try:
+            fds = os.listdir(os.path.join(d, "fd"))
+        except OSError:
+            fds = []
+        for x in fds:
+            try:
+                tgt = os.readlink(os.path.join(d, "fd", x))
+            except OSError:
+                continue
+            if under(tgt) and _writes(os.path.join(d, "fdinfo", x)):
+                users.add(int(pid))
+    return sorted(users)
+
+
+def _lock_nb(path):
+    """K14b W1/M1: (fd or None, refusal or None). Holds LOCK_EX on an
+    existing lock file without waiting; a missing file needs no lock."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except FileNotFoundError:
+        return None, None
+    except OSError as e:
+        return None, "cannot open %s (%s)" % (path, e)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        return fd, None
+    except OSError:
+        os.close(fd)
+        return None, "%s is held by a running PAPER_DATA.py" % path
+
+
+def bind_tmp_dirs(names, root, b_do, say, tmp="/tmp", lock=None):
+    """ALL_T1013 K14: bind-mount <tmp>/<name> from <root>/.bora_tmp/<name>.
+    A non-empty unmounted target is copied first, never over an existing
+    source file (K14b R4); nothing is deleted and nothing is ever unmounted.
+    lock: a lock file held without waiting for the whole copy and mount
+    (K14b W1).  b_do False only says what it would do.  Returns None, or a
+    refusal that names the commands to run by hand (with the copy, M6)."""
+    pairs = [(os.path.join(root, TMP_BIND_DIR, n), os.path.join(tmp, n))
+             for n in names]
+    hand = "\n".join("  mkdir -p %s %s && rsync -a --ignore-existing %s/ %s/ "
+                     "&& sudo mount --bind %s %s" % (s, d, d, s, s, d)
+                     for s, d in pairs)
+    fd = None
+    if b_do and lock and pairs:
+        fd, why = _lock_nb(lock)
+        if why:
+            return "REFUSED: %s; nothing was mounted" % why
+    todo = [d for _, d in pairs if not os.path.ismount(d)]
+    nosudo = sudo_status() if b_do and todo else None   # ALL_T1013 K14d
+    if nosudo and not any(os.path.islink(d) for d in todo):
+        import pwd
+        user = pwd.getpwuid(os.geteuid()).pw_name
+        if fd is not None:
+            os.close(fd)
+        return ("REFUSED: passwordless sudo is not available for user %s "
+                "(sudo -n true says: %s), so %s cannot be bind-mounted onto "
+                "the clone's disk (/tmp has %.0f GiB free, under %d GiB). "
+                "PAPER_DATA.py would stop at hour 0 for the same reason. Fix "
+                "once (asks your password):\n    %s\n  Or run by hand:\n%s"
+                % (user, nosudo, ", ".join(todo), _free_gib(tmp),
+                   TMP_BIND_FREE_GIB, sudo_fix_line(user), hand))
+    try:
+        for src, dst in pairs:
+            if os.path.islink(dst):           # K14b R1
+                return ("REFUSED: %s is a symlink to %s; remove it, then "
+                        "relaunch, or run by hand:\n%s"
+                        % (dst, os.readlink(dst), hand))
+            if os.path.ismount(dst):
+                say("tmp: %s is already a mount point, kept" % dst)
+                continue
+            say("tmp: %s %s -> %s" % ("bind-mount" if b_do else
+                                      "would bind-mount", src, dst))
+            if not b_do:
+                continue
+            busy = _dir_users(dst)
+            if busy:
+                return ("REFUSED: %s is in use by pid %s; stop it, then "
+                        "relaunch, or run by hand:\n%s" % (dst, busy, hand))
+            try:
+                os.makedirs(src, exist_ok=True)
+                os.makedirs(dst, exist_ok=True)
+                if os.listdir(dst):
+                    say("tmp: copying the contents of %s into %s first (no "
+                        "existing source file is replaced)" % (dst, src))
+                    cp = (["rsync", "-a", "--ignore-existing",
+                           "--exclude=*prepare_open4s*", dst + "/", src + "/"]
+                          if shutil.which("rsync")
+                          else ["cp", "-a", "-n", dst + "/.", src])
+                    subprocess.run(cp, check=True, capture_output=True,
+                                   timeout=7200)
+                r = subprocess.run(([] if os.geteuid() == 0
+                                    else ["sudo", "-n"])
+                                   + ["mount", "--bind", src, dst],
+                                   capture_output=True, text=True, timeout=120)
+                why = (r.stderr or r.stdout).strip()[-200:]
+                ok = (r.returncode == 0 and os.path.ismount(dst)
+                      and os.stat(dst).st_dev == os.stat(src).st_dev)
+                if ok:                        # K14b R3: writable after mount
+                    probe = os.path.join(dst, ".bora_tmp_probe")
+                    try:
+                        with open(probe, "w") as f:
+                            f.write("x")
+                        os.remove(probe)
+                    except OSError as e:
+                        ok, why = False, "mounted but not writable: %s" % e
+            except (OSError, subprocess.SubprocessError) as e:
+                ok, why = False, str(e)
+            if not ok:
+                return ("REFUSED: /tmp has under %d GiB free and %s could not "
+                        "be bind-mounted from the clone's disk (%s). Run by "
+                        "hand, then relaunch the same command:\n%s"
+                        % (TMP_BIND_FREE_GIB, dst,
+                           why or "not a mount after mount", hand))
+            say("tmp: %s is now on %s" % (dst, src))
+        return None
+    finally:
+        if fd is not None:
+            os.close(fd)
+
+
+def _git_root():
+    try:
+        r = subprocess.run(["git", "-C", ROOT, "rev-parse", "--show-toplevel"],
+                           capture_output=True, text=True, timeout=60)
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return os.path.dirname(os.path.dirname(ROOT))
+
+
+def install_tmp_bind(tmp=None):
+    """ALL_T1013 K15: at the start of INSTALL, bind /tmp/bora_install and
+    /tmp/bora_zombie_circ from the clone's disk when /tmp is small. Warn-only:
+    INSTALL never aborts here.  K15b: skipped as root (R5), and while a Zombie
+    driver or a PAPER_DATA run is live (M7, the S9 probes)."""
+    tmp = tmp or TMP_BIND_TMP
+    root = _git_root()
+    names = tmp_bind_names(root, tmp)
+    if not names:
+        return None
+    say = lambda m: print("  " + m)
+    if os.geteuid() == 0:                     # K15b R5: no root-owned sources
+        say("NOTE: running as root: the /tmp bind mounts are left to "
+            "PAPER_DATA.py, which makes them as the user")
+        return None
+    if _zombie_driver_live():
+        say("NOTE: a Zombie driver runs; the /tmp bind mounts are left to "
+            "PAPER_DATA.py")
+        return None
+    say("tmp: %s has %.0f GiB free, under %d GiB; the clone's disk has %.0f "
+        "GiB" % (tmp, _free_gib(tmp), TMP_BIND_FREE_GIB, _free_gib(root)))
+    why = bind_tmp_dirs(names, root, True, say, tmp, PD_RUN_LOCK)
+    if why:
+        print("  WARN: " + why.replace("REFUSED: ", "", 1))
+        print("  WARN: the install goes on with /tmp as it is.")
+        if _free_gib(tmp) < TMP_BIND_HAND_GIB:
+            print("  WARN: %s has only %.1f GiB free. Run the commands above "
+                  "by hand now, then rerun INSTALL.py." % (tmp, _free_gib(tmp)))
+    return why
+
+
+PD_RUN_LOCK = "/tmp/bora/PAPER_DATA.lock"     # PAPER_DATA.py RUN_LOCK
+
+
+def _zombie_driver_live():
+    """K15b M7: same_zombie's abstract-socket driver lock is bound."""
+    name = "@bora_zombie_driver_%d" % os.getuid()
+    try:
+        with open("/proc/net/unix") as f:
+            return any(ln.split()[-1] == name for ln in f
+                       if len(ln.split()) >= 8)
+    except OSError:
+        return False
+
+
 # =====================================================================
 # per-dataset setup (clean) + install
 #
@@ -1443,6 +1719,7 @@ def install_dataset_zombie():
         # DLP_T999: apply Zombie generator fixes to the kept tree (no clone)
         run_cmd_in([sys.executable, "-u", ZOMBIE_DOWNLOAD, "--patch-only"],
                    os.path.dirname(ZOMBIE_DOWNLOAD))
+        prebuild_zombie_circ()                # ALL_T1013 S9
         return
     if not os.path.isfile(ZOMBIE_DOWNLOAD):
         raise RuntimeError("missing %s (expected in the repo)"
@@ -1454,9 +1731,36 @@ def install_dataset_zombie():
     print("        do not redistribute -- zombie/ stays git-ignored)")
     run_cmd_in(argv, os.path.dirname(ZOMBIE_DOWNLOAD))
     verify_zombie_tree()
-    if not _BUILD_ZOMBIE:
-        print("  NOTE: TestRegex + circ are built on first use by")
-        print("        run_zombie.py; pass --build-zombie to do it now.")
+    if _BUILD_ZOMBIE:                         # ALL_T1013 R5
+        print("  NOTE: --build-zombie built the downloader's check copy; the")
+        print("        Zombie leaf reuses only the same_zombie.py build below.")
+    prebuild_zombie_circ()                    # ALL_T1013 S9
+
+
+def prebuild_zombie_circ():
+    """ALL_T1013 S9: build circ_executable the way the Zombie leaf would, so
+    the leaf finds it; warn-only, INSTALL's rc never changes."""
+    if _SKIP_ZOMBIE_BUILD:
+        print("  NOTE: --skip-zombie-build: the Zombie leaf builds "
+              "circ_executable at its start")
+        return
+    if os.geteuid() == 0:
+        print("  NOTE: running as root: circ_executable prebuild skipped (a "
+              "root-owned /tmp/bora_zombie_circ would block the leaf)")
+        return
+    env = dict(os.environ)
+    env["PATH"] = (os.path.expanduser("~/.cargo/bin") + os.pathsep
+                   + env.get("PATH", ""))
+    print("  prebuild circ_executable (same_zombie.py --build-only)")
+    try:
+        rc = subprocess.run([sys.executable, "-I", ZOMBIE_SAME,
+                             "--build-only"], cwd=os.path.dirname(ZOMBIE_SAME),
+                            env=env).returncode
+    except OSError as e:
+        rc = "%s" % e
+    if rc != 0:
+        print("  WARN: circ_executable not prebuilt (rc %s). The Zombie leaf "
+              "builds it at its start, as before." % rc)
 
 
 # =====================================================================
@@ -1722,6 +2026,10 @@ def main():
                          "already installed them, or without sudo. "
                          "Without numactl a two-socket machine runs "
                          "PAPER_DATA.py as one unpinned process")
+    ap.add_argument("--skip-zombie-build", action="store_true",
+                    help="zombie: do not prebuild circ_executable through "
+                         "same_zombie.py --build-only (ALL_T1013); the "
+                         "Zombie leaf then builds it at its start")
     ap.add_argument("--skip-linger", action="store_true",
                     help="do not run `sudo -n loginctl enable-linger $USER` "
                          "(ALL_T1009). Without Linger PAPER_DATA.py warns, "
@@ -1729,13 +2037,16 @@ def main():
     args = ap.parse_args()
 
     global _VERIFY_ALL, _SKIP_REEF_BUILD, _FORCE_ZOMBIE, _BUILD_ZOMBIE
-    global _SKIP_RUN_TOOLS, _SKIP_LINGER
+    global _SKIP_RUN_TOOLS, _SKIP_LINGER, _SKIP_ZOMBIE_BUILD
     _SKIP_RUN_TOOLS = args.skip_run_tools
+    _SKIP_ZOMBIE_BUILD = args.skip_zombie_build
     _SKIP_LINGER = args.skip_linger
     _VERIFY_ALL = args.verify_download
     _SKIP_REEF_BUILD = args.skip_reef_build
     _BUILD_ZOMBIE = args.build_zombie
     _FORCE_ZOMBIE = args.force_zombie or args.build_zombie
+    if not args.verify:
+        install_tmp_bind()                    # ALL_T1013 K15: small /tmp
 
     # Before anything else: needs no toolchain, no network and no dataset
     # selection, and data/debug + data/paper_data + data/src_sig/clamav

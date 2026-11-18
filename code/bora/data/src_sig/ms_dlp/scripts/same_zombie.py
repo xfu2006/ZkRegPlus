@@ -9,6 +9,7 @@
 import os
 import re
 import sys
+import errno
 import json
 import math
 import time
@@ -57,6 +58,7 @@ FX = os.path.join(REPO, FX_REL)
 RAW_DATA_ROOT = os.path.join(REPO, "data", "paper_data", "run_data", "data",
                              "raw_data")
 ZOMBIE_TREE = os.path.join(MS_DLP, "zombie")
+CLONE_SCRATCH = os.path.join(MS_DLP, "bora_zombie_scratch")  # ALL_T1013 K13
 SELF_PATH = os.path.abspath(__file__)
 RZ_PATH = os.path.abspath(rz.__file__)
 LIST_TIMING = ["data/src_sig/ms_dlp/scripts/run_zombie.py",
@@ -119,16 +121,24 @@ fn zreal_one_circuit<const N: usize>(circuit: &str) {
     let term_arr_path = CString::new(format!("./keys/{}_term_arr", circuit)).expect("failed").into_raw();
     let input_idxes_path = CString::new(format!("./keys/{}_input_idxes", circuit)).expect("failed").into_raw();
     let var_idxes_path = CString::new(format!("./keys/{}_var_idxes", circuit)).expect("failed").into_raw();
-    let prover = zkmb_get_prover(inst_path, gens_path, term_arr_path, input_idxes_path, var_idxes_path);
-    let prover = unsafe { &mut *prover };
+    let prover_p = zkmb_get_prover(inst_path, gens_path, term_arr_path, input_idxes_path, var_idxes_path);
+    let prover = unsafe { &mut *prover_p };
     println!("{} circuit constraints cons {} inputs {} vars {}", circuit, prover.inst.inst.get_num_cons(), prover.inst.inst.get_num_inputs(), prover.inst.inst.get_num_vars());
     let timer = Instant::now();
     let proof = prover.prove(vec![pw]);
     println!("prove takes {}", timer.elapsed().as_millis());
     let data = bincode::serialize(&proof).unwrap();
     println!("proof size is {} bytes", data.len());
-    let verifier = zkmb_get_verifier(inst_path, gens_path, input_names_path);
-    let verifier = unsafe { & *verifier };
+    if env::var("ZREAL_NO_VERIFY").is_ok() {
+        println!("zreal verify_ok skipped");
+        return;
+    }
+    // ALL_T1013 S1: verifier from the prover's loaded inst and gens (one load)
+    let pb = unsafe { Box::from_raw(prover_p) };
+    let SpartanProver { inst, gens, term_arr, input_idxes, var_idxes, val_arr } = *pb;
+    drop((term_arr, input_idxes, var_idxes, val_arr));
+    let verifier = SpartanVerifier::new(inst, gens, read_from_path(input_names_path));
+    let verifier = &verifier;
     let timer = Instant::now();
     let ok = verifier.verify(&proof, &vec![vw]);
     println!("verify takes {}", timer.elapsed().as_millis());
@@ -139,7 +149,8 @@ fn zreal_one_circuit<const N: usize>(circuit: &str) {
 }
 // <<< same_zombie zreal arm
 //@@ARM
-        "policy_real_{n}" => zreal_one_circuit::<{n}>("policy{n}"),'''
+        "policy_real_{n}" => zreal_one_circuit::<{n}>("policy{n}"),
+        "policy_keys_{n}" => compile_one_circuit("policy{n}"),'''
 ZK_ANCHOR = "fn zk_test() {\n"
 ZREAL_BEGIN = "        // >>> same_zombie zreal arms (do not edit)"
 ZREAL_END = "        // <<< same_zombie zreal arms"
@@ -472,6 +483,16 @@ def cpus_str(cpus):
 # ===========================================================================
 # partial pairs (R2)
 # ===========================================================================
+def _ends_nl(p):
+    """ALL_T1013 FI1: the file's last byte is a newline (or it is empty)."""
+    try:
+        with open(p, "rb") as f:
+            f.seek(-1, os.SEEK_END)
+            return f.read(1) == b"\n"
+    except OSError:
+        return True
+
+
 class Pair(object):
     """A partial: /tmp primary plus docs mirror, appended in lockstep."""
 
@@ -493,8 +514,11 @@ class Pair(object):
         return self.tmp if self._nonempty(self.tmp) else self.docs
 
     def load(self):
-        """Rows of the preferred copy; a torn last line is skipped."""
-        src, rows = self.src(), []
+        """Rows of the preferred copy; a torn last line is skipped. ALL_T1013
+        FI1: a bad middle line is skipped and counted when the other copy is
+        there to vouch for the rest (a short write tears only one copy)."""
+        src, rows, bad = self.src(), [], 0
+        other = self.docs if src == self.tmp else self.tmp
         if os.path.isfile(src):
             with open(src) as f:
                 lines = [ln for ln in f if ln.strip()]
@@ -502,13 +526,36 @@ class Pair(object):
                 try:
                     rows.append(json.loads(ln))
                 except ValueError:
-                    if i != len(lines) - 1:
+                    if i == len(lines) - 1:
+                        say("SAME note: torn last line in %s skipped" % src)
+                    elif other != src and self._nonempty(other):
+                        bad += 1
+                    else:
                         raise
-                    say("SAME note: torn last line in %s skipped" % src)
+        if bad:
+            say("SAME note: %d bad middle line(s) in %s skipped" % (bad, src))
         return rows
 
+    @staticmethod
+    def _valid_rows(p):
+        """ALL_T1013 FI5: parseable rows of one copy (0 when absent)."""
+        n = 0
+        try:
+            with open(p) as f:
+                for ln in f:
+                    try:
+                        json.loads(ln)
+                        n += 1
+                    except ValueError:
+                        pass
+        except OSError:
+            pass
+        return n
+
     def repair_tail(self):
-        """Drop a torn last line from both copies before any append."""
+        """Drop unparsable lines from both copies before any append: a torn
+        last line, and (ALL_T1013 F11) any torn line in the middle. The unit
+        of a dropped row is redone (V12)."""
         for p in (self.tmp, self.docs):
             if not self._nonempty(p):
                 continue
@@ -519,23 +566,39 @@ class Pair(object):
                 lines.pop()
             if not lines:                     # whitespace only: nothing to do
                 continue
-            try:
-                json.loads(lines[-1])
+            bad = []
+            for i, ln in enumerate(lines):
+                if not ln.strip():
+                    continue
+                try:
+                    json.loads(ln)
+                except ValueError:
+                    bad.append(i)
+            if not bad:
                 if not text.endswith("\n"):   # cut before the newline
                     with open(p, "a") as f:
                         f.write("\n")
                     say("SAME note: newline restored at the end of %s" % p)
                 continue
-            except ValueError:
-                pass
+            keep = [ln if ln.endswith("\n") else ln + "\n"
+                    for i, ln in enumerate(lines) if i not in bad]
             with open(p + ".repair", "w") as f:
-                f.writelines(lines[:-1])
+                f.writelines(keep)
             os.replace(p + ".repair", p)
-            say("SAME note: torn last line removed from %s" % p)
+            for i in bad:
+                redo_from_line(lines[i])
+            if bad == [len(lines) - 1]:
+                say("SAME note: torn last line removed from %s" % p)
+            else:
+                say("SAME note: %d unparsable line(s) removed from %s (lines "
+                    "%s)" % (len(bad), p, ",".join(str(i + 1) for i in bad)))
 
     def restore(self):
-        """Copy docs to /tmp when /tmp is absent or empty (reboot)."""
-        if not self._nonempty(self.tmp) and self._nonempty(self.docs):
+        """Copy docs to /tmp when /tmp is absent or empty (reboot), or
+        (ALL_T1013 FI5) when docs holds more valid rows than /tmp."""
+        if self._nonempty(self.docs) and (
+                not self._nonempty(self.tmp) or self._valid_rows(self.docs)
+                > self._valid_rows(self.tmp)):
             os.makedirs(os.path.dirname(self.tmp), exist_ok=True)
             shutil.copyfile(self.docs, self.tmp + ".restore")
             os.replace(self.tmp + ".restore", self.tmp)
@@ -548,12 +611,28 @@ class Pair(object):
         for p in (self.tmp, self.docs):
             os.makedirs(os.path.dirname(os.path.abspath(p)), exist_ok=True)
             with open(p, "a") as f:
+                if f.tell() and not _ends_nl(p):  # ALL_T1013 FI1: no merge
+                    f.write("\n")                 # into a torn fragment
                 f.write(text)
 
     def delete(self):
         for p in (self.tmp, self.docs):
             if os.path.exists(p):
                 os.remove(p)
+
+
+_REDO_U = re.compile(r'"(?:unit|regex_name)": "((?:[^"\\]|\\.)*)"')
+_REDO_S = re.compile(r'"(?:size|str_len)": (\d+)')
+
+
+def redo_from_line(ln):
+    """ALL_T1013 V12: a dropped row that names its unit and size makes that
+    unit redo the size (keygen, base, sample)."""
+    u, s = _REDO_U.search(ln), _REDO_S.search(ln)
+    if u and s:
+        S.setdefault("force_redo", set()).add((u.group(1), int(s.group(1))))
+    else:
+        say("SAME note: a dropped partial line names no unit and size")
 
 
 def ruleset():
@@ -824,19 +903,25 @@ def start_check(a, rows, pending=False):
                 S["w_state"][size] = max(S["w_state"].get(size, 0), w0)
         stop = stops.get(size)
         if stop is not None:
-            if stop.get("cause") == "error" and sum(   # DLP_T1001: lift first
+            cause = stop.get("cause")
+            if cause in ("error", "mem", "ref") and sum(  # ALL_T1013: once
                     1 for r in rows if r.get("kind") == "stop"
-                    and r.get("size") == size and r.get("cause") == "error"
-                    and stop_etype(r) == stop_etype(stop)
+                    and r.get("size") == size and r.get("cause") == cause
+                    and (cause != "error" or stop_etype(r) == stop_etype(stop))
                     and r.get("launch_sig") == sig) < 2:
-                say("SAME STOP row at %d lifted: an error stop is retried "
-                    "once per exception type (%s)" % (size, stop.get("reason")))
+                say("SAME STOP row at %d lifted: %s (%s)" % (
+                    size, "an error stop is retried once per exception type"
+                    if cause == "error" else "a %s stop is retried once" % (
+                        "memory" if cause == "mem" else "gate reference"),
+                    stop.get("reason")))
             elif size == 1000 or cap == 0:
                 S["serial"].add(size)
                 say("SAME STOP row at %d: serial mode for %d" % (size, size))
             elif cap > stop.get("cap", 0):
+                L = ladder(S["topo"], cap)            # ALL_T1013 S5
                 S["w_state"][size] = max(S["w_state"].get(size, 0),
-                                         2 * stop.get("width", 1))
+                                         next_rung(L, stop.get("width", 1))
+                                         or L[-1])
                 say("SAME STOP row at %d: cap raised, re-gate at %d cores"
                     % (size, S["w_state"][size]))
             elif stop.get("cause") == "nopass" and valid_pass:
@@ -1320,6 +1405,11 @@ def orphan_circ(kill, pids=None):
     return out
 
 
+def _alive(pid):
+    st = _stat_of(pid)
+    return st is not None and st[0] != "Z"
+
+
 def orphan_text(orph):
     return ("orphan circ_executable of a dead driver: %s. Kill them first: "
             "kill -9 %s" % ("; ".join("pid %d cwd %s" % o for o in orph),
@@ -1380,6 +1470,8 @@ def on_sigterm(signum, frame):
     # DLP_T1001 m9: stop writers, kill descendants every 1 s, exit 143
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     STOP.set()
+    for pid in descendants(os.getpid()):      # ALL_T1013 F3: one pass now
+        _sigkill(pid)
     threading.Thread(target=_kill_loop, daemon=True).start()
     raise SystemExit(143)
 
@@ -1392,6 +1484,7 @@ class Task(object):
         self.unit, self.size, self.eid, self.epath = unit, size, eid, epath
         self.dir, self.base, self.er = d, base, er
         self.launch_fail = 0
+        self.watchdog = 0                     # ALL_T1013 F14
         self.cls = []
 
     @property
@@ -1430,6 +1523,9 @@ def launch(t, mode, slot=None, w=0, gid="", K_f=0, bucket=None, conc=0,
         core = ["taskset", "-c", cpus] + core
     else:
         env.pop("RAYON_NUM_THREADS", None)
+    env.pop("ZREAL_NO_VERIFY", None)
+    if mode == "gate_serial":                 # ALL_T1013 S2: prove_ms only
+        env["ZREAL_NO_VERIFY"] = "1"
     S["k"] += 1
     unit = ""
     if S["launcher"] == "systemd":
@@ -1512,9 +1608,20 @@ def classify(rc, out, err, result, killed, er, timed_out, base_cons, cons):
     return "crash_suspect"
 
 
+SKIP_LINE = "zreal verify_ok skipped"
+
+
+def skip_view(out, mode):
+    """ALL_T1013 S2: a gate serial reference that skipped its verify reads
+    as verified for classify; its row keeps verify_ms and verify_ok empty."""
+    if mode == "gate_serial" and SKIP_LINE in out:
+        return out + "\nverify takes 0\nzreal verify_ok true\n", True
+    return out, False
+
+
 def needs_bus(r):
     """A systemd prove without a clean exit needs its scope Result."""
-    out = _read(r["out"])
+    out = skip_view(_read(r["out"]), r["mode"])[0]
     return r["launcher"] == "systemd" and not (
         r["p"].returncode == 0 and rz._parse_metrics(out) and
         VERIFY_RE.search(out))
@@ -1524,10 +1631,12 @@ def finish(r, status, ru, result=None):
     """Build, classify and persist the prove row of a reaped process."""
     t = r["t"]
     rc = r["p"].returncode if r["p"].returncode is not None else -9
-    out = _read(r["out"])
+    out, skipped = skip_view(_read(r["out"]), r["mode"])   # ALL_T1013 S2
     err = _read(r["err"])
     m = rz._parse_metrics(out) or {}
     vm = VERIFY_RE.search(out)
+    if skipped:
+        m["verify_ms"], vm = None, None
     if result is None:
         result = bus_result(r["unit"] + ".scope") if needs_bus(r) else ""
     cls = classify(rc, out, err, result, r["killed"], t.er,
@@ -1626,16 +1735,55 @@ def ffd_count(tasks, nslots, B, used=0):
     return k
 
 
+def ladder(topo, cap):
+    """ALL_T1013 S5: width rungs by slot count. A candidate is the widest
+    width for its slots per node (C // w); 1, 2, 4 and the top min(cap, C)
+    stay, any other rung needs at most 1/1.4 of the last kept rung's slots."""
+    C = node_slot_cores(topo)
+    top = max(1, min(cap, C) if cap else C)
+    out = []
+    for w in range(1, top + 1):
+        if not (w == top or C // (w + 1) < C // w):
+            continue
+        if (not out or w in (2, 4, top)
+                or C // w <= (C // out[-1]) / 1.4):
+            out.append(w)
+    return out
+
+
+def snap_up(rungs, x):
+    """ALL_T1013 R6: smallest rung >= x, else the top rung."""
+    return next((r for r in rungs if r >= x), rungs[-1])
+
+
+def snap_down(rungs, x):
+    return max([r for r in rungs if r <= x] or [rungs[0]])
+
+
+def next_rung(rungs, w):
+    """ALL_T1013 R6: smallest rung above w (w need not be a rung)."""
+    return next((r for r in rungs if r > w), None)
+
+
+def widen_next(g_hist, s, w):
+    """ALL_T1013 S5: the next rung, or None to give up: no rung above w,
+    or two rungs together improved g by at most the serial spread s."""
+    nxt = next_rung(ladder(S["topo"], S["cap"]), w) if S["cap"] else None
+    if nxt is None or (len(g_hist) >= 3 and g_hist[-3] - g_hist[-1] <= s):
+        return None
+    return nxt
+
+
 def width_for(size, tasks, B):
     topo = S["topo"]
     w_cpu = max([int(math.ceil(1.5 * (t.base["u_c"] or 0) / topo["tpc"]))
                  for t in tasks] + [ARGS.slot_cores])
     k_mem = max(1, ffd_count(tasks, len(tasks), B))
     w_mem = topo["c_cores"] // max(1, min(k_mem, len(tasks)))
-    w = max(S["w_state"].get(size, ARGS.slot_cores), up2(w_cpu), down2(w_mem))
-    if S["cap"]:                              # the cap bounds the first width
-        w = min(w, down2(S["cap"]))
-    return min(down2(node_slot_cores(topo)), w)
+    L = ladder(topo, S["cap"])                # ALL_T1013 S5: cap and node top
+    w = max(S["w_state"].get(size, ARGS.slot_cores), snap_up(L, w_cpu),
+            snap_down(L, w_mem))
+    return snap_up(L, w)
 
 
 def best_gate(key):
@@ -1656,13 +1804,24 @@ def gate_pairs(tasks):
     return out
 
 
+def ref_serial(t):
+    """ALL_T1013 FI2/FI4: one gate reference prove; a resource death
+    (OOM, kill, timeout) is retried once, as serial_until_done does."""
+    cls, row = run_one_serial(t, "gate_serial")
+    if cls == "resource":
+        say("SAME note: gate reference %s %s size=%d was a resource death; "
+            "retried once" % (t.unit, t.eid, t.size))
+        cls, row = run_one_serial(t, "gate_serial")
+    return cls, row
+
+
 def serial_reference(pairs):
     """2 serial proves per pair, a 3rd when d > 0.05; ref median, s."""
     ref, ds = {}, []
     for t in pairs:
         ms, cls = [], "ok"
         for _ in range(2):
-            cls, row = run_one_serial(t, "gate_serial")
+            cls, row = ref_serial(t)
             if cls != "ok":
                 break
             ms.append(row["prove_ms"])
@@ -1673,7 +1832,7 @@ def serial_reference(pairs):
             return None, None
         d = abs(ms[0] - ms[1]) / max(1e-9, statistics.mean(ms))
         if d > GATE_D3:
-            cls, row = run_one_serial(t, "gate_serial")
+            cls, row = ref_serial(t)
             if cls != "ok":
                 return None, None
             ms.append(row["prove_ms"])
@@ -1823,8 +1982,11 @@ class Packed(object):
 
     def after(self, t, cls, row, queue):
         if cls == "watchdog":
-            queue.insert(0, t)
-            return
+            t.watchdog += 1
+            if t.watchdog < 3:                # ALL_T1013 F14: bounded
+                queue.insert(0, t)
+                return
+            self.tail.append(t)
         if cls == "launcher":
             t.launch_fail += 1
             if t.launch_fail <= LAUNCH_RETRIES:
@@ -1846,7 +2008,7 @@ class Packed(object):
                 self.on_pairs(self)
 
 
-def give_up(size, reason, tasks, w):
+def give_up(size, reason, tasks, w, cause="gate"):
     """Gate cannot pass: SERIAL MODE 1 KB, cap-0 serial, or SAME STOP."""
     if size == 1000 or S["cap"] == 0:
         if size not in S["serial"]:
@@ -1858,7 +2020,7 @@ def give_up(size, reason, tasks, w):
         for t in tasks:
             serial_until_done(t, "serial")
         return
-    raise StopFlush(reason, w)
+    raise StopFlush(reason, w, cause)
 
 
 class MemStop(Exception):
@@ -1866,9 +2028,10 @@ class MemStop(Exception):
 
 
 class StopFlush(Exception):
-    def __init__(self, reason, width=None):
+    def __init__(self, reason, width=None, cause="gate"):
         Exception.__init__(self, reason)
         self.width = width
+        self.cause = cause                    # ALL_T1013 FI2: "ref" lifts once
 
 
 def run_subflush(size, b, tasks):
@@ -1881,7 +2044,8 @@ def run_subflush(size, b, tasks):
     tail = [t for t in tasks if t.cap > B]
     queue = sorted([t for t in tasks if t.cap <= B], key=lambda t: -t.rss)
     w = width_for(size, queue or tasks, B)
-    ref = s = g_prev = pairs = None
+    ref = s = pairs = None
+    g_hist = []                               # ALL_T1013 S5: this event's g
     while queue:
         key = (size, w, b, S["launcher"], S["sig"])
         K0 = ffd_count(queue, len(make_slots(S["topo"], w)), B)
@@ -1905,7 +2069,8 @@ def run_subflush(size, b, tasks):
             if not ref:
                 give_up(size, "verify_false on every gate pair at %d" % size
                         if ref == {} else
-                        "gate reference prove failed at %d" % size, queue, w)
+                        "gate reference prove failed at %d" % size, queue, w,
+                        cause="gate" if ref == {} else "ref")   # ALL_T1013
                 return tail
             pairs = [t for t in pairs if id(t) in ref]
         tail[:] = [t for t in tail if t not in pairs]
@@ -1956,7 +2121,8 @@ def run_subflush(size, b, tasks):
                   and r["kind"] == "gate"][-1]
             S["gates"].setdefault(key, []).append(gr)
             if queue:                         # drained by a launcher switch:
-                pairs = ref = g_prev = None   # new pairs, never re-proved
+                pairs = ref = None            # new pairs, never re-proved
+                g_hist = []
                 continue
             break
         if verdict.get("vf"):
@@ -1967,9 +2133,9 @@ def run_subflush(size, b, tasks):
         rejected = list(dict.fromkeys(pairs + pk.done_ok + queue))
         tail[:] = [t for t in tail if t not in pairs]
         g = verdict["g"]
-        nxt = 2 * w
-        if (g_prev is not None and g_prev - g <= s) or not (
-                nxt <= S["cap"] and nxt <= down2(node_slot_cores(S["topo"]))):
+        g_hist.append(g)
+        nxt = widen_next(g_hist, s, w)        # ALL_T1013 S5: two-rung stop
+        if nxt is None:
             give_up(size, "gate cannot pass at %d (w=%d g=%s)" % (size, w, g),
                     rejected, w)
             return tail
@@ -1977,7 +2143,6 @@ def run_subflush(size, b, tasks):
         w = nxt
         S["w_state"][size] = w
         put("width", size=size, width=w)
-        g_prev = g
         queue[:] = rejected
     return tail
 
@@ -2026,7 +2191,7 @@ def flush():
     except MemStop as e:
         mem_stop(size, str(e), tasks)
     except StopFlush as e:
-        stop_path(size, str(e), items, e.width)
+        stop_path(size, str(e), items, e.width, cause=e.cause)
         return                                # dirs gone: never re-kept
     except Exception as e:
         with open(plog("tracebacks.log"), "a") as f:
@@ -2104,6 +2269,12 @@ class ShutilProxy(object):
 def time_one(binp, built, str_len, mem_bytes=None, timeout=rz.PROVE_TIMEOUT):
     """RZ _time_one with wait4; a sample-size ok base is recorded/deferred."""
     rec, base = base_time(binp, built, str_len, mem_bytes, timeout)
+    if rec.get("status") == "oom_or_killed" and S.get("last_batch_n") == 1:
+        # ALL_T1013 FI3: RZ never retries a serial batch's killed base prove;
+        # rerun it once, alone, on the same keys, argv, cap and timeout
+        say("SAME note: base prove of %s at %d was killed in a serial batch; "
+            "rerun once alone" % (built["name"], str_len))
+        rec, base = base_time(binp, built, str_len, mem_bytes, timeout)
     if base is not None and str_len in ARGS.sizes:
         d = built["dir"]
         put("base", unit=built["name"], size=str_len, **base)
@@ -2171,6 +2342,17 @@ def load_partial_wrapped():
     sweep.restore()
     sample.restore()
     done = _ORIG["load"]()
+    retry_once(done, sweep)                   # ALL_T1013 F7
+    for u, size in sorted(S.get("force_redo", ())):   # ALL_T1013 V12
+        if done.pop("%s|%d" % (u, size), None) is not None:
+            say("SAME note: %s %d redone (a dropped partial line named it)"
+                % (u, size))
+    sigs = {r.get("launch_sig") for r in done.values()}   # ALL_T1013 F12
+    if len(sigs) > 1 or sigs - {S.get("sig")}:
+        say("SAME note: kept sweep rows carry %d launch_sig value(s) (%s); "
+            "this run is %s" % (len(sigs), ", ".join(
+                (x or "none")[:12] for x in sorted(sigs, key=str)),
+                (S.get("sig") or "")[:12]))
     for size in a.sizes:
         comp = complete_units(S["rows"], size, a.n, S["er"])
         for k in list(done):
@@ -2184,6 +2366,7 @@ def load_partial_wrapped():
 def append_partial_wrapped(rec):
     if STOP.is_set():                         # DLP_T1001 m9: no GIVEN UP rows
         return
+    rec["launch_sig"] = S.get("sig")          # ALL_T1013 F12
     return _ORIG["append"](rec)
 
 
@@ -2233,12 +2416,40 @@ def as_cap_wrapped(est_rss, full_mem):
     return int(min(full_mem, cap + room))
 
 
+def sync_scratch():
+    """ALL_T1013 F9/V13: syncfs the scratch fs, and the partial and log fs
+    when they are other mounts; os.sync only as a fallback."""
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        devs = []
+        for p in (rz.PAR_ROOT, rz.PARTIAL_DIR, S.get("logdir")):
+            if not p or not os.path.isdir(p):
+                continue
+            dev = os.stat(p).st_dev
+            if dev in devs:
+                continue
+            fd = os.open(p, os.O_RDONLY)
+            try:
+                if libc.syncfs(fd) != 0:
+                    raise OSError(ctypes.get_errno(), "syncfs %s" % p)
+            finally:
+                os.close(fd)
+            devs.append(dev)
+        if not devs:
+            raise OSError(errno.ENOENT, "no fs to sync")
+        return "syncfs=%d" % len(devs)
+    except Exception:
+        os.sync()
+        return "sync"
+
+
 class BatchTPE(ThreadPoolExecutor):
     """ALL_T1009 N2: rz.ThreadPoolExecutor that records the batch size."""
 
     def __init__(self, *args, **kw):
         n = kw.get("max_workers", args[0] if args else None)
-        S["batch_n"] = n
+        S["batch_n"] = S["last_batch_n"] = n   # ALL_T1013 FI3: kept for timing
         S["batch_seq"] = S.get("batch_seq", 0) + 1
         try:
             say("SAME batch t=%s size=%s jobs=%s" % (
@@ -2252,8 +2463,9 @@ class BatchTPE(ThreadPoolExecutor):
         r = super().__exit__(*exc)            # ALL_T1009: all keygens returned
         if exc[0] is None:                    # ALL_T1009 A4: sync before timing
             t0 = time.time()
-            os.sync()
-            say("SAME sync t=%s wall=%.1fs" % (_stamp(), time.time() - t0))
+            how = sync_scratch()
+            say("SAME sync t=%s wall=%.1fs %s" % (_stamp(), time.time() - t0,
+                                                  how))
         return r
 
 
@@ -2312,6 +2524,62 @@ def _after_build(b, name, str_len, mem, lone, room, wall):
     b["as_cap"] = rss_part      # ALL_T1009: RZ's retry backs off from RSS only
 
 
+KEY_PARTS = ("inst", "gens", "input_names", "term_arr", "input_idxes",
+             "var_idxes")
+
+
+def _kill_cwd(d):
+    """ALL_T1013 F1: kill our circ_executable left running in work dir d."""
+    out = []
+    for pid in _pids():
+        if pid == os.getpid() or not _owned(pid):
+            continue
+        if _exe_base(pid) != "circ_executable" or _cwd_of(pid) != d:
+            continue
+        for c in descendants(pid):
+            _sigkill(c)
+        _sigkill(pid)
+        out.append(pid)
+    return out
+
+
+def _keys_missing(d, str_len):
+    """ALL_T1013 R1: RZ's keys dir exists but a key file is absent or empty."""
+    kd = os.path.join(d, "keys")
+    if not os.path.isdir(kd):
+        return False
+    for part in KEY_PARTS:
+        try:
+            if os.path.getsize(os.path.join(kd, "policy%d_%s" % (
+                    str_len, part))) == 0:
+                return True
+        except OSError:
+            return True
+    return False
+
+
+def _post_build(b, str_len):
+    """ALL_T1013 F1/R1: no keygen outlives its timeout; no keyless build."""
+    st, d = b.get("status"), b.get("dir")
+    if st == "build_timeout" and d:
+        for pid in _kill_cwd(os.path.realpath(d)):
+            say("SAME note: killed timed-out keygen pid %d (cwd %s)" % (pid, d))
+    elif st == "built" and d and _keys_missing(d, str_len):
+        b["status"] = "build_fail"
+        b["err"] = "keygen wrote no keys (arm missing?)"
+
+
+def run_keygen_wrapped(cmd, cwd, timeout=rz.PROVE_TIMEOUT):
+    """ALL_T1013 S3: keys only; RZ never read the zero-witness prove that
+    followed them. Same zkmb_generate_keys call, paths and .zok."""
+    cmd = list(cmd)
+    i = len(cmd) - 3
+    if (i >= 0 and re.match(r"policy_\d+$", cmd[i])
+            and cmd[i + 1:] == ["true", "prover"]):
+        cmd[i] = "policy_keys_" + cmd[i][len("policy_"):]
+    return _ORIG["run_keygen"](cmd, cwd, timeout)
+
+
 def build_one_wrapped(binp, idx, name, str_len, mem_bytes=None,
                       timeout=rz.PROVE_TIMEOUT):
     """ALL_T1009 B1/N2: full headroom when alone, then log the keygen."""
@@ -2319,7 +2587,18 @@ def build_one_wrapped(binp, idx, name, str_len, mem_bytes=None,
     if lone:
         mem_bytes = S["full_mem"]
     room, t0 = S.get("cap_room", arena_room()), time.time()
-    b = _ORIG["build"](binp, idx, name, str_len, mem_bytes, timeout)
+    try:
+        b = _ORIG["build"](binp, idx, name, str_len, mem_bytes, timeout)
+    except OSError as e:                      # ALL_T1013 F8: RZ retries it
+        b = {"name": name, "prox": None,
+             "dir": os.path.join(rz.PAR_ROOT, "c%05d" % idx),
+             "status": ("disk_full" if e.errno in (errno.ENOSPC, errno.EDQUOT)
+                        else "build_fail"),
+             "err": ("%s: %s" % (type(e).__name__, e))[-300:]}
+    try:
+        _post_build(b, str_len)
+    except Exception as e:                    # ALL_T1013: never end the batch
+        say("SAME note: post-build check failed: %s" % e)
     try:
         _after_build(b, name, str_len, mem_bytes, lone, room, time.time() - t0)
     except Exception:
@@ -2436,6 +2715,7 @@ def install_rz_hooks():
     _hook("run_pipeline", "pipeline", run_pipeline_wrapped)
     _hook("_as_cap", "as_cap", as_cap_wrapped)          # ALL_T1009 N1
     _hook("_build_one", "build", build_one_wrapped)     # ALL_T1009 B1/N2
+    _hook("_run_keygen", "run_keygen", run_keygen_wrapped)  # ALL_T1013 S3
     rz.ThreadPoolExecutor = BatchTPE                    # ALL_T1009 N2
     _hook("_estimate", "estimate", estimate_wrapped)    # ALL_T1009 B2
     _hook("_median_at", "median_at", median_at_wrapped)  # ALL_T1009 N3
@@ -2503,10 +2783,11 @@ def full_start(a, rows):
 
 
 def scalecal_widths(topo, cap):
-    """Powers of 2 up to min(cap, down2(node slot cores)), as the full-run
-    widening; cap 0 keeps the old 1, 2, 4 ladder (DLP_T1001)."""
-    top = min(cap if cap else 4, down2(node_slot_cores(topo)))
-    return [1 << i for i in range(top.bit_length()) if 1 << i <= top]
+    """ALL_T1013 S5: the full-run ladder up to the cap; cap 0 keeps the old
+    ladder up to 4 (DLP_T1001)."""
+    if not cap:
+        return [w for w in (1, 2, 4) if w <= min(4, node_slot_cores(topo))]
+    return ladder(topo, cap)
 
 
 def scalecal():
@@ -2562,7 +2843,8 @@ def _scalecal_body(a, topo, commit0, dirty0, t0, it):
             except MemStop as e:              # a width that cannot launch
                 say("SCALECAL w=%d: %s" % (w, e))
             ms = [(v, ref[idx[id(c)]]) for c, v in pk.pair_ms.items()]
-            if len(ms) < n or any(v is None for v, _ in ms):
+            if len(ms) < n or any(not isinstance(v, int)   # ALL_T1013 F16
+                                  for v, _ in ms):
                 g, tau, ok = float("inf"), 0.0, False
             else:
                 g = math.exp(sum(math.log(v / rf) for v, rf in ms) / len(ms))
@@ -2667,6 +2949,7 @@ def parse_args(argv):
     ap.add_argument("--reserve-floor", type=int, default=64)
     ap.add_argument("--launcher", choices=("auto", "prlimit"), default="auto")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--build-only", action="store_true")   # ALL_T1013 S9
     a = ap.parse_args(argv)
     a.sizes = [int(x) for x in a.sizes.split(",") if x]
     return a
@@ -2789,6 +3072,54 @@ def sweep_refusal(a):
     return None
 
 
+def _fs_dev(p):
+    try:
+        return os.stat(p).st_dev
+    except OSError:
+        return None
+
+
+def pick_scratch():
+    """ALL_T1013 K13: RZ's scratch rule (writable local fs with the most
+    free space, at least SCRATCH_MIN_FREE_GB) over RZ's mount roots plus the
+    clone's own fs at <ms_dlp>/bora_zombie_scratch. One candidate per fs: the
+    clone dir first, so a K14 bind mount (/tmp/bora, /tmp/bora_zombie_par) of
+    the clone's fs never stands in for it. Under the C1 redirect only
+    rz.PAR_ROOT."""
+    if TMP_ROOT:
+        return rz.PAR_ROOT
+    best, best_free, seen = None, -1.0, set()
+    for mp, base in ([(MS_DLP, CLONE_SCRATCH)]   # ALL_T1013 K15: clone first
+                     + [(m, os.path.join(m, "bora_zombie_scratch"))
+                        for m in rz._candidate_mounts()]):
+        dev = _fs_dev(mp)
+        if dev is None or dev in seen:
+            continue
+        free = rz._writable_free_gb(mp)
+        if free is None:                      # e.g. a root-owned mount root
+            continue
+        seen.add(dev)
+        if free > best_free:
+            best, best_free = base, free
+    if best is None or best_free < rz.SCRATCH_MIN_FREE_GB:
+        say("[scratch] no local drive with >= %d GiB free; using %s"
+            % (rz.SCRATCH_MIN_FREE_GB, rz.PAR_ROOT))
+        return rz.PAR_ROOT
+    say("[scratch] using %s (%.0f GiB free) for per-job key work dirs%s"
+        % (best, best_free, " (the clone's fs)" if best == CLONE_SCRATCH
+           else ""))
+    return best
+
+
+if not TMP_ROOT:                              # ALL_T1013 K13: at import, so
+    rz._pick_scratch_base = pick_scratch      # check-start sees it too
+
+
+def scratch_src(base):
+    return ("clone" if base == CLONE_SCRATCH else "fallback"
+            if base == rz.PAR_ROOT else "mount")
+
+
 def scratch_free_gib():
     base = rz._pick_scratch_base()
     p = base
@@ -2845,19 +3176,73 @@ def jobs_fit():
     return max(0, min(want, (av - PIDS_SLACK) // (ncpu + 4))), want, av
 
 
+def leftover_gib(base):
+    """ALL_T1013 F5: GiB of a killed run's work dirs, which the leaf frees."""
+    return rz._dir_bytes(base) / GIB if os.path.isdir(base) else 0.0
+
+
+def reclaim_scratch():
+    """ALL_T1013 F5: under the lock, remove the work dirs a killed run left
+    (only rz.PAR_ROOT while the test redirect is set, V10)."""
+    roots = [rz.PAR_ROOT]
+    if not TMP_ROOT:
+        roots += [os.path.join(mp, "bora_zombie_scratch")
+                  for mp in rz._candidate_mounts()] + [CLONE_SCRATCH]
+    for p in dict.fromkeys(os.path.abspath(r) for r in roots):
+        try:
+            if (not os.path.isdir(p) or os.path.islink(p)
+                    or os.stat(p).st_uid != os.getuid()):
+                continue
+        except OSError:
+            continue
+        n = rz._dir_bytes(p)
+        shutil.rmtree(p, ignore_errors=True)
+        say("SAME note: removed leftover %s (%.1f GiB)" % (p, n / GIB))
+
+
+RETRY_ONCE = tuple(rz.RESOURCE_FAIL)          # ALL_T1013 F7 + FI3
+
+
+def retry_once(done, sweep):
+    """ALL_T1013 F7 (owner): a sweep row given up for a resource is retried
+    once per unit and size; a second give-up stays."""
+    try:
+        rows = sweep.load()
+    except ValueError:
+        return
+    n = {}
+    for r in rows:
+        if isinstance(r, dict) and r.get("status") in RETRY_ONCE:
+            k = "%s|%s" % (r.get("regex_name"), r.get("str_len"))
+            n[k] = n.get(k, 0) + 1
+    for k in sorted(done):
+        st = done[k].get("status")
+        if st not in RETRY_ONCE:
+            continue
+        u, sz_ = k.rsplit("|", 1)
+        if n.get(k, 0) <= 1:
+            del done[k]
+            say("SAME note: retry once %s %s (%s)" % (u, sz_, st))
+        else:
+            say("SAME note: %s %s given up %d times, kept" % (u, sz_, n[k]))
+
+
 def host_views(a):
     """ALL_T1009: (text, refusal) for the scratch drive and task limit."""
     free, base = scratch_free_gib()
+    lg = leftover_gib(base)                   # ALL_T1013 F5: freed at the leaf
+    free += lg
     n, want, av = jobs_fit()
     full = a.dry is None
-    txt = "scratch=%.0fGiB(%s) tasks_free=%s keygen_jobs=%d" % (
-        free, base, "max" if av is None else av, max(n, 0))
+    txt = "scratch=%.0fGiB(%s,%s) tasks_free=%s keygen_jobs=%d" % (
+        free, base, scratch_src(base), "max" if av is None else av,
+        max(n, 0))
     if n < 1:
         return txt, ("the task limits (pids.max, ulimit -u) leave %s free "
                      "tasks, too few for one keygen of %d threads"
                      % (av, len(os.sched_getaffinity(0)) + 4))
-    left = (" A leftover %s from a killed run exists; delete it." % base
-            if os.path.isdir(base) else "")
+    left = (" This counts %.0f GiB of leftover work dirs in %s, which the "
+            "leaf removes." % (lg, base) if lg else "")
     if full and free < SCRATCH_REFUSE_GIB:
         return txt, ("the scratch drive for %s has %.0f GiB free, below run_"
                      "zombie's own %d GiB rule.%s" % (base, free,
@@ -2876,7 +3261,10 @@ def check_start_main(a):
     """--check-start: cap, clone, oomd and launcher probes, rule 2, start
     check, STOP rule. No build, no keygen."""
     why = driver_guard(CHECK_LOCK_WAIT_S)     # ALL_T1009: bounded wait
-    orph = [] if why else orphan_circ(kill=False)
+    orph = [] if why else orphan_circ(kill=True)   # ALL_T1013 F4: lock held
+    if orph:
+        time.sleep(0.5)
+        orph = [o for o in orph if _alive(o[0])]
     if why or orph:
         say("SAME check-start REFUSE: %s" % (why or orphan_text(orph)))
         return 6
@@ -2908,6 +3296,8 @@ def check_start_main(a):
     if why:
         say("SAME check-start REFUSE: %s" % why)
         return 6
+    hv += " circ=%s" % ("rebuild-at-leaf" if circ_rebuild_needed(a)  # S9
+                        else "prebuilt")
     if a.dry is not None:
         say("SAME check-start PASS (dry: no start check) %s" % hv)
         return 0
@@ -2953,6 +3343,52 @@ def check_start_main(a):
     say("SAME check-start PASS sizes=%s serial=%s %s" % (
         ",".join(map(str, a.sizes)), sorted(S["serial"]) or "none", hv))
     return 0
+
+
+PD_RUN_LOCK = "/tmp/bora/PAPER_DATA.lock"
+BUILD_REDIRECT_ENV = "ZKR_T1013_BUILD_REDIRECT"   # ALL_T1013: test-only
+
+
+def pd_lock_held():
+    """ALL_T1013 R4: a PAPER_DATA run holds its flock (read-only probe)."""
+    import fcntl
+    try:
+        fd = os.open(PD_RUN_LOCK, os.O_RDONLY)
+    except OSError:
+        return False
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    except OSError:
+        return True
+    finally:
+        os.close(fd)
+
+
+def build_only_main(a):
+    """ALL_T1013 S9: build circ_executable as the full leaf would (same
+    VEC_SIZE, same render hooks); never refuses, rc 7 on a build failure."""
+    if TMP_ROOT and os.environ.get(BUILD_REDIRECT_ENV) != "1":
+        say("SAME note: test redirect active, circ build left to the leaf")
+        return 0
+    if pd_lock_held():
+        say("SAME note: a PAPER_DATA run holds %s; circ build left to the "
+            "leaf" % PD_RUN_LOCK)
+        return 0
+    why = driver_lock(0)
+    if why:
+        say("SAME note: %s; circ build left to the leaf" % why)
+        return 0
+    try:
+        install_rz_hooks()
+        binp = rz.ensure_zombie_built(rz.VEC_SIZE)
+        say("SAME build-only OK %s zkmb.rs %s" % (binp, sha256_file(
+            rz.BUILD_RS)[:16]))
+        return 0
+    except (Exception, SystemExit) as e:
+        say("SAME build-only FAIL: %s: %s" % (type(e).__name__, e))
+        return 7
 
 
 def only_same_main():
@@ -3018,6 +3454,7 @@ def run_main(a):
     if why:
         say("SAME refuse: %s" % why)
         return 6
+    reclaim_scratch()                         # ALL_T1013 F5: lock held
     n, want, av = jobs_fit()                  # ALL_T1009: adapt, never refuse
     S["jobs_cap"] = max(1, n)
     free, base = scratch_free_gib()
@@ -3081,6 +3518,8 @@ def main(argv=None):
     init_state(a)
     if a.check_start:
         return check_start_main(a)
+    if a.build_only:                          # ALL_T1013 S9: INSTALL calls it
+        return build_only_main(a)
     why = driver_guard(LOCK_WAIT_RUN_S)      # ALL_T1009: before any file
     if why:
         say("SAME refuse: %s" % why)
@@ -3134,7 +3573,16 @@ RZ_PINS = ("e = _estimate(n, str_len, done, slope",
            "caps = {idx: _as_cap(est_ram(n), full_mem)",
            "with ThreadPoolExecutor(max_workers=len(batch))",
            'default = _median_at(done, str_len, "peak_rss")',
-           "serial = len(batch) == 1", "// MIN_CPUS_PER_CIRC)")
+           "serial = len(batch) == 1", "// MIN_CPUS_PER_CIRC)",
+           "rc, _out, errtxt, rss = _run_keygen(",        # ALL_T1013 S3
+           '"true", "prover"], mem_bytes), d, timeout)')
+
+
+S1_PINS = ("let timer = Instant::now();\n    let proof = prover.prove(vec![pw]);"
+           "\n    println!(\"prove takes {}\", timer.elapsed().as_millis());",
+           "let verifier = &verifier;\n    let timer = Instant::now();\n    let ok"
+           " = verifier.verify(&proof, &vec![vw]);\n    println!(\"verify takes"
+           " {}\", timer.elapsed().as_millis());")
 
 
 def selftest():
@@ -3169,6 +3617,21 @@ def selftest():
         assert a1.index("fn zreal_one_circuit") < a1.index(ZK_ANCHOR)
         assert '"policy_real_4000" => zreal_one_circuit::<4000>("policy4000")' \
             in a1
+        assert "fn compile_one_circuit(circuit: &str)" in orig   # ALL_T1013 S3
+        zfn = a1[a1.index("fn zreal_one_circuit"):a1.index(
+            "// <<< same_zombie zreal arm")]
+        for pin in S1_PINS:                   # ALL_T1013 S1: timers unchanged
+            assert zfn.count(pin) == 1, "S1 timer pin: %s" % pin
+        assert [zfn.index(p) for p in S1_PINS] == sorted(
+            zfn.index(p) for p in S1_PINS), "S1 timer order"
+        assert "zkmb_get_verifier" not in zfn, "S1: second key load"
+        for fld in ("pub inst: Instance,", "    gens: NIZKGens,",
+                    "    val_arr: Vec<Option<Value>>,",
+                    "pub fn new(inst: Instance, gens: NIZKGens, "
+                    "input_names: Vec<String>)"):
+            assert fld in orig, "S1 upstream anchor moved: %s" % fld
+        assert ('"policy_keys_4000" => compile_one_circuit("policy4000")'
+                in a1), "S3 keys arm missing"
         blk = a1[a1.index(ZREAL_BEGIN):a1.index(ZREAL_END) + len(ZREAL_END) + 1]
         bare = a1.replace(ARM_T.split("\n//@@ARM\n")[0] + "\n\n", "", 1)
         assert bare.replace(blk, "", 1) == _ORIG["render"](

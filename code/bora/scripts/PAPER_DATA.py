@@ -272,11 +272,25 @@ def spawn(cmd, env, log_path, label):
     _CHILDREN.append(p)
 
     def pump():
+        ok = True                          # ALL_T1013 F15: keep draining on ENOSPC
         for line in p.stdout:
-            sys.stdout.write("[%s] %s" % (label, line))
-            lf.write(line)
-            lf.flush()
-        lf.close()
+            try:
+                sys.stdout.write("[%s] %s" % (label, line))
+            except (OSError, ValueError):
+                pass
+            if not ok:
+                continue
+            try:
+                lf.write(line)
+                lf.flush()
+            except OSError as e:
+                ok = False
+                _summary_line("       %s: job log write failed (%s); the "
+                              "pipe is still drained" % (label, e))
+        try:
+            lf.close()
+        except OSError:
+            pass
 
     t = threading.Thread(target=pump, daemon=True)
     t.start()
@@ -442,6 +456,10 @@ def run_external_python(ctx, script, args, env):
     p, t = spawn(cmd, env, run_log, ctx.key)
     ctx.watch(p, run_log)
     p.wait()
+    try:                                  # ALL_T1013 F6: no stray outlives the leaf
+        os.killpg(p.pid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError, OSError):
+        pass
     _join_pump(t)
     return p.returncode
 
@@ -969,7 +987,7 @@ CACHE_DIR = os.path.join(REPO, "data", "cache")
 # Never wiped: logs/ is LOGS_DIR, where the Rust per-job logs land
 # (logger.rs:127) and where every leaf's fail scan reads (A2017);
 # main/ is ensured-present by INSTALL.py and never repopulated by it.
-CACHE_KEEP = {"logs", "main"}
+CACHE_KEEP = {"logs", "main", "leaf_done"}   # ALL_T1013: keep done stamps
 
 
 def clear_db_cache():
@@ -1049,6 +1067,7 @@ class LeafResult:
     # the error paths that build a LeafResult by hand need not care; the
     # point is that every run reports its own margin against STALL_S.
     peak_idle_s: float = 0.0
+    kept: str = ""      # ALL_T1013: KEPT summary line when a stamp held
 
 
 def _atomic_symlink(target, link_path):
@@ -1510,6 +1529,40 @@ def ensure_cargo_path():
             "`python3 scripts/INSTALL.py --toolchain`" % cargo_bin)
 
 
+def sudo_status():
+    """ALL_T1013 K14d: None when root or passwordless sudo works, else the
+    cause in one line.  Never prompts for a password."""
+    if os.geteuid() == 0:
+        return None
+    try:
+        r = subprocess.run(["sudo", "-n", "true"], stdin=subprocess.DEVNULL,
+                           capture_output=True, text=True, timeout=30)
+    except FileNotFoundError:
+        return "sudo is not installed"
+    except (OSError, subprocess.SubprocessError) as e:
+        return str(e)
+    if r.returncode == 0:
+        return None
+    out = "".join(x for x in (r.stderr, r.stdout) if isinstance(x, str))
+    out = out.strip().splitlines()
+    return out[-1] if out else "exit code %d" % r.returncode
+
+
+def sudo_help(why, need):
+    """ALL_T1013 K14d: the hour-0 error when a step needs root and
+    passwordless sudo is missing.  The caller adds the by-hand commands."""
+    import pwd
+    user = pwd.getpwuid(os.geteuid()).pw_name
+    f = "/etc/sudoers.d/90-bora-run"
+    return ("ERROR: passwordless sudo is not available for user %s (sudo -n "
+            "true says: %s).\n  PAPER_DATA.py needs root at hour 0 to %s. It "
+            "never asks for a password, so it stops now, before any leaf "
+            "starts.\n  Fix once (asks your password), then relaunch the same "
+            "command:\n    sudo sh -c \"echo '%s ALL=(ALL) NOPASSWD:ALL' > %s "
+            "&& chmod 440 %s && visudo -cf %s\"\n  Or run the commands below "
+            "by hand, then relaunch:" % (user, why, need, user, f, f, f))
+
+
 def ensure_vma(target):
     """Raise vm.max_map_count via sudo sysctl, then ENFORCE the floor:
     below it we quit here.  No-op if target <= 0; an unreadable
@@ -1528,11 +1581,18 @@ def ensure_vma(target):
         log("vm.max_map_count=%d already >= %d" % (cur, target))
         return
     log("vm.max_map_count=%d < %d; raising via sudo sysctl" % (cur, target))
-    rc = subprocess.run(
-        ["sudo", "sysctl", "-w", "vm.max_map_count=%d" % target]).returncode
+    try:                                  # ALL_T1013 M10: never a password prompt
+        rc = subprocess.run(([] if os.geteuid() == 0 else ["sudo", "-n"]) + [
+            "sysctl", "-w", "vm.max_map_count=%d" % target],
+            stdin=subprocess.DEVNULL).returncode
+    except OSError as e:
+        log("vm.max_map_count: %s" % e)
+        rc = 1
+    nosudo = sudo_status() if rc != 0 else None    # ALL_T1013 K14d
     if rc != 0:
-        log("WARN: could not raise vm.max_map_count (sudo?). Run manually: "
-            "sudo sysctl -w vm.max_map_count=%d" % target)
+        log("WARN: could not raise vm.max_map_count (%s). Run manually: "
+            "sudo sysctl -w vm.max_map_count=%d" % (nosudo or "rc %d" % rc,
+                                                   target))
     # The RAISE is best-effort; the FLOOR is not.  Re-read instead of
     # trusting rc -- the file is the authority, and the value may
     # already be high from /etc/sysctl.d or an earlier session, in
@@ -1558,7 +1618,8 @@ def ensure_vma(target):
     #   full_dlp  474,624,000   (8 jobs)
     #   full_clam 431,521,792   (8 jobs, max job 3,371,008 fields)
     #   full_dna   21,518,560   (1 job, 1,342,862 fields)
-    raise SystemExit(
+    raise SystemExit((sudo_help(nosudo, "raise vm.max_map_count") + "\n"
+                      if nosudo else "") +
         "PREFLIGHT ABORT: vm.max_map_count=%d < %d.\n"
         "  mimalloc hits ENOMEM on mmap/munmap once the VMA count\n"
         "  reaches this ceiling, with RAM still free -- every full\n"
@@ -4022,6 +4083,10 @@ def run_leaf_zombie(mode, ctx):
             ctx.note("sample sizes refused: %s" % " | ".join(stops))
     # DLP_T1001: the same-sample part, outputs placed on every outcome.
     tsv = place_same_zombie_outputs(mode, ctx)
+    sigs = zombie_launch_sigs(tsv)        # ALL_T1013 F12: report a code mix
+    if len(sigs) >= 2:
+        ctx.note("kept rows from %d launch_sig values: %s" % (
+            len(sigs), ", ".join(s[:12] for s in sorted(sigs))))
     if rc == 0:
         reason, notes = same_zombie_missing_success(
             tsv, ctx.log_path("run"), ctx._t0, mode)
@@ -4041,6 +4106,31 @@ def run_leaf_zombie(mode, ctx):
             ctx.note("sample check on sizes %s: %s" % (
                 ",".join(map(str, ran)), reason or "PASS"))
     return ctx.finish(rc)
+
+
+def zombie_launch_sigs(tsv):
+    """ALL_T1013 F12: launch_sig values of the accepted TSV rows and of the
+    sweep partial rows that carry one.  Never raises."""
+    sigs = set()
+    try:
+        if not isinstance(tsv, str):      # ALL_T1013: never an fd (a mock is 1)
+            raise OSError("no tsv path")
+        with open(tsv, newline="", errors="replace") as f:
+            sigs.update(r.get("launch_sig") for r in csv.DictReader(
+                f, delimiter="\t") if r.get("accepted") == "1")
+    except OSError:
+        pass
+    for path in ZOMBIE_PARTIALS:
+        if (isinstance(path, str) and os.path.isfile(path)
+                and os.path.getsize(path) > 0):
+            with io.open(path, errors="replace") as f:
+                for ln in f:
+                    try:
+                        sigs.add(json.loads(ln).get("launch_sig"))
+                    except (ValueError, AttributeError):
+                        pass
+            break
+    return {s for s in sigs if s}
 
 
 def _same_sizes_ran(tsv, run_log, mode):
@@ -4194,9 +4284,41 @@ def reset_summary_log(top):
     at _summary_line("START  %-6s ...") is scanned as START\\s+(\\S+),
     and a banner carrying that token joins the leaf list."""
     os.makedirs(os.path.dirname(SUMMARY_LOG), exist_ok=True)
+    prev = rotate_summary_log()           # ALL_T1013 F2b: rotate, not truncate
     with open(SUMMARY_LOG, "w") as f:
         f.write("=== NEW RUN %s | %s | host=%s ===\n"
                 % (_ts(), top, platform.node()))
+        if prev:
+            f.write("previous summary: %s\n" % prev)
+        for ln in _TMP_ACTIONS:           # ALL_T1013 K14: what hour 0 mounted
+            f.write("%s\n" % ln)
+
+
+SUMMARY_KEEP = 5            # ALL_T1013 F2b: rotated SUMMARY copies kept
+
+
+def rotate_summary_log():
+    """ALL_T1013 F2b (V9): move a non-empty SUMMARY.log aside next to
+    SUMMARY_LOG and keep the newest SUMMARY_KEEP.  Returns the new name or
+    None.  Never raises."""
+    try:
+        if os.path.getsize(SUMMARY_LOG) == 0:
+            return None
+    except OSError:
+        return None
+    d = os.path.dirname(SUMMARY_LOG)
+    root, ext = os.path.splitext(os.path.basename(SUMMARY_LOG))
+    dest = os.path.join(d, "%s.%s_%d%s" % (
+        root, time.strftime("%Y%m%d_%H%M%S"), os.getpid(), ext))
+    try:
+        os.replace(SUMMARY_LOG, dest)
+        old = sorted(glob.glob(os.path.join(d, "%s.*%s" % (root, ext))),
+                     key=os.path.getmtime)
+        for q in old[:-SUMMARY_KEEP]:
+            _unlink_quiet(q)
+    except OSError:
+        return None
+    return dest
 
 
 def _terminate_all():
@@ -4210,10 +4332,220 @@ def _terminate_all():
             pass
 
 
+# ---- ALL_T1013 F2: per-leaf done stamp, so a relaunch keeps passed leaves
+LEAF_DONE_DIR = "leaf_done"        # under CACHE_DIR (git-ignored, kept)
+# ALL_T1013 R2: tracked files a leaf or INSTALL rewrites; not a source edit
+LEAF_OUTPUT_EXCLUDES = ["data/src_sig/ms_dlp/docs/download_zombie.log"]
+# ALL_T1013 V2: an untracked file here is a source change
+LEAF_SRC_PATHS = ["scripts/", "crates/", "vendor/", "data/src_sig/*/scripts/",
+                  "Cargo.toml", "Cargo.lock", "rust-toolchain*"]
+LEAF_ENV_PREFIXES = ("ZKR_", "RAYON_", "MALLOC_", "MIMALLOC_")   # V1
+LEAF_ENV_SKIP = ("ZKR_SAME_SCOPE", "ZKR_SAME_PARENT")   # per launch by design
+
+
+def leaf_stamp_path(key):
+    return os.path.join(CACHE_DIR, LEAF_DONE_DIR, key + ".json")
+
+
+def leaf_clean():
+    """ALL_T1013 F2c: (True|False|None, paths).  None = git failed (V8)."""
+    rc1, out1 = _git(["status", "--porcelain", "--untracked-files=no", "--",
+                      "."] + [":(exclude)" + x for x in LEAF_OUTPUT_EXCLUDES])
+    rc2, out2 = _git(["status", "--porcelain", "--untracked-files=all",
+                      "--"] + LEAF_SRC_PATHS)
+    if rc1 or rc2:
+        return None, ["git status failed (rc %d, %d)" % (rc1, rc2)]
+    paths = list(dict.fromkeys(ln[3:] for ln in (out1 + out2).splitlines()
+                               if ln.strip()))
+    return not paths, paths
+
+
+def leaf_head():
+    """ALL_T1013 V8: HEAD through _git (safe.directory), or None."""
+    rc, out = _git(["rev-parse", "HEAD"])
+    return out.strip() if rc == 0 and out.strip() else None
+
+
+def leaf_options(plan):
+    """ALL_T1013 F2a: every knob a kept leaf must share (V1, V4, V5)."""
+    env = {k: v for k, v in sorted(os.environ.items())
+           if k.startswith(LEAF_ENV_PREFIXES) and k not in LEAF_ENV_SKIP}
+    return {"SERVER": SERVER, "HALF": HALF,
+            "ONE_PROOF_PER_HALF": ONE_PROOF_PER_HALF, "SAME_1KB": SAME_1KB,
+            "SAME_ONLY": SAME_ONLY, "THP_MODE": THP_MODE,
+            "VMA_TARGET": VMA_TARGET, "numa": numa_available(), "env": env,
+            "top": plan.top, "leaf_keys": list(plan.leaf_keys)}
+
+
+def leaf_inputs(key):
+    """ALL_T1013 V3: hash of git-ignored inputs a leaf reads (Zombie
+    clone), or None.  Raises on failure; callers treat that as rerun."""
+    if key != "zombie":
+        return None
+    spec = importlib.util.spec_from_file_location("same_zombie_inputs",
+                                                  SAME_ZOMBIE_SCRIPT)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m.zombie_inputs_sha256()
+
+
+def _file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def _leaf_line(leaf_key, result):
+    status = "FAIL" if result.failed else "OK"
+    return "%-6s %-6s rc=%s wall=%ds peak_rss=%.1fGB idle=%ds/%ds" % (
+        status, leaf_key, result.rc, int(result.wall_s),
+        result.peak_rss_gb, int(result.peak_idle_s), STALL_S)
+
+
+def _read_json(path):
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def leaf_keep_reason(key, plan, b_hash=True):
+    """ALL_T1013 F2a keep rule: None = keep the leaf, else why it reruns.
+    b_hash False checks sizes only (the cheap hour-0 pre-pass)."""
+    st = _read_json(leaf_stamp_path(key))
+    if not isinstance(st, dict):
+        return ("no stamp" if not os.path.exists(leaf_stamp_path(key))
+                else "unreadable stamp")
+    for k, v in (("kind", "leaf_done"), ("leaf", key), ("mode", "full")):
+        if st.get(k) != v:
+            return "stamp %s %r" % (k, st.get(k))
+    if plan.mode != "full":
+        return "plan mode %s" % plan.mode
+    head = leaf_head()
+    if head is None:
+        return "git rev-parse failed"
+    if head != st.get("commit"):
+        return "commit %s, stamp %s" % (head[:12], str(st.get("commit"))[:12])
+    clean, paths = leaf_clean()
+    if not clean:
+        return "tree not clean: %s" % " ".join(paths[:5])
+    if st.get("host") != platform.node() or \
+            st.get("fingerprint") != box_fingerprint():
+        return "another host or box fingerprint"
+    opts = leaf_options(plan)
+    if st.get("options") != opts:
+        old = st.get("options") or {}
+        diff = sorted(k for k in set(old) | set(opts) if old.get(k) != opts.get(k))
+        return "options differ: %s" % ", ".join(diff)
+    try:
+        if st.get("inputs") != leaf_inputs(key):
+            return "leaf inputs hash differs"
+    except Exception as e:
+        return "leaf inputs hash failed: %s" % e
+    outs = st.get("outputs") or []
+    if not outs:
+        return "stamp lists no outputs"
+    for o in outs:
+        p = o.get("path") or ""
+        try:
+            if os.path.getsize(p) != o.get("size"):
+                return "output size changed: %s" % p
+            if b_hash and _file_sha256(p) != o.get("sha256"):
+                return "output sha256 changed: %s" % p
+        except OSError:
+            return "output missing: %s" % p
+    return None
+
+
+def write_leaf_stamp(key, plan, result, t0, commit0, clean0):
+    """ALL_T1013 F2a: vouch for a passed full leaf.  Returns None when the
+    stamp was written, else why not.  Never raises."""
+    try:
+        if result.failed or result.rc != 0:
+            return "leaf failed"
+        if not result.raw_data_written:
+            return "no outputs"
+        if commit0 is None or clean0[0] is None:
+            return "git failed at leaf start"
+        if not clean0[0]:
+            return "tree not clean at leaf start: %s" % " ".join(clean0[1][:5])
+        if leaf_head() != commit0:
+            return "HEAD moved during the leaf (or git failed)"
+        clean, paths = leaf_clean()
+        if not clean:
+            return "tree not clean at leaf end: %s" % " ".join(paths[:5])
+        outs = [{"path": q, "size": os.path.getsize(q),
+                 "sha256": _file_sha256(q)}
+                for q in dict.fromkeys(result.raw_data_written)]
+        mine = {o["path"] for o in outs}
+        dest = leaf_stamp_path(key)
+        for other in glob.glob(os.path.join(os.path.dirname(dest), "*.json")):
+            st = _read_json(other)
+            if other != dest and isinstance(st, dict) and mine & {
+                    o.get("path") for o in st.get("outputs") or []}:
+                _unlink_quiet(other)   # ALL_T1013: a shared name vouches for neither
+                return "an output is shared with the %s stamp" % st.get("leaf")
+        stamp = {"kind": "leaf_done", "leaf": key, "mode": "full",
+                 "commit": commit0, "host": platform.node(),
+                 "fingerprint": box_fingerprint(),
+                 "options": leaf_options(plan), "inputs": leaf_inputs(key),
+                 "summary": _leaf_line(key, result), "outputs": outs,
+                 "t_leaf_start": t0,
+                 "written": datetime.datetime.now().isoformat(
+                     timespec="seconds")}
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest + ".tmp", "w") as f:
+            json.dump(stamp, f, indent=1, sort_keys=True)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(dest + ".tmp", dest)
+        fd = os.open(os.path.dirname(dest), os.O_RDONLY)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+        return None
+    except Exception as e:
+        _unlink_quiet(leaf_stamp_path(key) + ".tmp")
+        return "stamp write failed: %s" % e
+
+
+def kept_leaves(plan, b_hash=True, b_log=False):
+    """ALL_T1013 F2a: the leaves of a full plan whose stamp holds."""
+    kept = []
+    if plan.mode != "full":
+        return kept
+    for key in plan.leaf_keys:
+        if not os.path.exists(leaf_stamp_path(key)):
+            continue
+        why = leaf_keep_reason(key, plan, b_hash)
+        if why is None:
+            kept.append(key)
+        elif b_log:
+            _summary_line("       %s: done stamp not used, rerun: %s"
+                          % (key, why))
+    return kept
+
+
+def _kept_result(key):
+    st = _read_json(leaf_stamp_path(key)) or {}
+    return LeafResult(rc=0, wall_s=0.0, raw_data_written=[
+        o.get("path") for o in st.get("outputs") or []], failed=False,
+        triage_tgz=None, peak_rss_gb=0.0,
+        note="kept from %s, commit %s" % (st.get("written"),
+                                          str(st.get("commit"))[:12]),
+        kept="KEPT   %-6s %s (stamp %s)" % (key, st.get("summary"),
+                                            st.get("written")))
+
+
 class Sequencer:
-    def __init__(self, plan, dry_run=False):
+    def __init__(self, plan, dry_run=False, kept=()):
         self.plan = plan
         self.dry_run = dry_run
+        self.kept = set(kept)            # ALL_T1013 F2a: decided at hour 0
 
     def run(self):
         """Continue-on-failure is the only policy: an organic leaf
@@ -4233,8 +4565,19 @@ class Sequencer:
     def _run_one_leaf(self, leaf_key):
         spec = JOB_SPECS[leaf_key]
         mode = self.plan.mode
+        b_stamp = mode == "full" and _run_lock_fd is not None   # ALL_T1013
+        if b_stamp and leaf_key in self.kept:
+            why = leaf_keep_reason(leaf_key, self.plan)   # ALL_T1013 V6: recheck
+            if why is None:
+                return _kept_result(leaf_key)
+            _summary_line("       %s: kept at hour 0, but now: %s; rerun"
+                          % (leaf_key, why))
         _summary_line("START  %-6s (%s/%s)" % (
             leaf_key, self.plan.top, mode))
+        commit0, clean0, t0 = None, (None, []), time.time()
+        if b_stamp:                       # ALL_T1013 F2a: a rerun never vouches early
+            _unlink_quiet(leaf_stamp_path(leaf_key))
+            commit0, clean0 = leaf_head(), leaf_clean()
         # INSIDE the try: JobHandle() itself does I/O (makedirs, a glob
         # of LOGS_DIR), so a full disk or a bad LOGS_DIR must not escape
         # as an uncaught traceback either.
@@ -4250,7 +4593,7 @@ class Sequencer:
                 for w in clear_db_cache():
                     _summary_line("       %s" % w)
             ctx = JobHandle(leaf_key, mode)
-            return spec.run_fn(mode, ctx)
+            result = spec.run_fn(mode, ctx)
         except Exception:
             # A run_fn bug (bad launch args, a helper raising outside the
             # subprocess it launched, etc.) must not kill the whole
@@ -4260,6 +4603,12 @@ class Sequencer:
             # silently killing the sequence (fatal under go_background(),
             # whose stdio goes to /dev/null).
             return self._failed_leaf(leaf_key, ctx)
+        if b_stamp:
+            why = write_leaf_stamp(leaf_key, self.plan, result, t0,
+                                   commit0, clean0)
+            if why and why != "leaf failed":
+                _summary_line("       %s: no stamp: %s" % (leaf_key, why))
+        return result
 
     def _failed_leaf(self, leaf_key, ctx):
         """Turn the in-flight exception into a FAILED LeafResult.  Never
@@ -4286,11 +4635,10 @@ class Sequencer:
                               note="triage bundle failed")
 
     def _append_summary(self, leaf_key, result):
-        status = "FAIL" if result.failed else "OK"
-        _summary_line(
-            "%-6s %-6s rc=%s wall=%ds peak_rss=%.1fGB idle=%ds/%ds" % (
-                status, leaf_key, result.rc, int(result.wall_s),
-                result.peak_rss_gb, int(result.peak_idle_s), STALL_S))
+        if getattr(result, "kept", ""):          # ALL_T1013 F2b: KEPT line
+            _summary_line(result.kept)
+            return
+        _summary_line(_leaf_line(leaf_key, result))
         if result.triage_tgz:
             _summary_line("       triage: %s" % result.triage_tgz)
 
@@ -4647,6 +4995,349 @@ def build_argparser():
     return ap
 
 
+# ---- ALL_T1013 K14: a small /tmp gets its big dirs from the clone's disk
+# June 2026: concurrent Zombie keygen dirs under /tmp filled a 60 GB root.
+TMP_BIND_TMP = "/tmp"
+TMP_BIND_NAMES = ("bora", "bora_zombie_circ", "bora_zombie_run",
+                  "bora_zombie_par", "reef_exp")   # /tmp/snark_start stays
+TMP_BIND_FREE_GIB = 250      # same_zombie's warn level (4 KB batch: 80-110 GiB)
+TMP_BIND_DIR = ".bora_tmp"   # under the git root, git-ignored
+TMP_BIND_WAIT_S = 900        # ALL_T1013 M2: bounded wait for another launch
+_TMP_ACTIONS = []            # K14 lines for the SUMMARY.log header
+
+
+def _free_gib(path):
+    st = os.statvfs(path)
+    return st.f_bavail * st.f_frsize / 2 ** 30
+
+
+def tmp_bind_names(root, tmp=None):
+    """ALL_T1013 K14 trigger: bind every target when /tmp is another
+    filesystem than the clone, has under TMP_BIND_FREE_GIB free, and the
+    clone's filesystem has more.  M4: a target whose .bora_tmp/<name>
+    already exists is bound whatever the free space.  Mounted targets are
+    left alone."""
+    tmp = tmp or TMP_BIND_TMP
+    try:
+        trig = (os.stat(tmp).st_dev != os.stat(root).st_dev
+                and _free_gib(tmp) < TMP_BIND_FREE_GIB
+                and _free_gib(root) > _free_gib(tmp))
+    except OSError:
+        trig = False
+    return [n for n in TMP_BIND_NAMES
+            if not os.path.ismount(os.path.join(tmp, n))
+            and (trig or os.path.isdir(os.path.join(root, TMP_BIND_DIR, n)))]
+
+
+def _dir_users(path):
+    """ALL_T1013 R2/M7: pids (not ours) whose cwd, exe, a mapped file or an
+    fd open for WRITING is under path.  Read-only fds (a `tail -F`) do not
+    count."""
+    under = lambda p: p == path or p.startswith(path + os.sep)
+    users = set()
+    for pid in filter(str.isdigit, os.listdir("/proc")):
+        if int(pid) == os.getpid():
+            continue
+        base = os.path.join("/proc", pid)
+        hit = False
+        for ln in ("cwd", "exe"):
+            try:
+                hit = hit or under(os.readlink(os.path.join(base, ln)))
+            except OSError:
+                pass
+        try:
+            with open(os.path.join(base, "maps")) as f:
+                hit = hit or any(under(x.split(None, 5)[-1].strip())
+                                 for x in f if "/" in x)
+        except OSError:
+            pass
+        try:
+            fds = os.listdir(os.path.join(base, "fd"))
+        except OSError:
+            fds = []
+        for fd in fds:
+            if hit:
+                break
+            try:
+                if not under(os.readlink(os.path.join(base, "fd", fd))):
+                    continue
+                with open(os.path.join(base, "fdinfo", fd)) as f:
+                    flags = int(re.search(r"flags:\s*(\d+)", f.read()).group(1), 8)
+                hit = bool(flags & 3)             # O_WRONLY or O_RDWR
+            except (OSError, AttributeError, ValueError):
+                pass
+        if hit:
+            users.add(int(pid))
+    return sorted(users)
+
+
+def _copy_no_clobber(dst, src):
+    """ALL_T1013 K14c: copy dst's tree into src without overwriting any file
+    src has.  rsync --ignore-existing; else cp --update=none where cp knows
+    it; else cp -n, whose "not replacing" exit 1 (coreutils 9.2) is a
+    success.  Raises CalledProcessError on a real failure."""
+    if shutil.which("rsync"):
+        subprocess.run(["rsync", "-a", "--ignore-existing",
+                        "--exclude=*prepare_open4s*", dst + "/", src + "/"],
+                       check=True, capture_output=True, timeout=7200)
+        return
+    hlp = subprocess.run(["cp", "--help"], capture_output=True, text=True,
+                         timeout=60).stdout
+    flag = "--update=none" if re.search(r"--update\[=UPDATE\].*\n?.*none",
+                                        hlp) else "-n"
+    r = subprocess.run(["cp", "-a", flag, dst + "/.", src],
+                       capture_output=True, text=True, timeout=7200)
+    skips = [x for x in r.stderr.splitlines() if x.strip()]
+    if r.returncode == 0 or (flag == "-n" and r.returncode == 1 and all(
+            "not replacing" in x or "skipped" in x or "warning" in x
+            for x in skips)):
+        return
+    raise subprocess.CalledProcessError(r.returncode, r.args, r.stdout,
+                                        r.stderr)
+
+
+def _hand_line(src, dst):
+    """ALL_T1013 M6: the by-hand fix starts with the same copy step."""
+    return ("  mkdir -p %s %s && rsync -a --ignore-existing %s/ %s/ && "
+            "sudo mount --bind %s %s" % (src, dst, dst, src, src, dst))
+
+
+def bind_tmp_dirs(names, root, b_do, say, tmp="/tmp"):
+    """ALL_T1013 K14: bind-mount <tmp>/<name> from <root>/.bora_tmp/<name>.
+    The target's files are copied first without overwriting any file the
+    source already has (R4), nothing is deleted, nothing is unmounted, and
+    each mount must accept a write (R3).  b_do False only says what it
+    would do.  Returns None, or a refusal naming the commands to run by
+    hand."""
+    pairs = [(os.path.join(root, TMP_BIND_DIR, n), os.path.join(tmp, n))
+             for n in names]
+    hand = "\n".join(_hand_line(s, d) for s, d in pairs)
+    todo = [d for _, d in pairs if not os.path.ismount(d)]
+    nosudo = sudo_status() if todo else None      # ALL_T1013 K14d
+    if nosudo and not b_do:
+        say("tmp: passwordless sudo is missing (%s); a full run would stop "
+            "at hour 0 with the fix" % nosudo)
+    elif todo and not b_do:
+        say("tmp: passwordless sudo works")
+    if nosudo and b_do and not any(os.path.islink(d) for d in todo):
+        return (sudo_help(nosudo, "bind-mount %s onto the clone's disk (/tmp "
+                          "has %.0f GiB free, under %d GiB)" % (", ".join(
+                              todo), _free_gib(tmp), TMP_BIND_FREE_GIB))
+                + "\n" + hand)
+    for src, dst in pairs:
+        if os.path.ismount(dst):
+            say("tmp: %s is already a mount point, kept" % dst)
+            continue
+        if os.path.islink(dst):                   # ALL_T1013 R1
+            return ("REFUSED: %s is a symlink to %s; it is neither copied nor "
+                    "mounted through. Remove the link (rm %s), then relaunch "
+                    "the same command." % (dst, os.readlink(dst), dst))
+        say("tmp: %s %s -> %s" % ("bind-mount" if b_do else
+                                  "would bind-mount", src, dst))
+        if not b_do:
+            continue
+        busy = _dir_users(dst)
+        if busy:
+            return ("REFUSED: %s is in use by pid %s (cwd, exe, a mapped file "
+                    "or a file open for writing); stop it, then relaunch, or "
+                    "run by hand:\n%s" % (dst, busy, hand))
+        try:
+            os.makedirs(src, exist_ok=True)
+            os.makedirs(dst, exist_ok=True)
+            if os.listdir(dst):
+                both = [x for x in os.listdir(dst) if os.path.lexists(
+                    os.path.join(src, x))]
+                say("tmp: copying %s into %s first; the source keeps its own "
+                    "copy of %d name(s)%s" % (dst, src, len(both), (
+                        ": " + ", ".join(sorted(both)[:5])) if both else ""))
+                _copy_no_clobber(dst, src)
+            r = subprocess.run(([] if os.geteuid() == 0 else ["sudo", "-n"])
+                               + ["mount", "--bind", src, dst],
+                               capture_output=True, text=True, timeout=120)
+            why = (r.stderr or r.stdout).strip()[-200:]
+            ok = (r.returncode == 0 and os.path.ismount(dst)
+                  and os.stat(dst).st_dev == os.stat(src).st_dev)
+            if ok:                                # ALL_T1013 R3: writable?
+                probe = os.path.join(dst, ".bora_tmp_wtest_%d" % os.getpid())
+                try:
+                    with open(probe, "w") as f:
+                        f.write("x")
+                    os.unlink(probe)
+                except OSError as e:
+                    ok, why = False, "mounted but not writable: %s" % e
+        except (OSError, subprocess.SubprocessError) as e:
+            ok, why = False, str(e)
+        if not ok:
+            return ("REFUSED: /tmp has under %d GiB free and %s could not be "
+                    "bind-mounted from the clone's disk (%s). Run by hand, "
+                    "then relaunch the same command:\n%s"
+                    % (TMP_BIND_FREE_GIB, dst, why or "not a mount after mount",
+                       hand))
+        say("tmp: %s is now on %s" % (dst, src))
+    return None
+
+
+# ALL_T1013 K14c: free GiB a full run needs on the clone's filesystem at
+# launch.  Peak = files written after hour 0 that coexist: cargo target
+# 9.2 GiB [M laptop], datasets 5.8 GB [M README], Reef target and
+# commitment 5.3 GB [E INSTALL.py], .bora_tmp (circ 2.2 GiB [M], logs and
+# partials 2 GiB [E]), plus the larger of the leaf-wiped data/cache (DLP
+# two parts, 2 x 37 GB [M memory: dlp_neo_p0 37 GB]) and one 4 KB Zombie
+# key batch (110 GiB [E same_zombie]); they never coexist, since every full
+# leaf wipes data/cache first.  24.5 + 110 = 134.5 GiB, plus 30 percent =
+# 175, rounded up to 180 GiB.  A 256 GB volume (June) has about 225 free.
+CLONE_MIN_FREE_GIB = 180
+
+
+def _reclaimable_cache_gib():
+    """data/cache the next full leaf wipes anyway (clear_db_cache)."""
+    tot = 0
+    try:
+        names = os.listdir(CACHE_DIR)
+    except OSError:
+        return 0.0
+    for n in names:
+        if n in CACHE_KEEP:
+            continue
+        for d, _, fs in os.walk(os.path.join(CACHE_DIR, n)):
+            for f in fs:
+                try:
+                    tot += os.lstat(os.path.join(d, f)).st_size
+                except OSError:
+                    pass
+    return tot / 2 ** 30
+
+
+def clone_space_step(plan, plan_only):
+    """ALL_T1013 K14c: refuse a full run at hour 0 when the clone's
+    filesystem cannot hold the run (row 1: the clone in ~ on the root
+    disk; row 29: a small volume).  Dry and plan-only invocations note."""
+    if plan.mode not in ("full", "dry"):
+        return None
+    root = _git_root()
+    try:
+        free = _free_gib(root)
+        on_root = os.stat(root).st_dev == os.stat("/").st_dev
+    except OSError:
+        return None
+    eff = free + _reclaimable_cache_gib()
+    if eff >= CLONE_MIN_FREE_GIB:
+        return None
+    msg = ("the clone's filesystem (%s) has %.0f GiB free (%.0f counting the "
+           "data/cache the next leaf wipes); a full run needs %d GiB.%s Clone "
+           "onto the attached volume (/media/volume/<name>), or attach a "
+           "bigger volume, then relaunch."
+           % (root, free, eff, CLONE_MIN_FREE_GIB,
+              " The clone sits on the root filesystem (/)." if on_root else ""))
+    if plan.mode == "full" and not plan_only:
+        return "REFUSED: " + msg
+    log("NOTE: " + msg)
+    return None
+
+
+def limit_core_dumps():
+    """ALL_T1013 K14c: soft RLIMIT_CORE 0 (hard kept), inherited by every
+    child, so a crashed prover never dumps hundreds of GB to /var.  The
+    kernel ignores RLIMIT_CORE for a piped core_pattern (core(5)); apport
+    and systemd-coredump get it as %c and honour 0."""
+    try:
+        import resource
+        _soft, hard = resource.getrlimit(resource.RLIMIT_CORE)
+        resource.setrlimit(resource.RLIMIT_CORE, (0, hard))
+    except (ImportError, ValueError, OSError):
+        pass
+
+
+def _git_root():
+    rc, out = _git(["rev-parse", "--show-toplevel"])
+    return out.strip() if rc == 0 and out.strip() else \
+        os.path.dirname(os.path.dirname(REPO))
+
+
+def _flock_wait(path, say, what):
+    """ALL_T1013 M1/M2: an exclusive flock on path with a bounded wait and a
+    "waiting for pid" line.  Returns (fd, None) or (None, refusal)."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+    except OSError as e:
+        return None, "REFUSED: cannot open the %s %s: %s" % (what, path, e)
+    t0, last = time.time(), 0.0
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            os.ftruncate(fd, 0)
+            os.write(fd, b"%d\n" % os.getpid())
+            return fd, None
+        except OSError:
+            pass
+        try:
+            holder = open(path).read().strip() or "?"
+        except OSError:
+            holder = "?"
+        if time.time() - t0 > TMP_BIND_WAIT_S:
+            os.close(fd)
+            return None, ("REFUSED: pid %s still holds the %s %s after %d s"
+                          % (holder, what, path, TMP_BIND_WAIT_S))
+        if time.time() - last >= 30:
+            last = time.time()
+            say("tmp: waiting for pid %s (%s)" % (holder, what))
+        time.sleep(1)
+
+
+def tmp_bind_step(plan, plan_only):
+    """ALL_T1013 K14: at hour 0 of a full or dry run, before the run lock
+    (it lives in /tmp/bora) and before the SUMMARY.log rotation.  M5: dry
+    runs mount too; --plan-only only says what it would do.  W1: the
+    unmounted RUN_LOCK is held from the probe to the last mount, so no
+    other invocation can take it meanwhile.  Returns None or a refusal."""
+    if plan.mode not in ("full", "dry"):
+        return None
+    def say(msg):
+        log(msg)
+        _TMP_ACTIONS.append(msg)
+    del _TMP_ACTIONS[:]
+    root = _git_root()
+    for n in TMP_BIND_NAMES:                     # ALL_T1013 M3: also in the child
+        dst = os.path.join(TMP_BIND_TMP, n)
+        if os.path.ismount(dst):
+            src = os.path.join(root, TMP_BIND_DIR, n)
+            on = (os.path.isdir(src) and os.stat(dst).st_dev ==
+                  os.stat(src).st_dev)
+            say("tmp: %s is a mount point%s" % (dst, " on %s's filesystem"
+                                               % src if on else ""))
+    names = tmp_bind_names(root)
+    if not names:
+        return None
+    say("tmp: %s has %.0f GiB free (bind under %d GiB, or when .bora_tmp "
+        "holds the name); the clone's disk has %.0f GiB"
+        % (TMP_BIND_TMP, _free_gib(TMP_BIND_TMP), TMP_BIND_FREE_GIB,
+           _free_gib(root)))
+    if plan_only:
+        return bind_tmp_dirs(names, root, False, say, TMP_BIND_TMP)
+    bfd, why = _flock_wait(os.path.join(root, TMP_BIND_DIR, ".bind.lock"),
+                           say, "bind lock")
+    if why:
+        return why
+    rfd = None
+    try:
+        names = tmp_bind_names(root)             # another launch may have bound
+        if not names:
+            return None
+        try:                                     # ALL_T1013 W1: hold RUN_LOCK
+            os.makedirs(os.path.dirname(RUN_LOCK), exist_ok=True)
+            rfd = os.open(RUN_LOCK, os.O_RDWR | os.O_CREAT, 0o644)
+            fcntl.flock(rfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as e:
+            return ("REFUSED: another PAPER_DATA.py holds %s, or it cannot be "
+                    "opened (%s); /tmp is not bind-mounted while it runs. "
+                    "Relaunch when it ends." % (RUN_LOCK, e))
+        return bind_tmp_dirs(names, root, True, say, TMP_BIND_TMP)
+    finally:
+        if rfd is not None:
+            os.close(rfd)                        # releases the hidden lock
+        os.close(bfd)
+
 def half_refusal(plan):
     """T955: --half fits only dry_run/full_run of the two-half leaves."""
     if HALF is None or (plan.mode and plan.leaf_keys
@@ -4667,9 +5358,10 @@ def _unvouched_dlp_dumps():
             or os.path.getmtime(d) > os.path.getmtime(sp)]
 
 
-def same_plan_check(plan):
+def same_plan_check(plan, kept=()):
     """DLP_T1001: plan-start refusals for the same-sample job, before the
-    run lock and before any leaf.  Returns the refusal, or None."""
+    run lock and before any leaf.  Returns the refusal, or None.
+    ALL_T1013 V6: for a kept zombie leaf the check-start only notes."""
     if (plan.mode == "full" and "zombie" in plan.leaf_keys
             and os.environ.get("ZKR_ZOMBIE_TMP_ROOT")):   # ALL_T1009: test-only
         return ("REFUSED: ZKR_ZOMBIE_TMP_ROOT is set (a test redirect of the "
@@ -4720,7 +5412,12 @@ def same_plan_check(plan):
                 return "REFUSED: %s=%r is not a non-negative integer" % (
                     SAME_CAP_ENV, cap)
         if plan.mode in ("dry", "full"):
-            return zombie_check_start(plan.mode)
+            why = zombie_check_start(plan.mode)
+            if why and "zombie" in kept:
+                log("NOTE: zombie is kept by its done stamp; check-start "
+                    "said: %s" % why)
+                return None
+            return why
     return None
 
 
@@ -6883,6 +7580,7 @@ def run_figs():
 def main():
     ap = build_argparser()
     args = ap.parse_args()
+    limit_core_dumps()                    # ALL_T1013 K14c: no huge core files
 
     if args.list:
         _show_menu()
@@ -6939,15 +7637,32 @@ def main():
     if refusal:
         log(refusal)
         return 2
-    # DLP_T1001: re-exec inside an oomd-omit scope; the menu's choice is
-    # passed on as --run/--items so the child does not ask again.
-    refusal = ensure_same_scope(plan, sys.argv[1:] + (
-        [] if args.run else ["--run", plan.top, "--items",
-                             ",".join(plan.leaf_keys)]))
+    # ALL_T1013 K14: a small /tmp first, before the run lock and any check
+    refusal = tmp_bind_step(plan, args.plan_only)
     if refusal:
         log(refusal)
         return 2
-    refusal = same_plan_check(plan)    # DLP_T1001: before the run lock
+    refusal = clone_space_step(plan, args.plan_only)   # ALL_T1013 K14c
+    if refusal:
+        log(refusal)
+        return 2
+    # DLP_T1001: re-exec inside an oomd-omit scope; the menu's choice is
+    # passed on as --run/--items so the child does not ask again.
+    # ALL_T1013 F2a/V6: cheap pre-pass (sizes only); the real keep set is
+    # decided after _preflight's numa probe (V5).  The plan is never
+    # narrowed, so the re-exec below carries the full plan (V7).
+    kept_pre = kept_leaves(plan, b_hash=False)
+    refusal = ensure_same_scope(plan, sys.argv[1:] + (
+        [] if args.run else ["--run", plan.top, "--items",
+                             ",".join(plan.leaf_keys)]))
+    if refusal and "zombie" in kept_pre:  # ALL_T1013 V6: kept, so a note
+        log("NOTE: zombie is kept by its done stamp; scope check said: %s"
+            % refusal)
+        refusal = None
+    if refusal:
+        log(refusal)
+        return 2
+    refusal = same_plan_check(plan, kept_pre)   # DLP_T1001: before the run lock
     if refusal:
         log(refusal)
         return 2
@@ -7105,6 +7820,9 @@ def main():
     rc = _preflight(plan)
     if rc:
         return rc
+    kept = kept_leaves(plan, b_log=True)   # ALL_T1013 F2a: after the probe (V5)
+    if kept:
+        _summary_line("       done stamps hold for: %s" % ", ".join(kept))
 
     ts = _ts()
     print("[paper_data %s] detaching into the background "
@@ -7119,7 +7837,7 @@ def main():
     sys.stdout.flush()
     go_background()
 
-    seq = Sequencer(plan, dry_run=(plan.mode == "dry"))
+    seq = Sequencer(plan, dry_run=(plan.mode == "dry"), kept=kept)
     install_signal_handlers()
     return seq.run()
 
@@ -7154,6 +7872,7 @@ _TEST_REDIRECTS = {
     # Sequencer test then ran clear_db_cache() on the REAL data/cache.
     "CACHE_DIR": "cache",
     "RAW_DATA_ROOT": "raw_data",
+    "TMP_BIND_TMP": "tmpbind_tmp",          # ALL_T1013 K14
     "MS_DLP_DIR": "ms_dlp",
     "ZOMBIE_TMP_DIR": "bora_zombie_run",
     # DLP_T1001 review4 M5: every other real path a leaf or top writes.
@@ -10644,9 +11363,29 @@ class EnsureVmaTest(unittest.TestCase):
                 pm["/proc/sys/vm/max_map_count"] = "1000\n"
                 return mock.Mock(returncode=0)
             run.side_effect = _raised
+            with mock.patch.object(_MOD.os, "geteuid", return_value=1000):
+                ensure_vma(1000)
+            run.assert_called_once_with(       # ALL_T1013 M10: never prompts
+                ["sudo", "-n", "sysctl", "-w", "vm.max_map_count=1000"],
+                stdin=subprocess.DEVNULL)
+
+    def test_raise_as_root_and_missing_sudo(self):
+        """ALL_T1013 M10: no sudo as root; a missing binary only warns."""
+        pm = {"/proc/sys/vm/max_map_count": "100\n"}
+        with mock.patch("builtins.open", _fake_open(pm)), \
+             mock.patch("subprocess.run") as run, \
+             mock.patch.object(_MOD.os, "geteuid", return_value=0):
+            def _raised(*a, **kw):
+                pm["/proc/sys/vm/max_map_count"] = "1000\n"
+                return mock.Mock(returncode=0)
+            run.side_effect = _raised
             ensure_vma(1000)
-            run.assert_called_once_with(
-                ["sudo", "sysctl", "-w", "vm.max_map_count=1000"])
+            self.assertEqual(run.call_args[0][0][0], "sysctl")
+        pm["/proc/sys/vm/max_map_count"] = "100\n"
+        with mock.patch("builtins.open", _fake_open(pm)), \
+             mock.patch("subprocess.run", side_effect=FileNotFoundError("sudo")), \
+             mock.patch.dict(os.environ, {"ZKR_SKIP_MAP_COUNT_CHECK": "1"}):
+            ensure_vma(1000)                     # warns, no traceback
 
     def test_still_short_after_raise_aborts(self):
         """A failed sudo must QUIT, not warn: Rust catches it only
@@ -10661,6 +11400,28 @@ class EnsureVmaTest(unittest.TestCase):
                 ensure_vma(1073741824)
             self.assertIn("PREFLIGHT ABORT", str(cm.exception))
             self.assertIn("65530", str(cm.exception))
+
+    def test_no_sudo_names_cause_and_fix(self):
+        """ALL_T1013 K14d: without passwordless sudo the abort says so."""
+        pm = {"/proc/sys/vm/max_map_count": "65530\n"}
+        def run(cmd, **kw):
+            return mock.Mock(returncode=1, stdout="", stderr=(
+                "sudo: a password is required" if cmd[:3] == [
+                    "sudo", "-n", "true"] else ""))
+        with mock.patch("builtins.open", _fake_open(pm)), \
+             mock.patch("subprocess.run", side_effect=run), \
+             mock.patch.object(_MOD.os, "geteuid", return_value=1000), \
+             mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("ZKR_SKIP_MAP_COUNT_CHECK", None)
+            with self.assertRaises(SystemExit) as cm:
+                ensure_vma(1073741824)
+        msg = str(cm.exception)
+        self.assertTrue(msg.startswith("ERROR: passwordless sudo is not "
+                                       "available"), msg)
+        self.assertIn("a password is required", msg)
+        self.assertIn("NOPASSWD:ALL", msg)
+        self.assertIn("visudo -cf", msg)
+        self.assertIn("sudo sysctl -w vm.max_map_count=1073741824", msg)
 
     def test_bypass_env_downgrades_abort_to_warn(self):
         """ZKR_SKIP_MAP_COUNT_CHECK is the SAME escape hatch Rust
@@ -14931,6 +15692,877 @@ class SameMainTest(unittest.TestCase):
         self.assertTrue(os.path.isfile(raw_data_path(
             SAME_ZOMBIE_BASE + ".dry.tsv")))
         self.assertEqual(find_run_dir("dlp"), (rd, "full"))
+
+
+class LeafDoneStampTest(unittest.TestCase):
+    """ALL_T1013 F2a/F2b/F2c: the per-leaf done stamp, in a temp git repo,
+    a temp cache and temp raw data; never the real tree, cache or /tmp/bora."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        r = self.repo = os.path.join(self.tmp.name, "repo")
+        for rel in ("scripts/a.py", "crates/x.rs",
+                    "data/src_sig/ms_dlp/docs/download_zombie.log",
+                    "data/src_sig/ms_dlp/scripts/s.py", "README.md"):
+            os.makedirs(os.path.dirname(os.path.join(r, rel)), exist_ok=True)
+            with open(os.path.join(r, rel), "w") as f:
+                f.write("v1\n")
+        self._git_ok("init", "-q")
+        self._git_ok("add", "-A")
+        self._commit("base")
+        self.raw = os.path.join(self.tmp.name, "raw")
+        os.makedirs(self.raw)
+        self.outs = {}
+        for k in ("fakeA", "fakeB"):
+            self.outs[k] = os.path.join(self.raw, k + ".dat")
+            with open(self.outs[k], "w") as f:
+                f.write(k * 100)
+        env = {k: v for k, v in os.environ.items()
+               if not k.startswith(LEAF_ENV_PREFIXES)}
+        patches = [
+            mock.patch.object(_MOD, "REPO", r),
+            mock.patch.object(_MOD, "CACHE_DIR",
+                              os.path.join(self.tmp.name, "cache")),
+            mock.patch.object(_MOD, "SUMMARY_LOG",
+                              os.path.join(self.tmp.name, "sum", "SUMMARY.log")),
+            mock.patch.object(_MOD, "JOB_LOG_DIR",
+                              os.path.join(self.tmp.name, "logs")),
+            mock.patch.object(_MOD, "numa_available", return_value=True),
+            mock.patch.dict(os.environ, env, clear=True),
+            _sandbox_aborted(),
+        ]
+        for q in patches:
+            q.start()
+            self.addCleanup(q.stop)
+        self.plan = _FakePlan("full_run", "full", ["fakeA", "fakeB"])
+
+    def _git_ok(self, *a):
+        subprocess.run(["git", "-C", self.repo] + list(a), check=True,
+                       capture_output=True)
+
+    def _commit(self, msg):
+        self._git_ok("-c", "user.name=t", "-c", "user.email=t@t",
+                     "commit", "-q", "--allow-empty", "-am", msg)
+
+    def _result(self, key, failed=False):
+        return LeafResult(rc=1 if failed else 0, wall_s=2.0,
+                          raw_data_written=[self.outs[key]], failed=failed,
+                          triage_tgz=None, peak_rss_gb=0.5, note="")
+
+    def _stamp(self, key="fakeA", plan=None):
+        plan = plan or self.plan
+        return write_leaf_stamp(key, plan, self._result(key), 1.0,
+                                leaf_head(), leaf_clean())
+
+    def _edit(self, rel, text="v2\n"):
+        with open(os.path.join(self.repo, rel), "w") as f:
+            f.write(text)
+
+    def test_kept_on_identical_state(self):
+        self.assertIsNone(self._stamp())
+        self.assertIsNone(leaf_keep_reason("fakeA", self.plan))
+        self.assertEqual(kept_leaves(self.plan), ["fakeA"])
+
+    def test_rerun_dirty_tracked_file(self):
+        self._stamp()
+        self._edit("README.md")
+        self.assertIn("tree not clean", leaf_keep_reason("fakeA", self.plan))
+
+    def test_rerun_untracked_source_file(self):
+        self._stamp()
+        self._edit("scripts/new.py")
+        self.assertIn("scripts/new.py", leaf_keep_reason("fakeA", self.plan))
+
+    def test_kept_untracked_doc_and_download_zombie_log(self):
+        """F2c, R2: a leaf's docs TSV and INSTALL's log do not count."""
+        self._stamp()
+        self._edit("data/src_sig/ms_dlp/docs/same_zombie_x.tsv")
+        self._edit("data/src_sig/ms_dlp/docs/download_zombie.log", "fresh\n")
+        self.assertIsNone(leaf_keep_reason("fakeA", self.plan))
+
+    def test_rerun_other_commit(self):
+        self._stamp()
+        self._commit("next")
+        self.assertIn("commit", leaf_keep_reason("fakeA", self.plan))
+
+    def test_rerun_changed_env(self):
+        self._stamp()
+        for k in ("ZKR_4JOB", "RAYON_NUM_THREADS", "MALLOC_ARENA_MAX",
+                  "MIMALLOC_ARENA_EAGER_COMMIT"):
+            with mock.patch.dict(os.environ, {k: "1"}):
+                self.assertIn("options differ", leaf_keep_reason(
+                    "fakeA", self.plan), k)
+        with mock.patch.dict(os.environ, {"ZKR_SAME_SCOPE": "u1"}):
+            self.assertIsNone(leaf_keep_reason("fakeA", self.plan))
+
+    def test_rerun_changed_option_global(self):
+        self._stamp()
+        with mock.patch.object(_MOD, "THP_MODE", "off-test"):
+            self.assertIn("THP_MODE", leaf_keep_reason("fakeA", self.plan))
+
+    def test_rerun_changed_raw_data_file(self):
+        self._stamp()
+        with open(self.outs["fakeA"], "r+") as f:
+            f.write("X")            # same size, other bytes
+        self.assertIn("sha256", leaf_keep_reason("fakeA", self.plan))
+        self.assertIsNone(leaf_keep_reason("fakeA", self.plan, b_hash=False))
+        os.unlink(self.outs["fakeA"])
+        self.assertIn("missing", leaf_keep_reason("fakeA", self.plan))
+
+    def test_rerun_other_top_or_leaf_set(self):
+        self._stamp()
+        self.assertIn("leaf_keys", leaf_keep_reason(
+            "fakeA", _FakePlan("full_run", "full", ["fakeA"])))
+        self.assertIn("top", leaf_keep_reason(
+            "fakeA", _FakePlan("other", "full", ["fakeA", "fakeB"])))
+
+    def test_rerun_git_failure(self):
+        self._stamp()
+        with mock.patch.object(_MOD, "_git", return_value=(128, "")):
+            self.assertIn("git", leaf_keep_reason("fakeA", self.plan))
+            self.assertIsNotNone(self._stamp())
+
+    def test_rerun_other_box(self):
+        self._stamp()
+        with mock.patch.object(_MOD, "box_fingerprint",
+                               return_value={"hostname": "x"}):
+            self.assertIn("host", leaf_keep_reason("fakeA", self.plan))
+
+    def test_rerun_zombie_inputs_hash(self):
+        """V3: the git-ignored Zombie clone is part of the zombie stamp."""
+        out = os.path.join(self.raw, "z.dat")
+        with open(out, "w") as f:
+            f.write("z")
+        res = LeafResult(rc=0, wall_s=1.0, raw_data_written=[out],
+                         failed=False, triage_tgz=None, peak_rss_gb=0.0,
+                         note="")
+        plan = _FakePlan("full_run", "full", ["zombie"])
+        with mock.patch.object(_MOD, "leaf_inputs", return_value="h1"):
+            self.assertIsNone(write_leaf_stamp("zombie", plan, res, 1.0,
+                                               leaf_head(), leaf_clean()))
+            self.assertIsNone(leaf_keep_reason("zombie", plan))
+        with mock.patch.object(_MOD, "leaf_inputs", return_value="h2"):
+            self.assertIn("inputs", leaf_keep_reason("zombie", plan))
+        with mock.patch.object(_MOD, "leaf_inputs",
+                               side_effect=RuntimeError("x")):
+            self.assertIn("failed", leaf_keep_reason("zombie", plan))
+
+    def test_no_stamp_when_not_vouchable(self):
+        self.assertEqual(write_leaf_stamp(
+            "fakeA", self.plan, self._result("fakeA", True), 1.0,
+            leaf_head(), leaf_clean()), "leaf failed")
+        self._edit("README.md")
+        self.assertIn("leaf start", self._stamp())
+        self._git_ok("checkout", "-q", "README.md")
+        head = leaf_head()
+        self._commit("moved")
+        self.assertIn("HEAD moved", write_leaf_stamp(
+            "fakeA", self.plan, self._result("fakeA"), 1.0, head,
+            leaf_clean()))
+        self.assertFalse(os.path.exists(leaf_stamp_path("fakeA")))
+
+    def test_shared_output_vouches_for_neither(self):
+        self._stamp("fakeA")
+        res = LeafResult(rc=0, wall_s=1.0, raw_data_written=[
+            self.outs["fakeA"]], failed=False, triage_tgz=None,
+            peak_rss_gb=0.0, note="")
+        self.assertIn("shared", write_leaf_stamp(
+            "fakeB", self.plan, res, 1.0, leaf_head(), leaf_clean()))
+        self.assertEqual(kept_leaves(self.plan), [])
+
+    def test_dry_plan_never_keeps(self):
+        self._stamp()
+        self.assertEqual(kept_leaves(_FakePlan("dry_run", "dry",
+                                               ["fakeA", "fakeB"])), [])
+
+    def _specs(self, calls):
+        def mk(key):
+            def run_fn(mode, ctx):
+                calls.append(key)
+                ctx.raw_data.append(self.outs[key])
+                return ctx.finish(0, b_fail_scan=False)
+            return JobSpec(key, key, run_fn)
+        return {k: mk(k) for k in ("fakeA", "fakeB")}
+
+    def _seq(self, plan, calls, lock=3, kept=()):
+        with mock.patch.object(_MOD, "JOB_SPECS", self._specs(calls)), \
+             mock.patch.object(_MOD, "_run_lock_fd", lock), \
+             mock.patch.object(_MOD, "clear_db_cache", return_value=[]):
+            return Sequencer(plan, dry_run=plan.mode == "dry",
+                             kept=kept).run()
+
+    def _summary(self):
+        with open(_MOD.SUMMARY_LOG) as f:
+            return f.read()
+
+    def test_sequencer_run_then_relaunch_keeps(self):
+        os.makedirs(os.path.dirname(_MOD.SUMMARY_LOG))
+        os.makedirs(_MOD.JOB_LOG_DIR)
+        calls = []
+        reset_summary_log("full_run")
+        self.assertEqual(self._seq(self.plan, calls), 0)
+        self.assertEqual(calls, ["fakeA", "fakeB"])
+        first = self._summary()
+        kept = kept_leaves(self.plan)
+        self.assertEqual(kept, ["fakeA", "fakeB"])
+        reset_summary_log("full_run")           # F2b: rotated, not truncated
+        rot = glob.glob(os.path.join(os.path.dirname(_MOD.SUMMARY_LOG),
+                                     "SUMMARY.*.log"))
+        self.assertEqual(len(rot), 1)
+        self.assertEqual(open(rot[0]).read(), first)
+        self.assertEqual(self._seq(self.plan, calls, kept=kept), 0)
+        self.assertEqual(calls, ["fakeA", "fakeB"])     # nothing re-ran
+        text = self._summary()
+        self.assertIn("previous summary: %s" % rot[0], text)
+        self.assertEqual(re.findall(r"^\[[^]]*\] KEPT\s+(\S+)", text, re.M),
+                         ["fakeA", "fakeB"])
+        self.assertNotIn("START", text)
+
+    def test_sequencer_turn_recheck_reruns_changed_leaf(self):
+        os.makedirs(_MOD.JOB_LOG_DIR)
+        calls = []
+        self._seq(self.plan, calls)
+        kept = kept_leaves(self.plan)
+        with open(self.outs["fakeA"], "a") as f:
+            f.write("more")
+        self._seq(self.plan, calls, kept=kept)
+        self.assertEqual(calls, ["fakeA", "fakeB", "fakeA"])
+        self.assertIn("kept at hour 0, but now", self._summary())
+
+    def test_dry_and_unlocked_runs_write_no_stamp(self):
+        os.makedirs(_MOD.JOB_LOG_DIR)
+        calls = []
+        self._seq(_FakePlan("dry_run", "dry", ["fakeA", "fakeB"]), calls)
+        self._seq(self.plan, calls, lock=None)
+        self.assertEqual(glob.glob(os.path.join(_MOD.CACHE_DIR,
+                                                LEAF_DONE_DIR, "*")), [])
+
+    def test_rerun_unlinks_old_stamp_first(self):
+        """A leaf that dies after its start leaves no stamp vouching."""
+        os.makedirs(_MOD.JOB_LOG_DIR)
+        self._stamp()
+        def boom(mode, ctx):
+            raise RuntimeError("killed")
+        with mock.patch.object(_MOD, "JOB_SPECS",
+                               {"fakeA": JobSpec("fakeA", "a", boom)}), \
+             mock.patch.object(_MOD, "_run_lock_fd", 3), \
+             mock.patch.object(_MOD, "clear_db_cache", return_value=[]):
+            Sequencer(_FakePlan("full_run", "full", ["fakeA"])).run()
+        self.assertFalse(os.path.exists(leaf_stamp_path("fakeA")))
+
+    def test_rotation_keeps_newest(self):
+        os.makedirs(os.path.dirname(_MOD.SUMMARY_LOG))
+        for i in range(SUMMARY_KEEP + 3):
+            with open(_MOD.SUMMARY_LOG, "a") as f:
+                f.write("line %d\n" % i)
+            with mock.patch.object(_MOD.time, "strftime",
+                                   return_value="2026%04d" % i):
+                reset_summary_log("full_run")
+        rot = glob.glob(os.path.join(os.path.dirname(_MOD.SUMMARY_LOG),
+                                     "SUMMARY.*.log"))
+        self.assertEqual(len(rot), SUMMARY_KEEP)
+
+    def test_kept_zombie_check_start_refusal_is_a_note(self):
+        """V6: hour-0 checks still run; for a kept leaf they only note."""
+        plan = _FakePlan("full_run", "full", ["zombie"])
+        with mock.patch.object(_MOD, "zombie_check_start",
+                               return_value="REFUSED: x") as zc:
+            self.assertEqual(same_plan_check(plan), "REFUSED: x")
+            self.assertIsNone(same_plan_check(plan, ["zombie"]))
+        self.assertEqual(zc.call_count, 2)
+
+    def test_reexec_argv_carries_full_plan(self):
+        """V7: a kept leaf never narrows the plan the re-exec passes on."""
+        class Stop(Exception):
+            pass
+        seen = {}
+        def scope(plan, argv):
+            seen["argv"], seen["plan"] = list(argv), list(plan.leaf_keys)
+            raise Stop()
+        plan = ResolvedPlan(top="full_run", mode="full",
+                            leaf_keys=["dlp", "zombie"])
+        with mock.patch("sys.argv", ["prog"]), \
+             mock.patch.object(_MOD, "ensure_vma"), \
+             mock.patch.object(_MOD, "check_thp"), \
+             mock.patch.object(_MOD, "interactive_select", return_value=plan), \
+             mock.patch.object(_MOD, "kept_leaves", return_value=["zombie"]), \
+             mock.patch.object(_MOD, "ensure_same_scope", side_effect=scope):
+            with self.assertRaises(Stop):
+                main()
+        self.assertEqual(seen["plan"], ["dlp", "zombie"])
+        self.assertEqual(seen["argv"][-2:], ["--items", "dlp,zombie"])
+
+
+def _sigkill_quiet(pid):
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except OSError:
+        pass
+
+
+class LeafProcessHygieneTest(unittest.TestCase):
+    """ALL_T1013 F6, F15, F12 (PAPER_DATA part)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        for q in (mock.patch.object(_MOD, "SUMMARY_LOG", os.path.join(
+                      self.tmp.name, "SUMMARY.log")),):
+            q.start()
+            self.addCleanup(q.stop)
+
+    class _Ctx:
+        key = "t"
+
+        def __init__(self, d):
+            self.d = d
+
+        def log_path(self, name):
+            return os.path.join(self.d, name + ".log")
+
+        def watch(self, p, path, **kw):
+            pass
+
+    def test_killpg_reaps_stray_grandchild(self):
+        """F6: a grandchild that keeps the group dies with the leaf."""
+        script = os.path.join(self.tmp.name, "c.py")
+        with open(script, "w") as f:
+            f.write("import subprocess\n"
+                    "s = subprocess.Popen(['sleep', '600'])\n"
+                    "print('grandchild', s.pid, flush=True)\n")
+        ctx = self._Ctx(self.tmp.name)
+        t0 = time.time()
+        rc = run_external_python(ctx, script, [], dict(os.environ))
+        took = time.time() - t0
+        self.assertEqual(rc, 0)
+        m = re.search(r"grandchild (\d+)", open(ctx.log_path("run")).read())
+        pid = int(m.group(1))
+        self.addCleanup(_sigkill_quiet, pid)
+        self.assertLess(took, 10)        # no KILL_GRACE_S wait on the pipe
+        for _ in range(40):
+            try:
+                st = open("/proc/%d/stat" % pid).read().split()[2]
+            except OSError:
+                break
+            if st == "Z":
+                break
+            time.sleep(0.05)
+        else:
+            self.fail("grandchild %d still alive" % pid)
+
+    def test_pump_survives_log_write_error(self):
+        """F15: ENOSPC on the job log notes once and keeps draining."""
+        logp = os.path.join(self.tmp.name, "full.log")
+        real_open = open
+
+        class Full(object):
+            n = 0
+
+            def write(self, s):
+                Full.n += 1
+                if Full.n > 1:            # the header goes through
+                    raise OSError(28, "No space left on device")
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        def fake_open(path, *a, **k):
+            return Full() if path == logp else real_open(path, *a, **k)
+
+        with mock.patch("builtins.open", side_effect=fake_open):
+            p, th = spawn([sys.executable, "-c",
+                           "print('x\\n' * 20000)"], dict(os.environ), logp,
+                          "t")
+        self.assertEqual(p.wait(timeout=30), 0)
+        th.join(timeout=10)
+        self.assertFalse(th.is_alive())
+        text = open(_MOD.SUMMARY_LOG).read()
+        self.assertEqual(text.count("job log write failed"), 1)
+
+    def test_launch_sig_mix_reported(self):
+        """F12: distinct launch_sig values of kept rows."""
+        tsv = os.path.join(self.tmp.name, "s.tsv")
+        with open(tsv, "w") as f:
+            f.write("unit\taccepted\tlaunch_sig\n"
+                    "u\t1\taaaa\nu\t1\tbbbb\nu\t0\tcccc\n")
+        part = os.path.join(self.tmp.name, "p.jsonl")
+        with open(part, "w") as f:
+            f.write('{"regex_name": "u", "launch_sig": "dddd"}\n'
+                    '{"regex_name": "v"}\nnot json\n')
+        with mock.patch.object(_MOD, "ZOMBIE_PARTIALS", (part,)):
+            self.assertEqual(zombie_launch_sigs(tsv),
+                             {"aaaa", "bbbb", "dddd"})
+        with mock.patch.object(_MOD, "ZOMBIE_PARTIALS", ()):
+            self.assertEqual(zombie_launch_sigs(tsv + ".none"), set())
+            self.assertEqual(zombie_launch_sigs(mock.MagicMock()), set())
+
+
+class TmpBindTest(unittest.TestCase):
+    """ALL_T1013 K14: a small /tmp gets its big dirs from the clone disk.
+    Every mount and statvfs is mocked; nothing outside the temp dir moves."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.t = os.path.join(self.tmp.name, "tmp")
+        self.root = os.path.join(self.tmp.name, "clone")
+        self.lock = os.path.join(self.tmp.name, "tmp", "bora", "PAPER_DATA.lock")
+        os.makedirs(self.t)
+        os.makedirs(self.root)
+        self.lines = []
+
+    def _fs(self, dev_tmp, dev_root, free_tmp, free_root):
+        real_stat = os.stat
+        def stat(path, *a, **k):
+            st = real_stat(path, *a, **k)
+            dev = {self.t: dev_tmp, self.root: dev_root}.get(path)
+            if dev is None:
+                return st
+            return os.stat_result(st[:2] + (dev,) + st[3:])
+        def statvfs(path):
+            gib = free_tmp if path == self.t else free_root
+            return mock.Mock(f_bavail=int(gib * 2 ** 30 / 4096), f_frsize=4096)
+        return mock.patch.multiple(_MOD.os, stat=mock.DEFAULT,
+                                   statvfs=mock.DEFAULT), stat, statvfs
+
+    def _names(self, *fs, mounted=()):
+        cm, stat, statvfs = self._fs(*fs)
+        with cm as m:
+            m["stat"].side_effect = stat
+            m["statvfs"].side_effect = statvfs
+            with mock.patch.object(_MOD.os.path, "ismount",
+                                   side_effect=lambda p: os.path.basename(p)
+                                   in mounted):
+                return tmp_bind_names(self.root, self.t)
+
+    def test_trigger_rule(self):
+        allv = list(TMP_BIND_NAMES)
+        self.assertEqual(self._names(1, 2, 50, 900), allv)        # jet1tb 60 GB root
+        self.assertEqual(self._names(1, 1, 50, 900), [])          # same fs (laptop)
+        self.assertEqual(self._names(1, 2, 250, 900), [])         # /tmp big enough
+        self.assertEqual(self._names(1, 2, 182, 150), [])         # clone has less
+        self.assertEqual(self._names(1, 2, 50, 900, mounted=(
+            "bora", "bora_zombie_par")), ["bora_zombie_circ",
+                                         "bora_zombie_run", "reef_exp"])
+        self.assertNotIn("snark_start", TMP_BIND_NAMES)
+
+    def _bind(self, names, b_do=True, rc=0, mounts_ok=True, users=()):
+        calls = []
+        def run(cmd, **kw):
+            if cmd == ["sudo", "-n", "true"]:    # K14d probe: not an action
+                return mock.Mock(returncode=0, stdout="", stderr="")
+            calls.append(cmd)
+            if "mount" in cmd:
+                if rc == 0 and mounts_ok:
+                    self.mounted.add(cmd[-1])
+                return mock.Mock(returncode=rc, stdout="",
+                                 stderr="" if rc == 0 else "sudo: a password is required")
+            return mock.Mock(returncode=0)
+        self.mounted = set()
+        real_stat = os.stat
+        def stat(path, *a, **k):
+            st = real_stat(path, *a, **k)
+            return os.stat_result(st[:2] + (7,) + st[3:]) if (
+                path in self.mounted or path.startswith(self.root)) else st
+        with mock.patch.object(_MOD.subprocess, "run", side_effect=run), \
+             mock.patch.object(_MOD.os.path, "ismount",
+                               side_effect=lambda p: p in self.mounted), \
+             mock.patch.object(_MOD.os, "stat", side_effect=stat), \
+             mock.patch.object(_MOD, "_dir_users", return_value=list(users)):
+            r = bind_tmp_dirs(names, self.root, b_do, self.lines.append, self.t)
+        return r, calls
+
+    def test_bind_success_and_verify(self):
+        r, calls = self._bind(["bora", "reef_exp"])
+        self.assertIsNone(r)
+        mounts = [c for c in calls if "mount" in c]
+        self.assertEqual(len(mounts), 2)
+        self.assertEqual(mounts[0][-4:], ["mount", "--bind", os.path.join(
+            self.root, TMP_BIND_DIR, "bora"), os.path.join(self.t, "bora")])
+        self.assertTrue(any("is now on" in x for x in self.lines))
+
+    def test_already_mounted_skipped(self):
+        self.mounted = set()
+        dst = os.path.join(self.t, "bora")
+        with mock.patch.object(_MOD.os.path, "ismount",
+                               side_effect=lambda p: p == dst), \
+             mock.patch.object(_MOD.subprocess, "run") as run:
+            self.assertIsNone(bind_tmp_dirs(["bora"], self.root, True,
+                                            self.lines.append, self.t))
+        run.assert_not_called()
+        self.assertIn("already a mount point", self.lines[0])
+
+    def test_sudo_refused_names_hand_commands(self):
+        r, _ = self._bind(["bora", "bora_zombie_par"], rc=1)
+        self.assertTrue(r.startswith("REFUSED"))
+        self.assertIn("a password is required", r)
+        self.assertIn("sudo mount --bind %s %s" % (os.path.join(
+            self.root, TMP_BIND_DIR, "bora_zombie_par"),
+            os.path.join(self.t, "bora_zombie_par")), r)
+
+    def test_no_sudo_clear_error_before_any_mount(self):
+        """ALL_T1013 K14d: missing passwordless sudo is named, with the
+        sudoers fix and the by-hand commands, and nothing is mounted."""
+        with mock.patch.object(_MOD, "sudo_status",
+                               return_value="sudo: a password is required"):
+            r, calls = self._bind(["bora", "reef_exp"])
+        self.assertTrue(r.startswith("ERROR: passwordless sudo"), r)
+        self.assertIn("bind-mount %s, %s onto" % (os.path.join(self.t, "bora"),
+                      os.path.join(self.t, "reef_exp")), r)
+        self.assertIn("NOPASSWD:ALL", r)
+        self.assertIn("sudo mount --bind", r)
+        self.assertFalse([c for c in calls if "mount" in c])
+
+    def test_plan_only_reports_sudo(self):
+        for st, want in ((None, "passwordless sudo works"),
+                         ("x", "passwordless sudo is missing (x)")):
+            self.lines = []
+            with mock.patch.object(_MOD, "sudo_status", return_value=st):
+                r, calls = self._bind(["bora"], b_do=False)
+            self.assertIsNone(r)
+            self.assertIn(want, "\n".join(self.lines))
+            self.assertEqual(calls, [])
+
+    def test_mount_not_verified_refuses(self):
+        r, _ = self._bind(["bora"], mounts_ok=False)
+        self.assertIn("not a mount after mount", r)
+
+    def test_non_empty_target_copied_first_never_deleted(self):
+        dst = os.path.join(self.t, "bora_zombie_circ")
+        os.makedirs(dst)
+        with open(os.path.join(dst, "keep.txt"), "w") as f:
+            f.write("k")
+        r, calls = self._bind(["bora_zombie_circ"])
+        self.assertIsNone(r)
+        self.assertIn(calls[0][0], ("rsync", "cp"))
+        self.assertIn("mount", calls[1])
+        self.assertTrue(os.path.isfile(os.path.join(dst, "keep.txt")))
+        if calls[0][0] == "rsync":
+            self.assertIn("--exclude=*prepare_open4s*", calls[0])
+
+    def test_busy_target_refuses_before_mount(self):
+        r, calls = self._bind(["bora"], users=[4242])
+        self.assertIn("in use by pid [4242]", r)
+        self.assertEqual(calls, [])
+
+    def test_dry_only_says(self):
+        r, calls = self._bind(["bora", "reef_exp"], b_do=False)
+        self.assertIsNone(r)
+        self.assertEqual(calls, [])
+        self.assertTrue(all(x.startswith(("tmp: would bind-mount",
+                                          "tmp: passwordless sudo"))
+                            for x in self.lines))
+
+    def _step(self, mode, plan_only=False, names=("bora",), bind=None):
+        """tmp_bind_step on a temp root; RUN_LOCK is the suite's redirect."""
+        plan = _FakePlan("full_run" if mode == "full" else "dry_run", mode,
+                         ["zombie"])
+        with mock.patch.object(_MOD, "_git_root", return_value=self.root), \
+             mock.patch.object(_MOD, "RUN_LOCK", self.lock), \
+             mock.patch.object(_MOD, "tmp_bind_names", return_value=list(names)), \
+             mock.patch.object(_MOD, "_free_gib", return_value=10.0), \
+             mock.patch.object(_MOD, "bind_tmp_dirs",
+                               side_effect=bind or (lambda *a: None)) as b:
+            r = tmp_bind_step(plan, plan_only)
+        return r, b
+
+    def test_step_modes(self):
+        """M5: full and dry mount; --plan-only only says."""
+        _, b = self._step("full")
+        self.assertTrue(b.call_args[0][2])
+        _, b = self._step("dry")
+        self.assertTrue(b.call_args[0][2])
+        _, b = self._step("full", plan_only=True)
+        self.assertFalse(b.call_args[0][2])
+        _, b = self._step("full", names=())
+        b.assert_not_called()
+
+    def test_run_lock_held_from_probe_to_last_mount(self):
+        """W1: no other invocation (--final_pack, small, figs, clean or a
+        second run) can take RUN_LOCK while the copy and mounts run."""
+        seen = {}
+        def bind(*a):
+            with mock.patch.object(_MOD, "_run_lock_fd", None):
+                seen["other"] = acquire_run_lock()
+                _MOD._run_lock_fd and os.close(_MOD._run_lock_fd)
+            return None
+        with mock.patch.object(_MOD, "RUN_LOCK", self.lock):
+            r, _ = self._step("full", bind=bind)
+        self.assertIsNone(r)
+        self.assertIsNotNone(seen["other"])         # refused meanwhile
+        fd = os.open(self.lock, os.O_RDWR)          # released afterwards
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.close(fd)
+
+    def test_busy_run_lock_refuses_without_mounting(self):
+        os.makedirs(os.path.dirname(self.lock))
+        fd = os.open(self.lock, os.O_RDWR | os.O_CREAT)
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            r, b = self._step("full")
+        finally:
+            os.close(fd)
+        self.assertIn("holds", r)
+        b.assert_not_called()
+
+    def test_symlink_target_refused(self):
+        """R1: a link is neither copied nor mounted through."""
+        os.symlink(self.root, os.path.join(self.t, "bora_zombie_run"))
+        r, calls = self._bind(["bora_zombie_run"])
+        self.assertIn("is a symlink", r)
+        self.assertEqual(calls, [])
+
+    def test_probe_write_failure_refuses(self):
+        """R3: a read-only mount is refused at hour 0."""
+        real_open = open
+        def ro(path, *a, **k):
+            if ".bora_tmp_wtest" in str(path):
+                raise OSError(30, "Read-only file system")
+            return real_open(path, *a, **k)
+        with mock.patch("builtins.open", side_effect=ro):
+            r, _ = self._bind(["reef_exp"])
+        self.assertIn("not writable", r)
+
+    def test_copy_never_overwrites_source(self):
+        """R4: --ignore-existing, and the note names the shared names."""
+        dst = os.path.join(self.t, "bora_zombie_run")
+        os.makedirs(dst)
+        src = os.path.join(self.root, TMP_BIND_DIR, "bora_zombie_run")
+        os.makedirs(src)
+        for d in (dst, src):
+            with open(os.path.join(d, "p.jsonl"), "w") as f:
+                f.write(d)
+        r, calls = self._bind(["bora_zombie_run"])
+        self.assertIsNone(r)
+        self.assertTrue("--ignore-existing" in calls[0] or "-n" in calls[0])
+        self.assertTrue(any("1 name(s): p.jsonl" in x for x in self.lines))
+
+    def test_hand_lines_start_with_copy(self):
+        """M6: each by-hand line copies before it mounts."""
+        r, _ = self._bind(["bora"], rc=1)
+        line = [x for x in r.splitlines() if "mount --bind" in x][0]
+        self.assertLess(line.index("rsync -a --ignore-existing"),
+                        line.index("mount --bind"))
+
+    def test_bind_lock_open_error_and_bounded_wait(self):
+        """M1: an unopenable lock is a refusal; M2: a held lock waits with a
+        pid line, then refuses after TMP_BIND_WAIT_S."""
+        f = os.path.join(self.tmp.name, "afile")
+        open(f, "w").close()
+        fd, why = _flock_wait(os.path.join(f, "x.lock"), self.lines.append, "bind lock")
+        self.assertIsNone(fd)
+        self.assertIn("cannot open", why)
+        lp = os.path.join(self.tmp.name, "b.lock")
+        hold = os.open(lp, os.O_RDWR | os.O_CREAT)
+        fcntl.flock(hold, fcntl.LOCK_EX)
+        os.write(hold, b"4242\n")
+        try:
+            with mock.patch.object(_MOD, "TMP_BIND_WAIT_S", 1):
+                fd, why = _flock_wait(lp, self.lines.append, "bind lock")
+        finally:
+            os.close(hold)
+        self.assertIn("pid 4242 still holds", why)
+        self.assertIn("waiting for pid 4242", self.lines[-1])
+
+    def test_mounted_targets_recorded(self):
+        """M3: the re-exec'd child still records the mounts in the header."""
+        mounted = os.path.join(_MOD.TMP_BIND_TMP, "bora")
+        with mock.patch.object(_MOD.os.path, "ismount",
+                               side_effect=lambda p: p == mounted):
+            self._step("full", names=())
+        self.assertIn("tmp: %s is a mount point" % mounted, _TMP_ACTIONS[0])
+
+    def test_existing_bora_tmp_binds_without_trigger(self):
+        """M4: state left in .bora_tmp is always bound again."""
+        os.makedirs(os.path.join(self.root, TMP_BIND_DIR, "bora_zombie_circ"))
+        self.assertEqual(self._names(1, 1, 900, 10), ["bora_zombie_circ"])
+
+    def test_dir_users_write_fd_exe_and_maps(self):
+        """R2: a read-only fd does not count; M7: exe and maps do."""
+        d = os.path.join(self.tmp.name, "busy")
+        os.makedirs(d)
+        logf = os.path.join(d, "SUMMARY.log")
+        open(logf, "w").close()
+        reader = subprocess.Popen(["sleep", "30"], stdin=open(logf))
+        writer = subprocess.Popen([sys.executable, "-c",
+                                   "import time; f = open(%r, 'a'); time.sleep(30)"
+                                   % logf])
+        exe = os.path.join(d, "sleep")
+        shutil.copy2(shutil.which("sleep"), exe)
+        runner = subprocess.Popen([exe, "30"])
+        for p in (reader, writer, runner):
+            self.addCleanup(p.wait)
+            self.addCleanup(p.kill)
+        time.sleep(0.5)
+        users = _dir_users(d)
+        self.assertNotIn(reader.pid, users)
+        self.assertIn(writer.pid, users)
+        self.assertIn(runner.pid, users)
+
+    def test_refusal_before_rotation_and_lock(self):
+        """K14 refuses at hour 0, before the run lock and SUMMARY.log."""
+        with mock.patch("sys.argv", ["prog", "--run", "full_run", "--items",
+                                     "dlp"]), \
+             mock.patch.object(_MOD, "ensure_vma"), \
+             mock.patch.object(_MOD, "check_thp"), \
+             mock.patch.object(_MOD, "tmp_bind_step",
+                               return_value="REFUSED: x"), \
+             mock.patch.object(_MOD, "acquire_run_lock") as lock, \
+             mock.patch.object(_MOD, "reset_summary_log") as rs, \
+             mock.patch.object(_MOD, "ensure_same_scope") as sc:
+            self.assertEqual(main(), 2)
+        lock.assert_not_called()
+        rs.assert_not_called()
+        sc.assert_not_called()
+
+    def test_actions_land_in_summary_header(self):
+        with mock.patch.object(_MOD, "SUMMARY_LOG", os.path.join(
+                self.tmp.name, "S", "SUMMARY.log")):
+            del _TMP_ACTIONS[:]
+            _TMP_ACTIONS.append("tmp: bind-mount a -> b")
+            reset_summary_log("full_run")
+            text = open(_MOD.SUMMARY_LOG).read()
+        del _TMP_ACTIONS[:]
+        self.assertIn("tmp: bind-mount a -> b", text.splitlines()[1])
+
+    def test_dir_users_sees_own_child_cwd(self):
+        d = os.path.join(self.tmp.name, "busy")
+        os.makedirs(d)
+        p = subprocess.Popen(["sleep", "30"], cwd=d)
+        self.addCleanup(p.wait)
+        self.addCleanup(p.kill)
+        self.assertIn(p.pid, _dir_users(d))
+        self.assertEqual(_dir_users(d + "_none"), [])
+
+
+class CloneSpaceAndCoreTest(unittest.TestCase):
+    """ALL_T1013 K14c: clone free-space gate, core-dump limit, cp fallback."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _space(self, mode, free, on_root=False, reclaim=0.0, plan_only=False):
+        plan = _FakePlan("full_run" if mode == "full" else "dry_run", mode,
+                         ["dlp"])
+        real_stat = os.stat
+        def stat(path, *a, **k):
+            st = real_stat(path, *a, **k)
+            dev = {"/": 1, self.tmp.name: 1 if on_root else 2}.get(path)
+            return st if dev is None else os.stat_result(st[:2] + (dev,) + st[3:])
+        with mock.patch.object(_MOD, "_git_root", return_value=self.tmp.name), \
+             mock.patch.object(_MOD, "_free_gib", return_value=free), \
+             mock.patch.object(_MOD, "_reclaimable_cache_gib",
+                               return_value=reclaim), \
+             mock.patch.object(_MOD.os, "stat", side_effect=stat):
+            return clone_space_step(plan, plan_only)
+
+    def test_full_refuses_below_minimum(self):
+        r = self._space("full", CLONE_MIN_FREE_GIB - 1)
+        self.assertTrue(r.startswith("REFUSED"))
+        self.assertIn("/media/volume/<name>", r)
+        self.assertNotIn("root filesystem", r)
+        self.assertIsNone(self._space("full", CLONE_MIN_FREE_GIB))
+
+    def test_clone_on_root_named(self):
+        r = self._space("full", 30, on_root=True)
+        self.assertIn("The clone sits on the root filesystem (/).", r)
+
+    def test_reclaimable_cache_counts(self):
+        self.assertIsNone(self._space("full", 100, reclaim=90))
+
+    def test_dry_and_plan_only_note(self):
+        self.assertIsNone(self._space("dry", 10))
+        self.assertIsNone(self._space("full", 10, plan_only=True))
+
+    def test_reclaimable_skips_kept_dirs(self):
+        c = os.path.join(self.tmp.name, "cache")
+        for d, n in (("dlp_neo_p0", 3000), ("logs", 5000), ("leaf_done", 7000)):
+            os.makedirs(os.path.join(c, d))
+            with open(os.path.join(c, d, "f"), "wb") as f:
+                f.write(b"x" * n)
+        with mock.patch.object(_MOD, "CACHE_DIR", c):
+            self.assertAlmostEqual(_reclaimable_cache_gib(), 3000 / 2 ** 30)
+
+    def test_order_in_main(self):
+        """After the K14 bind step; before the scope, lock and rotation."""
+        seen = []
+        with mock.patch("sys.argv", ["prog", "--run", "full_run", "--items",
+                                     "dlp"]), \
+             mock.patch.object(_MOD, "ensure_vma"), \
+             mock.patch.object(_MOD, "check_thp"), \
+             mock.patch.object(_MOD, "tmp_bind_step",
+                               side_effect=lambda *a: seen.append("bind")), \
+             mock.patch.object(_MOD, "clone_space_step",
+                               side_effect=lambda *a: seen.append("space")
+                               or "REFUSED: small"), \
+             mock.patch.object(_MOD, "acquire_run_lock") as lock, \
+             mock.patch.object(_MOD, "reset_summary_log") as rs, \
+             mock.patch.object(_MOD, "ensure_same_scope") as sc:
+            self.assertEqual(main(), 2)
+        self.assertEqual(seen, ["bind", "space"])
+        lock.assert_not_called()
+        rs.assert_not_called()
+        sc.assert_not_called()
+
+    def test_core_limit_soft_zero_hard_kept(self):
+        import resource
+        old = resource.getrlimit(resource.RLIMIT_CORE)
+        self.addCleanup(resource.setrlimit, resource.RLIMIT_CORE, old)
+        limit_core_dumps()
+        self.assertEqual(resource.getrlimit(resource.RLIMIT_CORE), (0, old[1]))
+        out = subprocess.run(["sh", "-c", "ulimit -c"], capture_output=True,
+                             text=True).stdout.strip()
+        self.assertEqual(out, "0")                 # children inherit it
+
+    def _tree(self):
+        dst, src = (os.path.join(self.tmp.name, x) for x in ("dst", "src"))
+        os.makedirs(dst)
+        os.makedirs(src)
+        for d, v in ((dst, "old"), (src, "new")):
+            with open(os.path.join(d, "p.jsonl"), "w") as f:
+                f.write(v)
+        with open(os.path.join(dst, "only_dst"), "w") as f:
+            f.write("d")
+        return dst, src
+
+    def test_cp_fallback_real_update_none(self):
+        """No rsync: real cp with --update=none (coreutils 9.3+) or -n."""
+        dst, src = self._tree()
+        real_which = shutil.which
+        with mock.patch.object(_MOD.shutil, "which",
+                               side_effect=lambda n: None if n == "rsync"
+                               else real_which(n)):
+            _copy_no_clobber(dst, src)
+        self.assertEqual(open(os.path.join(src, "p.jsonl")).read(), "new")
+        self.assertEqual(open(os.path.join(src, "only_dst")).read(), "d")
+
+    def test_cp_n_exit_one_on_skip_is_success(self):
+        """coreutils 9.2: cp -n exits 1 when it skips; that is a success."""
+        calls = []
+        def run(cmd, **kw):
+            calls.append(cmd)
+            if cmd[:2] == ["cp", "--help"]:
+                return mock.Mock(returncode=0, stdout="  -n, --no-clobber\n")
+            return mock.Mock(returncode=1, stdout="",
+                             stderr="cp: not replacing 'src/p.jsonl'\n")
+        with mock.patch.object(_MOD.shutil, "which", return_value=None), \
+             mock.patch.object(_MOD.subprocess, "run", side_effect=run):
+            _copy_no_clobber("/d", "/s")
+        self.assertEqual(calls[-1], ["cp", "-a", "-n", "/d/.", "/s"])
+        def bad(cmd, **kw):
+            if cmd[:2] == ["cp", "--help"]:
+                return mock.Mock(returncode=0, stdout="")
+            return mock.Mock(returncode=1, stdout="",
+                             stderr="cp: cannot create 'x': No space left\n")
+        with mock.patch.object(_MOD.shutil, "which", return_value=None), \
+             mock.patch.object(_MOD.subprocess, "run", side_effect=bad):
+            with self.assertRaises(subprocess.CalledProcessError):
+                _copy_no_clobber("/d", "/s")
 
 if __name__ == "__main__":
     sys.exit(main())

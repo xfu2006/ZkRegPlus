@@ -26,3 +26,6 @@ raw_data_records/
 !docs/retrieve_record.log
 !docs/reg_pat_samples.log
 !docs/download_zombie.log
+
+# ALL_T1013 K13: Zombie key work dirs on the clone's own filesystem
+bora_zombie_scratch/

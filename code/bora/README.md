@@ -192,6 +192,13 @@ as expected, not guaranteed.
 10 GB of headroom there — a host with less memory OOMs rather than
 running slowly.
 
+**Disk.** Clone onto the attached volume (Jetstream2: `/media/volume/<name>`),
+not into `~` on the 60 GB root disk; a full run needs at least 180 GiB free
+there at launch (a volume of about 250 GB), and hour 0 refuses below that.
+No swapfile is needed. Passwordless `sudo -n` is used for the `/tmp` bind
+mounts (small `/tmp` only) and the `vm.max_map_count` sysctl; without it
+hour 0 refuses and prints the commands to run by hand.
+
 ## 4. Ethics and safety
 
 - `INSTALL.py` downloads **real malware-scan targets** (CentOS 7 system

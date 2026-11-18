@@ -69,7 +69,8 @@ def setUpModule():
                 os.getpid(), os.path.basename(tmp))),
             (sz, "other_zombie_pids", lambda *a, **k: []),
             (sz, "orphan_circ", lambda *a, **k: []),
-            (rz, "_pick_scratch_base", lambda: os.path.join(tmp, "par"))):
+            (rz, "_pick_scratch_base", lambda: os.path.join(tmp, "par")),
+            (rz, "_candidate_mounts", lambda: [])):   # ALL_T1013 F5: no real
         p = mock.patch.object(mod, name, val)
         p.start()
         _GUARD["patches"].append(p)
@@ -100,6 +101,10 @@ STUB = textwrap.dedent('''\
     if "ZREAL_EMAIL" in os.environ:
         open(os.environ["ZREAL_EMAIL"], "rb").read()
     ms = int(os.environ.get("STUB_MS", "300"))
+    if sys.argv[2:3] == ["true"] and os.path.isdir("keys"):   # ALL_T1013 R1
+        for part in ("inst", "gens", "input_names", "term_arr",
+                     "input_idxes", "var_idxes"):
+            open("keys/policy%d_%s" % (n, part), "w").write("k")
     if os.environ.get("RAYON_NUM_THREADS") and os.environ.get("STUB_SLOW"):
         ms = int(ms * float(os.environ["STUB_SLOW"]))
     time.sleep(ms / 1000.0)
@@ -107,6 +112,9 @@ STUB = textwrap.dedent('''\
           % (n, os.environ.get("STUB_CONS", "70000")))
     print("prove takes %d" % ms)
     print("proof size is 10 bytes")
+    if os.environ.get("ZREAL_NO_VERIFY"):          # ALL_T1013 S2
+        print("zreal verify_ok skipped")
+        sys.exit(0)
     print("verify takes 5")
     ok = os.environ.get("STUB_VERIFY", "true")
     if os.environ.get("STUB_VF_EMAIL") and os.environ.get(
@@ -444,7 +452,7 @@ class AcceptTest(Base):
                                                    w0="1"))
         self.assertEqual(sz.S["refused_prior"], {2000})
         self.assertIsNone(self._start([stop], [2000], cap=8, sc=sc, w0="1"))
-        self.assertEqual(sz.S["w_state"][2000], 4)
+        self.assertEqual(sz.S["w_state"][2000], 3)   # ALL_T1013 S5: next rung
         self.assertIsNone(self._start([stop], [2000], cap=0, sc=sc, w0="1"))
         self.assertIn(2000, sz.S["serial"])
         old = dict(stop, launch_sig="sig0")       # another sig: no refusal
@@ -573,12 +581,13 @@ class StubSmoke(StubSetup):
         sz.S["topo"] = fake_topo(cores=4)
         with self.assertRaises(sz.StopFlush) as cm:
             sz.run_subflush(2000, 16, self.tasks(size=2000))
-        self.assertEqual(cm.exception.width, 2)    # the width that failed
+        # ALL_T1013 S5: two-rung stop rule, widths 1, 2, 4 all fail
+        self.assertEqual(cm.exception.width, 4)    # the width that failed
         rows = sz.S["pair"].load()
         self.assertEqual([r["verdict"] for r in rows if r["kind"] == "gate"],
-                         ["fail", "fail"])
+                         ["fail", "fail", "fail"])
         self.assertEqual([r["width"] for r in rows if r["kind"] == "width"],
-                         [2])
+                         [2, 4])
         sz.run_subflush(1000, 16, self.tasks())
         self.assertIn(1000, sz.S["serial"])
         rows = sz.S["pair"].load()
@@ -862,12 +871,13 @@ class ScalecalLadderTest(Base):
 
     def test_widths(self):
         t16 = fake_topo(cores=16)
-        self.assertEqual(sz.scalecal_widths(t16, 16), [1, 2, 4, 8, 16])
-        self.assertEqual(sz.scalecal_widths(t16, 4), [1, 2, 4])
+        # ALL_T1013 S5: rungs by slot count, top rung = min(cap, C)
+        self.assertEqual(sz.scalecal_widths(t16, 16), [1, 2, 3, 4, 8, 16])
+        self.assertEqual(sz.scalecal_widths(t16, 4), [1, 2, 3, 4])
         self.assertEqual(sz.scalecal_widths(t16, 0), [1, 2, 4])
         self.assertEqual(sz.scalecal_widths(fake_topo(cores=4), 16), [1, 2, 4])
         self.assertEqual(sz.scalecal_widths(fake_topo(cores=124), 16),
-                         [1, 2, 4, 8, 16])
+                         [1, 2, 3, 4, 6, 9, 13, 16])
 
     def test_scalecal_tries_8_and_16(self):
         sz.S["topo"] = fake_topo(cores=16)
@@ -895,7 +905,7 @@ class ScalecalLadderTest(Base):
                 mock.patch.object(sz, "serial_reference",
                                   lambda ts: ({id(t): 100 for t in ts}, 0.01)):
             sz.scalecal()
-        self.assertEqual(tried, [1, 2, 4, 8, 16])
+        self.assertEqual(tried, [1, 2, 3, 4, 8, 16])   # ALL_T1013 S5
         st = sz.read_scalecal("t1")
         self.assertEqual((st["overall"], st["w0"]), ("PASS", "8"))
 
@@ -1356,7 +1366,8 @@ class Round6Test(StubSetup):
         stop = [r for r in rows if r["kind"] == "stop"][-1]
         self.assertEqual((stop["size"], stop["cause"], stop["launch_sig"]),
                          (2000, "mem", "sig1"))
-        # resume: 2000 stays refused (no re-keygen), check-start only warns
+        # ALL_T1013 F10: one mem STOP is lifted once; a second one stays
+        # refused (no re-keygen), and check-start only warns
         sz.S["topo"] = fake_topo(cores=36)
         a = sz.parse_args(["--sizes", "1000,2000", "--server", "t1"])
         sc = {"w0": "4", "commit": "c"}
@@ -1364,6 +1375,15 @@ class Round6Test(StubSetup):
                 mock.patch.object(sz, "valid_timing",
                                   return_value=(True, None)), \
                 mock.patch.object(sz, "print_stamp_view"):
+            self.assertIsNone(sz.start_check(a, rows))
+            self.assertNotIn(2000, sz.S["refused"])
+            other = dict(stop, launch_sig="sig0")    # V11: own sig only
+            self.assertIsNone(sz.start_check(a, rows + [other]))
+            self.assertNotIn(2000, sz.S["refused"])
+            err = dict(stop, cause="error", etype="OSError")
+            self.assertIsNone(sz.start_check(a, rows + [err, stop]))
+            self.assertIn(2000, sz.S["refused"])   # V11: counts mem rows only
+            rows = rows + [dict(stop)]
             self.assertIsNone(sz.start_check(a, rows))
             self.assertIn(2000, sz.S["refused"])
             self.assertIn(2000, sz.S["refused_prior"])
@@ -1421,7 +1441,7 @@ class GateStopResumeTest(Base):
             sz.S["cap"] = 32                                # raised cap
             self.assertIsNone(sz.start_check(a, rows))
             self.assertEqual(sz.S["refused"], {})
-            self.assertEqual(sz.S["w_state"][4000], 8)
+            self.assertEqual(sz.S["w_state"][4000], 6)   # ALL_T1013 S5
 
 
 class Round7Test(StubSetup):
@@ -1918,10 +1938,12 @@ class T1009OrphanTest(Base):
                 pass
 
     def test_check_start_lists_orphans_with_kill_command(self):
+        # ALL_T1013 F4: refuses only when an orphan survives the kill
         out = []
         a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
         with mock.patch.object(sz, "orphan_circ",
                                return_value=[(77, "/x/bora_zombie_par/c1")]), \
+                mock.patch.object(sz, "_alive", return_value=True), \
                 mock.patch.object(sz, "say", side_effect=out.append):
             self.assertEqual(sz.check_start_main(a), 6)
         self.assertTrue(any("kill -9 77" in m and "cwd /x/bora_zombie_par/c1"
@@ -2181,7 +2203,7 @@ class T1009HourZeroTest(Base):
                 self.assertEqual(bool(why), want_ref, (free, a.dry))
                 self.assertEqual(any("scratch drive" in m for m in out),
                                  want_warn, (free, a.dry))
-                self.assertIn("scratch=%dGiB(/b)" % free, txt)
+                self.assertIn("scratch=%dGiB(/b,mount)" % free, txt)
 
     def test_pids_limit_fake_cgroup_tree(self):
         fs = {"/proc/self/cgroup": "0::/a/b",
@@ -2221,7 +2243,7 @@ class T1009HourZeroTest(Base):
 _RZ_HOOKED = ("shutil", "_time_one", "_load_partial", "_append_partial",
               "_render_zkmb", "run_pipeline", "_as_cap", "_build_one",
               "ThreadPoolExecutor", "_estimate", "_median_at",
-              "_cpu_max_jobs", "MIN_CPUS_PER_CIRC")
+              "_cpu_max_jobs", "MIN_CPUS_PER_CIRC", "_run_keygen")
 
 
 class HookBase(Base):
@@ -2813,11 +2835,13 @@ class T1009FixRoundTest(HookBase):
         a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
         with mock.patch.object(sz, "scratch_free_gib",
                                return_value=(40, base)), \
+                mock.patch.object(rz, "_dir_bytes",
+                                  return_value=10 * sz.GIB), \
                 mock.patch.object(sz, "jobs_fit", return_value=(8, 8, 9999)):
             txt, why = sz.host_views(a)
-        self.assertIn("leftover", why)
+        self.assertIn("leftover", why)            # ALL_T1013 F5: counted
         self.assertIn("60 GiB", why)
-        self.assertIn("scratch=40GiB", txt)
+        self.assertIn("scratch=50GiB", txt)
 
     def test_slice_reset_at_exit(self):
         sz.S["launcher"] = "systemd"
@@ -2833,8 +2857,9 @@ class T1009FixRoundTest(HookBase):
     def test_batch_exit_syncs_after_builds(self):
         """Review A4: one os.sync after every keygen of a batch returned."""
         order = []
-        with mock.patch.object(sz.os, "sync",
-                               side_effect=lambda: order.append("sync")):
+        with mock.patch.object(sz, "sync_scratch",      # ALL_T1013 F9
+                               side_effect=lambda: order.append("sync")
+                               or "syncfs=1"):
             with sz.BatchTPE(max_workers=2) as ex:
                 fs = [ex.submit(lambda i=i: (time.sleep(0.2),
                                              order.append("build"))[1])
@@ -2849,6 +2874,885 @@ class T1009FixRoundTest(HookBase):
         self.assertEqual(order, [])
         self.assertTrue(any(m.startswith("SAME sync") for m in self.out))
         self.assertTrue(all(f.done() for f in fs))
+
+
+
+# ===========================================================================
+# ALL_T1013 (zdrv2_d2.md)
+# ===========================================================================
+class T1013ProcTest(Base):
+    """ALL_T1013 K1: F3 synchronous kill pass, F4 check-start kills."""
+
+    def test_check_start_kills_orphans_and_goes_on(self):
+        out, calls = [], []
+        a = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+
+        def orph(kill, pids=None):
+            calls.append(kill)
+            return [(77, "/x/bora_zombie_par/c1")]
+        with mock.patch.object(sz, "orphan_circ", orph), \
+                mock.patch.object(sz, "_alive", return_value=False), \
+                mock.patch.object(sz, "clone_check", return_value="K1 stop"), \
+                mock.patch.object(sz, "say", side_effect=out.append):
+            self.assertEqual(sz.check_start_main(a), 6)
+        self.assertEqual(calls, [True])
+        self.assertTrue(any("K1 stop" in m for m in out))
+        self.assertFalse(any("orphan" in m for m in out))
+
+    def test_alive_rules(self):
+        with mock.patch.object(sz, "_stat_of", {1: ("S", 0), 2: ("Z", 0)}.get):
+            self.assertTrue(sz._alive(1))
+            self.assertFalse(sz._alive(2))
+            self.assertFalse(sz._alive(3))
+
+    def test_sigterm_kills_children_before_a_quick_exit(self):
+        d = os.path.join(self.tmp, "k1")
+        os.makedirs(d)
+        slp = os.path.join(d, "zz_k1_sleep")
+        shutil.copy("/bin/sleep", slp)
+        prog = textwrap.dedent("""\
+            import os, sys, signal, subprocess, time
+            sys.path.insert(0, %r)
+            import same_zombie as sz
+            p = subprocess.Popen([%r, "30"])
+            print(p.pid, flush=True)
+            signal.signal(signal.SIGTERM, sz.on_sigterm)
+            while True:
+                time.sleep(0.05)
+            """) % (HERE, slp)
+        for _ in range(3):
+            c = subprocess.Popen([sys.executable, "-c", prog],
+                                 stdout=subprocess.PIPE, text=True)
+            kid = int(c.stdout.readline())
+            try:
+                c.send_signal(signal.SIGTERM)
+                self.assertEqual(c.wait(timeout=10), 143)
+                gone = False
+                for _ in range(40):
+                    if not sz._alive(kid):
+                        gone = True
+                        break
+                    time.sleep(0.05)
+                self.assertTrue(gone, "child %d survived SIGTERM" % kid)
+            finally:
+                c.stdout.close()
+                try:
+                    os.kill(kid, signal.SIGKILL)
+                except OSError:
+                    pass
+
+
+
+class T1013BuildTest(HookBase):
+    """ALL_T1013 K2: F1 timed-out keygen kill, R1 keyless build."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(sz, "say", side_effect=self.out.append)
+        p.start()
+        self.addCleanup(p.stop)
+        sz._ORIG["as_cap"] = _RZ_PRISTINE["_as_cap"]
+
+    def _keys(self, d, n, skip=None, empty=None):
+        os.makedirs(os.path.join(d, "keys"), exist_ok=True)
+        for part in sz.KEY_PARTS:
+            if part == skip:
+                continue
+            with open(os.path.join(d, "keys", "policy%d_%s" % (n, part)),
+                      "w") as f:
+                f.write("" if part == empty else "k")
+
+    def test_built_with_all_keys_stays_built(self):
+        d = os.path.join(self.tmp, "c00000")
+        self._keys(d, 1000)
+        sz._ORIG["build"] = lambda *a, **k: {"name": "u", "dir": d,
+                                             "status": "built"}
+        self.assertEqual(sz.build_one_wrapped("b", 0, "u", 1000)["status"],
+                         "built")
+
+    def test_keyless_or_short_build_is_build_fail(self):
+        for skip, empty in ((None, "gens"), ("var_idxes", None),
+                            ("inst", "gens")):
+            d = os.path.join(self.tmp, "c%s%s" % (skip, empty))
+            self._keys(d, 2000, skip, empty)
+            sz._ORIG["build"] = lambda *a, d=d, **k: {"name": "u", "dir": d,
+                                                      "status": "built"}
+            b = sz.build_one_wrapped("b", 0, "u", 2000)
+            self.assertEqual(b["status"], "build_fail")
+            self.assertIn("wrote no keys", b["err"])
+        d = os.path.join(self.tmp, "empty")
+        os.makedirs(os.path.join(d, "keys"))
+        sz._ORIG["build"] = lambda *a, **k: {"name": "u", "dir": d,
+                                             "status": "built"}
+        self.assertEqual(sz.build_one_wrapped("b", 0, "u", 1000)["status"],
+                         "build_fail")
+
+    def test_stub_dir_without_keys_dir_untouched(self):
+        d = os.path.join(self.tmp, "stub")
+        os.makedirs(d)
+        sz._ORIG["build"] = lambda *a, **k: {"name": "u", "dir": d,
+                                             "status": "built"}
+        self.assertEqual(sz.build_one_wrapped("b", 0, "u", 1000)["status"],
+                         "built")
+
+    def test_timeout_kill_matches_own_cwd_only(self):
+        cwd = {11: "/p/c00001", 12: "/p/c00002", 13: "/p/c00001"}
+        exe = {11: "circ_executable", 12: "circ_executable", 13: "time"}
+        killed = []
+        with mock.patch.object(sz, "_pids", lambda: sorted(cwd)), \
+                mock.patch.object(sz, "_owned", return_value=True), \
+                mock.patch.object(sz, "_exe_base", exe.get), \
+                mock.patch.object(sz, "_cwd_of", cwd.get), \
+                mock.patch.object(sz, "descendants", lambda p: []), \
+                mock.patch.object(sz, "_sigkill", killed.append):
+            self.assertEqual(sz._kill_cwd("/p/c00001"), [11])
+        self.assertEqual(killed, [11])
+
+    @unittest.skipUnless(os.path.isfile("/usr/bin/time"), "no GNU time")
+    def test_timeout_orphan_killed_real(self):
+        d = os.path.join(self.tmp, "c00007")
+        os.makedirs(d)
+        exe = os.path.join(self.tmp, "circ_executable")
+        shutil.copy("/bin/sleep", exe)
+
+        def build(*a, **k):
+            try:
+                subprocess.run(["/usr/bin/time", "-v", exe, "30"], cwd=d,
+                               capture_output=True, text=True, timeout=1)
+            except subprocess.TimeoutExpired:
+                pass
+            return {"name": "u", "prox": 1, "dir": d,
+                    "status": "build_timeout"}
+        sz._ORIG["build"] = build
+
+        def mine():
+            return [p for p in sz._pids() if sz._owned(p)
+                    and sz._exe_base(p) == "circ_executable"
+                    and sz._cwd_of(p) == os.path.realpath(d)
+                    and sz._alive(p)]
+        try:
+            sz.build_one_wrapped("b", 7, "u", 1000)
+            for _ in range(40):
+                if not mine():
+                    break
+                time.sleep(0.05)
+            self.assertEqual(mine(), [])
+            self.assertTrue(any("killed timed-out keygen" in m
+                                for m in self.out))
+        finally:
+            for p in mine():
+                sz._sigkill(p)
+
+
+
+class T1013ResumeTest(Base):
+    """ALL_T1013 K3: F5 leftover scratch, F7 retry once."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(sz, "say", side_effect=self.out.append)
+        p.start()
+        self.addCleanup(p.stop)
+
+    def _left(self, root):
+        os.makedirs(os.path.join(root, "c00003", "keys"))
+        with open(os.path.join(root, "c00003", "keys", "k"), "w") as f:
+            f.write("x" * 100)
+
+    def test_reclaim_redirect_touches_par_root_only(self):
+        par, m1 = os.path.join(self.tmp, "par"), os.path.join(self.tmp, "m1")
+        self._left(par)
+        self._left(os.path.join(m1, "bora_zombie_scratch"))
+        with mock.patch.object(rz, "PAR_ROOT", par), \
+                mock.patch.object(sz, "TMP_ROOT", self.tmp), \
+                mock.patch.object(rz, "_candidate_mounts", lambda: [m1]):
+            sz.reclaim_scratch()
+        self.assertFalse(os.path.exists(par))
+        self.assertTrue(os.path.isdir(os.path.join(m1, "bora_zombie_scratch")))
+        self.assertTrue(any("removed leftover %s" % par in m for m in self.out))
+
+    def test_reclaim_every_candidate_without_redirect(self):
+        par = os.path.join(self.tmp, "par")
+        ms = [os.path.join(self.tmp, "m%d" % i) for i in range(3)]
+        for m in ms[:2]:
+            self._left(os.path.join(m, "bora_zombie_scratch"))
+        os.makedirs(ms[2])
+        os.symlink(ms[0], os.path.join(ms[2], "bora_zombie_scratch"))
+        with mock.patch.object(rz, "PAR_ROOT", par), \
+                mock.patch.object(sz, "TMP_ROOT", None), \
+                mock.patch.object(rz, "_candidate_mounts", lambda: ms):
+            sz.reclaim_scratch()
+        for m in ms[:2]:
+            self.assertFalse(os.path.exists(os.path.join(m,
+                                                         "bora_zombie_scratch")))
+        self.assertTrue(os.path.islink(os.path.join(ms[2],
+                                                    "bora_zombie_scratch")))
+        self.assertEqual(sum("removed leftover" in m for m in self.out), 2)
+
+    def test_host_views_counts_leftover_as_free(self):
+        full = sz.parse_args(["--sizes", "1000", "--server", "t1"])
+        base = os.path.join(self.tmp, "par")
+        os.makedirs(base)
+        with mock.patch.object(sz, "jobs_fit", return_value=(8, 8, 10 ** 6)), \
+                mock.patch.object(sz, "scratch_free_gib",
+                                  return_value=(50.0, base)), \
+                mock.patch.object(rz, "_dir_bytes",
+                                  return_value=20 * sz.GIB):
+            txt, why = sz.host_views(full)
+        self.assertIsNone(why)
+        self.assertIn("scratch=70GiB", txt)
+        self.assertTrue(any("leaf removes" in m for m in self.out))
+
+    def test_retry_once_then_kept(self):
+        sweep = sz.Pair(rz.PARTIAL, rz.PARTIAL_DOCS)
+        rows = [{"regex_name": "g", "str_len": 4000, "status": "disk_full"},
+                {"regex_name": "h", "str_len": 4000, "status": "build_fail"},
+                {"regex_name": "h", "str_len": 4000,
+                 "status": "oom_or_killed"},
+                {"regex_name": "p", "str_len": 4000, "status": "prove_fail"},
+                {"regex_name": "o", "str_len": 4000, "status": "ok"}]
+        with open(rz.PARTIAL, "w") as f:
+            f.writelines(json.dumps(r) + "\n" for r in rows)
+        done = {"%s|%d" % (r["regex_name"], r["str_len"]): r for r in rows}
+        sz.retry_once(done, sweep)
+        self.assertEqual(sorted(done), ["h|4000", "o|4000", "p|4000"])
+        self.assertTrue(any("retry once g 4000 (disk_full)" in m
+                            for m in self.out))
+        self.assertTrue(any("h 4000 given up 2 times, kept" in m
+                            for m in self.out))
+
+
+
+class T1013BuildOnlyTest(HookBase):
+    """ALL_T1013 K4: S9 --build-only (R4 PAPER_DATA lock, redirect)."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(sz, "say", side_effect=self.out.append)
+        p.start()
+        self.addCleanup(p.stop)
+        self.addCleanup(self._unlock)
+        self.lockf = os.path.join(self.tmp, "PAPER_DATA.lock")
+        p = mock.patch.object(sz, "PD_RUN_LOCK", self.lockf)
+        p.start()
+        self.addCleanup(p.stop)
+        self.rs = os.path.join(self.tmp, "zkmb.rs")
+        open(self.rs, "w").write("fn main() {}\n")
+        self.calls = []
+
+    def _unlock(self):
+        s = sz._LOCK.pop("sock", None)
+        if s is not None:
+            s.close()
+
+    def _ensure(self, sizes):
+        self.calls.append((list(sizes), rz._render_zkmb is sz.render_wrapped))
+        return "/x/circ_executable"
+
+    def _main(self, env=None, root=None):
+        a = sz.parse_args(["--build-only"])
+        with mock.patch.object(sz, "TMP_ROOT", root), \
+                mock.patch.dict(os.environ, env or {}), \
+                mock.patch.object(rz, "ensure_zombie_built", self._ensure), \
+                mock.patch.object(rz, "BUILD_RS", self.rs):
+            return sz.build_only_main(a)
+
+    def test_builds_full_vec_size_with_hooks(self):
+        self.assertEqual(self._main(), 0)
+        self.assertEqual(self.calls, [(list(rz.VEC_SIZE), True)])
+        self.assertTrue(any(m.startswith("SAME build-only OK /x/circ")
+                            for m in self.out))
+
+    def test_redirect_needs_opt_in(self):
+        self.assertEqual(self._main(root=self.tmp), 0)
+        self.assertEqual(self.calls, [])
+        self._unlock()
+        self.assertEqual(self._main({sz.BUILD_REDIRECT_ENV: "1"},
+                                    root=self.tmp), 0)
+        self.assertEqual(len(self.calls), 1)
+
+    def test_paper_data_lock_held_skips(self):
+        import fcntl
+        fd = os.open(self.lockf, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.assertTrue(sz.pd_lock_held())
+            self.assertEqual(self._main(), 0)
+        finally:
+            os.close(fd)
+        self.assertEqual(self.calls, [])
+        self.assertTrue(any("PAPER_DATA run holds" in m for m in self.out))
+        self.assertFalse(sz.pd_lock_held())
+
+    def test_driver_lock_held_skips(self):
+        s = socket_hold(sz.DRIVER_LOCK)
+        try:
+            self.assertEqual(self._main(), 0)
+        finally:
+            s.close()
+        self.assertEqual(self.calls, [])
+        self.assertTrue(any("circ build left to the leaf" in m
+                            for m in self.out))
+
+    def test_build_failure_is_rc7(self):
+        def bad(sizes):
+            raise SystemExit("cargo build failed; see output above.")
+        a = sz.parse_args(["--build-only"])
+        with mock.patch.object(sz, "TMP_ROOT", None), \
+                mock.patch.object(rz, "ensure_zombie_built", bad):
+            self.assertEqual(sz.build_only_main(a), 7)
+        self.assertTrue(any("FAIL: SystemExit: cargo build failed" in m
+                            for m in self.out))
+
+    def test_check_start_pass_names_circ_state(self):
+        a = sz.parse_args(["--dry", "4", "--sizes", "1000", "--server", "t1",
+                           "--launcher", "prlimit"])
+        for need, word in ((True, "circ=rebuild-at-leaf"),
+                           (False, "circ=prebuilt")):
+            del self.out[:]
+            self._unlock()
+            with mock.patch.object(sz, "clone_check", return_value=None), \
+                    mock.patch.object(sz, "fx_check", return_value=None), \
+                    mock.patch.object(sz, "nightly_refusal",
+                                      return_value=None), \
+                    mock.patch.object(sz, "selftest_refusal",
+                                      return_value=None), \
+                    mock.patch.object(sz, "oomd_check", return_value=None), \
+                    mock.patch.object(sz, "host_views",
+                                      return_value=("hv", None)), \
+                    mock.patch.object(sz, "circ_rebuild_needed",
+                                      return_value=need):
+                self.assertEqual(sz.check_start_main(a), 0)
+            self.assertTrue(any("PASS" in m and word in m for m in self.out),
+                            self.out)
+
+
+def socket_hold(name):
+    import socket as so
+    s = so.socket(so.AF_UNIX, so.SOCK_DGRAM)
+    s.bind("\0" + name)
+    return s
+
+
+
+class T1013KeysArmTest(HookBase):
+    """ALL_T1013 K5: S3 keygen-only arm through rz._run_keygen."""
+
+    def setUp(self):
+        super().setUp()
+        self.seen = []
+        sz._ORIG["run_keygen"] = lambda cmd, cwd, timeout=0: (
+            self.seen.append(cmd) or (0, "", "", 1))
+
+    def test_rewrites_only_the_keygen_circuit_arg(self):
+        pre = ["/usr/bin/prlimit", "--as=9", "--"]
+        sz.run_keygen_wrapped(pre + ["/b/circ", "policy_2000", "true",
+                                     "prover"], "/d", 5)
+        sz.run_keygen_wrapped(["/b/circ", "policy_1000", "true", "prover"],
+                              "/d")
+        sz.run_keygen_wrapped(["/b/circ", "policy_1000", "false",
+                               "prover_verifier"], "/d")
+        sz.run_keygen_wrapped(["/b/circ", "policy_real_1000", "true",
+                               "prover"], "/d")
+        self.assertEqual(self.seen, [
+            pre + ["/b/circ", "policy_keys_2000", "true", "prover"],
+            ["/b/circ", "policy_keys_1000", "true", "prover"],
+            ["/b/circ", "policy_1000", "false", "prover_verifier"],
+            ["/b/circ", "policy_real_1000", "true", "prover"]])
+
+    def test_installed_hook_reaches_rz_build_one(self):
+        sz.install_rz_hooks()
+        sz.install_rz_hooks()
+        self.assertIs(rz._run_keygen, sz.run_keygen_wrapped)
+        self.assertIs(sz._ORIG["run_keygen"], _RZ_PRISTINE["_run_keygen"])
+        src = open(sz.RZ_PATH).read()
+        self.assertIn("rc, _out, errtxt, rss = _run_keygen(", src)
+
+    def test_render_has_keys_arm_per_size(self):
+        orig = "fn zk_test() {\n    match x {\n        _ => ()\n    }\n}\n"
+        sz._ORIG["render"] = _RZ_PRISTINE["_render_zkmb"]
+        out = sz.render_wrapped(orig, [1000, 4000])
+        for n in (1000, 4000):
+            self.assertEqual(out.count('"policy_keys_%d" => compile_one_'
+                                       'circuit("policy%d"),' % (n, n)), 1)
+        self.assertLess(out.index("policy_keys_4000"), out.index("_ => ()"))
+
+
+
+class T1013ZrealArmTest(unittest.TestCase):
+    """ALL_T1013 K6: S1 one key load, timers unchanged (selftest pins)."""
+
+    def _fn(self, arm=None):
+        fn = (arm or sz.ARM_T).split("\n//@@ARM\n")[0]
+        return fn
+
+    def test_timer_blocks_once_in_order(self):
+        fn = self._fn()
+        idx = [fn.index(p) for p in sz.S1_PINS]
+        self.assertEqual([fn.count(p) for p in sz.S1_PINS], [1, 1])
+        self.assertEqual(idx, sorted(idx))
+        self.assertNotIn("zkmb_get_verifier", fn)
+        self.assertEqual(fn.count("Box::from_raw(prover_p)"), 1)
+        self.assertLess(fn.index("prove takes"), fn.index("Box::from_raw"))
+        self.assertLess(fn.index("Box::from_raw"),
+                        fn.index("let ok = verifier.verify"))
+
+    def test_selftest_catches_a_moved_timer(self):
+        bad = sz.ARM_T.replace(
+            "    let timer = Instant::now();\n    let proof = prover.prove",
+            "    let proof0 = 0;\n    let timer = Instant::now();\n"
+            "    let proof = prover.prove", 1)
+        bad = bad.replace("let verifier = &verifier;\n    let timer",
+                          "let verifier = &verifier;\n    drop(0);\n"
+                          "    let timer", 1)
+        with mock.patch.object(sz, "ARM_T", bad):
+            with self.assertRaises(AssertionError):
+                sz.selftest()
+
+
+
+class T1013LadderTest(Base):
+    """ALL_T1013 K8: S5 width ladder by slot count, R6, two-rung stop, F16."""
+
+    def test_ladders(self):
+        jet = fake_topo(n_nodes=2, cores=32, tpc=2, keep=4)   # C = 30
+        self.assertEqual(sz.ladder(jet, 16), [1, 2, 3, 4, 6, 10, 15, 16])
+        self.assertEqual(sz.ladder(fake_topo(cores=4), 16), [1, 2, 4])
+        self.assertEqual(sz.ladder(fake_topo(cores=6), 16), [1, 2, 3, 6])
+        self.assertEqual(sz.ladder(fake_topo(cores=60), 16),
+                         [1, 2, 3, 4, 6, 8, 12, 16])
+        self.assertEqual(sz.ladder(fake_topo(cores=1), 16), [1])
+        for t in (jet, fake_topo(cores=36), fake_topo(cores=7)):
+            for w in sz.ladder(t, 16):
+                self.assertTrue(sz.make_slots(t, w), w)
+
+    def test_snap_and_next_rung(self):
+        L = [1, 2, 3, 4, 6, 10, 15, 16]
+        self.assertEqual(sz.snap_up(L, 5), 6)
+        self.assertEqual(sz.snap_up(L, 40), 16)        # R6: clamp to top
+        self.assertEqual(sz.snap_down(L, 9), 6)
+        self.assertEqual(sz.snap_down(L, 0), 1)
+        self.assertEqual(sz.next_rung(L, 8), 10)       # R6: w not a rung
+        self.assertEqual(sz.next_rung(L, 4), 6)
+        self.assertIsNone(sz.next_rung(L, 16))
+
+    def test_width_for_snaps_state_to_a_rung(self):
+        sz.S["topo"] = fake_topo(n_nodes=2, cores=32, tpc=2, keep=4)
+        sz.S["cap"] = 16
+        sz.S["w_state"] = {4000: 8}                   # old powers-of-two row
+        ts = [sz.Task("u%d" % i, 4000, "e", "p", "d", {"u_c": 1.0, "rss_c": 1,
+                                                       "wall_s": 1}, False)
+              for i in range(30)]                 # w_mem = 60 // 30 = 2
+        self.assertEqual(sz.width_for(4000, ts, 1 << 40), 10)
+
+    def test_two_rung_stop_rule(self):
+        sz.S["topo"] = fake_topo(n_nodes=2, cores=32, tpc=2, keep=4)
+        sz.S["cap"] = 16
+        self.assertEqual(sz.widen_next([1.30], 0.004, 4), 6)
+        self.assertEqual(sz.widen_next([1.30, 1.299], 0.004, 6), 10)
+        self.assertIsNone(sz.widen_next([1.30, 1.299, 1.298], 0.004, 10))
+        self.assertEqual(sz.widen_next([1.20, 1.17, 1.14], 0.05, 10), 15)
+        self.assertIsNone(sz.widen_next([1.2, 1.1], 0.004, 16))
+        sz.S["cap"] = 0
+        self.assertIsNone(sz.widen_next([1.3], 0.004, 4))
+
+    def test_scalecal_verify_false_copy_is_a_failed_width(self):
+        sz.S["topo"] = fake_topo(cores=4)
+        sz.S["cap"] = 4
+        sz.ARGS.scalecal_min_cores = 1
+        d = os.path.join(self.tmp, "u")
+        os.makedirs(d)
+        base = {"base_uuid": "b", "rss_c": 1 << 20, "wall_s": 1.0,
+                "u_c": 1.0, "cons": 70000, "prove_ms": 100}
+        sz.S["keep"].append({"unit": "u", "size": 1000, "dir": d,
+                             "base": base})
+
+        class FakePacked(object):
+            def __init__(self, size, b, w, B, K_f, gid, pairs, mode=None):
+                self.pairs, self.pair_ms = pairs, {}
+
+            def run(self, queue):
+                self.pair_ms = {c: 100 for c in self.pairs}
+                self.pair_ms[self.pairs[0]] = "verify_false"
+        with mock.patch.object(sz, "Packed", FakePacked), \
+                mock.patch.object(sz, "serial_reference",
+                                  lambda ts: ({id(t): 100 for t in ts}, 0.01)):
+            sz.scalecal()                             # F16: no TypeError
+        self.assertEqual(sz.read_scalecal("t1")["overall"], "FAIL")
+
+
+
+class T1013RobustTest(HookBase):
+    """ALL_T1013 K9: F8, F9/V13, F11/V12, F12, F14."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(sz, "say", side_effect=self.out.append)
+        p.start()
+        self.addCleanup(p.stop)
+        sz._ORIG["as_cap"] = _RZ_PRISTINE["_as_cap"]
+
+    def test_oserror_in_keygen_becomes_resource_status(self):
+        import errno
+        for err, st in ((errno.ENOSPC, "disk_full"), (errno.EDQUOT,
+                                                      "disk_full"),
+                        (errno.EAGAIN, "build_fail")):
+            def bad(*a, err=err, **k):
+                raise OSError(err, os.strerror(err))
+            sz._ORIG["build"] = bad
+            b = sz.build_one_wrapped("b", 3, "u", 1000)
+            self.assertEqual(b["status"], st)
+            self.assertIn(st, rz.RESOURCE_FAIL)
+            self.assertEqual(b["dir"], os.path.join(rz.PAR_ROOT, "c00003"))
+
+    def test_sync_scratch_syncfs_each_fs_once(self):
+        calls = []
+
+        class Libc(object):
+            def syncfs(self, fd):
+                calls.append(fd)
+                return 0
+        os.makedirs(os.path.join(self.tmp, "par"), exist_ok=True)
+        with mock.patch.object(rz, "PAR_ROOT", os.path.join(self.tmp, "par")), \
+                mock.patch("ctypes.CDLL", lambda *a, **k: Libc()), \
+                mock.patch.object(sz.os, "sync") as osync:
+            self.assertEqual(sz.sync_scratch(), "syncfs=1")   # one fs here
+            osync.assert_not_called()
+        self.assertEqual(len(calls), 1)
+
+    def test_sync_scratch_falls_back_to_os_sync(self):
+        class Libc(object):
+            def syncfs(self, fd):
+                return -1
+        with mock.patch("ctypes.CDLL", lambda *a, **k: Libc()), \
+                mock.patch.object(sz.os, "sync") as osync:
+            self.assertEqual(sz.sync_scratch(), "sync")
+            osync.assert_called_once()
+
+    def test_sync_scratch_real(self):
+        self.assertTrue(sz.sync_scratch().startswith("syncfs="))
+
+    def test_torn_middle_line_dropped_and_unit_redone(self):
+        p = sz.Pair(os.path.join(self.tmp, "a.jsonl"),
+                    os.path.join(self.tmp, "b.jsonl"))
+        good = json.dumps({"kind": "base", "unit": "u1", "size": 1000})
+        torn = '{"base_uuid": "x", "kind": "base", "size": 2000, "unit": "u2'
+        torn2 = '{"base_uuid": "y", "co'
+        text = "\n".join([good, torn + '", "w', torn2, good]) + "\n"
+        for f in (p.tmp, p.docs):
+            open(f, "w").write(text)
+        sz.S.pop("force_redo", None)
+        p.repair_tail()
+        self.assertEqual(open(p.tmp).read(), good + "\n" + good + "\n")
+        self.assertEqual(p.load(), [json.loads(good)] * 2)
+        self.assertEqual(sz.S["force_redo"], {("u2", 2000)})
+        self.assertTrue(any("2 unparsable line(s) removed" in m
+                            for m in self.out))
+        self.assertTrue(any("names no unit" in m for m in self.out))
+
+    def test_force_redo_and_sig_note_in_load(self):
+        sz.ARGS = sz.parse_args(["--sizes", "1000", "--n", "2", "--server",
+                                 "t1"])
+        sz.S["rule2_done"] = True
+        sz.S["force_redo"] = {("u2", 2000)}
+        rows = {"u2|2000": {"regex_name": "u2", "str_len": 2000,
+                            "status": "ok", "launch_sig": "sig0"},
+                "u3|2000": {"regex_name": "u3", "str_len": 2000,
+                            "status": "ok", "launch_sig": "sig1"}}
+        sz._ORIG["load"] = lambda: dict(rows)
+        done = sz.load_partial_wrapped()
+        self.assertNotIn("u2|2000", done)
+        self.assertIn("u3|2000", done)
+        self.assertTrue(any("u2 2000 redone" in m for m in self.out))
+        self.assertFalse(any("launch_sig value" in m for m in self.out))
+        rows["u4|2000"] = {"regex_name": "u4", "str_len": 2000,
+                           "status": "ok"}
+        sz.load_partial_wrapped()
+        self.assertTrue(any("2 launch_sig value(s)" in m for m in self.out))
+
+    def test_append_stamps_launch_sig(self):
+        got = []
+        sz._ORIG["append"] = got.append
+        sz.append_partial_wrapped({"regex_name": "u"})
+        self.assertEqual(got, [{"regex_name": "u", "launch_sig": "sig1"}])
+
+    def test_watchdog_requeue_bounded(self):
+        pk = sz.Packed.__new__(sz.Packed)
+        pk.tail, pk.done_ok, pk.pairs, pk.pair_ms = [], [], None, {}
+        t = sz.Task("u", 1000, "e", "p", "d", {"rss_c": 1, "wall_s": 1},
+                    False)
+        q = []
+        for _ in range(3):
+            pk.after(t, "watchdog", {}, q)
+        self.assertEqual((len(q), pk.tail), (2, [t]))
+
+
+
+class T1013SkipVerifyTest(StubSetup):
+    """ALL_T1013 K10: S2 gate serial references skip the verify."""
+
+    def test_only_gate_serial_skips(self):
+        t = self.tasks(units=("ua",))[0]
+        envs = {}
+        real = subprocess.Popen
+
+        def pop(cmd, **k):
+            envs[k["env"].get("ZREAL_NO_VERIFY")] = cmd
+            return real(cmd, **k)
+        with mock.patch.object(sz.subprocess, "Popen", pop):
+            for mode in ("gate_serial", "serial", "tail"):
+                cls, row = sz.run_one_serial(t, mode)
+                self.assertEqual(cls, "ok", mode)
+                if mode == "gate_serial":
+                    self.assertIsNone(row["verify_ok"])
+                    self.assertIsNone(row["verify_ms"])
+                    self.assertEqual(row["prove_ms"], 300)
+                else:
+                    self.assertIs(row["verify_ok"], True)
+                    self.assertEqual(row["verify_ms"], 5)
+        self.assertEqual(sorted(envs, key=str), ["1", None])
+
+    def test_skip_line_counts_only_for_gate_serial(self):
+        out = "prove takes 3\nproof size is 1 bytes\nzreal verify_ok skipped\n"
+        self.assertTrue(sz.skip_view(out, "gate_serial")[1])
+        self.assertFalse(sz.skip_view(out, "packed")[1])
+        self.assertEqual(sz.classify(0, sz.skip_view(out, "packed")[0], "",
+                                     "", None, False, False, 1, 1), "resource")
+
+    def test_verify_false_pair_found_in_packed_wave(self):
+        os.environ["STUB_VF_EMAIL"] = "1000_01"
+        try:
+            sz.run_subflush(1000, 16, self.tasks())
+        finally:
+            os.environ.pop("STUB_VF_EMAIL", None)
+        rows = sz.S["pair"].load()
+        ser = [r for r in rows if r.get("mode") == "gate_serial"]
+        self.assertTrue(ser and all(r["class"] == "ok" for r in ser))
+        self.assertTrue(any("verify_false" in f for f in sz.S["fails"]))
+
+
+
+class T1013CloneScratchTest(Base):
+    """ALL_T1013 K13: the clone's own fs is a scratch candidate."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(sz, "say", side_effect=self.out.append)
+        p.start()
+        self.addCleanup(p.stop)
+        self.ms = os.path.join(self.tmp, "vol", "ms_dlp")
+        os.makedirs(self.ms)
+        for k, v in (("MS_DLP", self.ms), ("CLONE_SCRATCH", os.path.join(
+                self.ms, "bora_zombie_scratch")), ("TMP_ROOT", None)):
+            p = mock.patch.object(sz, k, v)
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _pick(self, mounts, free, dev):
+        """mounts: list of mount roots; free: path -> GiB or None (not
+        writable); dev: path -> st_dev."""
+        with mock.patch.object(rz, "_candidate_mounts", lambda: mounts), \
+                mock.patch.object(rz, "_writable_free_gb", free.get), \
+                mock.patch.object(sz, "_fs_dev", dev.get):
+            return sz.pick_scratch()
+
+    def test_clone_fs_picked_when_roomiest(self):
+        got = self._pick(["/", "/data"], {"/": 40, "/data": 300,
+                                          self.ms: 3000},
+                         {"/": 1, "/data": 2, self.ms: 3})
+        self.assertEqual(got, sz.CLONE_SCRATCH)
+        self.assertEqual(sz.scratch_src(got), "clone")
+        self.assertTrue(any("(the clone's fs)" in m for m in self.out))
+
+    def test_unwritable_mount_root_skipped_clone_used(self):
+        vol = "/media/volume/v1"
+        got = self._pick(["/", vol], {"/": None, vol: None, self.ms: 900},
+                         {"/": 1, vol: 7, self.ms: 7})
+        self.assertEqual(got, sz.CLONE_SCRATCH)
+
+    def test_same_fs_counts_once_clone_first(self):
+        # ALL_T1013 K15: K14 binds /tmp/bora and /tmp/bora_zombie_par from the
+        # clone's fs; the clone dir stands for that fs, a bigger disk wins
+        vol, b1, b2 = "/media/volume/v1", "/tmp/bora", "/tmp/bora_zombie_par"
+        seen = []
+        free = {"/": 40, vol: 900, b1: 900, b2: 900, self.ms: 900}
+
+        def wf(p):
+            seen.append(p)
+            return free.get(p)
+        with mock.patch.object(rz, "_candidate_mounts",
+                               lambda: ["/", vol, b1, b2]), \
+                mock.patch.object(rz, "_writable_free_gb", wf), \
+                mock.patch.object(sz, "_fs_dev", {"/": 1, vol: 7, b1: 7,
+                                                  b2: 7, self.ms: 7}.get):
+            got = sz.pick_scratch()
+        self.assertEqual(got, sz.CLONE_SCRATCH)
+        self.assertEqual(seen, [self.ms, "/"])      # same fs probed once
+        got = self._pick(["/", "/big", b2], {"/": 40, "/big": 2000, b2: 900,
+                                             self.ms: 900},
+                         {"/": 1, "/big": 9, b2: 7, self.ms: 7})
+        self.assertEqual(got, "/big/bora_zombie_scratch")
+
+    def test_reclaim_bind_mount_point_keeps_mount(self):
+        # F5 empties a dead run's PAR_ROOT even when it is a mount point;
+        # rmdir of the mount point itself fails and is ignored
+        par = os.path.join(self.tmp, "par")
+        os.makedirs(os.path.join(par, "c00001"))
+        real = shutil.rmtree
+
+        def rm(p, ignore_errors=False):
+            for n in os.listdir(p):
+                real(os.path.join(p, n))
+            if not ignore_errors:
+                raise OSError(16, "busy")
+        with mock.patch.object(rz, "PAR_ROOT", par), \
+                mock.patch.object(rz, "_candidate_mounts", lambda: []), \
+                mock.patch.object(sz.shutil, "rmtree", rm):
+            sz.reclaim_scratch()
+        self.assertEqual(os.listdir(par), [])
+
+    def test_small_disks_fall_back_to_par_root(self):
+        got = self._pick(["/"], {"/": 40, self.ms: 50},
+                         {"/": 1, self.ms: 1})
+        self.assertEqual(got, rz.PAR_ROOT)
+
+    def test_redirect_respected(self):
+        with mock.patch.object(sz, "TMP_ROOT", self.tmp):
+            got = self._pick(["/"], {"/": 4000, self.ms: 4000},
+                             {"/": 1, self.ms: 2})
+        self.assertEqual(got, rz.PAR_ROOT)
+
+    def test_reclaim_covers_the_clone_dir(self):
+        d = os.path.join(sz.CLONE_SCRATCH, "c00001")
+        os.makedirs(d)
+        with mock.patch.object(rz, "PAR_ROOT", os.path.join(self.tmp, "p")), \
+                mock.patch.object(rz, "_candidate_mounts", lambda: []):
+            sz.reclaim_scratch()
+        self.assertFalse(os.path.exists(sz.CLONE_SCRATCH))
+        with mock.patch.object(sz, "TMP_ROOT", self.tmp):
+            os.makedirs(d)
+            sz.reclaim_scratch()
+        self.assertTrue(os.path.isdir(d))         # redirect: PAR_ROOT only
+
+    def test_hook_installed_at_import_without_redirect(self):
+        src = open(sz.SELF_PATH).read()
+        self.assertIn("rz._pick_scratch_base = pick_scratch", src)
+        self.assertIn("bora_zombie_scratch/", open(os.path.join(
+            os.path.dirname(sz.SELF_PATH), "..", ".gitignore")).read())
+
+
+
+class T1013FaultFixTest(StubSetup):
+    """ALL_T1013 K16: r4_faults.md FI1 to FI5."""
+
+    def _pair(self):
+        return sz.Pair(os.path.join(self.tmp, "a.jsonl"),
+                       os.path.join(self.tmp, "b.jsonl"))
+
+    def test_append_after_a_torn_fragment_starts_a_new_line(self):
+        p = self._pair()
+        for f in (p.tmp, p.docs):
+            open(f, "w").write('{"kind": "base"}\n{"kind": "pro')
+        p.append([{"kind": "stop", "size": 2000}])
+        lines = open(p.tmp).read().splitlines()
+        self.assertEqual(lines[1], '{"kind": "pro')
+        self.assertEqual(json.loads(lines[2]), {"kind": "stop", "size": 2000})
+        open(p.tmp, "w").write("")
+        p.append([{"k": 1}])                     # empty file: no blank line
+        self.assertEqual(open(p.tmp).read(), '{"k": 1}\n')
+
+    def test_load_skips_a_bad_middle_line_when_the_other_copy_exists(self):
+        p = self._pair()
+        open(p.tmp, "w").write('{"a": 1}\n{"b": \n{"c": 3}\n')
+        open(p.docs, "w").write('{"a": 1}\n{"c": 3}\n')
+        out = []
+        with mock.patch.object(sz, "say", side_effect=out.append):
+            self.assertEqual(p.load(), [{"a": 1}, {"c": 3}])
+        self.assertTrue(any("1 bad middle line(s)" in m for m in out))
+        os.remove(p.docs)
+        with self.assertRaises(ValueError):
+            p.load()
+
+    def test_restore_takes_docs_when_it_has_more_valid_rows(self):
+        p = self._pair()
+        open(p.tmp, "w").write('{"a": 1}\n{"b": 2')
+        open(p.docs, "w").write('{"a": 1}\n{"b": 2}\n{"c": 3}\n')
+        p.restore()
+        self.assertEqual(open(p.tmp).read(), open(p.docs).read())
+        open(p.docs, "w").write('{"a": 1}\n')
+        p.restore()                               # /tmp has more: kept
+        self.assertEqual(len(p.load()), 3)
+
+    def test_gate_reference_resource_death_retried_once(self):
+        t = self.tasks(units=("ua",))[0]
+        seq = [("resource", None), ("ok", {"prove_ms": 300}),
+               ("ok", {"prove_ms": 301})]
+        with mock.patch.object(sz, "run_one_serial",
+                               lambda t, mode: seq.pop(0)), \
+                mock.patch.object(sz, "say"):
+            ref, s = sz.serial_reference([t])
+        self.assertEqual(ref[id(t)], 300.5)
+        seq = [("resource", None), ("resource", None)]
+        with mock.patch.object(sz, "run_one_serial",
+                               lambda t, mode: seq.pop(0)), \
+                mock.patch.object(sz, "say"):
+            self.assertEqual(sz.serial_reference([t]), (None, None))
+
+    def test_ref_stop_has_cause_ref_and_is_lifted_once(self):
+        sz.S["cap"] = 16
+        sz.S["topo"] = fake_topo(cores=36)
+        sz.ARGS.sizes = [1000, 2000]
+        with mock.patch.object(sz, "serial_reference",
+                               return_value=(None, None)):
+            sz.S["pending"][:] = []
+            ts = self.tasks(size=2000)
+            with self.assertRaises(sz.StopFlush) as cm:
+                sz.run_subflush(2000, 16, ts)
+        self.assertEqual(cm.exception.cause, "ref")
+        sz.stop_path(2000, str(cm.exception), [], cm.exception.width,
+                     cause=cm.exception.cause)
+        rows = sz.S["pair"].load()
+        stop = [r for r in rows if r["kind"] == "stop"][-1]
+        self.assertEqual(stop["cause"], "ref")
+        a = sz.parse_args(["--sizes", "1000,2000", "--server", "t1"])
+        sc = {"w0": "4", "commit": "c"}
+        with mock.patch.object(sz, "read_scalecal", return_value=sc), \
+                mock.patch.object(sz, "valid_timing",
+                                  return_value=(True, None)), \
+                mock.patch.object(sz, "print_stamp_view"):
+            sz.start_check(a, rows)
+            self.assertNotIn(2000, sz.S["refused"])          # lifted once
+            sz.start_check(a, rows + [dict(stop)])
+            self.assertIn(2000, sz.S["refused"])             # second: kept
+
+    def test_serial_batch_killed_base_prove_rerun_once(self):
+        calls = []
+        recs = [({"status": "oom_or_killed"}, None),
+                ({"status": "ok"}, {"base_uuid": "u2"})]
+
+        def bt(*a, **k):
+            calls.append(1)
+            return recs.pop(0)
+        sz.S["last_batch_n"] = 1
+        sz.ARGS.sizes = []
+        with mock.patch.object(sz, "base_time", bt), \
+                mock.patch.object(sz, "say"):
+            rec = sz.time_one("b", {"name": "u", "dir": "/d"}, 1000)
+        self.assertEqual((rec["status"], len(calls)), ("ok", 2))
+        sz.S["last_batch_n"] = 4                  # RZ requeues these itself
+        recs[:] = [({"status": "oom_or_killed"}, None)]
+        calls[:] = []
+        with mock.patch.object(sz, "base_time", bt):
+            sz.time_one("b", {"name": "u", "dir": "/d"}, 1000)
+        self.assertEqual(len(calls), 1)
+
+    def test_relaunch_retries_every_resource_class_once(self):
+        self.assertEqual(set(sz.RETRY_ONCE), set(rz.RESOURCE_FAIL))
 
 
 if __name__ == "__main__":
