@@ -2388,6 +2388,10 @@ def run_pipeline_wrapped(binp, str_len, names, done):
     S["cur_size"] = str_len                   # ALL_T1009: for batch lines
     res = _ORIG["pipeline"](binp, str_len, names, done)
     flush()
+    try:
+        size_notes(str_len, res, done)        # ALL_T1017 b/c
+    except Exception as e:
+        say("SAME note: size notes skipped: %s" % e)
     if ARGS.scalecal and str_len == 1000:
         try:
             scalecal()
@@ -2396,6 +2400,46 @@ def run_pipeline_wrapped(binp, str_len, names, done):
                 _ORIG["rmtree"](it["dir"], ignore_errors=True)
             del S["keep"][:]
     return res
+
+
+def size_notes(str_len, res, done):
+    """ALL_T1017 b/c: calib per constraint count, growth factor, the not-fit
+    list, and after the second-largest size the largest-size prediction.
+    res holds resumed rows, so every launch prints them. A later launch that
+    only KEEPs the leaf copies no note; the docs log still shows not_fit."""
+    by = {}
+    for r in res:
+        if _okv(r, "peak_rss") and r.get("r1cs_cons"):
+            by.setdefault(r["r1cs_cons"], []).append(r["peak_rss"])
+    for c, v in sorted(by.items()):
+        say("SAME note: calib size=%d cons=%d units=%d rss median/max=%s/%s"
+            % (str_len, c, len(v), _gib(statistics.median(v)), _gib(max(v))))
+    say("SAME note: growth factor at %d B is %.3f over %d rows"
+        % ((str_len,) + growth_factor(done, str_len)))
+    nf = sorted(r["regex_name"] for r in res if r.get("status") == "not_fit")
+    if nf:
+        say("SAME note: units over the address-space cap at %d B: %s"
+            % (str_len, ", ".join(nf)))
+    vs = sorted(rz.VEC_SIZE)
+    if len(vs) > 1 and str_len == vs[-2] and S.get("full_mem"):
+        predict_next(vs[-1], [r["regex_name"] for r in res], done)
+
+
+def predict_next(L, names, done):
+    """ALL_T1017 b: keygen RSS prediction at the largest size L."""
+    full = S["full_mem"]
+    slope = rz._calib_slope(done, "peak_rss", rz.EST_SLOPE_BYTES_PER_CONS)
+    est = sorted(((rz._estimate(n, L, done, slope, "peak_rss", 0), n)
+                  for n in names), reverse=True)
+    if not est:
+        return
+    over = ["%s %s" % (n, _gib(v)) for v, n in est if v > full]
+    say("SAME note: %d B keygen prediction: largest %s %s; %d unit(s) above "
+        "the %s address-space cap" % (L, est[0][1], _gib(est[0][0]),
+                                      len(over), _gib(full)))
+    if over:
+        say("SAME WARNING: %d B keygen predicted above the %s address-space "
+            "cap: %s" % (L, _gib(full), ", ".join(over)), caveat=True)
 
 
 # ALL_T1009 N1/O2: rayon thread arena + stack room in the keygen AS cap
@@ -2505,10 +2549,18 @@ def _est_txt(mem, room, lone):
 def _after_build(b, name, str_len, mem, lone, room, wall):
     """ALL_T1009 B1/O2/m4: log one keygen, learn the arena room."""
     st, err = b.get("status"), b.get("err") or ""
+    est, fit = _est_txt(mem, room, lone), ""
+    tried = S.setdefault("tried", set())      # ALL_T1017 b: first attempt only
+    if (st == "built" and (name, str_len) not in tried and est[:1].isdigit()
+            and b.get("peak_rss")):
+        part = (mem - room) / rz.EST_AS_MARGIN
+        fit = " est=%s err=%+.0f%%" % (_gib(part),
+                                       100.0 * (b["peak_rss"] / part - 1))
+    tried.add((name, str_len))
     say("SAME build t=%s size=%d %s -> %s wall=%.0fs rss=%s res=%s cap=%s%s%s"
         % (_stamp(), str_len, name, st, wall, _gib(b.get("peak_rss")),
-           _est_txt(mem, room, lone), _gib(mem), " lone" if lone else "",
-           "" if st == "built" else " err=" + err[-80:].replace("\n", " ")))
+           est, _gib(mem), " lone" if lone else "",
+           fit if st == "built" else " err=" + err[-80:].replace("\n", " ")))
     if not mem or lone or b.get("as_cap") != mem or st == "built":
         return
     rss_part = max(1, mem - room)
@@ -2526,11 +2578,33 @@ def _after_build(b, name, str_len, mem, lone, room, wall):
 
 KEY_PARTS = ("inst", "gens", "input_names", "term_arr", "input_idxes",
              "var_idxes")
+KILL_WAIT_S = 120                 # ALL_T1017 d: wait for killed keygen pids
+NOT_FIT_RE = re.compile(r"memory allocation of (\d+) bytes failed")
+
+
+def _not_fit(b, name, str_len, mem, lone, room):
+    """ALL_T1017 c: a lone keygen's own allocation failure near the full
+    address-space cap is deterministic, so not_fit, never retried. A bare
+    signal death (kernel OOM, cgroup, operator) keeps oom_or_killed."""
+    m = NOT_FIT_RE.search(b.get("err") or "")
+    if not (lone and m and mem and b.get("status") in ("oom_or_killed",
+                                                       "build_fail")):
+        return
+    n = int(m.group(1))
+    if n > meminfo("MemTotal") or (b.get("peak_rss") or 0) + n < 0.8 * (
+            mem - room):
+        return
+    pre = "exceeds the %s address-space cap (0.9 x MemTotal); " % _gib(mem)
+    b["status"] = "not_fit"
+    b["err"] = pre + (b.get("err") or "")[-(300 - len(pre)):]
+    say("SAME FAIL-FAST: %s at %d B exceeds the %s address-space cap "
+        "(0.9 x MemTotal); the rest of this size goes on"
+        % (name, str_len, _gib(mem)), caveat=True)
 
 
 def _kill_cwd(d):
     """ALL_T1013 F1: kill our circ_executable left running in work dir d."""
-    out = []
+    out, gone = [], []
     for pid in _pids():
         if pid == os.getpid() or not _owned(pid):
             continue
@@ -2538,8 +2612,12 @@ def _kill_cwd(d):
             continue
         for c in descendants(pid):
             _sigkill(c)
+            gone.append(c)
         _sigkill(pid)
         out.append(pid)
+    t_end = time.time() + KILL_WAIT_S         # ALL_T1017 d: no overlap after
+    while any(_alive(p) for p in out + gone) and time.time() < t_end:
+        time.sleep(POLL_S)
     return out
 
 
@@ -2600,6 +2678,10 @@ def build_one_wrapped(binp, idx, name, str_len, mem_bytes=None,
     except Exception as e:                    # ALL_T1013: never end the batch
         say("SAME note: post-build check failed: %s" % e)
     try:
+        _not_fit(b, name, str_len, mem_bytes, lone, room)    # ALL_T1017 c
+    except Exception as e:
+        say("SAME note: not_fit check failed: %s" % e)
+    try:
         _after_build(b, name, str_len, mem_bytes, lone, room, time.time() - t0)
     except Exception:
         pass
@@ -2653,6 +2735,17 @@ def estimate_wrapped(name, str_len, done, slope, vkey, floor):
     if (vkey == "peak_rss" and e == floor and _ORIG.get(
             "median_at", rz._median_at)(done, str_len, vkey) is None):
         e = max(e, rz_cold())                 # ALL_T1009 A5: RZ's own cold
+    v = own_growth(name, str_len, done, vkey)[0]
+    if v is None:
+        return e
+    if vkey == "peak_rss":                    # ALL_T1017 a: F1 factor
+        v = int(v * growth_factor(done, str_len)[0])
+    return max(e, v)
+
+
+def own_growth(name, str_len, done, vkey):
+    """ALL_T1009 B2 loop: (value, own) grown from the nearest smaller size;
+    own is True when the exponent is the unit's own (ALL_T1017 a)."""
     smaller = sorted((x for x in rz.VEC_SIZE if x < str_len), reverse=True)
     for i, s in enumerate(smaller):
         rr = done.get("%s|%d" % (name, s))
@@ -2664,10 +2757,37 @@ def estimate_wrapped(name, str_len, done, slope, vkey, floor):
             if _okv(rr, vkey) and _okv(q, vkey):
                 k = min(K_MAX, max(K_MIN, math.log(rr[vkey] / q[vkey])
                                    / math.log(s / smaller[i + 1])))
+        own = k is not None
         if k is None:
             k = _pooled_k(done, vkey, s, str_len)
-        return max(e, int(rr[vkey] * (str_len / s) ** k))
-    return e
+        return int(rr[vkey] * (str_len / s) ** k), own
+    return None, False
+
+
+GF_MIN_ROWS, GF_FLOOR_ROWS = 3, 6  # ALL_T1017 F1: rows to fit, rows to go <1
+GF_FLOOR, GF_MAX = 0.95, 2.0
+
+
+def growth_factor(done, str_len):
+    """ALL_T1017 a: (p75 of measured / own-grown keygen RSS over ok rows at
+    str_len with an own exponent, rows); 1.0 below 3 rows, >= 0.95 only from
+    6 rows, else >= 1.0; at most 2.0."""
+    key = (id(done), str_len, len(done))
+    memo = S.setdefault("gf_memo", {})
+    if key not in memo:
+        q = []
+        for r in list(done.values()):
+            if r.get("str_len") == str_len and _okv(r, "peak_rss"):
+                v, own = own_growth(r.get("regex_name"), str_len, done,
+                                    "peak_rss")
+                if own and v:
+                    q.append(r["peak_rss"] / v)
+        q.sort()
+        f = q[int(math.ceil(0.75 * len(q))) - 1] if len(q) >= GF_MIN_ROWS \
+            else 1.0
+        lo = GF_FLOOR if len(q) >= GF_FLOOR_ROWS else 1.0
+        memo[key] = (min(GF_MAX, max(lo, f)), len(q))
+    return memo[key]
 
 
 def median_at_wrapped(done, str_len, vkey):
@@ -3637,6 +3757,11 @@ def selftest():
         assert bare.replace(blk, "", 1) == _ORIG["render"](
             orig, [1000, 2000, 4000]), "render differs outside the zreal parts"
     assert up2(3) == 4 and down2(3) == 2 and up2(1) == 1 and down2(0) == 1
+    m = NOT_FIT_RE.search("memory allocation of 34359738368 bytes failed\n")
+    assert m and m.group(1) == "34359738368", "ALL_T1017: NOT_FIT_RE"
+    assert "not_fit" not in rz.RESOURCE_FAIL + RETRY_ONCE, "T1017: retried"
+    assert not FAIL_LIKE.search("SAME note: units over the address-space "
+                                "cap at 4000 B: u"), "T1017: note is a FAIL"
     say("[same_zombie selftest] OK")
     return 0
 

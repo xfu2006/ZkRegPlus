@@ -3005,7 +3005,8 @@ class T1013BuildTest(HookBase):
                 mock.patch.object(sz, "_exe_base", exe.get), \
                 mock.patch.object(sz, "_cwd_of", cwd.get), \
                 mock.patch.object(sz, "descendants", lambda p: []), \
-                mock.patch.object(sz, "_sigkill", killed.append):
+                mock.patch.object(sz, "_sigkill", killed.append), \
+                mock.patch.object(sz, "_alive", return_value=False):
             self.assertEqual(sz._kill_cwd("/p/c00001"), [11])
         self.assertEqual(killed, [11])
 
@@ -3753,6 +3754,339 @@ class T1013FaultFixTest(StubSetup):
 
     def test_relaunch_retries_every_resource_class_once(self):
         self.assertEqual(set(sz.RETRY_ONCE), set(rz.RESOURCE_FAIL))
+
+
+def _row(name, size, rss, cons=None, status="ok"):
+    r = {"regex_name": name, "str_len": size, "status": status,
+         "peak_rss": rss}
+    if cons:
+        r["r1cs_cons"] = cons
+    return {"%s|%d" % (name, size): r}
+
+
+class T1017GrowthTest(HookBase):
+    """ALL_T1017 a: own growth and the F1 growth factor."""
+
+    def setUp(self):
+        super().setUp()
+        sz._ORIG["estimate"] = _RZ_PRISTINE["_estimate"]
+        sz._ORIG["median_at"] = _RZ_PRISTINE["_median_at"]
+        vp = mock.patch.object(rz, "VEC_SIZE", [1000, 2000, 4000])
+        vp.start()
+        self.addCleanup(vp.stop)
+        self.g = sz.GIB
+
+    def _own(self, done, name, ratio=None):
+        """1 -> 4 GiB own k=2, so 4 KB grows to 16 GiB; measured = ratio x."""
+        done.update(_row(name, 1000, self.g))
+        done.update(_row(name, 2000, 4 * self.g))
+        if ratio is not None:
+            done.update(_row(name, 4000, int(ratio * 16 * self.g)))
+        return done
+
+    def _many(self, ratios):
+        done = {}
+        for i, q in enumerate(ratios):
+            self._own(done, "o%d" % i, q)
+        return done
+
+    def test_own_growth_flags_own_exponent(self):
+        done = self._own({}, "u")
+        self.assertEqual(sz.own_growth("u", 4000, done, "peak_rss"),
+                         (16 * self.g, True))
+        done = _row("p", 2000, 4 * self.g)
+        v, own = sz.own_growth("p", 4000, done, "peak_rss")
+        self.assertFalse(own)
+        self.assertEqual(sz.own_growth("z", 4000, {}, "peak_rss"),
+                         (None, False))
+
+    def test_factor_counts_own_rows_only(self):
+        done = self._many([1.2, 1.2, 1.2])
+        for i in range(4):                    # pooled rows: ratio 3, ignored
+            done.update(_row("p%d" % i, 2000, 4 * self.g))
+            done.update(_row("p%d" % i, 4000, 3 * 16 * self.g))
+        f, n = sz.growth_factor(done, 4000)
+        self.assertEqual(n, 3)
+        self.assertAlmostEqual(f, 1.2, 6)
+
+    def test_factor_floor_needs_6_rows(self):
+        self.assertEqual(sz.growth_factor(self._many([1.5] * 2), 4000),
+                         (1.0, 2))            # below 3 rows
+        self.assertEqual(sz.growth_factor(self._many([0.9] * 5), 4000),
+                         (1.0, 5))            # 3..5 rows: floor 1.0
+        f, n = sz.growth_factor(self._many([0.9] * 6), 4000)
+        self.assertEqual((f, n), (0.95, 6))
+        f, n = sz.growth_factor(self._many([0.9, 0.9, 0.97, 0.97, 0.97,
+                                            0.97]), 4000)
+        self.assertAlmostEqual(f, 0.97, 6)    # p75, above the floor
+        self.assertEqual(sz.growth_factor(self._many([3.0] * 3), 4000)[0],
+                         2.0)                 # cap
+
+    def test_factor_is_1_at_2kb_and_skips_failed_rows(self):
+        done = {}
+        for i in range(5):
+            done.update(_row("u%d" % i, 1000, self.g))
+            done.update(_row("u%d" % i, 2000, 9 * self.g))
+        self.assertEqual(sz.growth_factor(done, 2000), (1.0, 0))
+        done = self._many([1.2] * 3)
+        done.update(_row("o0", 4000, 99 * self.g, status="oom_or_killed"))
+        self.assertEqual(sz.growth_factor(done, 4000)[1], 2)
+
+    def test_estimate_applies_factor(self):
+        est = lambda d: sz.estimate_wrapped("x", 4000, d, 1, "peak_rss", 7)
+        done = self._own(self._many([1.2] * 3), "x")
+        self.assertEqual(est(done), int(16 * self.g * 1.2))
+        done = self._own(self._many([0.9] * 6), "x")
+        self.assertEqual(est(done), int(16 * self.g * 0.95))
+        done = self._own(self._many([0.9] * 5), "x")
+        self.assertEqual(est(done), 16 * self.g)
+        self.assertEqual(sz.estimate_wrapped("x", 4000, done, 1, "key_bytes",
+                                             7), 7)  # key_bytes unchanged
+
+    def test_factor_memo_tracks_done_growth(self):
+        done = self._many([1.2] * 2)
+        self.assertEqual(sz.growth_factor(done, 4000), (1.0, 2))
+        self._own(done, "o9", 1.2)
+        self.assertEqual(sz.growth_factor(done, 4000)[1], 3)
+
+
+class T1017NotFitTest(HookBase):
+    """ALL_T1017 c: not_fit only for a lone allocation failure at the cap."""
+
+    MSG = "memory allocation of %d bytes failed\n"
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(
+            sz, "say", side_effect=lambda m, caveat=False:
+            self.out.append((m, caveat)))
+        p.start()
+        self.addCleanup(p.stop)
+        self.res = []
+        sz._ORIG["build"] = lambda *a, **k: self.res.pop(0)
+        self.g = sz.GIB
+        sz.S.update(batch_n=1, full_mem=100 * self.g, cap_room=self.g)
+
+    def build(self, status, rss, err="", lone=True):
+        sz.S["batch_n"] = 1 if lone else 2
+        self.res = [{"name": "u", "prox": 1, "dir": None, "status": status,
+                     "peak_rss": rss, "err": err, "as_cap": 1}]
+        return sz.build_one_wrapped("b", 0, "u", 4000, 50 * self.g)
+
+    def test_relabel_high_peak_and_large_request(self):
+        old = ("x" * 280) + self.MSG % self.g
+        b = self.build("oom_or_killed", 90 * self.g, old[-300:])
+        self.assertEqual(b["status"], "not_fit")
+        self.assertTrue(b["err"].startswith(
+            "exceeds the 100.0GiB address-space cap (0.9 x MemTotal); "))
+        self.assertLessEqual(len(b["err"]), 300)
+        self.assertIn("bytes failed", b["err"])
+        ff = [m for m, c in self.out if m.startswith("SAME FAIL-FAST")]
+        self.assertEqual(ff, ["SAME FAIL-FAST: u at 4000 B exceeds the "
+                              "100.0GiB address-space cap (0.9 x MemTotal); "
+                              "the rest of this size goes on"])
+        self.assertTrue([c for m, c in self.out if m == ff[0]][0])
+        b = self.build("build_fail", self.g, self.MSG % (80 * self.g))
+        self.assertEqual(b["status"], "not_fit")
+
+    def test_not_relabelled(self):
+        g, msg = self.g, self.MSG % (8 * self.g)
+        cases = [("oom_or_killed", 95 * g, "", True),        # bare SIGKILL
+                 ("oom_or_killed", 95 * g, "Killed", True),  # cgroup-style
+                 ("oom_or_killed", 95 * g, msg, False),      # not lone
+                 ("build_timeout", 95 * g, msg, True),
+                 ("disk_full", 95 * g, msg, True),
+                 ("oom_or_killed", g, self.MSG % g, True),   # low peak + N
+                 ("oom_or_killed", 95 * g, self.MSG % (2 ** 60), True)]
+        for st, rss, err, lone in cases:
+            b = self.build(st, rss, err, lone)
+            self.assertEqual(b["status"], st, (st, err, lone))
+        self.assertFalse([m for m, c in self.out if "FAIL-FAST" in m])
+
+
+class T1017PipelineNotFitTest(HookBase):
+    """ALL_T1017 c: through RZ, a not_fit row is final and kept on resume."""
+
+    def test_not_fit_once_and_note_on_resume(self):
+        stub = os.path.join(self.tmp, "circ_stub")
+        with open(stub, "w") as f:
+            f.write(STUB)
+        os.chmod(stub, 0o755)
+        full = os.path.join(self.tmp, "rules")
+        os.makedirs(full)
+        names = ["big", "s1", "s2"]
+        for u in names:
+            open(os.path.join(full, u + ".regex"), "w").write(
+                "(a.{0,10}(b))|((b).{0,10}a)")
+        g, calls, out = sz.GIB, [], []
+
+        def build(binp, idx, name, str_len, mem=None, timeout=0):
+            calls.append((name, sz.S.get("batch_n")))
+            d = os.path.join(rz.PAR_ROOT, "c%05d" % idx)
+            os.makedirs(d, exist_ok=True)
+            if name == "big":
+                return {"name": name, "prox": 10, "dir": d, "status":
+                        "oom_or_killed", "peak_rss": int(0.9 * mem),
+                        "as_cap": mem, "err": "memory allocation of "
+                        "4294967296 bytes failed\n"}
+            return {"name": name, "prox": 10, "dir": d, "status": "built",
+                    "peak_rss": g, "key_bytes": 1, "as_cap": mem}
+        done = _row("big", 1000, 400 * g)
+        done.update(_row("s1", 1000, g // 2))
+        done.update(_row("s2", 1000, g // 2))
+        saved = {k: getattr(rz, k) for k in ("FULL_DIR", "PAR_ROOT",
+                                             "PARTIAL", "PARTIAL_DOCS")}
+        rz.FULL_DIR, rz.PAR_ROOT = full, os.path.join(self.tmp, "par")
+        rz.PARTIAL = os.path.join(self.tmp, "rz.jsonl")
+        rz.PARTIAL_DOCS = os.path.join(self.tmp, "rzd.jsonl")
+        rz._build_one = build
+        sz.S.update(binp=stub, bus=None, full_mem=rz._mem_cap_bytes(1))
+        vp = mock.patch.object(rz, "VEC_SIZE", [1000, 2000, 4000])
+        vp.start()
+        self.addCleanup(vp.stop)
+        sz.install_rz_hooks()
+        try:
+            with mock.patch.object(sz, "say", side_effect=lambda m, caveat=0:
+                                   out.append(m)), \
+                    mock.patch("builtins.print"):
+                res = rz.run_pipeline(stub, 2000, names, done)
+                n1 = len(out)
+                res2 = rz.run_pipeline(stub, 2000, names, done)
+        finally:
+            for k, v in saved.items():
+                setattr(rz, k, v)
+        st = {r["regex_name"]: r["status"] for r in res}
+        self.assertEqual(st, {"big": "not_fit", "s1": "ok", "s2": "ok"})
+        self.assertEqual([c for c in calls if c[0] == "big"], [("big", 1)])
+        self.assertEqual(len(calls), 3)      # resume: no keygen at all
+        self.assertEqual([r["status"] for r in res2], [r["status"]
+                                                      for r in res])
+        note = "SAME note: units over the address-space cap at 2000 B: big"
+        self.assertIn(note, out[:n1])
+        self.assertIn(note, out[n1:])
+        self.assertTrue(any(m.startswith("SAME FAIL-FAST: big at 2000 B")
+                            for m in out[:n1]))
+        with open(os.path.join(self.tmp, "rz.jsonl")) as f:
+            rows = [json.loads(x) for x in f]
+        self.assertEqual([r["status"] for r in rows if r["regex_name"] ==
+                          "big"], ["not_fit"])
+
+
+class T1017NotesTest(HookBase):
+    """ALL_T1017 b: calib, factor and prediction notes; est and err."""
+
+    def setUp(self):
+        super().setUp()
+        self.out = []
+        p = mock.patch.object(
+            sz, "say", side_effect=lambda m, caveat=False:
+            self.out.append((m, caveat)))
+        p.start()
+        self.addCleanup(p.stop)
+        sz._ORIG["estimate"] = _RZ_PRISTINE["_estimate"]
+        sz._ORIG["median_at"] = _RZ_PRISTINE["_median_at"]
+        rz._estimate = sz.estimate_wrapped
+        vp = mock.patch.object(rz, "VEC_SIZE", [1000, 2000, 4000])
+        vp.start()
+        self.addCleanup(vp.stop)
+        self.g = sz.GIB
+        sz.S["full_mem"] = 10 * self.g
+
+    def _done(self):
+        g = self.g
+        done = _row("u1", 1000, g, 50)
+        done.update(_row("u1", 2000, 4 * g, 100))
+        done.update(_row("u2", 1000, g, 50))
+        done.update(_row("u2", 2000, 2 * g, 100))
+        done.update(_row("u3", 2000, 0, 300, status="build_fail"))
+        return done
+
+    def test_size_notes_at_second_largest_size(self):
+        done = self._done()
+        res = [r for r in done.values() if r["str_len"] == 2000]
+        sz.size_notes(2000, res, done)
+        msgs = [m for m, c in self.out]
+        self.assertEqual(msgs[:2], [
+            "SAME note: calib size=2000 cons=100 units=2 rss median/max="
+            "3.0GiB/4.0GiB",
+            "SAME note: growth factor at 2000 B is 1.000 over 0 rows"])
+        self.assertIn("SAME note: 4000 B keygen prediction: largest u1 "
+                      "16.0GiB; 2 unit(s) above the 10.0GiB address-space "
+                      "cap", msgs)
+        warn = [(m, c) for m, c in self.out if m.startswith("SAME WARNING")]
+        self.assertEqual(warn, [("SAME WARNING: 4000 B keygen predicted "
+                                 "above the 10.0GiB address-space cap: u1 "
+                                 "16.0GiB, u3 12.0GiB", True)])
+        import re
+        pd_note = re.compile(r"(SAME (?:gate|widen|note:) .*)")
+        for m in msgs:
+            if not m.startswith("SAME WARNING"):
+                self.assertFalse(sz.FAIL_LIKE.search(m), m)
+                self.assertTrue(pd_note.match(m), m)
+
+    def test_no_prediction_at_other_sizes(self):
+        done = self._done()
+        res = [r for r in done.values() if r["str_len"] == 1000]
+        sz.size_notes(1000, res, done)
+        msgs = [m for m, c in self.out]
+        self.assertEqual(len(msgs), 2)
+        self.assertTrue(msgs[0].startswith("SAME note: calib size=1000 "
+                                           "cons=50 units=2"))
+        self.assertFalse(any("prediction" in m or "over the address" in m
+                             for m in msgs))
+
+    def test_est_err_first_numeric_attempt_only(self):
+        res = []
+        sz._ORIG["build"] = lambda *a, **k: res.pop(0)
+        room = sz.arena_room()
+        sz.S.pop("cap_room", None)
+        sz.S["full_mem"] = 100 * self.g
+        cap = int(15 * self.g + room)
+
+        def line(name, mem, rss=2 * sz.GIB, lone=False):
+            sz.S["batch_n"] = 1 if lone else 2
+            res.append({"status": "built", "peak_rss": rss, "as_cap": mem})
+            sz.build_one_wrapped("b", 0, name, 2000, mem)
+            return self.out[-1][0]
+        self.assertIn(" est=10.0GiB err=-80%", line("a", cap))
+        self.assertNotIn("est=", line("a", cap))          # retry
+        self.assertIn(" est=10.0GiB err=+5%", line("b", cap,
+                                                   int(10.5 * self.g)))
+        self.assertNotIn("est=", line("c", 100 * self.g))  # full cap
+        self.assertNotIn("est=", line("d", int(8 * self.g + room)))  # floor
+        self.assertNotIn("est=", line("e", cap, lone=True))
+
+
+class T1017KillWaitTest(Base):
+    """ALL_T1017 d: _kill_cwd waits for the killed pids, at most a bound."""
+
+    def _kill(self, alive):
+        with mock.patch.object(sz, "_pids", lambda: [11]), \
+                mock.patch.object(sz, "_owned", return_value=True), \
+                mock.patch.object(sz, "_exe_base",
+                                  return_value="circ_executable"), \
+                mock.patch.object(sz, "_cwd_of", return_value="/p/c1"), \
+                mock.patch.object(sz, "descendants", lambda p: [12]), \
+                mock.patch.object(sz, "_sigkill"), \
+                mock.patch.object(sz, "_alive", side_effect=alive):
+            t0 = time.time()
+            self.assertEqual(sz._kill_cwd("/p/c1"), [11])
+            return time.time() - t0
+
+    def test_waits_until_gone(self):
+        seen = []
+
+        def alive(p):
+            seen.append(p)
+            return len(seen) < 6
+        self._kill(alive)
+        self.assertGreaterEqual(len(seen), 6)
+        self.assertIn(12, seen)
+
+    def test_wait_is_bounded(self):
+        with mock.patch.object(sz, "KILL_WAIT_S", 0.3):
+            self.assertLess(self._kill(lambda p: True), 2.0)
 
 
 if __name__ == "__main__":
