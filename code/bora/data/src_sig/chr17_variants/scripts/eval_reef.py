@@ -354,18 +354,21 @@ def _net_from(timings):
 
 
 def _parse_proj(log_path):
-    # Returns (applied: bool, real_chunk_len: int|None) from the REEF_PROJ line.
+    # Returns (applied: bool, real_chunk_len: int|None, batch: int) from the
+    # REEF_PROJ line and (ALL_T1021) Reef's auto-selected "Final Batch Size"
+    # (costs.rs:242), -1 if absent.
     applied, chunk = False, None
     try:
         with open(log_path, "r", errors="replace") as f:
             text = f.read()
     except OSError:
-        return applied, chunk
+        return applied, chunk, -1
     m = re.search(r"REEF_PROJ applied=(\d).*?chunk_len=(\d+)", text)
     if m:
         applied = m.group(1) == "1"
         chunk = int(m.group(2))
-    return applied, chunk
+    ks = re.findall(r"^Final Batch Size: (\d+)", text, re.M)
+    return applied, chunk, (int(ks[-1]) if ks else -1)
 
 
 def _cleanup(*paths):
@@ -424,7 +427,7 @@ def run_variant(variant_name, timeout):
 
     # b_if_p_applied comes from the REEF_PROJ stdout line (flushed well
     # before the long witness phase, so it survives even a timed-out run).
-    b_applied, real_chunk = _parse_proj(log_path)
+    b_applied, real_chunk, batch = _parse_proj(log_path)
 
     if timed_out:
         results = {t: -1 for t in EXPECTED_TIMERS}
@@ -432,6 +435,8 @@ def run_variant(variant_name, timeout):
         results["total_net_time"] = float(timeout)
         results["wall_time"] = float(timeout)
         results["timed_out"] = True
+        results["real_batch_size"] = batch
+        results["real_steps"] = -1
         _cleanup(metrics_path, proof_path, log_path)
         return [b_applied, results]
 
@@ -441,6 +446,10 @@ def run_variant(variant_name, timeout):
     results["total_net_time"] = _net_from(timings)
     results["wall_time"] = wall
     results["timed_out"] = False
+    results["real_batch_size"] = batch
+    # ALL_T1021: one prove_i timer per folding step; -1 if Reef failed.
+    results["real_steps"] = (sum(1 for t in timings if _RE_PROVE.match(t))
+                             if rc == 0 else -1)
     if rc != 0:
         # Finished but non-zero exit: flag it; keep whatever timings exist.
         results["returncode"] = rc
@@ -692,6 +701,18 @@ def write_log(seq_run_results, full_category, discarded=None):
                         % (r["name"], r["est_net"],
                            res.get("total_net_time", -1),
                            r.get("discard_reason", "?")))
+        f.write("\n")
+
+        # ALL_T1021: k = "Final Batch Size", steps = prove_i timers, both
+        # over the samples that finished (real_steps >= 0).
+        f.write("== 5. REEF BATCH SIZE AND STEPS (finished samples) ==\n")
+        for cat, recs in seq_run_results.items():
+            ok = [r["results"] for r in recs
+                  if r["results"].get("real_steps", -1) >= 0]
+            f.write("  cat=%s  k: %s  steps: %s\n"
+                    % (cat, _stats([x["real_batch_size"] for x in ok
+                                    if x["real_batch_size"] >= 0]),
+                       _stats([x["real_steps"] for x in ok])))
         f.write("\n")
 
     # ---- variants_category.txt (full assessment of ALL variants) ----
