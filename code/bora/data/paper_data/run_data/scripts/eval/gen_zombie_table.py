@@ -4,232 +4,143 @@
 # Code reviewed and audited by the author; the generated tables were manually
 # verified by the paper author.
 # ----------------------------------
-"""Generate the two Zombie tables for section 7.7 (Zombie comparison).
+"""Generate the Zombie same-sample table (tab:zombie-data, App. F; W210).
 
-Reads (server-specific files under data/raw_data/<SERVER_TO_USE>/):
-  run_zombie_regex_zombie_international.log
-  full_clam.part1/2.tgz  (8-job full ClamAV; resolve_server_dump joins them)
-  full_dna.tgz    (single-job full DNA)
-  full_dlp.tgz    (Dlp; resolve_server_dump prefers full_dlp.part*.tgz,
-                   the real 8-job Enron run, when present)
-  + the dataset corpora / regex sets via the common extractors (same sources
-    as eval/datasets.py, so the sizes agree with tab:datasets).
+ALL_T1020 (W807 d, OD19): one row per arm L_T (1/2/4 KB). R1CS and proof
+size come from the Zombie sweep log (they do not depend on the e-mail);
+prove and verify time come from the same-sample run on the fixed 32 e-mails
+per arm (same_zombie.py, D5). The u row and the projection table
+(compare_zombie_bora.tex) are gone (W206, W807 e).
 
+Reads (server-specific, under data/raw_data/<SERVER_TO_USE>/):
+  run_zombie_regex_zombie_international.log   (sweep: R1CS, proof bytes)
+  same_zombie_regex_zombie_international.tsv  (D5: accepted proofs)
 Writes:
-  <paper_root>/figs/zombie_data.tex          (Table A: Zombie measured totals)
-  <paper_root>/figs/compare_zombie_bora.tex  (Table B: projection vs BORA)
+  <fig_dir>/zombie_data.tex
 """
 
 from __future__ import annotations
 
+import csv
 import sys
 from pathlib import Path
 
-# common.py lives in the parent scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common import (get_paper_root, zombie_totals, zombie_str_lens,
-                    zombie_regex_bytes,
-                    dataset_corpus_bytes, bora_cost_breakdown,
-                    resolve_server_dump, server_file)
+from common import (zombie_totals, zombie_str_lens, server_file, fig_dir,
+                    source_line, MISSING)
+
+ARMS = [1000, 2000, 4000]
+ZOMBIE_LOG = "run_zombie_regex_zombie_international.log"
+SAME_TSV = "same_zombie_regex_zombie_international.tsv"
+# T943 per-arm share of the RE2-clean <= 4 KB Enron e-mails [U: owner to
+# confirm the source and refresh it on the final corpus].
+ARM_MIX = {1000: 0.342, 2000: 0.399, 4000: 0.260}
 
 
-# ----------------------------- configuration -----------------------------
-
-STR_LENS = [1000, 2000, 4000]
-UNIT_STR_LEN = 2000   # unit cost taken at 2k (~ BORA folding step size)
-
-ZOMBIE_LOG = "run_zombie_regex_zombie_international.log"  # server-specific
-
-# (label, dataset key, BORA dump filename | None if no BORA data yet).
-# Server-specific dumps, resolved via SERVER_TO_USE. For Dlp,
-# resolve_server_dump prefers the two-part real dump
-# (full_dlp.part1/2.tgz, 8-job Enron run) over full_dlp.tgz.
-DATASETS = [
-    ("\\textsc{Mal} (ClamAV)", "mal", "full_clam.tgz"),
-    ("\\textsc{Dna} (chr17)",  "dna", "full_dna.tgz"),
-    ("\\textsc{Dlp} (Enron)",  "dlp", "full_dlp.tgz"),
-]
-
-
-# ---------------------------- formatting ---------------------------------
-
-def fmt_sci(x: float, sig: int = 2) -> str:
-    """Format ``x`` as $a \\times 10^{b}$ in LaTeX math mode."""
-    if x == 0:
-        return "$0$"
-    exp = int(f"{x:.6e}".split("e")[1])
-    mant = x / (10 ** exp)
-    return f"${mant:.{sig}f} \\times 10^{{{exp}}}$"
-
-
-def fmt_human(seconds: float) -> str:
-    """Compact wall-clock label (min / hr / d / yr)."""
-    if seconds < 3600:
-        return f"{seconds / 60:.1f}\\,min"
-    if seconds < 86400 * 2:
-        return f"{seconds / 3600:.2f}\\,hr"
-    if seconds < 86400 * 730:
-        return f"{seconds / 86400:.1f}\\,d"
-    return f"{seconds / 31557600:.1f}\\,yr"
+def same_sample(path) -> dict:
+    """{arm: {emails, proofs, prove_s, verify_s}} over accepted proofs; a
+    retried (unit, e-mail) proof counts once. Per-e-mail values = the
+    e-mail's accepted proofs summed, mean over e-mails. {} when the TSV is
+    missing (D5 not run yet) or a cell does not parse."""
+    try:
+        with open(path) as f:
+            rows = {(int(r["size"]), r["unit"], r["email_id"]): r
+                    for r in csv.DictReader(f, delimiter="\t")
+                    if r.get("accepted") == "1"}
+        for r in rows.values():               # parse once; a bad cell = no D5
+            r["prove_ms"] = float(r["prove_ms"])
+            r["verify_ms"] = float(r["verify_ms"] or 0)
+    except (OSError, ValueError) as e:
+        print(f"MISSING same-sample TSV (D5): {e}")
+        return {}
+    out = {}
+    for arm in ARMS:
+        rs = [r for (size, _, _), r in rows.items() if size == arm]
+        mails = {r["email_id"] for r in rs}
+        if mails:
+            out[arm] = {
+                "emails": len(mails), "proofs": len(rs),
+                "prove_s": sum(r["prove_ms"] for r in rs)
+                / 1000 / len(mails),
+                "verify_s": sum(r["verify_ms"] for r in rs)
+                / 1000 / len(mails)}
+    return out
 
 
-def fmt_bytes(n: int) -> str:
-    """Compact byte size label (KB / MB / GB), decimal units."""
-    if n < 1e6:
-        return f"{n / 1e3:.1f}\\,KB"
-    if n < 1e9:
-        return f"{n / 1e6:.1f}\\,MB"
-    return f"{n / 1e9:.2f}\\,GB"
+def build_table(sweep: dict, same: dict) -> str:
+    """Two 5-column blocks: compile (sweep log) for every swept arm, then
+    same-sample timing (D5) for every timed arm. A missing arm is omitted
+    from its own block only (OD39 a, W807 d)."""
+    rows = []
+    for arm in ARMS:
+        z = sweep.get(arm)
+        if z is None:
+            rows.append(f"% OMITTED compile arm {arm} (OD39 a): no sweep block")
+            continue
+        rows.append(f"    {arm:,} & {z['n']} & {z['total_r1cs']:,} & "
+                    f"{z['total_r1cs'] / arm:,.0f} & "
+                    f"{z['total_proof_bytes'] / 1e6:.2f} \\\\")
+    if not sweep:
+        rows.append(rf"    \multicolumn{{5}}{{l}}{{{MISSING} sweep log}} \\")
+    full = set(same) >= set(ARMS)                      # OD39 a
+    if same:
+        rows += [r"    \midrule",
+                 r"    $L_T$ (B) & E-mails & Proofs & Prove/e-mail (s) & "
+                 r"Verify/e-mail (s) \\",
+                 r"    \midrule"]
+        for arm in ARMS:
+            s = same.get(arm)
+            if s is None:
+                rows.append(f"% OMITTED timing arm {arm} (OD39 a): not in D5")
+                continue
+            rows.append(f"    {arm:,} & {s['emails']} & {s['proofs']:,} & "
+                        f"{s['prove_s']:.1f} & {s['verify_s']:.1f} \\\\")
+        if full:
+            pw = [sum(ARM_MIX[a] * same[a][k] for a in ARMS)
+                  for k in ("prove_s", "verify_s")]
+            rows.append(r"    \midrule")
+            rows.append(rf"    \multicolumn{{3}}{{l}}{{Population-weighted "
+                        rf"mean (derived)}} & {pw[0]:.1f} & {pw[1]:.1f} \\")
+    return "\n".join([
+        r"% Auto-generated by data/scripts/eval/gen_zombie_table.py",
+        source_line(server_file(ZOMBIE_LOG), server_file(SAME_TSV)),
+        r"\begin{table*}[t]",
+        r"  \centering",
+        r"  \small",
+        r"  \caption{Zombie prover cost on the \textsc{MS-DLP} international",
+        r"  SIT rules (Spartan NIZK, two-pattern proximity circuit), per",
+        r"  scanned length $L_T$. R1CS and proof size are summed over the"
+        + (r" regex instances. Prove and verify time are measured on the"
+           r" same random Enron e-mails BORA proves, summed over each"
+           r" e-mail's accepted proofs and averaged over the e-mails."
+           if same else r" regex instances.")
+        + (r" The derived row weights the per-arm means by the arm mix."
+           if full else "") + "}",                       # OD39 a
+        r"  \label{tab:zombie-data}",
+        r"  \begin{tabular}{rrrrr}",
+        r"    \toprule",
+        r"    $L_T$ (B) & Instances & R1CS & R1CS/B & Proof (MB) \\",
+        r"    \midrule",
+        *rows,
+        r"    \bottomrule",
+        r"  \end{tabular}",
+        r"\end{table*}",
+        "",
+    ])
 
-
-# --------------------------- Table A: Zombie -----------------------------
-
-def build_table_a(rows: list) -> str:
-    """Zombie measured totals per string length + derived unit cost."""
-    regex_total = rows[0]["total_regex_bytes"]   # constant across blocks
-
-    body = []
-    for r in rows:
-        body.append(
-            f"    {r['str_len']:,} & {r['total_r1cs']:,} & "
-            f"{r['total_prove_s']:.1f} & {r['total_verify_s']:.1f} & "
-            f"{r['total_proof_bytes'] / 1e6:.2f} \\\\"
-        )
-
-    units = " / ".join(fmt_sci(r["unit_cost"], sig=4) for r in rows)
-    lens = " / ".join(f"{r['str_len']:,}" for r in rows)
-
-    return r"""% Auto-generated by data/scripts/eval/gen_zombie_table.py
-% Source (server-specific, under data/raw_data/<SERVER_TO_USE>/;
-% the paper's numbers come from jet1tb):
-%   """ + ZOMBIE_LOG + r"""
-%
-% Per-block totals over all 'ok' international SIT regex instances. The unit cost
-% u = (total prove time) / (L_T * total regex bytes) is the price of one
-% input-byte x one regex-byte; it is reused in tab:compare-zombie-bora to
-% project the full Mal/Dna/Dlp corpora.
-\begin{table*}[t]
-  \centering
-  \small
-  \caption{Zombie prover cost on the MS-DLP international SIT rules
-  (Spartan NIZK, two-pattern proximity circuit), totalled over all
-  """ + f"{rows[0]['n']}" + r""" regex instances (the """ + \
-        f"{rows[0]['n_rules']}" + r""" \textsc{Sit} rules of
-  Table~\ref{tab:datasets}, expanded into their comb variants) at each
-  scanned document length $L_T$. Zombie proves each instance separately;
-  constraints, prove and verify time, and proof size are all summed over
-  these instances. The total regex size is fixed
-  at """ + f"{regex_total:,}" + r"""\,B. The last row
-  derives the unit cost $u = t_{\text{prove}} / (L_T \cdot \sum_{r \in \hat{R}} |r|)$ in seconds
-  per (input-byte $\times$ regex-byte).}
-  \label{tab:zombie-data}
-  \begin{tabular}{r r r r r}
-    \toprule
-    $L_T$ (B) & Total constraints & Prove (s) & Verify (s) & Proof (MB) \\
-    \midrule
-""" + "\n".join(body) + r"""
-    \midrule
-    \multicolumn{5}{l}{Unit $u = t/(L_T\cdot\sum_{r \in \hat{R}}|r|)$ at $L_T=""" + \
-        f"{lens}" + r"""$: $""" + units.replace("$", "") + \
-        r"""$ s\,B$^{-2}$} \\
-    \bottomrule
-  \end{tabular}
-\end{table*}
-"""
-
-
-# ------------------------ Table B: project vs BORA -----------------------
-
-def build_table_b(unit: float, rows: list,
-                  unit_str_len: int = UNIT_STR_LEN) -> str:
-    """Project the Zombie unit cost across datasets and compare with BORA."""
-    body = []
-    notes = []
-    for label, key, dump in rows:
-        corpus = dataset_corpus_bytes(key)
-        regex = zombie_regex_bytes(key)
-        est = unit * corpus * regex
-        if dump is not None:
-            b = bora_cost_breakdown(resolve_server_dump(dump))
-            bora_cell = f"{fmt_sci(b['net'])} ({b['net'] / 3600:.2f}\\,hr)"
-            speed = f"$\\approx {est / b['net']:,.0f}\\times$"
-            if b["n_jobs"] > 1:
-                notes.append(
-                    f"The {label} BORA cost ${b['net'] / 3600:.2f}$\\,hr is the "
-                    f"total over its ${b['n_jobs']}$ parallel jobs."
-                )
-        else:
-            bora_cell = "--- (no data)"
-            speed = "---"
-        body.append(
-            f"    {label} & {fmt_bytes(corpus)} & {fmt_bytes(regex)} & "
-            f"{fmt_sci(est)} ({fmt_human(est)}) & {bora_cell} & {speed} \\\\"
-        )
-
-    note_tex = (" " + " ".join(notes)) if notes else ""
-
-    return r"""% Auto-generated by data/scripts/eval/gen_zombie_table.py
-% Sources (server-specific, under data/raw_data/<SERVER_TO_USE>/):
-%   full_clam.part1/2.tgz (BORA full ClamAV, 8-job sum; joined by
-%                         resolve_server_dump)
-%   full_dna.tgz   (BORA full DNA, single job)
-%   full_dlp.part1/2.tgz (BORA Dlp, 8-job Enron run; preferred over
-%                         full_dlp.tgz by resolve_server_dump)
-%   dataset corpus + regex sizes via common extractors (same as tab:datasets)
-%
-% Est. Zombie = u * (corpus bytes) * (regex-set bytes), the full doc x regex
-% cross product, with u the """ + f"{unit_str_len}" + r"""-byte unit cost from
-% tab:zombie-data (closest to BORA's folding step size). This UNDER-estimates
-% Zombie at MB-scale documents (Spartan prove is super-linear in constraints),
-% so it is charitable to Zombie. BORA = phase-1 main-circuit folding net
-% (bora_net_cost): single-job DNA, 8-job sums for ClamAV and Dlp (the Dlp
-% dump is the real two-part full_dlp.part1/2.tgz Enron run).
-\begin{table*}[t]
-  \centering
-  \small
-  \caption{Projected Zombie cost (unit $u =
-  """ + fmt_sci(unit, sig=4).replace("$", "") + r"""$ s\,B$^{-2}$, taken at $L_T=""" + \
-        f"{unit_str_len:,}" + r"""$) vs.\ BORA's net main-circuit folding
-  cost. $\text{Est.\ Zombie} = u \cdot (\text{corpus})\cdot
-  (\text{regex set})$, a full document~$\times$~regex cross product. Regex-set
-  size is on-disk rule-file bytes for \textsc{Mal}/\textsc{Dna}; for
-  \textsc{Dlp} it is the pattern$+$keyword bytes fed to the circuit (the
-  on-disk \texttt{.regex} doubles each sub-pattern for the bidirectional
-  proximity form).""" + note_tex + r"""}
-  \label{tab:compare-zombie-bora}
-  \begin{tabular}{l r r r r r}
-    \toprule
-    Dataset & Corpus & Regex set & Est.\ Zombie & BORA (net) & Speedup \\
-    \midrule
-""" + "\n".join(body) + r"""
-    \bottomrule
-  \end{tabular}
-\end{table*}
-"""
-
-
-# --------------------------------- main ----------------------------------
 
 def main() -> None:
-    root = get_paper_root()
-    figs = root / "figs"
-    figs.mkdir(exist_ok=True)
-
-    # A thinned run leaves only shorter blocks; use whichever of STR_LENS the
-    # log actually carries, and fall back for the unit cost.
-    avail = zombie_str_lens(server_file(ZOMBIE_LOG))
-    lens = [n for n in STR_LENS if n in avail] or avail
-    zrows = [zombie_totals(server_file(ZOMBIE_LOG), n) for n in lens]
-    urow = zombie_totals(server_file(ZOMBIE_LOG), UNIT_STR_LEN,
-                         allow_nearest=True)
-    unit = urow["unit_cost"]
-
-    (figs / "zombie_data.tex").write_text(build_table_a(zrows))
-    print(f"wrote {figs / 'zombie_data.tex'}")
-
-    (figs / "compare_zombie_bora.tex").write_text(
-        build_table_b(unit, DATASETS, urow["str_len"]))
-    print(f"wrote {figs / 'compare_zombie_bora.tex'}")
+    sweep = {}
+    try:
+        log = server_file(ZOMBIE_LOG)
+        for arm in ARMS:
+            if arm in zombie_str_lens(log):
+                sweep[arm] = zombie_totals(log, arm)
+    except (OSError, RuntimeError) as e:
+        print(f"MISSING Zombie sweep log: {e}")
+    out = fig_dir() / "zombie_data.tex"
+    out.write_text(build_table(sweep, same_sample(server_file(SAME_TSV))))
+    print(f"wrote {out}")
 
 
 if __name__ == "__main__":

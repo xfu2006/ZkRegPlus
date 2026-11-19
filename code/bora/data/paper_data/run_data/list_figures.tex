@@ -18,6 +18,11 @@
 \def\sde{\texttt{SDE}}
 \def\dfa{\texttt{DFA}}
 \def\cost{\mathsf{cost}}
+% ALL_T1020: a dry run compiles with \def\figdir{figs/dry}; a missing
+% fragment prints a marker instead of stopping pdflatex.
+\providecommand{\figdir}{figs}
+\newcommand{\frag}[1]{\InputIfFileExists{\figdir/#1}{}{\fbox{MISSING
+  fragment \texttt{\detokenize{#1}}}}}
 
 \title{BORA paper-data: figure/table review}
 \author{}
@@ -26,7 +31,7 @@
 \begin{document}
 \maketitle
 
-\input{figs/datasets}
+\frag{datasets}
 
 \begin{table}[t]
 \centering
@@ -35,7 +40,7 @@
 \hline
 Dataset & Pairs & $\mathtt{CP}$ & $\mathtt{SDE}$ & $\mathtt{DFA}$ \\
 \hline
-\input{figs/effectiveness_tab}
+\frag{effectiveness_tab}
 \end{tabular}
 \caption{Discharging statistics: total (rule, file) pairs per data set
 discharged at each tier. Most task pairs clear at $\cp$; $\sde$ is the
@@ -50,7 +55,7 @@ terminal tier for \textsc{Dna}/\textsc{Dlp}.}
 \hline
 Size (B) & Files & $\mathtt{CP}$ & $\mathtt{SDE}$ & $\mathtt{DFA}$ \\
 \hline
-\input{figs/effectiveness_size}
+\frag{effectiveness_size}
 \end{tabular}
 \caption{Change of approximation effectiveness with file size (over
 \textsc{Mal}): fractions of (rule, file) pairs discharged at each tier across
@@ -66,26 +71,24 @@ though the $\dfa$ fraction stays negligible throughout.}
 \hline
 Size (B) & Files & $\mathtt{CP}$ & $\mathtt{SDE}$ & $\mathtt{DFA}$ \\
 \hline
-\input{figs/effectiveness_size_dlp}
+\frag{effectiveness_size_dlp}
 \end{tabular}
 \caption{Same as Table~\ref{tab:eff-size}, over \textsc{Dlp}.}
 \label{tab:eff-size-dlp}
 \end{table}
 
-\input{figs/lookup}
+\frag{lookup}
 
-\input{figs/component_cost}
+\frag{component_cost}
 
-\input{figs/overall_perf}
+\frag{overall_perf}
 
-\input{figs/scale}
+\frag{scale}
 
-\input{figs/dna_reef_bora}
+\frag{dna_reef_bora}
 
-\input{figs/zombie_data}
+\frag{zombie_data}
 
-\input{figs/compare_zombie_bora}
-
-\input{figs/compare_all}
+\frag{compare_measured}
 
 \end{document}

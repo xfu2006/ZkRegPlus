@@ -34,9 +34,13 @@ from pathlib import Path
 
 # common.py lives in the parent scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common import get_paper_root, any_server_file
+from common import (any_server_file, server_file, fig_dir, source_line,
+                    MISSING,
+                    circuit_step_times, resolve_server_dump, raw_data_root)
 
 ORDER = ["Mal", "Dna", "Dlp"]
+# ALL_T1020 (W301): Table 2 sub-rows read each dataset's full-run dump
+DUMPS = {"Mal": "full_clam.tgz", "Dna": "full_dna.tgz", "Dlp": "full_dlp.tgz"}
 TIERS = ("cp", "sde", "dfa", "fail")
 
 
@@ -172,12 +176,35 @@ def _cells(*pcts: float) -> str:
     return " & ".join(f"${pct(p)}\\%$" for p in pcts)
 
 
+def step_rows(label: str) -> list:
+    """ALL_T1020 (W301): one sub-row per circuit, measured Phase-1 step
+    count and total prove_step time, from the dataset's full-run dump."""
+    try:
+        dump = resolve_server_dump(DUMPS[label], raw_data_root() / "extracted")
+        per = circuit_step_times(dump)
+    except (OSError, RuntimeError) as e:
+        print(f"MISSING {label} step times: {e}")
+        per = {}
+    if not per:
+        return [f"\\quad steps & \\multicolumn{{4}}{{r}}{{{MISSING}}} \\\\"]
+    return [f"\\quad circ.~${c}$ & \\multicolumn{{4}}{{r}}{{$"
+            + f"{n:,}".replace(",", "{,}")
+            + f"$ steps, ${t / 3600:.2f}$\\,hr}} \\\\"
+            for c, (n, t) in sorted(per.items())]
+
+
 def build_table(datasets: dict) -> str:
-    rows = []
+    rows = [source_line(any_server_file("eval_effective.txt"),
+                        *map(server_file, DUMPS.values()))]
     for label in ORDER:
-        d = datasets[label]
-        rows.append(f"\\textsc{{{label}}} & {sci(d['pairs'])} & "
-                    f"{_cells(d['cp'], d['sde'], d['dfa'])} \\\\")
+        d = datasets.get(label)
+        if d is None:
+            rows.append(f"\\textsc{{{label}}} & \\multicolumn{{4}}{{r}}"
+                        f"{{{MISSING}}} \\\\")
+        else:
+            rows.append(f"\\textsc{{{label}}} & {sci(d['pairs'])} & "
+                        f"{_cells(d['cp'], d['sde'], d['dfa'])} \\\\")
+        rows.extend(step_rows(label))
     # Emit the closing \hline here so the last row's \\ and the rule sit in
     # the SAME file -- \input'ing a tabular body that ends in \\ right before
     # an outer \hline triggers "Misplaced \noalign" across the file boundary.
@@ -193,7 +220,7 @@ def size_label(lo: int, hi: int) -> str:
 def build_size_table(buckets: list) -> str:
     """Tiers by file size, merged into 4 log-even bins. Owns its closing
     \\hline (see build_table note on the \\input boundary)."""
-    rows = []
+    rows = [source_line(any_server_file("eval_effective.txt"))]
     for b in merge_to_4(buckets):
         rows.append(f"{size_label(b['flen_lo'], b['flen_hi'])} & {b['files']} "
                     f"& {_cells(b['cp'], b['sde'], b['dfa'])} \\\\")
@@ -201,14 +228,21 @@ def build_size_table(buckets: list) -> str:
 
 
 def main() -> None:
-    root = get_paper_root()
-    dump = any_server_file("eval_effective.txt").read_text()
-    datasets, size_buckets = parse(dump)
-    figs = root / "figs"
+    try:
+        datasets, size_buckets = parse(
+            any_server_file("eval_effective.txt").read_text())
+    except OSError as e:
+        print(f"MISSING eval_effective.txt: {e}")
+        datasets, size_buckets = {}, {}
+    figs = fig_dir()
+    gone = (source_line(any_server_file("eval_effective.txt"))
+            + f"\n{MISSING} & & & & \\\\\n\\hline\n")
     outputs = {
         "effectiveness_tab.tex": build_table(datasets),
-        "effectiveness_size.tex": build_size_table(size_buckets["Mal"]),
-        "effectiveness_size_dlp.tex": build_size_table(size_buckets["Dlp"]),
+        "effectiveness_size.tex": (build_size_table(size_buckets["Mal"])
+                                   if size_buckets else gone),
+        "effectiveness_size_dlp.tex": (build_size_table(size_buckets["Dlp"])
+                                       if size_buckets else gone),
     }
     for name, text in outputs.items():
         (figs / name).write_text(text)

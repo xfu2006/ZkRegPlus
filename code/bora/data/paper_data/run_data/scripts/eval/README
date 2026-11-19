@@ -2,7 +2,9 @@ Evaluation scripts (data/scripts/eval)
 ======================================
 
 These scripts turn the raw run logs in data/raw_data/ into the LaTeX table /
-figure fragments under figs/. They share helpers from ../common.py, including
+figure fragments under figs/ (ALL_T1020: with BORA_FIG_DRY=1, a dry run's
+data/raw_data/dry/ into figs/dry/; a missing log prints a visible
+"missing" box or omits a pending same-sample row). They share helpers from ../common.py, including
 SERVER_TO_USE, which selects the data-collection server (gcpm1 / jet1tb) for
 all server-specific logs. Run each from this folder (python3 <name>.py); each
 prints the path it wrote.
@@ -48,14 +50,15 @@ dna_reef_bora.py      Table 9 (tab:dna-reef-bora, App. C.4): Reef per-bucket
                       cost vs BORA on chr17 x NCBI, with the Reef-log parser
                       reused by the comparison generators.
 
-gen_zombie_table.py   Tables 10/11 (App. C.4): two Zombie tables -- measured
-                      per-length totals (+ derived unit cost) and the unit-cost
-                      projection vs BORA across datasets.
+gen_zombie_table.py   Table 10 (tab:zombie-data, App. D.4): Zombie per arm L_T
+                      (1/2/4 KB): R1CS and proof size from the sweep log,
+                      prove/verify time from the same-sample TSV (D5).
 
-gen_compare_all.py    Table 4 (tab:compare-all, §6.5): the consolidated
-                      main-body comparison of Zombie / Reef / BORA across all
-                      three datasets plus BORA's speedup over each (reuses the
-                      Table 1/9/10 extractors).
+gen_compare_measured.py
+                      Sec. 6.5 measured comparison (tab:compare-measured, W203):
+                      Reef 60 sampled rules vs BORA all rules on Dna, Zombie
+                      vs BORA on the same e-mails per arm on Dlp. Replaces
+                      gen_compare_all.py (old Table 4, deleted).
 
 count_loc.py          Implementation/eval: counts author-owned Rust lines in
                       new_zkregplus by module (vendored/upstream code excluded).

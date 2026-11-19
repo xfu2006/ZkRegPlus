@@ -27,7 +27,7 @@ from pathlib import Path
 
 # common.py lives in the parent scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common import get_paper_root, any_server_file
+from common import any_server_file, fig_dir, source_line, MISSING
 
 DATASETS = ["Mal", "Dna", "Dlp"]    # column order (matches §7.6 stubs)
 
@@ -122,8 +122,10 @@ def build_table(data: dict[str, dict]) -> str:
         f"\\multicolumn{{2}}{{c}}{{{data[d]['sigs'] + SIG_ADJUST.get(d, 0):,}}}"
         for d in DATASETS) + r" \\"
     r2 = " / ".join(str(data[d]["r2"]) for d in DATASETS)
+    n_dlp = f"{data['Dlp']['sigs']:,}".replace(",", "{,}")   # as the row
 
     return "\n".join([
+        source_line(any_server_file("lookup_stats.dat")),
         # table* spans both columns; such floats cannot be [H]-pinned, so
         # [t] floats it to a page top near §7.4 (the paper preamble loads
         # stfloats, which also permits [b]).
@@ -153,7 +155,8 @@ def build_table(data: dict[str, dict]) -> str:
         r"$(\cdot/\cdot/\cdot)$ after \emph{DFA} is the number of "
         r"DFAs folded in for rules that frequently fail SDE, per dataset.",
         r"BORA re-writes \ttt{(kw1|...kwn).\{0,N\}pat} in \textsc{Dlp} to "
-        r"disjunction of $n$ rules for improved SDE accuracy, thus expanding from $136$ to $9861$.}",
+        r"disjunction of $n$ rules for improved SDE accuracy, thus expanding "
+        rf"from $136$ to ${n_dlp}$.}}",          # ALL_T1020: DD13 count
         r"\label{tbl:lkup}",
         r"\end{table*}",
         "",
@@ -161,10 +164,15 @@ def build_table(data: dict[str, dict]) -> str:
 
 
 def main() -> None:
-    root = get_paper_root()
-    dump = any_server_file("lookup_stats.dat").read_text()
-    out = root / "figs" / "lookup.tex"
-    out.write_text(build_table(parse(dump)))
+    out = fig_dir() / "lookup.tex"
+    try:
+        tex = build_table(parse(any_server_file("lookup_stats.dat").read_text()))
+    except (OSError, RuntimeError) as e:     # ALL_T1020 (W807 i)
+        print(f"MISSING lookup_stats.dat: {e}")
+        tex = (source_line(any_server_file("lookup_stats.dat")) + "\n"
+               + r"\begin{table*}[t]\caption{" + MISSING
+               + r" lookup composition}\label{tbl:lkup}\end{table*}" + "\n")
+    out.write_text(tex)
     print(f"wrote {out}")
 
 

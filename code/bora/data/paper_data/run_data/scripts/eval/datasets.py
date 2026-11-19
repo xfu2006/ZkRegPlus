@@ -39,7 +39,10 @@ from pathlib import Path
 # common.py lives in the parent scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common import (get_paper_root, get_proj_root, extract_mal_dataset,
-                    extract_dna_dataset, extract_dlp_dataset, dlp_patkws_bytes)
+                    extract_dna_dataset, extract_dlp_dataset, dlp_patkws_bytes,
+                    any_server_file, server_file, fig_dir, source_line,
+                    MISSING)
+from dataclasses import replace
 
 
 # ----------------------------- configuration -----------------------------
@@ -192,7 +195,7 @@ def dlp_step1_corpus(paper_root: Path, proj_root: Path) -> dict:
     metadata entries (.gitignore, README.md) are excluded. Returns
     docs/total_bytes/size_min/size_median/size_max.
     """
-    tgz = paper_root / "data" / "raw_data" / "any_server" / "corpus.tgz"
+    tgz = any_server_file("corpus.tgz")        # ALL_T1020: dry root too
     members = ["passed_clean_email.txt", "failed_clean_email.txt"]
     workdir = Path("/tmp/bora")
     workdir.mkdir(parents=True, exist_ok=True)
@@ -301,8 +304,7 @@ def build_table(datasets: list[Dataset], dna_note: str = "") -> str:
 
 def main() -> None:
     root = get_paper_root()
-    figs = root / "figs"
-    figs.mkdir(exist_ok=True)
+    figs = fig_dir()
 
     proj = get_proj_root()
     mal = build_mal_dataset(extract_mal_dataset(proj))
@@ -315,15 +317,23 @@ def main() -> None:
     # instance, each sub-pattern counted once) -- the accurate cost-driver
     # measure -- not the on-disk .regex size, which doubles each sub-pattern
     # for the bidirectional proximity form. Mal/Dna keep on-disk file sizes.
-    dlp_raw["ruleset_bytes"] = dlp_patkws_bytes()
+    try:
+        dlp_raw["ruleset_bytes"] = dlp_patkws_bytes()
+        zombie = True
+    except (OSError, RuntimeError) as e:     # ALL_T1020 (W807 i)
+        print(f"MISSING Dlp regex size (Zombie sweep log): {e}")
+        zombie = False
     # Override corpus count/size/per-doc stats with the step-1 (RE2-screened)
     # clean corpus -- the emails actually evaluated -- computed from the real
     # files listed in corpus.tgz, resolved under proj (get_proj_root()).
     dlp_raw.update(dlp_step1_corpus(root, proj))
-    dlp = build_dlp_dataset(dlp_raw)
+    dlp = build_dlp_dataset(dlp_raw) if zombie else replace(
+        build_dlp_dataset(dict(dlp_raw, ruleset_bytes=0)), regex_size=MISSING)
     datasets = [mal, dna, dlp]
 
-    tex = build_table(datasets, dna_note=dna_drop_note(dna_raw))
+    tex = (source_line(any_server_file("corpus.tgz"), server_file(
+        "run_zombie_regex_zombie_international.log")) + "\n"
+           + build_table(datasets, dna_note=dna_drop_note(dna_raw)))
     out = figs / "datasets.tex"
     out.write_text(tex)
     print(f"wrote {out}")

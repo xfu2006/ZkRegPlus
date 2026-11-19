@@ -10,3 +10,4 @@ task_tgz/**
 scratch/**
 !scratch/**/
 !scratch/**/.gitkeep
+figs/dry/

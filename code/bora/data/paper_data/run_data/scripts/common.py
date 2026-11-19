@@ -10,6 +10,7 @@ import io
 import os
 import re
 import statistics
+import time
 from pathlib import Path
 
 
@@ -73,16 +74,59 @@ def get_proj_root() -> Path:
 # ALL_T1019: PAPER_DATA.py --run figs (and the end of a dry/full run) sets
 # BORA_FIG_SERVER to its --server; unset = jet1tb, the paper's data.
 SERVER_TO_USE = os.environ.get("BORA_FIG_SERVER", "jet1tb")  # or "gcpm1"
-if SERVER_TO_USE not in ("jet1tb", "gcpm1", "cl2x7542"):
+if SERVER_TO_USE not in ("jet1tb", "gcpm1", "cl2x7542", "jet1tb_v2"):
     raise ValueError("BORA_FIG_SERVER=%r: no such raw_data server folder"
                      % SERVER_TO_USE)
 # NB: the raw_data README/spec calls the 1 TB machine's folder "jet1t", but
 # on-disk directory is "jet1tb"; this constant must match the directory name.
 
 
+# ALL_T1020: a dry run's raw data and fragments live apart from the paper's,
+# under data/raw_data/dry/ and figs/dry/ (PAPER_DATA.py sets BORA_FIG_DRY=1).
+FIG_DRY = os.environ.get("BORA_FIG_DRY") == "1"
+# ALL_T1020 (W807 i): visible marker for a value whose log is missing
+MISSING = r"\fbox{\scriptsize missing}"
+
+
 def raw_data_root() -> Path:
-    """Absolute path of ``data/raw_data/`` under the paper root."""
-    return get_paper_root() / "data" / "raw_data"
+    """Absolute path of ``data/raw_data/`` (``raw_data/dry/`` for a dry run)."""
+    root = get_paper_root() / "data" / "raw_data"
+    return root / "dry" if FIG_DRY else root
+
+
+def fig_dir() -> Path:
+    """Folder the generators write their fragments to (figs/ or figs/dry/)."""
+    d = get_paper_root() / "figs" / ("dry" if FIG_DRY else "")
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def reset_fig_dir() -> None:
+    """ALL_T1020: RUNALL.sh first drops every fragment, so a generator that
+    fails leaves no older fragment behind to pass as this run's."""
+    for p in fig_dir().glob("*.tex"):
+        p.unlink()
+
+
+def source_line(*paths) -> str:
+    """ALL_T1020 (W807 h): '% SOURCE:' line naming each input file with its
+    mtime date (UTC), so the pass shows and a file a failed leaf left in
+    place stands out. A dump's NUMA parts are listed in its place (as
+    resolve_server_dump reads them); a glob lists every match."""
+    out = []
+    for p in map(Path, paths):
+        hits = (sorted(p.parent.glob(p.name.replace(".tgz", ".part*.tgz")))
+                or sorted(p.parent.glob(p.name)))
+        out += ["%s@%s" % (h.relative_to(get_paper_root()), time.strftime(
+            "%Y-%m-%d", time.gmtime(h.stat().st_mtime))) for h in hits] or [
+            "%s@missing" % p.relative_to(get_paper_root())]
+    return "% SOURCE: " + ", ".join(out)
+
+
+def reef_file() -> Path:
+    """ALL_T1020 (W807 g): Reef is always read from jet1tb/ (submitted +
+    Reef data), whatever BORA_FIG_SERVER names; dry/jet1tb/ when dry."""
+    return raw_data_root() / "jet1tb" / "reef_sample_run.log"
 
 
 def server_file(name: str) -> Path:
@@ -92,7 +136,12 @@ def server_file(name: str) -> Path:
     ``data/raw_data/<server>/`` -- the ``*.tgz`` dumps and the Reef/Zombie
     run logs.
     """
-    return raw_data_root() / SERVER_TO_USE / name
+    p = raw_data_root() / SERVER_TO_USE / name
+    if FIG_DRY and not p.exists():       # ALL_T1020: dry logs wear .dry
+        root, ext = os.path.splitext(name)
+        if (p.parent / (root + ".dry" + ext)).exists():
+            return p.parent / (root + ".dry" + ext)
+    return p
 
 
 def any_server_file(name: str) -> Path:
@@ -653,6 +702,22 @@ def get_main_folding_stats(dump_file) -> tuple:
             per_job.append({"job": jid, "num_steps": None, "avg": None,
                             "min": None, "max": None})
     return per_job, _aggregate(per_job, ("num_steps", "avg", "min", "max"))
+
+
+_STEP_CIRC = re.compile(r"prove_step cost: i: \d+, circ_id: (\d+),[^\n]*?"
+                        + _TIME + r"\s*$", re.MULTILINE)
+
+
+def circuit_step_times(dump_file) -> dict:
+    """ALL_T1020 (W301, the T947 measure): {circ_id: (steps, seconds)} over
+    every job's Phase-1 main-folding prove_step lines (Phase 2 excluded)."""
+    out: dict = {}
+    for _jid, jtext in _split_by_job(Path(dump_file).read_text()):
+        n1 = _opt(_phase_num_steps, jtext, 1) or 0
+        for cid, v, u in _STEP_CIRC.findall(jtext)[:n1]:
+            n, s = out.get(int(cid), (0, 0.0))
+            out[int(cid)] = (n + 1, s + _secs(v, u))
+    return out
 
 
 def test_get_cost(dump_file) -> None:

@@ -878,10 +878,14 @@ def pack_full_dump(base, run_logs, ts):
 RAW_DATA_ROOT = os.path.join(REPO, "data", "paper_data", "run_data",
                               "data", "raw_data")
 SERVER = "jet1tb"
+# ALL_T1020: a dry run (or its --final_pack replay) places every raw output
+# under raw_data/dry/, never under the paper's names.
+DRY_RAW = False
 
 def raw_data_path(name, server_specific=True):
     sub = SERVER if server_specific else "any_server"
-    return os.path.join(RAW_DATA_ROOT, sub, name)
+    root = os.path.join(RAW_DATA_ROOT, "dry") if DRY_RAW else RAW_DATA_ROOT
+    return os.path.join(root, sub, name)
 
 def place_raw_data(src, dest_name, server_specific=True):
     dest = raw_data_path(dest_name, server_specific)
@@ -2847,6 +2851,8 @@ def final_pack_one(key):
         log("final_pack %s: no %s/%s_*_* dir with logs -- nothing to "
             "replay" % (key, JOB_LOG_DIR, key))
         return 1
+    global DRY_RAW
+    DRY_RAW = mode == "dry"           # ALL_T1020: a dry replay stays dry
     ctx = JobHandle.replay(key, mode, run_dir)
     # Two-half runs write part1/part2; a single process writes run.log.
     names = ["part1", "part2"] \
@@ -2919,16 +2925,27 @@ def run_final_pack(items):
 
 
 # bora_cli scale_dlp counts (spec 8.10c), pin-INCLUSIVE units: each
-# legacy entry +1; top 9861 = the complete rule set. Bundles land under
-# the literal any_server names gen_scale_all.py hardcodes.
+# legacy entry +1. Bundles land under the literal any_server names
+# gen_scale_all.py hardcodes.
 SCALE_DLP_COUNTS = {
     # dry top halved 987 -> 494 (493 + pin) 2026-08-11: measured
     # peak RSS is 22.3GB + 0.0136*count GB, so the count buys 6.7GB
     # of the cut and DLP's new dry_range2_bit 22 buys the rest.
     "dry":  [2, 494],
-    "full": [2, 987, 1973, 2959, 3945, 4931, 5917, 6903, 7889,
-             8875, 9861],
 }
+# ALL_T1020 (DD13): the rule file bora_cli counts (DLP spec, n_sigs).
+DLP_SIG_FILE = os.path.join(REPO, "data", "paper_data", "dlp", "cfg",
+                            "regex_pat", "main_data_dlp_internationl.dat")
+
+
+def scale_dlp_counts(mode):
+    """ALL_T1020 (DD13): full = 2 plus ten 10% steps of the rule file, so
+    the top count is the complete rule set (9,861 gave the old list)."""
+    if mode == "dry":
+        return SCALE_DLP_COUNTS["dry"]
+    with open(DLP_SIG_FILE) as f:
+        n = sum(1 for s in f if s.strip() and not s.startswith("#"))
+    return [2] + [(p * (n - 1) + 5) // 10 + 1 for p in range(1, 11)]
 
 # (corpus_idx, bundle, log tag); order = DLP.scale_sources (idx 0 =
 # griffith-j/continental/2. sparse, idx 1 = donohoe-t/sent/6. dense).
@@ -3401,7 +3418,7 @@ def run_leaf_scale_dlp(mode, ctx):
     leaf but is NOT byte-identical: one process per round, so
     per-round logs, an s0_-tagged Rust job log, and a cache reclaimed
     after each round rather than overwritten."""
-    counts = SCALE_DLP_COUNTS[mode]
+    counts = scale_dlp_counts(mode)
     rc = run_scale_batched(ctx, "scale_dlp", mode, SCALE_DLP_RUNS,
                            counts, lambda _tag: "scale_dlp",
                            "1" if mode == "dry" else "0", scale_env())
@@ -3833,7 +3850,9 @@ def place_same_zombie_outputs(mode, ctx):
     # full run without a valid PASS; only this run's copy is reported.
     for name in dict.fromkeys([zombie_out_name(SAME_ZOMBIE_SCALECAL, mode),
                                SAME_ZOMBIE_SCALECAL]):
-        sc = raw_data_path(name)
+        # ALL_T1020: stays outside dry/; the full run's best_scalecal reads
+        # the dry record here (the dry-to-full handoff).
+        sc = os.path.join(RAW_DATA_ROOT, SERVER, name)
         if stale_artifact(sc, ctx._t0) is None:
             ctx.raw_data.append(sc)
             break
@@ -5366,20 +5385,9 @@ def same_plan_check(plan, kept=()):
             and os.environ.get("ZKR_ZOMBIE_TMP_ROOT")):   # ALL_T1009: test-only
         return ("REFUSED: ZKR_ZOMBIE_TMP_ROOT is set (a test redirect of the "
                 "Zombie /tmp paths); unset it for a full run")
+    # ALL_T1020: the full-stamp refusal is gone; a dry run writes only
+    # raw_data/dry/, so it cannot overwrite a full dlp result.
     if plan.mode == "dry" and "dlp" in plan.leaf_keys:
-        st = load_stamp("full")
-        if st is not None and st.get("mode") == "full":
-            return ("REFUSED: a full dlp result exists for %s (stamp %s, "
-                    "%s); a dry dlp run would overwrite raw_data/%s/"
-                    "full_dlp*.tgz and become --final_pack's newest dlp "
-                    "dir. A full run does its own zombie speed check, so "
-                    "no dry run is needed; to dry-test zombie alone run "
-                    "`--run dry_run --items zombie` (CloudLab: add "
-                    "--same_1kb --server cl2x7542). To run "
-                    "a dry dlp anyway, move full_dlp*.tgz and "
-                    "full_dlp.stamp.json out of raw_data/%s/ first."
-                    % (SERVER, (st.get("commit") or "?")[:12],
-                       st.get("written", "?"), SERVER, SERVER))
         loose = _unvouched_dlp_dumps()
         if loose:
             ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -7442,12 +7450,14 @@ PDF_DIR = os.path.join(REPO, "data", "paper_data", "pdf")
 PDF_PATH = os.path.join(PDF_DIR, "list_figures.pdf")
 
 
-def pdf_path(server):
+def pdf_path(server, dry=False):
     """ALL_T1019: jet1tb (the paper) keeps list_figures.pdf; any other
-    --server gets list_figures.<server>.pdf, never the paper's PDF."""
-    if server == "jet1tb":
+    --server gets list_figures.<server>.pdf, never the paper's PDF.
+    ALL_T1020: a dry run adds .dry (list_figures.dry.pdf on jet1tb)."""
+    if server == "jet1tb" and not dry:
         return PDF_PATH
-    return os.path.join(PDF_DIR, "list_figures.%s.pdf" % server)
+    return os.path.join(PDF_DIR, "list_figures%s%s.pdf" % (
+        "" if server == "jet1tb" else "." + server, ".dry" if dry else ""))
 
 
 def _wipe_generated(root):
@@ -7559,13 +7569,16 @@ def run_figs(server=None):
     then compile list_figures.pdf. Runs in the foreground: this takes
     seconds, unlike a Sequencer leaf, so no daemonizing.
     ALL_T1019: the generators read raw_data/<server>/ (default: the
-    --server of this run) via BORA_FIG_SERVER (common.SERVER_TO_USE)."""
-    server = server or SERVER
+    --server of this run) via BORA_FIG_SERVER (common.SERVER_TO_USE).
+    ALL_T1020: a dry run (DRY_RAW) reads raw_data/dry/, writes figs/dry/
+    and builds the PDF in a temp dir, so nothing of the paper's is touched."""
+    server, dry = server or SERVER, DRY_RAW
     stage_corpus_tgz()
     log("figs: running RUNALL.sh for server %s (per-generator failures "
         "are non-fatal)" % server)
     p = subprocess.run(["bash", "RUNALL.sh"], cwd=EVAL_DIR,
-                       env=dict(os.environ, BORA_FIG_SERVER=server),
+                       env=dict(os.environ, BORA_FIG_SERVER=server,
+                                BORA_FIG_DRY="1" if dry else "0"),
                        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                        text=True)
     sys.stdout.write(p.stdout or "")
@@ -7580,22 +7593,27 @@ def run_figs(server=None):
             % (server, ", ".join(failed)))
 
     log("figs: compiling list_figures.tex")
-    out = None
-    for _ in range(2):
-        p = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "list_figures.tex"],
-            cwd=RUN_DATA_DIR, stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, text=True)
-        out = p.stdout
-    built = os.path.join(RUN_DATA_DIR, "list_figures.pdf")
-    if not os.path.isfile(built):
-        log("figs: pdflatex did not produce a PDF:\n%s"
-            % (out or "")[-4000:])
-        return 1
-
-    os.makedirs(PDF_DIR, exist_ok=True)
-    dest = pdf_path(server)
-    shutil.copy2(built, dest)
+    with tempfile.TemporaryDirectory() as td:
+        # ALL_T1020: dry builds from figs/dry/ into td, never over the
+        # tracked run_data/list_figures.pdf.
+        argv = (["-jobname=list_figures", "-output-directory=" + td,
+                 r"\def\figdir{figs/dry}\input{list_figures}"] if dry
+                else ["list_figures.tex"])
+        out = None
+        for _ in range(2):
+            p = subprocess.run(
+                ["pdflatex", "-interaction=nonstopmode"] + argv,
+                cwd=RUN_DATA_DIR, stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT, text=True)
+            out = p.stdout
+        built = os.path.join(td if dry else RUN_DATA_DIR, "list_figures.pdf")
+        if not os.path.isfile(built):
+            log("figs: pdflatex did not produce a PDF:\n%s"
+                % (out or "")[-4000:])
+            return 1
+        os.makedirs(PDF_DIR, exist_ok=True)
+        dest = pdf_path(server, dry)
+        shutil.copy2(built, dest)
     log("figs: wrote %s" % dest)
     return 0
 
@@ -7613,7 +7631,7 @@ def figs_after_run(plan):
         _summary_line("FIGS   error  %r" % (e,))
         return
     if rc == 0:
-        _summary_line("FIGS   built  %s" % pdf_path(SERVER))
+        _summary_line("FIGS   built  %s" % pdf_path(SERVER, DRY_RAW))
     else:
         _summary_line("FIGS   error  pdflatex made no PDF (rc %d)" % rc)
 
@@ -7630,7 +7648,7 @@ def main():
 
     # T952/T955 opt-in options (owner decision 4): with none given
     # every global keeps its module default.
-    global SERVER, HALF, ONE_PROOF_PER_HALF, SAME_1KB, SAME_ONLY
+    global SERVER, HALF, ONE_PROOF_PER_HALF, SAME_1KB, SAME_ONLY, DRY_RAW
     SERVER, HALF = args.server, args.half
     ONE_PROOF_PER_HALF = args.one_proof_per_half
     SAME_1KB = args.same_1kb                      # DLP_T1001
@@ -7665,6 +7683,7 @@ def main():
 
     plan = resolve_plan(args.run, args.items) if args.run \
         else interactive_select()
+    DRY_RAW = plan.mode == "dry"           # ALL_T1020: before any check
 
     log("resolved: python3 PAPER_DATA.py --run %s%s" % (
         plan.top,
@@ -9355,6 +9374,14 @@ class RawDataPathTest(unittest.TestCase):
         self.assertTrue(p.endswith(
             os.path.join("raw_data", "any_server", "lookup_stats.dat")))
 
+    def test_dry_run_root(self):
+        """ALL_T1020: dry outputs never take the paper's raw names."""
+        with mock.patch.object(_MOD, "DRY_RAW", True):
+            for name, spec, sub in (("full_clam.tgz", True, SERVER),
+                                    ("lookup_stats.dat", False, "any_server")):
+                self.assertEqual(raw_data_path(name, spec), os.path.join(
+                    RAW_DATA_ROOT, "dry", sub, name))
+
 
 class PlaceRawDataTest(unittest.TestCase):
     def test_copies_and_overwrites(self):
@@ -10181,6 +10208,20 @@ class RunLeafScaleDlpTest(ScaleLeafPoolTests, unittest.TestCase):
     RUNS = SCALE_DLP_RUNS
     COUNTS = SCALE_DLP_COUNTS["dry"]
     LEAF = staticmethod(run_leaf_scale_dlp)
+
+    def test_full_counts_follow_the_rule_file(self):
+        """ALL_T1020 (DD13): 9,861 rules give the old list; the top count
+        is always the whole rule file (comments, blanks skipped)."""
+        for n, want in ((9861, [2, 987, 1973, 2959, 3945, 4931, 5917, 6903,
+                                7889, 8875, 9861]),
+                        (10167, [2, 1018, 2034, 3051, 4067, 5084, 6101,
+                                 7117, 8134, 9150, 10167])):
+            with tempfile.NamedTemporaryFile("w") as f:
+                f.write("# c\n\n" + "r\n" * n)
+                f.flush()
+                with mock.patch.object(_MOD, "DLP_SIG_FILE", f.name):
+                    self.assertEqual(scale_dlp_counts("full"), want)
+        self.assertEqual(scale_dlp_counts("dry"), [2, 494])
 
     def test_subcommand_is_the_bare_token(self):
         ctx = JobHandle("scale_dlp", "dry")
@@ -11571,17 +11612,43 @@ class RunFigsTest(unittest.TestCase):
                                           "list_figures.cl2x7542.pdf"))
             self.assertEqual(pdf_path("jet1tb"), PDF_PATH)
 
+    def test_dry_figs_never_touch_paper_names(self):
+        """ALL_T1020: dry figs read raw_data/dry (BORA_FIG_DRY=1), compile
+        from figs/dry into a temp dir, and place list_figures.dry.pdf."""
+        with mock.patch("subprocess.run") as run, \
+             mock.patch("os.path.isfile", return_value=True), \
+             mock.patch("os.makedirs"), \
+             mock.patch("shutil.copy2") as copy2, \
+             mock.patch.object(_MOD, "DRY_RAW", True):
+            run.return_value.returncode = 0
+            run.return_value.stdout = ""
+            self.assertEqual(run_figs(), 0)
+            self.assertEqual(run.call_args_list[0].kwargs["env"]
+                             ["BORA_FIG_DRY"], "1")
+            tex = run.call_args_list[1].args[0]
+            self.assertIn(r"\def\figdir{figs/dry}\input{list_figures}", tex)
+            out = [a for a in tex if a.startswith("-output-directory=")]
+            src, dest = copy2.call_args_list[-1].args
+            self.assertEqual(os.path.dirname(src), out[0].split("=", 1)[1])
+            self.assertEqual(dest, os.path.join(PDF_DIR,
+                                                "list_figures.dry.pdf"))
+        self.assertEqual(pdf_path("cl2x7542", True), os.path.join(
+            PDF_DIR, "list_figures.cl2x7542.dry.pdf"))
+
     def test_figs_after_run_only_dry_full(self):
         class _P:
             def __init__(self, top):
                 self.top = top
         with mock.patch.object(_MOD, "run_figs", return_value=0) as rf, \
-             mock.patch.object(_MOD, "_summary_line") as sl:
-            _REAL_FIGS_AFTER_RUN(_P("dry_run"))
+             mock.patch.object(_MOD, "_summary_line") as sl, \
+             mock.patch.object(_MOD, "SERVER", "jet1tb"):
+            with mock.patch.object(_MOD, "DRY_RAW", True):   # ALL_T1020
+                _REAL_FIGS_AFTER_RUN(_P("dry_run"))
             _REAL_FIGS_AFTER_RUN(_P("full_run"))
             _REAL_FIGS_AFTER_RUN(_P("small"))
             self.assertEqual(rf.call_count, 2)
-            self.assertIn("FIGS   built", sl.call_args_list[0].args[0])
+            self.assertIn("list_figures.dry.pdf", sl.call_args_list[0].args[0])
+            self.assertIn("list_figures.pdf", sl.call_args_list[1].args[0])
         with mock.patch.object(_MOD, "run_figs",
                                side_effect=RuntimeError("x")), \
              mock.patch.object(_MOD, "_summary_line") as sl:
@@ -12108,6 +12175,7 @@ class PreflightTest(unittest.TestCase):
         sees it on the terminal instead of in a log."""
         with mock.patch("sys.argv",
                          ["prog", "--run", "dry_run", "--items", "lkup"]), \
+             mock.patch.object(_MOD, "DRY_RAW", False), \
              mock.patch.object(_MOD, "_preflight", return_value=2), \
              mock.patch.object(_MOD, "go_background") as gb, \
              mock.patch.object(_MOD, "Sequencer") as seq:
@@ -12830,6 +12898,7 @@ class EndToEndWiringTest(unittest.TestCase):
         # not the kernel.  EnsureVmaTest owns that gate.
         with mock.patch("sys.argv",
                          ["prog", "--run", "dry_run", "--items", "A"]), \
+             mock.patch.object(_MOD, "DRY_RAW", False), \
              mock.patch.object(_MOD, "ensure_vma"), \
              mock.patch.object(_MOD, "_preflight", return_value=0) as pf, \
              mock.patch.object(_MOD, "go_background") as gb, \
@@ -14655,17 +14724,12 @@ class SamePlanCheckTest(unittest.TestCase):
                 self.assertIsNone(
                     same_plan_check(self._plan("full_run", "dlp")))
 
-    def test_dry_dlp_refused_while_full_stamp_exists(self):
-        """amend R3, invariant 40."""
-        self._stamp("dry")
-        self.assertIsNone(same_plan_check(self._plan("dry_run", "dlp")))
+    def test_dry_dlp_not_refused_by_full_stamp(self):
+        """ALL_T1020: a dry run writes raw_data/dry/ only, so a full
+        stamp no longer refuses it (was amend R3, invariant 40)."""
         self._stamp("full")
-        r = same_plan_check(self._plan("dry_run", "dlp,zombie"))
-        self.assertIn("a full dlp result exists for jet1tb", r)
-        self.assertIn("A full run does its own zombie speed check", r)
-        self.assertIn("--run dry_run --items zombie", r)
-        self.assertIsNone(same_plan_check(self._plan("dry_run", "zombie")))
-        self.assertIsNone(same_plan_check(self._plan("full_run", "dlp")))
+        self.assertIsNone(same_plan_check(self._plan("dry_run",
+                                                     "dlp,zombie")))
 
     def test_dry_dlp_refused_over_unstamped_dump(self):
         """review2 minor 9: a full_dlp.tgz with no stamp (pre-stamp full
@@ -15677,7 +15741,8 @@ class SameMainTest(unittest.TestCase):
 
     def _main(self, *argv, env=None):
         with mock.patch("sys.argv", ["prog"] + list(argv)), \
-             mock.patch.dict(os.environ, env or {}):
+             mock.patch.dict(os.environ, env or {}), \
+             mock.patch.object(_MOD, "DRY_RAW", False):   # ALL_T1020
             return main()
 
     def test_t14_full_plan_refused_before_any_leaf(self):
@@ -15748,8 +15813,11 @@ class SameMainTest(unittest.TestCase):
         rd = os.path.join(_MOD.JOB_LOG_DIR, "dlp_full_20261101_000000")
         os.makedirs(rd)
         open(os.path.join(rd, "run.log"), "w").close()
-        self.assertEqual(self._main("--run", "dry_run", "--items",
-                                    "dlp,zombie"), 2)
+        # ALL_T1020: a dry run reads and writes raw_data/dry/ only, so
+        # the full result no longer needs a refusal to stay untouched.
+        with mock.patch.object(_MOD, "DRY_RAW", True):
+            self.assertIsNone(same_plan_check(resolve_plan("dry_run",
+                                                           "dlp")))
         ms = os.path.join(self.tmp.name, "ms")
         os.makedirs(os.path.join(ms, "docs"))
 
@@ -15773,8 +15841,8 @@ class SameMainTest(unittest.TestCase):
                                         "zombie"), 0)
         for name, text in files.items():
             self.assertEqual(open(raw_data_path(name)).read(), text, name)
-        self.assertTrue(os.path.isfile(raw_data_path(
-            SAME_ZOMBIE_BASE + ".dry.tsv")))
+        self.assertTrue(os.path.isfile(os.path.join(
+            RAW_DATA_ROOT, "dry", SERVER, SAME_ZOMBIE_BASE + ".dry.tsv")))
         self.assertEqual(find_run_dir("dlp"), (rd, "full"))
 
 
