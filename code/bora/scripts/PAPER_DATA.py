@@ -1839,10 +1839,14 @@ def run_leaf_effective(mode, ctx):
         if missing:
             ctx.note("effective: %s" % missing)
             rc = 6
+        elif not effective_mark_stale(ctx):   # ALL_T1022 D3
+            rc = 6
         else:
             dest = place_raw_data(local_out, "eval_effective.txt",
                                    server_specific=False)
             ctx.raw_data.append(dest)
+            if not getattr(ctx, "dlp_stale_msg", None):   # ALL_T1022 D3: good run
+                _unlink_quiet(raw_data_path(EFFECTIVE_STALE))
     # b_fail_scan=False as lkup: the report itself is println!'d into
     # run.log, and ClamAV signature NAMES are arbitrary text.
     return ctx.finish(rc, b_fail_scan=False)
@@ -2139,8 +2143,11 @@ def run_same_dlp(mode, ctx, rc_main):
     """DLP_T1001: the BORA same-sample job after the main dlp run.
     Returns its rc (0 when skipped); same_dlp*.tgz on every outcome."""
     if rc_main != 0:
-        ctx.note("BORA same-sample skipped: main rc=%s" % rc_main)
-        return 0
+        if rc_main == ABORT_RC or aborted():   # O2: an operator stop still skips
+            ctx.note("BORA same-sample skipped: main rc=%s" % rc_main)
+            return 0
+        # O2: D6 reads only its fixtures; a half-saved main DB lacks fmt_t978.txt
+        ctx.note("BORA same-sample runs although main rc=%s (O2)" % rc_main)
     if HALF == 1:
         ctx.note("BORA same-sample skipped under --half 1")
         return 0
@@ -2178,6 +2185,468 @@ def run_same_dlp(mode, ctx, rc_main):
     return rc
 
 
+# ---- ALL_T1022: dlp_corpus leaf (Dlp corpus + job list at the run commit) --
+
+DLP_CORPUS_TEST = ("zkp_driver::tests_zkp_driver::"
+                   "gen_email_corpus_for_full_dlp")
+# ALL_T1022 r3: --lib = the lib test harness only (no examples, no doctests)
+DLP_CORPUS_CMD = ["cargo", "test", "-p", "zkregplus", "--release", "--lib"]
+DLP_CFG_REL = "data/paper_data/dlp/cfg"
+# tracked files the regen rewrites (zkp_driver.rs compile_dlp_rules + steps 6-8)
+DLP_CORPUS_OUTPUTS = [DLP_CFG_REL + "/corpus.stat",
+                      DLP_CFG_REL + "/corpus.tgz",
+                      DLP_CFG_REL + "/jobs/final_enron_list.txt.tgz",
+                      DLP_CFG_REL + "/regex_pat/main_data_dlp_internationl.dat"]
+# ALL_T1022 r3: only the 3 lists leave the git checks; the rules copy stays in
+DLP_CORPUS_LISTS = DLP_CORPUS_OUTPUTS[:3]
+# scratch the regen makes and removes; left behind only by a crash
+DLP_CORPUS_TMP = [DLP_CFG_REL + "/corpus/",
+                  DLP_CFG_REL + "/jobs/final_enron_list.txt"]
+DLP_CORPUS_CLEAN_GLOB = "/tmp/bora_clean_*"   # ALL_T1022 r3: extract_clean_list
+DLP_CORPUS_INPUTS = [
+    "data/src_sig/ms_dlp/regex_bora_international/main_full.dat",
+    "data/src_sig/ms_dlp/docs/"
+    "clean_email_list_email_regex_zombie_international.txt.tgz"] + [
+    DLP_CFG_REL + "/regex_pat/" + n for n in (   # ALL_T1022 r3: hidden inputs
+        "main_dfa.dat", "needs_ised.dat", "needs_ised_igc.dat",
+        "main_fanout.dat")]
+# ALL_T1022 r3: one maildir file (INSTALL email item) as the Enron sentinel
+DLP_CORPUS_MAILDIR = "data/samples/email/src/maildir/griffith-j/continental/2."
+DLP_CORPUS_GITIGNORE = "data/samples/email/.gitignore"   # step-1 list names it
+DLP_CORPUS_RAW, DLP_CORPUS_STAGE1 = 517403, 509600   # b95dce0c corpus.stat
+# ALL_T1022 r3: a commit here after the regen makes its list stale
+DLP_CORPUS_CODE = ["crates/", "vendor/", "Cargo.toml", "Cargo.lock",
+                   "rust-toolchain*"] + DLP_CORPUS_INPUTS
+DLP_CORPUS_NAME = "dlp_corpus.tgz"
+DLP_CORPUS_MANIFEST = "dlp_corpus.json"
+DLP_CORPUS_SUMS = "dlp_corpus.sha256"
+DLP_CORPUS_MAX_WALL_S = 6 * 3600   # 2.3 h measured on r7525 (11/14)
+DLP_CORPUS_DRY_WALL_S = 2 * 3600   # ALL_T1022 r3: test-target build only
+DLP_CORPUS_DONE_RE = re.compile(
+    r"^\[corpus\] DONE raw=(\d+) stage1=(\d+) passed=(\d+) failed=(\d+) "
+    r"high=(\d+) final=(\d+)", re.M)
+DLP_CORPUS_DONE_KEYS = ("raw", "stage1", "passed", "failed", "high", "final")
+DLP_CORPUS_PASS_RE = re.compile(r"test result: ok\. 1 passed")
+DLP_CORPUS_LIST_RE = re.compile(
+    r"^%s: test$" % re.escape(DLP_CORPUS_TEST), re.M)
+DLP_CORPUS_MEMBERS = {"passed_clean_email.txt": "passed",
+                      "failed_clean_email.txt": "failed",
+                      "high_cost_email_removed.txt": "high"}
+
+
+def dlp_corpus_required(mode):
+    """ALL_T1022: inputs of the regen and the maildir sentinel, not its
+    outputs (the regen rewrites them; dry checks them by digest)."""
+    return [os.path.join(REPO, p) for p in
+            DLP_CORPUS_INPUTS + [DLP_CORPUS_MAILDIR]]
+
+
+def _member_name(m):
+    """ALL_T1022 r3: tar member name without a leading './' prefix."""
+    return m.name[2:] if m.name.startswith("./") else m.name
+
+
+def dlp_corpus_digest(root=None):
+    """ALL_T1022: (digest, {path: sha256}) of DLP_CORPUS_OUTPUTS by
+    content; a .tgz hashes member names and bytes, so tar mtimes do not
+    count.  Raises when a file is missing or unreadable."""
+    root = root or REPO
+    per, h = {}, hashlib.sha256()
+    for rel in DLP_CORPUS_OUTPUTS:
+        p, fh = os.path.join(root, rel), hashlib.sha256()
+        if rel.endswith(".tgz"):
+            with tarfile.open(p, "r:gz") as t:
+                for m in t:
+                    if not m.isfile():
+                        continue
+                    fh.update(_member_name(m).encode() + b"\0")
+                    f = t.extractfile(m)
+                    for b in iter(lambda: f.read(1 << 20), b""):
+                        fh.update(b)
+                    fh.update(b"\0")
+        else:
+            with open(p, "rb") as f:
+                for b in iter(lambda: f.read(1 << 20), b""):
+                    fh.update(b)
+        per[rel] = fh.hexdigest()
+        h.update(("%s %s\n" % (rel, per[rel])).encode())
+    return h.hexdigest(), per
+
+
+def dlp_corpus_counts(root=None):
+    """ALL_T1022 r3: non-blank lines per list (final, passed, failed,
+    high).  Raises on a truncated .tgz."""
+    root, out = root or REPO, {}
+    for rel, names in ((DLP_CORPUS_OUTPUTS[2],
+                        {"final_enron_list.txt": "final"}),
+                       (DLP_CORPUS_OUTPUTS[1], DLP_CORPUS_MEMBERS)):
+        with tarfile.open(os.path.join(root, rel), "r:gz") as t:
+            for m in t:
+                k = names.get(_member_name(m))
+                if k and m.isfile():
+                    out[k] = sum(1 for ln in t.extractfile(m) if ln.strip())
+    return out
+
+
+def _head_blob(rel):
+    """ALL_T1022 r3: bytes of HEAD:./rel (REPO-relative, read-only git)."""
+    p = subprocess.run(["git"] + _git_safe(REPO) + ["-C", REPO, "cat-file",
+                        "blob", "HEAD:./" + rel], capture_output=True,
+                       timeout=300)
+    if p.returncode != 0:
+        raise RuntimeError("git cat-file HEAD:%s rc %d" % (rel, p.returncode))
+    return p.stdout
+
+
+def dlp_corpus_put_head(root):
+    """ALL_T1022 r3: write HEAD's DLP_CORPUS_OUTPUTS under root."""
+    for rel in DLP_CORPUS_OUTPUTS:
+        data = _head_blob(rel)
+        p = os.path.join(root, rel)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "wb") as f:
+            f.write(data)
+
+
+def dlp_corpus_head():
+    """ALL_T1022 r3: (digest, per-file sha256, counts) of HEAD's files."""
+    with tempfile.TemporaryDirectory() as td:
+        dlp_corpus_put_head(td)
+        dig, per = dlp_corpus_digest(td)
+        return dig, per, dlp_corpus_counts(td)
+
+
+def dlp_corpus_restore(ctx):
+    """ALL_T1022 r3: HEAD's files back, regen scratch removed.  Never
+    raises; True when done."""
+    try:
+        dlp_corpus_put_head(REPO)
+        shutil.rmtree(os.path.join(REPO, DLP_CORPUS_TMP[0]),
+                      ignore_errors=True)
+        _unlink_quiet(os.path.join(REPO, DLP_CORPUS_TMP[1]))
+        for d in glob.glob(DLP_CORPUS_CLEAN_GLOB):
+            shutil.rmtree(d, ignore_errors=True)
+        return True
+    except Exception as e:
+        ctx.note("dlp_corpus: restore from HEAD failed: %s" % e)
+        return False
+
+
+def dlp_corpus_missing_success(text, t0, files_head):
+    """ALL_T1022: None when the regen passed and its outputs agree with
+    its DONE line, else why not."""
+    if not DLP_CORPUS_PASS_RE.search(text):
+        return "no 'test result: ok. 1 passed' (wrong test path or fail)"
+    done = DLP_CORPUS_DONE_RE.findall(text)
+    if len(done) != 1:
+        return "%d '[corpus] DONE' lines, want 1" % len(done)
+    d = dict(zip(DLP_CORPUS_DONE_KEYS, (int(x) for x in done[0])))
+    if (d["raw"], d["stage1"]) != (DLP_CORPUS_RAW, DLP_CORPUS_STAGE1):
+        return "raw/stage1 %d/%d, want %d/%d (maildir or step-1 list)" % (
+            d["raw"], d["stage1"], DLP_CORPUS_RAW, DLP_CORPUS_STAGE1)
+    if d["passed"] != d["final"] + d["high"] or d["final"] == 0 \
+            or d["passed"] + d["failed"] != d["stage1"]:
+        return "DONE counts do not add up: %s" % d
+    for rel in DLP_CORPUS_OUTPUTS:
+        why = stale_artifact(os.path.join(REPO, rel), t0)
+        if why:
+            return why
+    try:
+        n = dlp_corpus_counts()
+    except Exception as e:
+        return "lists unreadable: %s" % e
+    for k in ("final", "passed", "failed", "high"):
+        if n.get(k) != d[k]:
+            return "%s list has %s paths, DONE says %d" % (k, n.get(k), d[k])
+    stat = _read_text(os.path.join(REPO, DLP_CORPUS_OUTPUTS[0]))
+    if [int(x) for x in re.findall(r"retained\s+(\d+) files", stat)] != [
+            d["raw"], d["stage1"], d["passed"], d["final"]] \
+            or [int(x) for x in re.findall(r"dropped\s+(\d+) files", stat)] \
+            != [d["raw"] - d["stage1"], d["failed"], d["high"]] \
+            or re.findall(r"^\s+(\d+) files, ", stat, re.M) != [str(d["final"])]:
+        return "corpus.stat counts differ from the DONE line"
+    rules = DLP_CORPUS_OUTPUTS[3]
+    if not files_head or \
+            _file_sha256(os.path.join(REPO, rules)) != files_head.get(rules):
+        return "rules copy %s differs from HEAD's (or HEAD unread)" % rules
+    return None
+
+
+def _write_json_atomic(path, obj):
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".tmp", "w") as f:
+        json.dump(obj, f, indent=1, sort_keys=True)
+    os.replace(path + ".tmp", path)
+
+
+def _place_dlp_corpus(ctx, man, run_log):
+    """ALL_T1022: manifest, then <outputs + log + sums>.tgz, then (rc 0
+    only, r3) the sha256 file over both, under raw_data/<server>/.
+    Never raises; False when not placed."""
+    try:
+        dest_j = raw_data_path(DLP_CORPUS_MANIFEST)
+        _write_json_atomic(dest_j, man)
+        dest_t = raw_data_path(DLP_CORPUS_NAME)
+        sums = "".join("%s  %s\n" % (_file_sha256(os.path.join(REPO, r)), r)
+                       for r in DLP_CORPUS_OUTPUTS
+                       if os.path.isfile(os.path.join(REPO, r)))
+        sp = ctx.report_path("dlp_corpus_files_sha256")
+        with open(sp, "w") as f:
+            f.write(sums)
+        with tarfile.open(dest_t + ".tmp", "w:gz") as t:
+            for r in DLP_CORPUS_OUTPUTS:
+                if os.path.isfile(os.path.join(REPO, r)):
+                    t.add(os.path.join(REPO, r), arcname=r)
+            t.add(sp, arcname="FILES.sha256")
+            t.add(dest_j, arcname=DLP_CORPUS_MANIFEST)
+            if os.path.isfile(run_log):
+                t.add(run_log, arcname="dlp_corpus_%s.log" % ctx._ts)
+        os.replace(dest_t + ".tmp", dest_t)
+        ctx.raw_data.extend([dest_j, dest_t])
+        if man.get("rc") != 0:   # ALL_T1022 r3: a failed pack never sha-passes
+            return True
+        dest_s = raw_data_path(DLP_CORPUS_SUMS)
+        with open(dest_s + ".tmp", "w") as f:
+            for d in (dest_t, dest_j):
+                f.write("%s  %s\n" % (_file_sha256(d), os.path.basename(d)))
+        os.replace(dest_s + ".tmp", dest_s)
+        ctx.raw_data.append(dest_s)
+        return True
+    except Exception as e:
+        for n in (DLP_CORPUS_MANIFEST, DLP_CORPUS_NAME, DLP_CORPUS_SUMS):
+            _unlink_quiet(raw_data_path(n) + ".tmp")
+        ctx.note("dlp_corpus: raw_data not placed: %s" % e)
+        return False
+
+
+def _dlp_corpus_dry(ctx, run_log):
+    """ALL_T1022 r3: inputs present, the test target builds (warms
+    target/ for hour 0) and lists exactly the regen test."""
+    miss = [p for p in dlp_corpus_required("dry") if not os.path.isfile(p)]
+    if miss:
+        ctx.note("dlp_corpus dry: missing %s" % " ".join(miss))
+        return 6
+    for lp, argv in ((ctx.log_path("build"), ["--no-run"]),
+                     (run_log, ["--", DLP_CORPUS_TEST, "--exact", "--list"])):
+        p, t = spawn(DLP_CORPUS_CMD + argv, neo_env(), lp, ctx.key)
+        ctx.watch(p, lp, max_wall_s=DLP_CORPUS_DRY_WALL_S)
+        p.wait()
+        _join_pump(t)
+        if p.returncode != 0:
+            ctx.note("dlp_corpus dry: cargo test %s rc %s"
+                     % (argv[-1], p.returncode))
+            return p.returncode
+    if not DLP_CORPUS_LIST_RE.search(_read_text(run_log)):
+        ctx.note("dlp_corpus dry: '%s: test' not listed" % DLP_CORPUS_TEST)
+        return 6
+    return 0
+
+
+def _dlp_corpus_full(ctx, man, run_log):
+    """ALL_T1022: the regen and every check; returns rc.  The caller
+    restores HEAD's files on any rc != 0 or raise."""
+    gi = os.path.join(REPO, DLP_CORPUS_GITIGNORE)
+    if not os.path.exists(gi):   # ALL_T1022 r3: INSTALL never makes it
+        open(gi, "a").close()
+        ctx.note("dlp_corpus: created empty %s" % DLP_CORPUS_GITIGNORE)
+    point_current_job(run_log, None)
+    # ALL_T1022: one test thread, the test writes the global config
+    p, t = spawn(DLP_CORPUS_CMD + ["--", DLP_CORPUS_TEST, "--exact",
+                                   "--nocapture", "--test-threads=1"],
+                 neo_env(), run_log, ctx.key)
+    ctx.watch(p, run_log, max_wall_s=DLP_CORPUS_MAX_WALL_S)
+    p.wait()
+    _join_pump(t)
+    rc, text = p.returncode, _read_text(run_log)
+    done = DLP_CORPUS_DONE_RE.findall(text)
+    if done:
+        man["done"] = dict(zip(DLP_CORPUS_DONE_KEYS,
+                               (int(x) for x in done[-1])))
+    try:
+        man["digest_after"], man["files_after"] = dlp_corpus_digest()
+        man["counts_after"] = dlp_corpus_counts()
+    except Exception as e:
+        man["digest_after"], man["why"] = None, "outputs unreadable: %s" % e
+        ctx.note("dlp_corpus: digest after the regen failed: %s" % e)
+        rc = rc or 6
+    if rc == 0:
+        why = dlp_corpus_missing_success(text, ctx._t0, man.get("files_head"))
+        if why:
+            man["why"] = why
+            ctx.note("dlp_corpus: %s" % why)
+            rc = 6
+    if rc == 0:
+        man["reproduced_head"] = man["digest_after"] == man.get("digest_head")
+    return rc
+
+
+def _dlp_corpus_summary(man):
+    """ALL_T1022 r3: one SUMMARY.log line (digests and pack: the manifest)."""
+    if man.get("rc") == 0:
+        d, h = man.get("done") or {}, man.get("counts_head") or {}
+        _summary_line(
+            "       dlp_corpus: rc=0 final=%s passed=%s failed=%s high=%s "
+            "(HEAD final=%s failed=%s); lists %s HEAD's" % (
+                d.get("final"), d.get("passed"), d.get("failed"),
+                d.get("high"), h.get("final"), h.get("failed"),
+                "REPRODUCE" if man.get("reproduced_head") else "DIFFER FROM"))
+    else:
+        _summary_line(
+            "       dlp_corpus: FAILED rc=%s (%s); HEAD files restored: %s; "
+            "dlp refuses, effective runs with Dlp rows STALE" % (
+                man.get("rc"), man.get("why", "cargo test failed"),
+                man.get("restored_head")))
+
+
+def run_leaf_dlp_corpus(mode, ctx):
+    """ALL_T1022: regenerate corpus.stat, corpus.tgz and the Dlp job list
+    at the run commit (cargo test gen_email_corpus_for_full_dlp, ~2.3 h,
+    ~131 GB).  dry: input check plus the test-target build and --list,
+    no regen, no tracked file written.  The manifest records the HEAD,
+    before and after digests."""
+    man = {"kind": "dlp_corpus", "mode": mode, "commit": leaf_head(),
+           "host": platform.node(), "t_leaf_start": ctx._t0, "rc": None,
+           "test": DLP_CORPUS_TEST, "inputs": {}}
+    if mode == "full":   # ALL_T1022 r3: pending manifest; a crash leaves rc None
+        _write_json_atomic(raw_data_path(DLP_CORPUS_MANIFEST), man)
+    else:
+        _unlink_quiet(raw_data_path(DLP_CORPUS_MANIFEST))
+    for n in (DLP_CORPUS_NAME, DLP_CORPUS_SUMS):   # ALL_T1022 r3: no stale pack
+        _unlink_quiet(raw_data_path(n))
+    for rel in DLP_CORPUS_INPUTS:
+        p = os.path.join(REPO, rel)
+        man["inputs"][rel] = _file_sha256(p) if os.path.isfile(p) else None
+    try:
+        man["digest_head"], man["files_head"], man["counts_head"] = \
+            dlp_corpus_head()
+    except Exception as e:
+        man["digest_head"] = man["files_head"] = None
+        ctx.note("dlp_corpus: HEAD's corpus files unreadable: %s" % e)
+    try:
+        man["digest_before"] = dlp_corpus_digest()[0]
+    except Exception as e:
+        man["digest_before"] = None
+        ctx.note("dlp_corpus: digest of the tree's files failed: %s" % e)
+    run_log = ctx.log_path("run")
+    if mode == "dry":
+        rc = _dlp_corpus_dry(ctx, run_log)
+        if man["digest_before"] is None:
+            rc = rc or 6
+        man["digest_after"], man["rc"] = man["digest_before"], rc
+        if not _place_dlp_corpus(ctx, man, run_log) and rc == 0:
+            rc = 6
+        return ctx.finish(rc, b_fail_scan=False)
+    rc = 6
+    try:
+        rc = _dlp_corpus_full(ctx, man, run_log)
+        man["rc"] = rc
+        if not _place_dlp_corpus(ctx, man, run_log) and rc == 0:
+            rc = 6
+    finally:
+        if rc != 0:   # ALL_T1022 r3: restore after the last rc change
+            man["rc"] = rc
+            man["restored_head"] = dlp_corpus_restore(ctx)
+            try:
+                _write_json_atomic(raw_data_path(DLP_CORPUS_MANIFEST), man)
+            except OSError as e:
+                ctx.note("dlp_corpus: final manifest not written: %s" % e)
+    _dlp_corpus_summary(man)
+    return ctx.finish(rc, b_fail_scan=False)
+
+
+CORPUS_GATED = ("dlp", "effective")        # ALL_T1022: Dlp job list readers
+
+
+def dlp_corpus_refusal():
+    """ALL_T1022: why a full dlp/effective must not read the tree's Dlp
+    lists, or None.  The manifest must vouch for them (rc 0, same digest,
+    no commit under DLP_CORPUS_CODE since the regen); R1: with no
+    manifest (GRP3 boxes) they must be HEAD's."""
+    man_p = raw_data_path(DLP_CORPUS_MANIFEST)
+    if os.path.exists(man_p):
+        man = _read_json(man_p)
+        if not isinstance(man, dict) or man.get("rc") != 0:
+            return "manifest %s has rc %s (crashed or failed regen)" % (
+                man_p, man.get("rc") if isinstance(man, dict) else
+                "unreadable")
+        c = str(man.get("commit"))
+        rc, out = _git(["diff", "--name-only", c, "HEAD", "--"]
+                       + DLP_CORPUS_CODE)
+        if rc != 0 or out.strip():
+            return "discharge code changed since the regen at %s: %s" % (
+                c[:12], " ".join(out.split()[:5]) or "git diff failed")
+        want, src = man.get("digest_after"), "the dlp_corpus manifest"
+    else:
+        try:
+            want, src = dlp_corpus_head()[0], "HEAD (no dlp_corpus manifest)"
+        except Exception:
+            return None   # ALL_T1022 R1: no git, as before
+    try:
+        dig = dlp_corpus_digest()[0]
+    except Exception as e:
+        return "corpus digest failed: %s" % e
+    if dig != want:
+        return "the tree's Dlp lists differ from %s" % src
+    return None
+
+
+EFFECTIVE_STALE = "effective_dlp_stale.txt"   # ALL_T1022 D3: Dlp rows stale marker
+
+
+def effective_mark_stale(ctx):
+    """ALL_T1022 D3: a stale run writes the marker before its report is
+    placed; False = marker not written (report not placed)."""
+    stale_p, msg = raw_data_path(EFFECTIVE_STALE), getattr(
+        ctx, "dlp_stale_msg", None)
+    if not msg:
+        return True   # a good run clears the marker after placing (r1)
+    try:
+        os.makedirs(os.path.dirname(stale_p), exist_ok=True)
+        with open(stale_p, "w") as f:
+            f.write(msg + "\n")
+        ctx.raw_data.append(stale_p)
+        return True
+    except OSError as e:
+        ctx.note("ALL_T1022: stale marker not written, report not placed: %s"
+                 % e)
+        return False
+
+
+def corpus_gate(ctx, key, mode, plan_keys=()):
+    """ALL_T1022: None to run the leaf, else the refused LeafResult of a
+    full dlp/effective on lists dlp_corpus_refusal rejects (Sequencer)."""
+    if mode != "full" or key not in CORPUS_GATED or (key == "dlp"
+                                                     and SAME_ONLY):
+        return None   # ALL_T1022: SAME_ONLY dlp runs only D6 (no list)
+    why = dlp_corpus_refusal()
+    no_man = not os.path.exists(raw_data_path(DLP_CORPUS_MANIFEST))
+    if why is None and no_man and "dlp_corpus" in plan_keys:   # H1
+        why = "dlp_corpus is in the plan but wrote no manifest"
+    if why is None:
+        if no_man:   # H2: name the list this leaf reads
+            _summary_line("       %s: runs on HEAD's committed Dlp lists "
+                          "(no dlp_corpus manifest)" % key)
+        return None
+    try:
+        on_head = key == "effective" and \
+            dlp_corpus_digest()[0] == dlp_corpus_head()[0]
+    except Exception:
+        on_head = False
+    if on_head:   # ALL_T1022 D3: Mal/Dna rows stay valid; Dlp rows STALE
+        ctx.dlp_stale_msg = ("effective runs on HEAD's Dlp lists (%s); Dlp "
+                             "rows STALE: %s" % (str(leaf_head())[:12], why))
+        ctx.note("ALL_T1022: " + ctx.dlp_stale_msg)
+        _summary_line("       effective: " + ctx.dlp_stale_msg)
+        return None
+    why += "; relaunch with dlp_corpus in --items"
+    ctx.note("ALL_T1022: %s refused: %s" % (key, why))
+    _summary_line("       %s: REFUSED (ALL_T1022): %s" % (key, why))
+    if key == "dlp":   # O2: D6 does not read the list
+        ctx.note("BORA same-sample runs although dlp is refused (O2)")
+        run_same_dlp_safe(mode, ctx, 0)
+    return ctx.finish(6, b_fail_scan=False)
+
+
 # ---- DLP_T1001: stamps (d9 1d) ----------------------------------------
 
 STAMP_LISTS = {
@@ -2185,6 +2654,10 @@ STAMP_LISTS = {
                  "rust-toolchain", "data/paper_data/dlp/",
                  ":(exclude)crates/zkregplus/src/same_dlp.rs"],
 }   # zombie_timing validity is owned by same_zombie.py alone
+# ALL_T1022: a stamp without corpus_digest is checked on the old list
+STAMP_LISTS["dlp_main_legacy"] = list(STAMP_LISTS["dlp_main"])
+# ALL_T1022: regen outputs leave git checks; corpus_digest covers them
+STAMP_LISTS["dlp_main"] += [":(exclude)" + x for x in DLP_CORPUS_LISTS]
 
 
 def _git_version():
@@ -2279,6 +2752,11 @@ def dlp_before(ctx):
     an error is kept and makes the stamp invalid (amend m4)."""
     ctx._same_err = None
     ctx._same_commit_t0, ctx._same_dirty_t0 = None, None
+    ctx._corpus_digest_t0 = None
+    try:   # ALL_T1022: no corpus files = a legacy stamp (full git list)
+        ctx._corpus_digest_t0 = dlp_corpus_digest()[0]
+    except Exception:
+        pass
     try:
         # A stale stamp must never vouch for this leaf's new dumps.
         if os.path.exists(dlp_stamp_path(ctx.mode)):
@@ -2308,12 +2786,20 @@ def dlp_after(mode, ctx, rc):
         model = resolve_process_model()
         reason = err or ("HEAD moved during the leaf" if head_moved
                          else None)
+        if getattr(ctx, "_corpus_digest_t0", None):   # ALL_T1022
+            try:
+                if dlp_corpus_digest()[0] != ctx._corpus_digest_t0:
+                    reason = reason or ("Dlp corpus files changed during "
+                                        "the leaf")
+            except Exception as e:
+                reason = reason or "corpus digest: %s" % e
         stamp = {
             "kind": "dlp_main", "invalid_reason": reason,
             "commit": ctx._same_commit_t0,
             "dirty": bool(ctx._same_dirty_t0) or ctx._same_dirty_t0 is None,
             "dirty_paths": ctx._same_dirty_t0 or [],
             "head_moved": head_moved, "host": platform.node(),
+            "corpus_digest": getattr(ctx, "_corpus_digest_t0", None),
             "fingerprint": box_fingerprint(), "mode": mode,
             "t_leaf_start": ctx._t0, "rc": rc,
             "argv": _dlp_main_argv(mode, HALF, model.n_parts),
@@ -2390,18 +2876,29 @@ def stamp_check(stamp, kind, repo=None):
         return "stamp commit %r unknown to git" % c
     if _git(["merge-base", "--is-ancestor", c, "HEAD"], repo)[0] != 0:
         return "stamp commit %s is not an ancestor of HEAD" % c[:12]
+    lk = kind   # ALL_T1022: old stamps keep the full git list
+    if kind == "dlp_main" and not stamp.get("corpus_digest"):
+        lk = "dlp_main_legacy"
     rc, out = _git(["diff", "--name-only", c, "HEAD", "--"]
-                   + STAMP_LISTS[kind], repo)
+                   + STAMP_LISTS[lk], repo)
     if rc != 0 or out.strip():
         return "committed changes under the %s list since %s: %s" % (
             kind, c[:12], " ".join(out.split()) or "git diff failed")
     try:
-        st = _git_status(kind, repo)
+        st = _git_status(lk, repo)
     except RuntimeError as e:
         return str(e)
     if st:
         return "uncommitted changes under the %s list: %s" % (
             kind, " ".join(ln[3:] for ln in st))
+    if lk == "dlp_main":
+        try:
+            dig = dlp_corpus_digest(repo)[0]
+        except Exception as e:
+            return "corpus digest failed: %s" % e
+        if dig != stamp.get("corpus_digest"):
+            return "Dlp corpus files differ from the stamp's (%s vs %s)" % (
+                dig[:12], str(stamp.get("corpus_digest"))[:12])
     if kind == "dlp_main":
         if stamp.get("rc") != 0:
             return "main dlp rc %s, want 0" % stamp.get("rc")
@@ -4262,6 +4759,8 @@ JOB_SPECS.update({
                           lambda m: zombie_required_files(m)),
     "reef":       JobSpec("reef",       "Reef",         run_leaf_reef,
                           lambda m: [reef_script(m)]),
+    "dlp_corpus": JobSpec("dlp_corpus", "Dlp corpus",   run_leaf_dlp_corpus,
+                          dlp_corpus_required),   # ALL_T1022
 })
 
 
@@ -4355,6 +4854,9 @@ def _terminate_all():
 LEAF_DONE_DIR = "leaf_done"        # under CACHE_DIR (git-ignored, kept)
 # ALL_T1013 R2: tracked files a leaf or INSTALL rewrites; not a source edit
 LEAF_OUTPUT_EXCLUDES = ["data/src_sig/ms_dlp/docs/download_zombie.log"]
+# ALL_T1022: dlp_corpus rewrites these; leaf_inputs hashes them instead
+LEAF_OUTPUT_EXCLUDES += DLP_CORPUS_LISTS
+LEAF_CORPUS_READERS = CORPUS_GATED + ("dlp_corpus",)
 # ALL_T1013 V2: an untracked file here is a source change
 LEAF_SRC_PATHS = ["scripts/", "crates/", "vendor/", "data/src_sig/*/scripts/",
                   "Cargo.toml", "Cargo.lock", "rust-toolchain*"]
@@ -4393,12 +4895,16 @@ def leaf_options(plan):
             "ONE_PROOF_PER_HALF": ONE_PROOF_PER_HALF, "SAME_1KB": SAME_1KB,
             "SAME_ONLY": SAME_ONLY, "THP_MODE": THP_MODE,
             "VMA_TARGET": VMA_TARGET, "numa": numa_available(), "env": env,
-            "top": plan.top, "leaf_keys": list(plan.leaf_keys)}
+            "top": plan.top,   # ALL_T1022: stamps ignore dlp_corpus
+            "leaf_keys": [k for k in plan.leaf_keys if k != "dlp_corpus"]}
 
 
 def leaf_inputs(key):
     """ALL_T1013 V3: hash of git-ignored inputs a leaf reads (Zombie
-    clone), or None.  Raises on failure; callers treat that as rerun."""
+    clone), or None.  Raises on failure; callers treat that as rerun.
+    ALL_T1022: the Dlp job list readers hash the regen outputs."""
+    if key in LEAF_CORPUS_READERS:
+        return dlp_corpus_digest()[0]
     if key != "zombie":
         return None
     spec = importlib.util.spec_from_file_location("same_zombie_inputs",
@@ -4532,6 +5038,22 @@ def write_leaf_stamp(key, plan, result, t0, commit0, clean0):
         return "stamp write failed: %s" % e
 
 
+def corpus_auto_add(plan):
+    """ALL_T1022 (owner 11/19 "re-generate it"): a full plan that runs dlp
+    or effective without dlp_corpus, on lists the gate would refuse
+    (missing, truncated, not vouched), gets dlp_corpus first instead.
+    Never under SAME_ONLY or --half (half_refusal takes only dlp,clam)."""
+    keys = list(plan.leaf_keys)
+    if (plan.mode != "full" or SAME_ONLY or HALF is not None
+            or "dlp_corpus" in keys or not set(keys) & set(CORPUS_GATED)):
+        return plan, None
+    why = dlp_corpus_refusal()
+    if not why:
+        return plan, None
+    return ResolvedPlan(top=plan.top, mode=plan.mode,
+                        leaf_keys=["dlp_corpus"] + keys), why
+
+
 def kept_leaves(plan, b_hash=True, b_log=False):
     """ALL_T1013 F2a: the leaves of a full plan whose stamp holds."""
     kept = []
@@ -4587,6 +5109,10 @@ class Sequencer:
         b_stamp = mode == "full" and _run_lock_fd is not None   # ALL_T1013
         if b_stamp and leaf_key in self.kept:
             why = leaf_keep_reason(leaf_key, self.plan)   # ALL_T1013 V6: recheck
+            if why is None and leaf_key == "effective" and os.path.exists(
+                    raw_data_path(EFFECTIVE_STALE)) \
+                    and dlp_corpus_refusal() is None:   # ALL_T1022 D3
+                why = "its Dlp rows are STALE and the lists now pass"
             if why is None:
                 return _kept_result(leaf_key)
             _summary_line("       %s: kept at hour 0, but now: %s; rerun"
@@ -4612,7 +5138,10 @@ class Sequencer:
                 for w in clear_db_cache():
                     _summary_line("       %s" % w)
             ctx = JobHandle(leaf_key, mode)
-            result = spec.run_fn(mode, ctx)
+            result = corpus_gate(ctx, leaf_key, mode,   # ALL_T1022: Dlp gate
+                                 self.plan.leaf_keys)
+            if result is None:
+                result = spec.run_fn(mode, ctx)
         except Exception:
             # A run_fn bug (bad launch args, a helper raising outside the
             # subprocess it launched, etc.) must not kill the whole
@@ -4718,6 +5247,8 @@ DRY_COST = [
     # effective is ESTIMATED, not measured: gb None until its first
     # instrumented dry run replaces this row.
     ("effective",  "Effectiveness", 6.0,  None, ""),
+    # ALL_T1022: dry = inputs + test-target build + --list, no regen; est
+    ("dlp_corpus", "Dlp corpus regen", 30.0, None, " build check"),
 ]
 
 # small_full_snark is MEASURED, not dry -- a real 4-job fold plus a full
@@ -4818,6 +5349,7 @@ FULL_COST = [
     ("scale_clam",  7.1,  148,  ""),
     ("scale_dlp",   3.7,  165,  ""),
     ("effective",   1.9,   73,  ""),
+    ("dlp_corpus",  2.5,  132,  ""),  # ALL_T1022 est: r7525 11/14 2.3 h, 131.2 GB
 ]
 
 
@@ -4926,13 +5458,21 @@ class ResolvedPlan:
     leaf_keys: list
 
 
+def corpus_first(keys):
+    """ALL_T1022: dlp_corpus always runs first (dlp and effective read
+    the job list it writes); every other key keeps its order."""
+    if "dlp_corpus" in keys[1:]:
+        keys = ["dlp_corpus"] + [k for k in keys if k != "dlp_corpus"]
+    return keys
+
+
 def _parse_items(items):
     """'1,3,5' / 'dlp,clam' / 'A' / 'all' -> ordered, deduped leaf keys."""
     tokens = [t.strip() for t in items.split(",") if t.strip()]
     if any(t.lower() in ("a", "all") for t in tokens):
         if len(tokens) > 1:
             log("--items: 'A' selects every leaf; other tokens ignored")
-        return list(_LEAF_KEYS)
+        return corpus_first(list(_LEAF_KEYS))
     keys = []
     for t in tokens:
         if t.isdigit():
@@ -4947,7 +5487,7 @@ def _parse_items(items):
             raise SystemExit("--items: unknown item %r" % t)
         if key not in keys:
             keys.append(key)
-    return keys
+    return corpus_first(keys)
 
 
 NO_ITEM_TOPS = ("small", "figs", "small_full_snark", "clean",
@@ -7684,6 +8224,11 @@ def main():
     plan = resolve_plan(args.run, args.items) if args.run \
         else interactive_select()
     DRY_RAW = plan.mode == "dry"           # ALL_T1020: before any check
+    typed_keys = plan.leaf_keys   # ALL_T1022: the scope re-exec retypes these
+    plan, corpus_why = corpus_auto_add(plan)   # ALL_T1022: regen, not refuse
+    if corpus_why:
+        log("ALL_T1022: Dlp lists not usable (%s): dlp_corpus added first "
+            "(+about 2.3 h)" % corpus_why)
 
     log("resolved: python3 PAPER_DATA.py --run %s%s" % (
         plan.top,
@@ -7714,7 +8259,7 @@ def main():
     kept_pre = kept_leaves(plan, b_hash=False)
     refusal = ensure_same_scope(plan, sys.argv[1:] + (
         [] if args.run else ["--run", plan.top, "--items",
-                             ",".join(plan.leaf_keys)]))
+                             ",".join(typed_keys)]))
     if refusal and "zombie" in kept_pre:  # ALL_T1013 V6: kept, so a note
         log("NOTE: zombie is kept by its done stamp; scope check said: %s"
             % refusal)
@@ -7881,6 +8426,8 @@ def main():
     if rc:
         return rc
     kept = kept_leaves(plan, b_log=True)   # ALL_T1013 F2a: after the probe (V5)
+    if corpus_why:   # ALL_T1022
+        _summary_line("       dlp_corpus auto-added: %s" % corpus_why)
     if kept:
         _summary_line("       done stamps hold for: %s" % ", ".join(kept))
 
@@ -12577,11 +13124,19 @@ class ResolvePlanTest(unittest.TestCase):
 
     def test_all_expansion(self):
         plan = resolve_plan("dry_run", "all")
-        self.assertEqual(plan.leaf_keys, _LEAF_KEYS)
+        self.assertEqual(plan.leaf_keys, corpus_first(list(_LEAF_KEYS)))
 
     def test_all_wins_over_mixed_tokens(self):
         plan = resolve_plan("dry_run", "dlp,A,clam")
-        self.assertEqual(plan.leaf_keys, _LEAF_KEYS)
+        self.assertEqual(plan.leaf_keys, corpus_first(list(_LEAF_KEYS)))
+
+    def test_corpus_first(self):
+        """ALL_T1022: dlp_corpus moves to the front, the rest keep order."""
+        plan = resolve_plan("full_run", "dna,clam,dlp,dlp_corpus,effective")
+        self.assertEqual(plan.leaf_keys, ["dlp_corpus", "dna", "clam", "dlp",
+                                          "effective"])
+        self.assertEqual(resolve_plan("full_run", "dna,dlp").leaf_keys,
+                         ["dna", "dlp"])
 
     def test_dedup_preserves_first_order(self):
         plan = resolve_plan("dry_run", "1,3,1")
@@ -12911,9 +13466,9 @@ class EndToEndWiringTest(unittest.TestCase):
         with open(_MOD.SUMMARY_LOG) as f:
             text = f.read()
         self.assertEqual(re.findall(r"START\s+(\S+)", text),
-                          list(_LEAF_KEYS))
+                          corpus_first(list(_LEAF_KEYS)))
         self.assertEqual(re.findall(r"OK\s+(\S+)", text),
-                          list(_LEAF_KEYS))
+                          corpus_first(list(_LEAF_KEYS)))
         self.assertIn("DONE   overall_rc=0", text)
 
 
@@ -16715,6 +17270,457 @@ class CloneSpaceAndCoreTest(unittest.TestCase):
              mock.patch.object(_MOD.subprocess, "run", side_effect=bad):
             with self.assertRaises(subprocess.CalledProcessError):
                 _copy_no_clobber("/d", "/s")
+
+def _t1022_tgz(path, members, prefix="", mtime=0):
+    """ALL_T1022 r3 test helper: a .tgz of {name: [lines]}."""
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with tarfile.open(path, "w:gz") as t:
+        for n, lines in members.items():
+            b = "".join(ln + "\n" for ln in lines).encode()
+            ti = tarfile.TarInfo(prefix + n)
+            ti.size, ti.mtime = len(b), mtime
+            t.addfile(ti, io.BytesIO(b))
+
+
+def _t1022_stat(raw, s1, passed, failed, high, final):
+    """ALL_T1022 r3 test helper: corpus.stat in the test's own layout."""
+    return ("  0. raw\n        retained %d files (100%%)\n"
+            "  1. zombie\n        dropped  %d files (x)\n"
+            "        retained %d files (x)\n"
+            "  2. bora\n        dropped  %d files (x)\n"
+            "        retained %d files (x)\n"
+            "  3. high\n        dropped  %d files (x)\n"
+            "        retained %d files (x)\n"
+            "  final  cfg/jobs/final_enron_list.txt.tgz\n"
+            "        %d files, 0 MB = x\n" % (
+                raw, raw - s1, s1, failed, passed, high, final, final))
+
+
+def _t1022_lists(root, n_final, n_failed, n_high=1, raw=12, mtime=0):
+    """ALL_T1022 r3 test helper: the 3 regen lists + corpus.stat."""
+    fin = ["m%d" % i for i in range(n_final)]
+    high = ["h%d" % i for i in range(n_high)]
+    failed = ["f%d" % i for i in range(n_failed)]
+    _t1022_tgz(os.path.join(root, DLP_CORPUS_OUTPUTS[2]),
+               {"final_enron_list.txt": fin}, mtime=mtime)
+    _t1022_tgz(os.path.join(root, DLP_CORPUS_OUTPUTS[1]),
+               {"passed_clean_email.txt": fin + high,
+                "failed_clean_email.txt": failed,
+                "high_cost_email_removed.txt": high}, mtime=mtime)
+    s1 = n_final + n_high + n_failed
+    with open(os.path.join(root, DLP_CORPUS_OUTPUTS[0]), "w") as f:
+        f.write(_t1022_stat(raw, s1, n_final + n_high, n_failed, n_high,
+                            n_final))
+
+
+# fake `cargo test`: argv = DLP_CORPUS_CMD tail; writes what the regen writes
+_T1022_FAKE = r'''
+import io, json, os, shutil, sys, tarfile
+mode = os.environ.get("T1022_FAKE", "pass")
+if "--no-run" in sys.argv:
+    sys.exit(0)
+if "--list" in sys.argv:
+    print("" if mode == "nolist" else sys.argv[sys.argv.index("--") + 1]
+          + ": test")
+    sys.exit(0)
+man = os.environ["T1022_MAN"]
+print("MANIFEST_RC=%s" % json.load(open(man)).get("rc"))
+cfg = "data/paper_data/dlp/cfg"
+shutil.copy("data/src_sig/ms_dlp/regex_bora_international/main_full.dat",
+            cfg + "/regex_pat/main_data_dlp_internationl.dat")
+os.makedirs(cfg + "/corpus", exist_ok=True)
+def tgz(rel, members):
+    with tarfile.open(rel, "w:gz") as t:
+        for n, lines in members.items():
+            b = "".join(ln + "\n" for ln in lines).encode()
+            ti = tarfile.TarInfo(n)
+            ti.size = len(b)
+            t.addfile(ti, io.BytesIO(b))
+fin, high, failed = ["m%d" % i for i in range(5)], ["h0"], ["f%d" % i
+                                                          for i in range(4)]
+if mode == "panic":
+    open(cfg + "/jobs/final_enron_list.txt.tgz", "wb").write(b"\x1f\x8bxx")
+    print("thread 'main' panicked at read_nibbles")
+    sys.exit(101)
+tgz(cfg + "/jobs/final_enron_list.txt.tgz", {"final_enron_list.txt": fin})
+tgz(cfg + "/corpus.tgz", {"passed_clean_email.txt": fin + high,
+                          "failed_clean_email.txt": failed,
+                          "high_cost_email_removed.txt": high})
+shutil.rmtree(cfg + "/corpus")
+if mode == "trunc":
+    b = open(cfg + "/corpus.tgz", "rb").read()
+    open(cfg + "/corpus.tgz", "wb").write(b[:len(b) // 2])
+open(cfg + "/corpus.stat", "w").write(os.environ["T1022_STAT"])
+print("[corpus] DONE raw=12 stage1=10 passed=6 failed=4 high=1 final=5")
+print("test result: ok. 1 passed; 0 failed; 0 ignored")
+'''
+
+
+class DlpCorpusLeafTest(unittest.TestCase):
+    """ALL_T1022 r3: dlp_corpus leaf (fake cargo child), pack, restore,
+    gate and excludes in a temp git repo; never the real tree."""
+
+    GIT = ["git", "-c", "user.name=t", "-c", "user.email=t@t",
+           "-c", "commit.gpgsign=false"]
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        r = self.repo = os.path.join(self.tmp.name, "repo")
+        for rel in DLP_CORPUS_INPUTS + [DLP_CORPUS_MAILDIR, "crates/x.rs",
+                                        "scripts/a.py"]:
+            os.makedirs(os.path.dirname(os.path.join(r, rel)), exist_ok=True)
+            with open(os.path.join(r, rel), "w") as f:
+                f.write("rule\n" if rel.endswith("main_full.dat") else "x\n")
+        shutil.copy(os.path.join(r, DLP_CORPUS_INPUTS[0]),
+                    os.path.join(r, DLP_CORPUS_OUTPUTS[3]))
+        _t1022_lists(r, 6, 3)             # committed: final 6, failed 3
+        with open(os.path.join(r, ".gitignore"), "w") as f:
+            f.write("data/samples/\n*.txt\n")
+        self._git("init", "-q")
+        self._git("add", "-A")
+        self._git("commit", "-q", "-m", "base")
+        fake = os.path.join(self.tmp.name, "fake_cargo.py")
+        with open(fake, "w") as f:
+            f.write(_T1022_FAKE)
+        self.clean = os.path.join(self.tmp.name, "bora_clean_1")
+        os.makedirs(self.clean)
+        self.raw = os.path.join(self.tmp.name, "raw")
+        for name, val in (("REPO", r), ("RAW_DATA_ROOT", self.raw),
+                          ("SERVER", "jet1tb"), ("DRY_RAW", False),
+                          ("SUMMARY_LOG", os.path.join(self.tmp.name, "S.log")),
+                          ("DLP_CORPUS_CMD", [sys.executable, fake]),
+                          ("DLP_CORPUS_RAW", 12), ("DLP_CORPUS_STAGE1", 10),
+                          ("CACHE_DIR", os.path.join(self.tmp.name, "cache")),
+                          ("DLP_CORPUS_CLEAN_GLOB",
+                           os.path.join(self.tmp.name, "bora_clean_*"))):
+            p = mock.patch.object(_MOD, name, val)
+            p.start()
+            self.addCleanup(p.stop)
+        for p in (mock.patch.dict(os.environ, {
+                      "T1022_MAN": raw_data_path(DLP_CORPUS_MANIFEST),
+                      "T1022_STAT": _t1022_stat(12, 10, 6, 4, 1, 5)}),
+                  _sandbox_aborted()):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def _git(self, *a):
+        return subprocess.run(self.GIT + ["-C", self.repo] + list(a),
+                              check=True, capture_output=True,
+                              text=True).stdout
+
+    def _leaf(self, fake="pass", mode="full"):
+        with mock.patch.dict(os.environ, {"T1022_FAKE": fake}):
+            ctx = JobHandle("dlp_corpus", mode)
+            return run_leaf_dlp_corpus(mode, ctx), ctx
+
+    def _man(self):
+        return _read_json(raw_data_path(DLP_CORPUS_MANIFEST))
+
+    def _gate(self):
+        return dlp_corpus_refusal()
+
+    def _assert_head(self):
+        self.assertEqual(dlp_corpus_digest()[0], dlp_corpus_head()[0])
+        self.assertFalse(os.path.exists(os.path.join(self.repo,
+                                                     DLP_CORPUS_TMP[0])))
+        self.assertFalse(os.path.exists(self.clean))
+        self.assertFalse(os.path.exists(raw_data_path(DLP_CORPUS_SUMS)))
+
+    def test_pass_pack_gate_restart(self):
+        res, ctx = self._leaf()
+        self.assertEqual((res.rc, res.failed), (0, False))
+        log = _read_text(ctx.log_path("run"))
+        self.assertIn("MANIFEST_RC=None", log)       # pending before spawn
+        man = self._man()
+        self.assertEqual(man["rc"], 0)
+        self.assertFalse(man["reproduced_head"])     # 5 vs committed 6
+        self.assertEqual(man["counts_head"]["final"], 6)
+        self.assertEqual(man["done"]["final"], 5)
+        self.assertTrue(os.path.isfile(os.path.join(
+            self.repo, DLP_CORPUS_GITIGNORE)))
+        d = os.path.dirname(raw_data_path(DLP_CORPUS_SUMS))
+        self.assertEqual(subprocess.run(
+            ["sha256sum", "-c", DLP_CORPUS_SUMS], cwd=d,
+            capture_output=True).returncode, 0)
+        with tarfile.open(raw_data_path(DLP_CORPUS_NAME)) as t:
+            self.assertTrue(set(DLP_CORPUS_OUTPUTS + ["FILES.sha256"])
+                            <= set(t.getnames()))
+        self.assertIn("lists DIFFER FROM HEAD's", _read_text(SUMMARY_LOG))
+        self.assertEqual(leaf_clean(), (True, []))   # lists excluded
+        self.assertIsNone(self._gate())   # this launch or a restart, same commit
+        dlp_corpus_put_head(self.repo)    # a list reset (to HEAD) is refused
+        self.assertIn("differ from the dlp_corpus manifest", self._gate())
+        _t1022_lists(self.repo, 5, 4)     # the regen's lists back
+        self._git("commit", "-q", "--allow-empty", "-m", "doc")
+        with open(os.path.join(self.repo, "scripts/a.py"), "a") as f:
+            f.write("y\n")
+        self._git("commit", "-q", "-am", "scripts only")
+        self.assertIsNone(self._gate())
+        with open(os.path.join(self.repo, "crates/x.rs"), "a") as f:
+            f.write("y\n")
+        self._git("commit", "-q", "-am", "discharge code")
+        self.assertIn("discharge code changed", self._gate())
+        self.assertIsNone(corpus_gate(None, "dlp", "dry"))   # dry: gate off
+
+    def test_h1_h2_no_manifest(self):   # ALL_T1022 H1/H2
+        keys = ["dlp_corpus", "dlp", "effective"]   # regen died before its manifest
+        with mock.patch.object(_MOD, "run_same_dlp_safe"):
+            self.assertIsNotNone(corpus_gate(JobHandle("dlp", "full"),
+                                             "dlp", "full", keys))
+        ctx = JobHandle("effective", "full")
+        self.assertIsNone(corpus_gate(ctx, "effective", "full", keys))
+        self.assertIn("Dlp rows STALE", ctx.dlp_stale_msg)
+        self.assertIsNone(corpus_gate(JobHandle("dlp", "full"), "dlp",
+                                      "full", ["dlp"]))   # no regen planned
+        self.assertIn("dlp: runs on HEAD's committed Dlp lists",
+                      _read_text(SUMMARY_LOG))
+
+    def test_failed_regen_effective_stale_dlp_refused(self):   # ALL_T1022 D3
+        self._leaf("panic")                          # tree restored to HEAD
+        stale = raw_data_path(EFFECTIVE_STALE)
+        def eff(fail=False):   # the Sequencer applies the gate
+            def fake(c, ex, args, env):
+                with open(args[-1], "w") as f:
+                    f.write("report\n")
+                return 1 if fail else 0
+            with mock.patch.object(_MOD, "run_rust_example", fake), \
+                 mock.patch.object(_MOD, "effective_missing_success",
+                                   return_value=None), \
+                 mock.patch.object(_MOD, "_run_lock_fd", None):
+                return Sequencer(_FakePlan("full_run", "full", [
+                    "effective"]))._run_one_leaf("effective").rc
+        self.assertEqual(eff(), 0)
+        self.assertIn("Dlp rows STALE", _read_text(stale))
+        self.assertEqual(eff(fail=True), 1)          # failed rerun keeps marker
+        self.assertTrue(os.path.exists(stale))
+        with mock.patch.object(_MOD, "run_same_dlp_safe"):
+            self.assertIsNotNone(corpus_gate(JobHandle("dlp", "full"),
+                                             "dlp", "full"))
+        _t1022_lists(self.repo, 5, 2)                # not HEAD, not vouched
+        self.assertEqual(eff(), 6)
+        self.assertTrue(os.path.exists(stale))       # refused: old marker kept
+        dlp_corpus_put_head(self.repo)
+        self.assertEqual(self._leaf()[0].rc, 0)      # a passing regen
+        self.assertEqual(eff(), 0)
+        self.assertFalse(os.path.exists(stale))      # good run: marker cleared
+
+    def test_auto_add_regen(self):   # ALL_T1022 owner 11/19
+        full = ResolvedPlan(top="full_run", mode="full",
+                            leaf_keys=["dna", "dlp", "effective"])
+        self.assertEqual(corpus_auto_add(full), (full, None))   # HEAD lists
+        os.unlink(os.path.join(self.repo, DLP_CORPUS_OUTPUTS[0]))  # missing
+        plan, why = corpus_auto_add(full)
+        self.assertEqual(plan.leaf_keys, ["dlp_corpus", "dna", "dlp",
+                                          "effective"])
+        self.assertIn("digest failed", why)
+        dry = ResolvedPlan(top="dry_run", mode="dry", leaf_keys=["dlp"])
+        self.assertEqual(corpus_auto_add(dry), (dry, None))
+        dna = ResolvedPlan(top="full_run", mode="full", leaf_keys=["dna"])
+        self.assertEqual(corpus_auto_add(dna), (dna, None))
+        with mock.patch.object(_MOD, "SAME_ONLY", True):
+            self.assertEqual(corpus_auto_add(full), (full, None))
+        # preflight does not need the missing list; the regen rewrites it
+        self.assertTrue(check_required_files(dlp_corpus_required("full"))[0])
+        self.assertEqual(self._leaf()[0].rc, 0)
+        self.assertEqual(corpus_auto_add(full), (full, None))
+
+    def test_auto_add_never_under_half(self):   # ALL_T1022: --half rows
+        os.unlink(os.path.join(self.repo, DLP_CORPUS_OUTPUTS[0]))
+        row = ResolvedPlan(top="full_run", mode="full",
+                           leaf_keys=["dlp", "clam"])
+        with mock.patch.object(_MOD, "HALF", None):
+            added = corpus_auto_add(row)[0]
+        self.assertEqual(added.leaf_keys[0], "dlp_corpus")
+        with mock.patch.object(_MOD, "HALF", 0):
+            self.assertIsNotNone(half_refusal(added))   # what auto-add caused
+            self.assertEqual(corpus_auto_add(row), (row, None))
+            self.assertIsNone(half_refusal(row))
+
+    def test_stamp_holds_after_auto_add(self):   # ALL_T1022: leaf_keys
+        out = os.path.join(self.tmp.name, "dna.out")
+        with open(out, "w") as f:
+            f.write("x\n")
+        res = LeafResult(rc=0, wall_s=1.0, raw_data_written=[out],
+                         failed=False, triage_tgz=None, peak_rss_gb=0.0,
+                         note="")
+        added = ResolvedPlan(top="full_run", mode="full",
+                             leaf_keys=["dlp_corpus", "dna", "dlp"])
+        self.assertIsNone(write_leaf_stamp("dna", added, res, 1.0,
+                                           leaf_head(), leaf_clean()))
+        typed = ResolvedPlan(top="full_run", mode="full",
+                             leaf_keys=["dna", "dlp"])
+        self.assertIsNone(leaf_keep_reason("dna", typed))
+
+    def test_no_manifest_needs_head_lists(self):   # ALL_T1022 R1
+        self.assertIsNone(self._gate())            # HEAD lists, no manifest
+        self._leaf()                               # regen: lists now differ
+        os.unlink(raw_data_path(DLP_CORPUS_MANIFEST))
+        self.assertIn("differ from HEAD", self._gate())
+        dlp_corpus_put_head(self.repo)
+        self.assertIsNone(self._gate())
+
+    def test_rules_copy_stays_under_git(self):
+        self._leaf()
+        with open(os.path.join(self.repo, DLP_CORPUS_OUTPUTS[3]), "a") as f:
+            f.write("extra rule\n")
+        clean, paths = leaf_clean()
+        self.assertFalse(clean)
+        self.assertEqual(paths, [DLP_CORPUS_OUTPUTS[3]])
+
+    def test_panic_restores_head(self):
+        with open(os.path.join(self.repo, DLP_CORPUS_TMP[1]), "w") as f:
+            f.write("scratch\n")
+        res, _ = self._leaf("panic")
+        self.assertEqual((res.rc, res.failed), (101, True))
+        self._assert_head()
+        self.assertFalse(os.path.exists(os.path.join(self.repo,
+                                                     DLP_CORPUS_TMP[1])))
+        man = self._man()
+        self.assertEqual((man["rc"], man["restored_head"]), (101, True))
+        self.assertTrue(os.path.isfile(raw_data_path(DLP_CORPUS_NAME)))
+        self.assertIn("rc 101", self._gate())
+
+    def test_truncated_tgz_rc6_restores_head(self):
+        res, _ = self._leaf("trunc")
+        self.assertEqual(res.rc, 6)
+        self._assert_head()
+        self.assertEqual(self._man()["rc"], 6)
+        self.assertIn("FAILED rc=6", _read_text(SUMMARY_LOG))
+
+    def test_bad_counts_rc6(self):
+        with mock.patch.dict(os.environ, {
+                "T1022_STAT": _t1022_stat(12, 10, 6, 4, 1, 4)}):
+            res, _ = self._leaf()
+        self.assertEqual(res.rc, 6)
+        self.assertIn("corpus.stat", self._man()["why"])
+        self._assert_head()
+
+    def test_crash_mid_regen_then_relaunch(self):
+        """VM crash: pending manifest + a truncated list, no restore."""
+        _write_json_atomic(raw_data_path(DLP_CORPUS_MANIFEST), {"rc": None})
+        with open(os.path.join(self.repo, DLP_CORPUS_OUTPUTS[2]), "wb") as f:
+            f.write(b"\x1f\x8bxx")
+        self.assertIn("rc None", self._gate())
+        res, _ = self._leaf()                  # the relaunch reruns dlp_corpus
+        self.assertEqual(res.rc, 0)
+        self.assertIsNone(self._man()["digest_before"])
+        self.assertIsNone(self._gate())
+
+    def test_dry_builds_lists_and_writes_no_tracked_file(self):
+        before = dlp_corpus_digest()[0]
+        with mock.patch.object(_MOD, "DRY_RAW", True):
+            res, ctx = self._leaf(mode="dry")
+            self.assertEqual(res.rc, 0)
+            self.assertTrue(os.path.isfile(raw_data_path(DLP_CORPUS_SUMS)))
+            self.assertEqual(self._man()["digest_after"], before)
+            res, _ = self._leaf("nolist", mode="dry")
+            self.assertEqual(res.rc, 6)
+            os.unlink(os.path.join(self.repo, DLP_CORPUS_MAILDIR))
+            res, _ = self._leaf(mode="dry")
+            self.assertEqual(res.rc, 6)
+        self.assertEqual(dlp_corpus_digest()[0], before)
+        self.assertFalse(os.path.exists(os.path.join(
+            self.repo, DLP_CORPUS_GITIGNORE)))
+
+    def test_digest_ignores_mtime_and_dot_slash(self):
+        d0 = dlp_corpus_digest()[0]
+        p = os.path.join(self.repo, DLP_CORPUS_OUTPUTS[2])
+        _t1022_tgz(p, {"final_enron_list.txt": ["m%d" % i for i in range(6)]},
+                   prefix="./", mtime=12345)
+        self.assertEqual(dlp_corpus_digest()[0], d0)
+        self.assertEqual(_member_name(tarfile.TarInfo(".x")), ".x")
+        with open(p, "r+b") as f:
+            f.truncate(20)
+        with self.assertRaises(Exception):
+            dlp_corpus_digest()
+
+    def test_kept_reruns_stale_vouched_only(self):   # ALL_T1022 D3
+        stale, ran = raw_data_path(EFFECTIVE_STALE), []
+
+        def fn(mode, ctx):
+            ran.append(1)
+            return ctx.finish(0, b_fail_scan=False)
+        os.makedirs(os.path.dirname(stale), exist_ok=True)
+        for key, marked, why, want in (("dlp", False, "x", []),
+                                       ("effective", True, "x", []),
+                                       ("effective", True, None, [1]),
+                                       ("effective", False, None, [])):
+            ran.clear()
+            _unlink_quiet(stale)
+            if marked:
+                open(stale, "w").close()
+            with mock.patch.dict(JOB_SPECS, {key: JobSpec(key, key, fn)}), \
+                 mock.patch.object(_MOD, "_run_lock_fd", 99), \
+                 mock.patch.object(_MOD, "leaf_keep_reason",
+                                   return_value=None), \
+                 mock.patch.object(_MOD, "dlp_corpus_refusal",
+                                   return_value=why), \
+                 mock.patch.object(_MOD, "clear_db_cache", return_value=[]), \
+                 mock.patch.object(_MOD, "write_leaf_stamp",
+                                   return_value=None):
+                Sequencer(_FakePlan("full_run", "full", [key]),
+                          kept=[key])._run_one_leaf(key)
+            self.assertEqual(ran, want, (key, marked, why))
+
+
+class StampCorpusGitTest(StampRealGitTest):
+    """ALL_T1022 r3: every StampRealGitTest case, now with the corpus
+    files present (the corpus_digest stamp path, not the legacy one)."""
+
+    def setUp(self):
+        super().setUp()
+        rules = os.path.join(self.repo, DLP_CORPUS_OUTPUTS[3])
+        os.makedirs(os.path.dirname(rules), exist_ok=True)
+        with open(rules, "w") as f:
+            f.write("rule\n")
+        _t1022_lists(self.repo, 6, 3)
+        self._commit("corpus")
+
+    def test_corpus_digest_binds_the_lists(self):
+        self._leaf()
+        self.assertTrue(load_stamp("full").get("corpus_digest"))
+        self.assertIsNone(self._check())
+        _t1022_lists(self.repo, 6, 3, mtime=999)   # bytes only
+        self.assertIsNone(self._check())
+        _t1022_lists(self.repo, 5, 4)              # content
+        self.assertIn("Dlp corpus files differ", self._check())
+
+
+class O2SameDlpTest(unittest.TestCase):
+    """O2: D6 after a failed main dlp or a gate refusal; an operator
+    stop still skips it."""
+
+    def setUp(self):
+        self.ctx = mock.Mock(_ts="20261119_000000", raw_data=[])
+        for p in (mock.patch.object(_MOD, "HALF", None), _sandbox_aborted()):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_main_fail_runs_abort_skips(self):
+        with mock.patch.object(_MOD, "same_fx_check", return_value="bad"), \
+             mock.patch.object(_MOD, "run_rust_example") as rre:
+            self.assertEqual(run_same_dlp("full", self.ctx, 3), 6)   # reached D6
+            self.assertEqual(run_same_dlp("full", self.ctx, ABORT_RC), 0)
+        rre.assert_not_called()
+        notes = " ".join(c[0][0] for c in self.ctx.note.call_args_list)
+        self.assertIn("runs although main rc=3", notes)
+        self.assertIn("skipped: main rc=%d" % ABORT_RC, notes)
+
+    def test_refusal_runs_d6_for_dlp_only(self):
+        for key, same_only, want in (("dlp", False, 1), ("effective", False, 0),
+                                     ("dlp", True, 0)):   # SAME_ONLY: no gate
+            with mock.patch.object(_MOD, "dlp_corpus_refusal",
+                                   return_value="x"), \
+                 mock.patch.object(_MOD, "SAME_ONLY", same_only), \
+                 mock.patch.object(_MOD, "dlp_corpus_digest",
+                                   side_effect=OSError("x")), \
+                 mock.patch.object(_MOD, "_summary_line"), \
+                 mock.patch.object(_MOD, "run_same_dlp_safe") as d6:
+                r = corpus_gate(self.ctx, key, "full")
+            self.assertEqual(d6.call_count, want, key)
+            self.assertEqual(r is None, same_only, key)
+
 
 if __name__ == "__main__":
     sys.exit(main())
