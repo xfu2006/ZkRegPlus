@@ -23,18 +23,41 @@ from __future__ import annotations
 
 import csv
 import sys
+import tarfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common import (zombie_totals, zombie_str_lens, server_file, fig_dir,
-                    source_line, MISSING)
+                    source_line, MISSING, get_proj_root)
 
 ARMS = [1000, 2000, 4000]
 ZOMBIE_LOG = "run_zombie_regex_zombie_international.log"
 SAME_TSV = "same_zombie_regex_zombie_international.tsv"
-# T943 per-arm share of the RE2-clean <= 4 KB Enron e-mails [U: owner to
-# confirm the source and refresh it on the final corpus].
-ARM_MIX = {1000: 0.342, 2000: 0.399, 4000: 0.260}
+# ALL_T1020 Q5a (owner 11/19): the arm mix is recomputed from the paper's
+# Dlp run list (tracked) and the installed e-mail files.
+RUN_LIST = "data/paper_data/dlp/cfg/jobs/final_enron_list.txt.tgz"
+
+
+def arm_mix():
+    """{arm: share} of the paper's Dlp run e-mails of at most 4,000 B, each
+    counted in the smallest arm that holds it. None when the list or an
+    e-mail file is missing."""
+    root, n = get_proj_root(), dict.fromkeys(ARMS, 0)
+    try:
+        with tarfile.open(root / RUN_LIST) as t:
+            names = t.extractfile(t.getmember("final_enron_list.txt")
+                                  ).read().decode().splitlines()
+        for p in (x.strip() for x in names):
+            if "/maildir/" in p:
+                size = (root / p).stat().st_size
+                arm = next((a for a in ARMS if size <= a), None)
+                if arm:
+                    n[arm] += 1
+    except (OSError, KeyError, tarfile.TarError) as e:
+        print(f"MISSING arm mix: {e}")
+        return None
+    tot = sum(n.values())
+    return {a: n[a] / tot for a in ARMS} if tot else None
 
 
 def same_sample(path) -> dict:
@@ -67,7 +90,7 @@ def same_sample(path) -> dict:
     return out
 
 
-def build_table(sweep: dict, same: dict) -> str:
+def build_table(sweep: dict, same: dict, mix=None) -> str:
     """Two 5-column blocks: compile (sweep log) for every swept arm, then
     same-sample timing (D5) for every timed arm. A missing arm is omitted
     from its own block only (OD39 a, W807 d)."""
@@ -82,7 +105,7 @@ def build_table(sweep: dict, same: dict) -> str:
                     f"{z['total_proof_bytes'] / 1e6:.2f} \\\\")
     if not sweep:
         rows.append(rf"    \multicolumn{{5}}{{l}}{{{MISSING} sweep log}} \\")
-    full = set(same) >= set(ARMS)                      # OD39 a
+    full = set(same) >= set(ARMS) and bool(mix)        # OD39 a
     if same:
         rows += [r"    \midrule",
                  r"    $L_T$ (B) & E-mails & Proofs & Prove/e-mail (s) & "
@@ -96,7 +119,7 @@ def build_table(sweep: dict, same: dict) -> str:
             rows.append(f"    {arm:,} & {s['emails']} & {s['proofs']:,} & "
                         f"{s['prove_s']:.1f} & {s['verify_s']:.1f} \\\\")
         if full:
-            pw = [sum(ARM_MIX[a] * same[a][k] for a in ARMS)
+            pw = [sum(mix[a] * same[a][k] for a in ARMS)
                   for k in ("prove_s", "verify_s")]
             rows.append(r"    \midrule")
             rows.append(rf"    \multicolumn{{3}}{{l}}{{Population-weighted "
@@ -114,7 +137,9 @@ def build_table(sweep: dict, same: dict) -> str:
            r" same random Enron e-mails BORA proves, summed over each"
            r" e-mail's accepted proofs and averaged over the e-mails."
            if same else r" regex instances.")
-        + (r" The derived row weights the per-arm means by the arm mix."
+        + (r" The derived row weights the per-arm means by the arm mix ("
+           + "/".join(rf"{100 * mix[a]:.1f}\%" for a in ARMS)
+           + r" of the \textsc{Dlp} e-mails of at most 4\,KB)."
            if full else "") + "}",                       # OD39 a
         r"  \label{tab:zombie-data}",
         r"  \begin{tabular}{rrrrr}",
@@ -139,7 +164,9 @@ def main() -> None:
     except (OSError, RuntimeError) as e:
         print(f"MISSING Zombie sweep log: {e}")
     out = fig_dir() / "zombie_data.tex"
-    out.write_text(build_table(sweep, same_sample(server_file(SAME_TSV))))
+    same = same_sample(server_file(SAME_TSV))
+    mix = arm_mix() if set(same) >= set(ARMS) else None
+    out.write_text(build_table(sweep, same, mix))
     print(f"wrote {out}")
 
 

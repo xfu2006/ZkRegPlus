@@ -315,7 +315,8 @@ def build_figure(datasets: list[tuple[dict, list, dict]]) -> str:
         z_prb_tex = f"{z['total_r1cs'] / z['str_len'] / dlp['total']:.2f}"  # R1CS/rule-byte
     except (OSError, RuntimeError) as e:      # ALL_T1020 (W807 i)
         print(f"MISSING Zombie sweep log: {e}")
-        z, z_r1cs_tex, z_prb_tex = {"str_len": MISSING}, MISSING, MISSING
+        z, z_r1cs_tex, z_prb_tex = ({"str_len": MISSING, "n": MISSING},
+                                    MISSING, MISSING)
 
     caption = (
         rf"\caption{{Ruleset-size scalability (input fixed), per folding step, "
@@ -331,10 +332,12 @@ def build_figure(datasets: list[tuple[dict, list, dict]]) -> str:
         rf"per-step input length---moving from {clam_phrase} R1CS per rule-byte "
         rf"(\textsc{{ClamAV}}) and {dlp_phrase} R1CS per rule-byte "
         rf"(\textsc{{MS-DLP}}) between $10\%$ of the ruleset and the full "
-        rf"set. For the "
-        rf"same \textsc{{MS-DLP}} ruleset, \textsc{{Zombie}} emits ${z_r1cs_tex}$ "
-        rf"R1CS in total; dividing by the ${z['str_len']}$-byte input and the "
-        rf"same ${dlp['total_tex']}$ rules gives $\sim$${z_prb_tex}$ R1CS per "
+        rf"set. For the "                   # ALL_T1020 Q9 (owner 11/19)
+        rf"same \textsc{{MS-DLP}} ruleset, which \textsc{{Zombie}} compiles "
+        rf"into ${z['n']}$ regex instances and BORA into ${dlp['total_tex']}$ "
+        rf"rules, \textsc{{Zombie}} emits ${z_r1cs_tex}$ R1CS in total. "
+        rf"Dividing by the ${z['str_len']}$-byte input and BORA's "
+        rf"${dlp['total_tex']}$ rules gives about ${z_prb_tex}$ R1CS per "
         rf"rule-byte, the same normalization applied to BORA.}}")
 
     return "\n".join([
