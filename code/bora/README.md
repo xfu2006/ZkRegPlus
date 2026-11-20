@@ -67,7 +67,7 @@ wall, ~3-4 GB RSS).
 python3 scripts/PAPER_DATA.py --run dry_run --items A
 ```
 
-All nine leaves against deterministically thinned inputs: **~91 min
+All ten leaves against deterministically thinned inputs: **~2 h
 wall, ~30 GB peak RSS** (sequential, so the peak is the largest leaf,
 not the sum). Needs all five data packs (step 0). A smoke test only —
 **its numbers are not the paper's**. Its raw data, fragments and PDF go
@@ -91,18 +91,22 @@ pick from the menu (`python3 scripts/PAPER_DATA.py`, then `dry_run`).
 | `scale_clam` | Scale-ClamAV | 7.3 min / 5.2 GB | `binexec` |
 | `scale_dlp` | Scale-DLP | 8.5 min / 13.0 GB | `email` |
 | `effective` | Effectiveness | ~6 min (estimated) | `email,dna,binexec` |
+| `dlp_corpus` | Dlp corpus regen | ~30 min (estimated, build check) | `email` |
 
 ### Step 3 — full reproduction
 
 ```bash
+bash scripts/debug/host_check.sh      # read-only pre-flight, expect FAIL count 0
 python3 scripts/PAPER_DATA.py --run full_run --items A
 ```
 
-All nine leaves in sequence: **~6.7 days wall, up to 952 GB peak RSS.**
-The run self-detaches and survives logout; follow it with `tail -f
-/tmp/bora/SUMMARY.log` (verdicts) and `tail -F
-/tmp/bora/CURRENT_JOB.log` (live leaf). One failing leaf does not stop
-the rest — see section 6.
+All ten leaves in sequence (`dlp_corpus` first): **~8.5-9.5 days wall
+(estimated), up to 952 GB peak RSS.** The run self-detaches and survives
+logout; follow it with `tail -f /tmp/bora/SUMMARY.log` (verdicts) and
+`tail -F /tmp/bora/CURRENT_JOB.log` (live leaf). One failing leaf does
+not stop the rest — see section 6. At the end the run rebuilds
+`data/paper_data/pdf/list_figures.pdf` from your data (`FIGS built` in
+`SUMMARY.log`).
 
 Leaves also run individually (`--items dna`, `--items clam,dlp`, or the
 menu). `--items dna` is the cheapest full reproduction of a paper
@@ -110,35 +114,41 @@ column.
 
 | `--items` | Leaf | Full cost | Needs `--data` |
 |-----------|------|-----------|----------------|
-| `dlp` | DLP | 70.8 h / ~700 GB | `email` |
+| `dlp` | DLP | 85-90 h (est.) / ~700 GB | `email` |
 | `dna` | Dna | 5.8 h / 529 GB | `dna` |
-| `clam` | Clamav | 20.3 h / ~900 GB | `binexec` |
-| `zombie` | Zombie | 43.5 h / 952 GB | `zombie` |
+| `clam` | Clamav | 26-30 h (est.) / ~900 GB | `binexec` |
+| `zombie` | Zombie | 58-72 h (est.) / 952 GB | `zombie` |
 | `reef` | Reef | 5.0 h / 29 GB | `dna` |
 | `lkup` | Analyze lkup | 1.8 h / 73 GB | `email,dna,binexec` |
 | `scale_clam` | Scale-ClamAV | 7.1 h / 148 GB | `binexec` |
 | `scale_dlp` | Scale-DLP | 3.7 h / 165 GB | `email` |
 | `effective` | Effectiveness | 1.9 h / 73 GB | `email,dna,binexec` |
+| `dlp_corpus` | Dlp corpus regen | ~2.5 h (est.) / 132 GB | `email` |
+
+"est." = 2026-11 estimate (every job now proves a decider, and Zombie
+times the same 32 samples per size); the other costs were measured 2026-08.
 
 ## 2. Claim -> experiment map
 
-Costs measured 2026-08; wall covers a whole leaf (build, DB, folding,
-decider, teardown). dlp/clam RSS are derived provisioning floors, not
-metered peaks. `R` = `data/paper_data/run_data/data/raw_data`.
+Costs measured 2026-08 ("est." = 2026-11 estimate, see step 3); wall
+covers a whole leaf (build, DB, folding, decider, teardown). dlp/clam
+RSS are derived provisioning floors, not metered peaks.
+`R` = `data/paper_data/run_data/data/raw_data`.
 
 | Command | Paper artifact (label) | `--data` | Cost | Result file |
 |---------|------------------------|----------|------|-------------|
 | `--run figs` | Tables 1-11 + Fig. 8, all labels | `paper_data` | ~1 min | `data/paper_data/pdf/list_figures.pdf` |
 | `--run small` | — (demo only) | — (in-tree) | 1.3 min / 3-4 GB | console + `/tmp/bora/SUMMARY.log` |
 | `full_run --items dna` | Table 3 Dna col (`tbl:overall-perf`), T8 Dna (`tbl:component-cost`), T9 BORA cells (`tab:dna-reef-bora`), T4 (`tab:compare-all`) | `dna` | 5.8 h / 529 GB | `R/jet1tb/full_dna.tgz` |
-| `full_run --items clam` | Table 3 Mal col, T8 Mal, T4 | `binexec` | 20.3 h / ~900 GB | `R/jet1tb/full_clam.part{1,2}.tgz` |
-| `full_run --items dlp` | Table 3 Dlp col, T8 Dlp, T11 BORA basis (`tab:compare-zombie-bora`), T4 | `email` | 70.8 h / ~700 GB | `R/jet1tb/full_dlp.part{1,2}.tgz` |
-| `full_run --items zombie` | Table 10 (`tab:zombie-data`), T11 + T4 Zombie cells | `zombie` | 43.5 h / 952 GB | `R/jet1tb/run_zombie_regex_zombie_international.log` |
+| `full_run --items clam` | Table 3 Mal col, T8 Mal, T4 | `binexec` | 26-30 h (est.) / ~900 GB | `R/jet1tb/full_clam.part{1,2}.tgz` |
+| `full_run --items dlp` | Table 3 Dlp col, T8 Dlp, T11 BORA basis (`tab:compare-zombie-bora`), T4 | `email` | 85-90 h (est.) / ~700 GB | `R/jet1tb/full_dlp.part{1,2}.tgz` |
+| `full_run --items zombie` | Table 10 (`tab:zombie-data`), T11 + T4 Zombie cells | `zombie` | 58-72 h (est.) / 952 GB | `R/jet1tb/run_zombie_regex_zombie_international.log` |
 | `full_run --items reef` | Table 9 Reef buckets, T4 Reef row | `dna` | 5.0 h / 29 GB | `R/jet1tb/reef_sample_run.log` |
 | `full_run --items lkup` | Table 7 (`tbl:lkup`) | `email,dna,binexec` | 1.8 h / 73 GB | `R/any_server/lookup_stats.dat` |
 | `full_run --items effective` | Tables 2, 5, 6 (`tab:eff-pair`, `tab:eff-size`, `tab:eff-size-dlp`) | `email,dna,binexec` | 1.9 h / 73 GB | `R/any_server/eval_effective.txt` |
 | `full_run --items scale_clam` | Fig. 8 (`fig:scale-regex`) | `binexec` | 7.1 h / 148 GB | `R/any_server/scale_data_{readelf,gdb}.tgz` |
 | `full_run --items scale_dlp` | Fig. 8 (`fig:scale-regex`) | `email` | 3.7 h / 165 GB | `R/any_server/scale_data_dlp_{2,6}.tgz` |
+| `full_run --items dlp_corpus` | Dlp corpus + job list read by `dlp` and `effective` (App. C.1 funnel, `corpus.stat`) | `email` | ~2.5 h (est.) / 132 GB | `R/jet1tb/dlp_corpus.{tgz,json,sha256}`, `data/paper_data/dlp/cfg/` |
 
 `SUMMARY.log`'s `wall=` covers a whole leaf, so it exceeds the paper's
 per-phase cells — Table 3's Mal folding wall of 15.48 h comes from the
@@ -181,17 +191,17 @@ as expected, not guaranteed.
 | Step | Example | Wall | Peak RSS |
 |------|---------|------|----------|
 | demo (laptop) | `small` | ~1.3 min | ~3-4 GB |
-| pipeline smoke test | `dry_run --items A` | ~91 min | ~30 GB |
+| pipeline smoke test | `dry_run --items A` | ~2 h | ~30 GB |
 | ------------------- | ---------------------- | ------------------- | -------- |
 | mid-scale SNARK | `small_full_snark` | ~113 min | ~433 GB |
 | cheapest full leaf | `full_run --items dna` | 5.8 h | 529 GB |
-| largest full leaf | `full_run --items zombie` | 43.5 h | 952 GB |
-| all 9 full leaves | `full_run --items A` | ~160 h (sequential) | 952 GB |
+| largest full leaf | `full_run --items zombie` | 58-72 h (est.) | 952 GB |
+| all 10 full leaves | `full_run --items A` | ~200-230 h (sequential, est.) | 952 GB |
 
-**Reference machine.** All full-run costs above were measured on a
-128-core / 961 GiB Linux server. `zombie`'s 952 GB peak leaves under
-10 GB of headroom there — a host with less memory OOMs rather than
-running slowly.
+**Reference machine.** All full-run costs above were measured (or, for
+"est.", projected) for a 128-core / 961 GiB Linux server. `zombie`'s
+952 GB peak leaves under 10 GB of headroom there — a host with less
+memory OOMs rather than running slowly.
 
 **Disk.** Clone onto the attached volume (Jetstream2: `/media/volume/<name>`),
 not into `~` on the 60 GB root disk; a full run needs at least 180 GiB free
@@ -248,6 +258,16 @@ symlinks the live log at `/tmp/bora/CURRENT_JOB.log` (+`_part2` for
 2-part leaves). A failed leaf packs one triage tarball under
 `data/paper_data/run_data/data/raw_data/failed_tgz/`. Known errors, by
 verbatim string: [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md).
+
+A failed leaf leaves the result file that `INSTALL.py --data paper_data`
+shipped (the paper's recorded run) in place, so `--run figs` and the
+final PDF then mix recorded and new values. Before comparing tables,
+check that `SUMMARY.log` shows `OK` for every leaf; rerun a failed leaf
+alone with `--items <leaf>`.
+
+If the VM restarts mid-run, launch the same command again. Each passed
+leaf leaves a done stamp, so the relaunch skips it (`done stamps hold
+for:` in `SUMMARY.log`) and only the interrupted leaf runs again.
 
 ## 7. Vendored dependencies and license
 
