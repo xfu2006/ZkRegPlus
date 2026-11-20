@@ -4118,5 +4118,94 @@ class TestParseTimeSignal(unittest.TestCase):
             self.assertEqual(rz._run_keygen(["x"], "/")[0], -6)
 
 
+class T1023Test(Base):
+    """ALL_T1023: D5 cap = base RSS + 4 GiB; equal keep-free per node."""
+
+    def task(self, rss_gib, i=0):
+        return sz.Task("u%d" % (i // 32), 4000, "e%d" % i, "p", self.tmp,
+                       {"base_uuid": "b", "rss_c": int(rss_gib * sz.GIB),
+                        "wall_s": 380.0, "u_c": 2.0, "cons": 2 ** 21}, False)
+
+    def geometry(self, topo, B_gib, rss_gib=128.5):
+        """(w, slots, K) of a 4 KB giant pair (64 proves) under budget B."""
+        sz.S.update(topo=topo, cap=16, w_state={})
+        ts = [self.task(rss_gib, i) for i in range(64)]
+        w = sz.width_for(4000, ts, B_gib * sz.GIB)
+        n = len(sz.make_slots(topo, w))
+        return w, n, sz.ffd_count(ts, n, B_gib * sz.GIB)
+
+    def test_cap_is_base_rss_plus_4gib(self):
+        for rss, want in ((128.5, 132.5), (27.3, 31.3), (8, 12), (1, 5),
+                          (0, 4)):
+            self.assertAlmostEqual(self.task(rss).cap / sz.GIB, want, 6)
+        # node B 4 KB germany: D5 peak 88.14 GiB + 42.6 GiB key cache fit
+        self.assertGreater(self.task(128.47).cap / sz.GIB, 88.14 + 42.6)
+
+    def test_cap_in_memorymax_and_as_limit(self):
+        t, seen = self.task(128.5), []
+
+        class P(object):
+            pid = 0
+
+            def __init__(self, cmd, **k):
+                seen.append(cmd)
+        sz.S.update(launcher="systemd", props=["MemorySwapMax=0"],
+                    binp="/bin/true")
+        with mock.patch.object(sz.subprocess, "Popen", P):
+            r = sz.launch(t, "packed", slot=(0, [8]), w=1)
+        self.assertIn("MemoryMax=%d" % int(132.5 * sz.GIB), seen[0])
+        self.assertEqual(r["memmax"], int(132.5 * sz.GIB))
+        sz.S["launcher"] = "prlimit"
+        with mock.patch.object(sz.subprocess, "Popen", P), \
+                mock.patch.object(rz, "_PRLIMIT", "prlimit"):
+            sz.launch(t, "packed", slot=(0, [8]), w=1)
+        self.assertIn("--as=%d" % int(4 * 132.5 * sz.GIB), seen[1])
+
+    def test_keep_free_on_8_nodes(self):
+        """8 x 8 x 2: 1 core free on every node, ladder [1, 2, 3, 7]."""
+        tp = fake_topo(n_nodes=8, cores=8, tpc=2, base=0, keep=4)
+        self.assertEqual((tp["keep"], tp["c_cores"]), (8, 56))
+        self.assertEqual({len(v) for v in tp["nodes"].values()}, {7})
+        self.assertEqual(sz.ladder(tp, 16), [1, 2, 3, 7])
+        # MemAvailable 891 GiB - R 96 GiB = 795 = 6 x 132.5 GiB; 890 gives 5
+        self.assertEqual(self.geometry(tp, 891 - 96), (7, 8, 6))
+        self.assertEqual(self.geometry(tp, 890 - 96), (7, 8, 5))
+        tp = fake_topo(n_nodes=8, cores=16, tpc=1, base=0, keep=4)
+        self.assertEqual((tp["keep"], tp["c_cores"]), (8, 120))
+        self.assertEqual(self.geometry(tp, 850), (15, 8, 6))
+
+    def test_keep_free_1_and_2_nodes_unchanged(self):
+        tp = fake_topo(n_nodes=2, cores=32, tpc=2, base=0, keep=4)
+        self.assertEqual((tp["keep"], tp["c_cores"]), (4, 60))
+        self.assertEqual(sz.ladder(tp, 16), [1, 2, 3, 4, 6, 10, 15, 16])
+        self.assertEqual(self.geometry(tp, 850), (10, 6, 6))   # 2-node jet1tb
+        self.assertEqual(self.geometry(tp, 429), (16, 2, 2))   # node B
+        tp = fake_topo(n_nodes=1, cores=36, keep=4)
+        self.assertEqual((tp["keep"], tp["c_cores"]), (4, 32))
+        tp = fake_topo(n_nodes=2, cores=8, keep=3)            # odd keep
+        self.assertEqual((tp["keep"], tp["c_cores"]), (4, 12))
+        self.assertEqual(fake_topo(n_nodes=8, cores=8, keep=0)["keep"], 0)
+
+    def test_keep_free_few_core_guard(self):
+        """Round up only if every node keeps at least 2 slot cores."""
+        for n, cores, want in ((16, 2, (4, 28)), (8, 1, (4, 4)),
+                               (16, 3, (4, 44)), (16, 4, (4, 60)),
+                               (6, 3, (6, 12))):
+            tp = fake_topo(n_nodes=n, cores=cores, base=0, keep=4)
+            self.assertEqual((tp["keep"], tp["c_cores"]), want, (n, cores))
+        tp = fake_topo(n_nodes=8, cores=8, tpc=2, base=0, keep=1)
+        self.assertEqual((tp["keep"], tp["c_cores"]), (1, 63))
+
+    def test_topology_line_shows_keep_free(self):
+        sz.S.update(topo=fake_topo(n_nodes=8, cores=8, tpc=2, base=0,
+                                   keep=4), sig="ab" * 32, cap=16)
+        line = sz.topology_line()
+        self.assertEqual(line, "SAME topology C_cores=56 tpc=2 nodes=8 "
+                         "launch_sig=%s cap=16 keep_free=8" % ("ab" * 32))
+        import re                             # PAPER_DATA.SAME_ZOMBIE_SIG_RE
+        m = re.search(r"SAME topology .*launch_sig=(\S+)", line)
+        self.assertEqual(m.group(1), "ab" * 32)
+
+
 if __name__ == "__main__":
     unittest.main()

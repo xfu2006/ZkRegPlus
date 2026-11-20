@@ -450,11 +450,16 @@ def topo_from(nodes, keep_free):
     nodes = {nd: sorted(cs) for nd, cs in nodes.items()}
     tpc = max(len(c) for cs in nodes.values() for c in cs)
     order = sorted(nodes)
+    # ALL_T1023: equal keep-free per node if at most 2x and 2+ cores stay
+    per = -(-keep_free // len(order))
+    if (per * len(order) <= 2 * keep_free
+            and min(len(cs) for cs in nodes.values()) >= per + 2):
+        keep_free = per * len(order)
     keep = {nd: keep_free // len(order) for nd in order}
     for nd in order[:keep_free % len(order)]:
         keep[nd] += 1
     slot_cores = {nd: nodes[nd][keep[nd]:] for nd in order}
-    return {"nodes": slot_cores, "tpc": tpc,
+    return {"nodes": slot_cores, "tpc": tpc, "keep": keep_free,
             "c_cores": sum(len(v) for v in slot_cores.values())}
 
 
@@ -1493,7 +1498,8 @@ class Task(object):
 
     @property
     def cap(self):
-        return int(max(1.5 * self.rss, self.rss + 4 * GIB))
+        # ALL_T1023: base RSS + 4 GiB (the D5 arm loads the keys once)
+        return int(self.rss + 4 * GIB)
 
     @property
     def timeout(self):
@@ -3543,9 +3549,10 @@ def only_same_main():
 
 def topology_line():
     """Full 64-hex launch_sig, as in every row (DLP_T1001 fix2)."""
-    return "SAME topology C_cores=%d tpc=%d nodes=%d launch_sig=%s cap=%d" % (
-        S["topo"]["c_cores"], S["topo"]["tpc"], len(S["topo"]["nodes"]),
-        S["sig"], S["cap"])
+    t = S["topo"]                         # ALL_T1023: + effective keep-free
+    return ("SAME topology C_cores=%d tpc=%d nodes=%d launch_sig=%s cap=%d "
+            "keep_free=%s" % (t["c_cores"], t["tpc"], len(t["nodes"]),
+                              S["sig"], S["cap"], t.get("keep")))
 
 
 def post_build(binp, a):
