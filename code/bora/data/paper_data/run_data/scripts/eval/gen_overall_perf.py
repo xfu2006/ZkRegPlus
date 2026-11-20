@@ -293,12 +293,9 @@ def parse_log(text: str) -> dict:
             job_parts.setdefault(key, set()).add(part)
     complete = [job_time[k] for k in job_time
                 if set(COMPRESS_PARTS) <= job_parts[k]]
-    if complete:
-        compress = sum(complete) / len(complete)
-    elif job_time:
-        compress = max(job_time.values())
-    else:
-        compress = 0.0
+    # JET_T1026: no job with all parts -> 0.0, so the cell prints MISSING
+    # (was the largest partial sum, which read as a real Stage 2 value).
+    compress = sum(complete) / len(complete) if complete else 0.0
     all_proved = (bool(complete) and len(complete) == jobs
                   and all(_FOLD_START.search(s) for s in segs))
     compress_total = sum(complete) if all_proved else None
