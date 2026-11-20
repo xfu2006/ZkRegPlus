@@ -100,10 +100,20 @@ def build_table(reef, bora_dna, zomb, bsame) -> str:
         *rows,
         r"\bottomrule",
         r"\end{tabular}",
-        r"\caption{Measured prover cost (net, as in Table~\ref{tab:dna-reef-bora}). "
-        r"\textsc{Dna}: mean per rule. "
-        + (r"\textsc{Dlp}: both systems prove the same random Enron e-mails, "
-           r"padded to each length; mean per e-mail. "
+        # Caption defines Net/Mean and each system's net (owner 11/20).
+        r"\caption{Measured prover cost. \emph{Net} is the total over the "
+        r"listed inputs, and \emph{Mean} divides it by the number of rules"
+        + (r" (\textsc{Dna}) or e-mails (\textsc{Dlp})"
+           if any(r.startswith(r"\textsc{Dlp}") for r in rows) else "")
+        + r". For Reef and BORA, net is "
+        r"as in Table~\ref{tab:dna-reef-bora}. It excludes commitment, setup "
+        r"and BORA's per-run compression. "
+        + (r"For Zombie, net is the Spartan prove time summed over each "
+           r"e-mail's accepted proofs, without key generation or verification. "
+           r"In \textsc{Dlp}, both systems prove the same random Enron "
+           r"e-mails, padded to each length. BORA's compression is left out "
+           r"because the sample is too small to amortize the decider proof "
+           r"cost. "
            if any(r.startswith(r"\textsc{Dlp}") for r in rows) else "")
         + note + "}",
         r"\label{tab:compare-measured}",

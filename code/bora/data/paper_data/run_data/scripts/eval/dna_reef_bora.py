@@ -148,7 +148,7 @@ def build_table(buckets, bora_cost) -> str:
     rules = f"{n_rules:,}" if n_rules else MISSING   # the same regex set
     # Caption regex count, from the Reef log (was a fixed 27,500).
     rules_tex = f"{n_rules:,}".replace(",", "{,}") if n_rules else MISSING
-    rows.append(f"    \\textbf{{BORA, all rules}} & {rules} & 1 & --- & "
+    rows.append(f"    \\textbf{{BORA, all rules}} & {rules} & --- & --- & "
                 f"{bora} \\\\")
     body = "\n".join(rows)
 
