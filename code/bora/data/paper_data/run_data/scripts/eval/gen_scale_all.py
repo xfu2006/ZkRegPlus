@@ -161,10 +161,12 @@ def collect(bundle: Path, work: Path) -> list[tuple[int, float, float, int]]:
     return points
 
 
-def _net_density(pts, floor):
-    """Net R1CS per (rule x input byte), in 1e-3 units; floor point skipped."""
+def _net_density(pts, floor, floor_n):
+    """Net R1CS per (rule x input byte), in 1e-3 units; floor point skipped.
+
+    floor_n is the sweep's smallest count (ClamAV 1, DLP 2 = 1 rule + pin)."""
     return [(n, (r - floor) / (n * inb) * PR_SCALE)
-            for n, r, _, inb in pts if n > 1]
+            for n, r, _, inb in pts if n > floor_n]
 
 
 def _panel(dataset: dict, show_ylabel: bool = True) -> tuple[list[str], dict]:
@@ -175,6 +177,7 @@ def _panel(dataset: dict, show_ylabel: bool = True) -> tuple[list[str], dict]:
     series = dataset["series"]
     total = max(n for _, _, pts in series.values() for n, _, _, _ in pts)
     floor = min(pts[0][1] for _, _, pts in series.values())
+    floor_n = min(pts[0][0] for _, _, pts in series.values())
 
     abs_lines, pr_lines = [], []
     max_abs = max_pr = 0.0
@@ -184,7 +187,7 @@ def _panel(dataset: dict, show_ylabel: bool = True) -> tuple[list[str], dict]:
                         for n, r, _, _ in pts)
         abs_lines.append(rf"  \addplot[{marker}] coordinates {{{abs_c}}};")
         abs_lines.append(rf"  \addlegendentry{{{label}}}")
-        dens = _net_density(pts, floor)
+        dens = _net_density(pts, floor, floor_n)
         pr_c = "".join(f"({n / total * 100:.1f},{v:.3f})" for n, v in dens)
         pr_lines.append(rf"  \addplot[{marker}] coordinates {{{pr_c}}};")
         max_abs = max(max_abs, max(r / 1e6 for _, r, _, _ in pts))
@@ -195,11 +198,11 @@ def _panel(dataset: dict, show_ylabel: bool = True) -> tuple[list[str], dict]:
             # set, not peak -> final.  Peak->final describes only the
             # descending tail and reads as amortization even where the net
             # movement is upward (ClamAV gdb runs 0.45 -> 0.76 over the sweep
-            # but 0.94 -> 0.76 from its peak).  Start at the first >=10% step:
-            # the sub-1% points are single-rule-scale probes (email1's is
-            # 0.000, email2's 323.59) and are far too noisy to headline.
-            steps = [v for n, v in dens if n / total >= 0.095]
-            corpus_stats[key] = (label, steps[0], steps[-1])
+            # but 0.94 -> 0.76 from its peak).  Start at the first >=10% step;
+            # the caption quotes that step's share (log-derived, not fixed).
+            steps = [(n, v) for n, v in dens if n / total >= 0.095]
+            corpus_stats[key] = (label, steps[0][0], steps[0][1],
+                                 steps[-1][1])
 
     floor_m = f"{floor / 1e6:.2f}"
     abs_lines.append(rf"  \addplot[gray, densely dotted, thick] coordinates "
@@ -272,21 +275,24 @@ def _panel(dataset: dict, show_ylabel: bool = True) -> tuple[list[str], dict]:
         "floor_m": floor_m,
         "total": total,          # ruleset size (int), for the Zombie per-rule-byte calc
         "total_tex": f"{total:,}".replace(",", "{,}"),
-        "corpus": corpus_stats,   # key -> (label, peak, final) in 1e-3 units
+        "corpus": corpus_stats,   # key -> (label, first n, first, final), 1e-3 units
     }
     return lines, stats
 
 
-def _corpus_phrase(corpus_stats: dict) -> str:
+def _corpus_phrase(corpus_stats: dict, total: int) -> str:
     """`A to B (x) and C to D (y)` over the corpora, derived.
 
-    A is the first sampled step (>=10% of the ruleset), B the full set."""
+    A is the first sampled step (>=10% of the ruleset), B the full set.
+    A sweep with no step below the full set prints B alone."""
     frags = []
-    for _, (label, first, final) in corpus_stats.items():
+    for _, (label, first_n, first, final) in corpus_stats.items():
         # label like "gdb (dense)" -> bare token for \ttt{}
         tok = label.split(" ")[0]
-        frags.append(rf"${first:.2f}\times10^{{-3}}$ to ${final:.2f}\times10^{{-3}}$ "
-                     rf"(\ttt{{{tok}}})")
+        fin = rf"${final:.2f}\times10^{{-3}}$"
+        rng = (fin if first_n == total else
+               rf"${first:.2f}\times10^{{-3}}$ to " + fin)
+        frags.append(rf"{rng} (\ttt{{{tok}}})")
     return " and ".join(frags)
 
 
@@ -301,8 +307,15 @@ def build_figure(datasets: list[tuple[dict, list, dict]]) -> str:
     # Caption numbers, all derived above.
     clam = next(s for d, _, s in datasets if d["key"] == "clamav")
     dlp = next(s for d, _, s in datasets if d["key"] == "dlp")
-    clam_phrase = _corpus_phrase(clam["corpus"])
-    dlp_phrase = _corpus_phrase(dlp["corpus"])
+    clam_phrase = _corpus_phrase(clam["corpus"], clam["total"])
+    dlp_phrase = _corpus_phrase(dlp["corpus"], dlp["total"])
+    # Sweep span from the logs: share of the ruleset at the first quoted step.
+    pct = min(fn / s["total"] * 100 for s in (clam, dlp)
+              for _, fn, _, _ in s["corpus"].values())
+    if pct < 99.5:
+        lead, span = "moving from", rf"between ${pct:.0f}\%$ of the ruleset and the full set"
+    else:                               # dry sweep: no intermediate step
+        lead, span = "reaching", "with the full set"
 
     # Zombie comparison on the SAME DLP ruleset, read live from the Zombie log.
     # Report per rule-byte (total R1CS / input length / ruleset size) so the unit
@@ -329,10 +342,9 @@ def build_figure(datasets: list[tuple[dict, list, dict]]) -> str:
         rf"slower than the rule count. \emph{{Bottom:}} net circuit cost "
         rf"\emph{{per rule per input byte}}---"
         rf"cumulative R1CS above the floor divided by cumulative rule count times "
-        rf"per-step input length---moving from {clam_phrase} R1CS per rule-byte "
+        rf"per-step input length---{lead} {clam_phrase} R1CS per rule-byte "
         rf"(\textsc{{ClamAV}}) and {dlp_phrase} R1CS per rule-byte "
-        rf"(\textsc{{MS-DLP}}) between $10\%$ of the ruleset and the full "
-        rf"set. For the "                   # ALL_T1020 Q9 (owner 11/19)
+        rf"(\textsc{{MS-DLP}}) {span}. For the "   # ALL_T1020 Q9 (owner 11/19)
         rf"same \textsc{{MS-DLP}} ruleset, which \textsc{{Zombie}} compiles "
         rf"into ${z['n']}$ regex instances and BORA into ${dlp['total_tex']}$ "
         rf"rules, \textsc{{Zombie}} emits ${z_r1cs_tex}$ R1CS in total. "

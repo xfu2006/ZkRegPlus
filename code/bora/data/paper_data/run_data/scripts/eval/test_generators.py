@@ -67,7 +67,7 @@ class GeneratorTest(unittest.TestCase):
 
     def test_missing_logs_print_markers_not_fallbacks(self):
         t9 = dna_reef_bora.build_table(None, None)
-        self.assertEqual(t9.count(common.MISSING), 3)
+        self.assertEqual(t9.count(common.MISSING), 5)   # 3 cells + 2 caption counts
         self.assertNotIn("Estimate", t9)
         t3 = gen_overall_perf.build_table({"Mal": None, "Dna": None,
                                            "Dlp": None})

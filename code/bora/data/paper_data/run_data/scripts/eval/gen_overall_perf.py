@@ -21,10 +21,13 @@ For each dataset (Mal/Dna/Dlp) we read a FoldPot run log and emit one row:
     durations.  NOT Total/Jobs: that balanced-job mean under-reports the
     wall by the job imbalance (5.9% on Mal, 3.3% on Dlp).  Agrees with
     common.py bora_cost_breakdown's max(jobs) by an independent path.
-  - Stage 2 (Compression): a single per-job tail = build main decider +
+  - Stage 2 (Compression): the per-job tail = build main decider +
     main-circuit SNARK proof + cyclepair fold + build cyclepair + second
-    SNARK proof.  The two Groth16 key-generations are one-time setup and are
-    excluded (amortized).
+    SNARK proof (+ KZG openings and batch-proof assembly when logged).
+    The two Groth16 key-generations are one-time setup and are excluded.
+    Cell = per-job mean / total over all jobs (ALL_T1025).
+  - End-to-end wall (ALL_T1025): first fold start to last proof, minus the
+    one-time setup (FoldPot steps 1-3, every Groth16 key-generation).
 
 Reads : the per-dataset BORA dump under data/raw_data/<SERVER_TO_USE>/
         (extracted to <paper_root>/data/raw_data/extracted/ and read there)
@@ -33,14 +36,17 @@ Writes: <paper_root>/figs/overall_perf.tex
 
 from __future__ import annotations
 
+import calendar
 import re
 import sys
+import time
 from pathlib import Path
 
 # common.py lives in the parent scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common import (resolve_server_dump, raw_data_root, fig_dir, server_file,
                     source_line, MISSING)
+from gen_component_cost import parse_log as parse_cost
 
 # Dataset -> server-specific log archive (resolved via SERVER_TO_USE). Each
 # dataset has its own full-run dump under data/raw_data/<server>/.
@@ -86,6 +92,26 @@ COMPRESS_PARTS = [
     "build CyclePair circuit",
     "Generate Groth16 proof",
 ]
+# ALL_T1025: later code also logs these per-job tail parts; summed when
+# present, not required (the August logs lack the KZG lines).
+COMPRESS_OPTIONAL = [
+    "KZG open + D_1",
+    "KZG open + D_2",
+    "Assmeble Batch Proof",      # sic, as the log spells it
+]
+
+# ALL_T1025: end-to-end wall.  A dump is one or more process logs, each
+# opening with a "# <date> <time> host=... label=..." header.
+_HEADER = re.compile(r"^# \d{4}-\d\d-\d\d \d\d:\d\d:\d\d", re.M)
+SELF_COVER_MARK = "fold: dummy self-cover:"   # PAPER_DATA.py: retry marker
+_FOLD_START = re.compile(r"fold_pot starts with \d+ jobs")
+_DATETIME = re.compile(r"^datetime : (\d{4}-\d\d-\d\d \d\d:\d\d:\d\d) (\S+)\s*$",
+                       re.M)
+_ALL_JOBS = re.compile(r"=== ALL JOBS === ([\d.]+)\s*ms")
+_FP_STEP = re.compile(r"PERF 1005: FoldPot:? Step ([0-3]):")
+_BARE_MS = re.compile(r"^\s*([\d.]+)\s*ms\s*$")
+_G16_SETUP = "setup Groth16"
+_P1_DONE = "Phase 1 step 7: PROVE STEPS done"
 
 _JOB = re.compile(r"\[job (\d+)\]")
 _NJOBS = re.compile(r"fold_pot starts with (\d+) jobs")
@@ -121,8 +147,103 @@ def _dur_ms(line: str):
     return float(m.group(1)) * _UNIT_MS[m.group(2)] if m else None
 
 
+def _segments(text: str) -> list:
+    """ALL_T1025: one text per process log (split at the "# <date>" header),
+    each cut to its last fold attempt: a self-cover retry re-runs fold_pot
+    after SELF_COVER_MARK, so only the text after the last mark counts (as
+    PAPER_DATA.py's verdict does).  Text with no header is one process.
+    A headerless prefix without a fold is dropped; a process log without a
+    fold is kept, so the total and E2E print MISSING for a half-run dump."""
+    cuts = [m.start() for m in _HEADER.finditer(text)]
+    if not cuts or cuts[0] != 0:
+        cuts = [0] + cuts
+    segs = [text[a:b] for a, b in zip(cuts, cuts[1:] + [len(text)])]
+    if len(segs) > 1 and not _HEADER.match(segs[0]) \
+            and not _FOLD_START.search(segs[0]):
+        segs = segs[1:]
+    return [s[s.rfind(SELF_COVER_MARK):] if SELF_COVER_MARK in s else s
+            for s in segs]
+
+
+def _stage1_by_job(seg_lines: list) -> dict:
+    """{job id: summed Stage-1 ms} for one process."""
+    out: dict[str, float] = {}
+    for line in seg_lines:
+        sm, jm = _P1STEP.search(line), _JOB.search(line)
+        if not sm or not jm:
+            continue
+        dur = _dur_ms(line)
+        if dur is not None and any(int(sm.group(1)) in m
+                                   for m in STAGE1_BUCKETS.values()):
+            out[jm.group(1)] = out.get(jm.group(1), 0.0) + dur
+    return out
+
+
+def _foldpot_setup(seg_lines: list) -> tuple:
+    """(step-0 ms, steps 1-3 ms) of one process.  Step 3's duration sits on
+    the first bare "<n> ms" line after its label."""
+    step0 = setup = 0.0
+    for i, line in enumerate(seg_lines):
+        m = _FP_STEP.search(line)
+        if not m:
+            continue
+        dur = _dur_ms(line)
+        if dur is None:
+            dur = next((float(b.group(1)) for b in
+                        map(_BARE_MS.match, seg_lines[i + 1:i + 6]) if b), 0.0)
+        if m.group(1) == "0":
+            step0 += dur
+        else:
+            setup += dur
+    return step0, setup
+
+
+def _end_to_end(segs: list):
+    """ALL_T1025: wall-clock ms from the first fold start to the last proof,
+    minus the one-time setup, or None when the log cannot vouch for it.
+
+    Per process p: F_p = the "datetime :" line printed right after "fold_pot
+    starts" (the ALL JOBS timer starts just before it), all_p = ALL JOBS.
+    The deciders run one at a time and only after every job has folded
+    (part1 waits for part2's fold, part2 for part1's exit), so every Groth16
+    key-generation G lies on the critical path, as do FoldPot steps 1-3 of
+    the process whose fold ends last (q):
+        E2E = max(F_p + all_p) - min(F_p) - S_q - G."""
+    procs, tzs, g16 = [], set(), 0.0
+    for seg in segs:
+        fs = _FOLD_START.search(seg)
+        dt = _DATETIME.search(seg, fs.end()) if fs else None
+        al = _ALL_JOBS.search(seg, fs.end()) if fs else None
+        if not dt or not al:               # also "epoch+Ns" datetime fallback
+            return None
+        # Guard: all folding before the first key-generation, else a setup
+        # could overlap folding and subtracting it would over-count.
+        first_g = seg.find(_G16_SETUP)
+        if first_g >= 0 and seg.rfind(_P1_DONE) > first_g:
+            return None
+        lines = seg.splitlines()
+        g16_ms = [_dur_ms(l) for l in lines if _G16_SETUP in l]
+        if None in g16_ms:                 # an untimed setup cannot be removed
+            return None
+        g16 += sum(g16_ms)
+        tzs.add(dt.group(2))
+        f_ms = calendar.timegm(time.strptime(dt.group(1),
+                                             "%Y-%m-%d %H:%M:%S")) * 1e3
+        step0, setup = _foldpot_setup(lines)
+        fold = max(_stage1_by_job(lines).values(), default=0.0)
+        procs.append({"f": f_ms, "end": f_ms + float(al.group(1)),
+                      "setup": setup, "foldend": f_ms + step0 + setup + fold})
+    if not procs or len(tzs) != 1:          # one time zone (no DST change)
+        return None
+    q = max(procs, key=lambda p: p["foldend"])
+    return (max(p["end"] for p in procs) - min(p["f"] for p in procs)
+            - q["setup"] - g16)
+
+
 def parse_log(text: str) -> dict:
-    """Return {corpus_bytes, jobs, steps, sel, commit, fold, compress}."""
+    """Return {corpus_bytes, jobs, steps, sel, commit, fold, compress, ...}."""
+    segs = _segments(text)
+    text = "".join(segs)                   # ALL_T1025: last attempt only
     lines = text.splitlines()
 
     # Sum every "fold_pot starts with N jobs" marker: a single-process dump
@@ -136,51 +257,54 @@ def parse_log(text: str) -> dict:
     corpus = sum(int(round(float(v) * _SIZE_B[u]))
                  for v, u in _CORPUS.findall(text))
 
-    # Stage 1: bucket each (job, Phase-1 step) duration, summed over jobs.
-    # Also accumulate PER JOB, so the true wall-clock (the slowest single
-    # job, since the jobs run in parallel) can be reported instead of the
-    # balanced-job approximation Total/Jobs.
+    # Stage 1: bucket each Phase-1 step duration, summed over jobs.
     stage1 = {k: 0.0 for k in STAGE1_BUCKETS}
-    stage1_by_job: dict[str, float] = {}
     for line in lines:
         sm = _P1STEP.search(line)
-        if not sm:
-            continue
-        step, dur = int(sm.group(1)), _dur_ms(line)
+        dur = _dur_ms(line) if sm else None
         if dur is None:
             continue
         for bucket, members in STAGE1_BUCKETS.items():
-            if step in members:
+            if int(sm.group(1)) in members:
                 stage1[bucket] += dur
-                jm = _JOB.search(line)
-                if jm is not None:
-                    job = jm.group(1)
-                    stage1_by_job[job] = stage1_by_job.get(job, 0.0) + dur
                 break
+    # True wall-clock = the slowest single job (jobs run in parallel), keyed
+    # (process, job) so an un-renumbered part2 cannot merge with part1.
+    seg_lines = [s.splitlines() for s in segs]
+    stage1_by_job = {(i, j): v for i, sl in enumerate(seg_lines)
+                     for j, v in _stage1_by_job(sl).items()}
 
-    # Stage 2: ONE per-job compression tail. The log holds one tail per job;
-    # sum a single proof's parts (the N tails are parallel/amortized), not
-    # all jobs. Attribute each part-line to its [job N] and pick the lowest-id
-    # job whose tail is complete (all parts present).
-    job_time: dict[str, float] = {}
-    job_parts: dict[str, set] = {}
-    for line in lines:
-        part = next((p for p in COMPRESS_PARTS if p in line), None)
-        jm = _JOB.search(line)
-        dur = _dur_ms(line) if part else None
-        if part is None or jm is None or dur is None:
-            continue
-        job = jm.group(1)
-        job_time[job] = job_time.get(job, 0.0) + dur
-        job_parts.setdefault(job, set()).add(part)
-    complete = [j for j in job_time
-                if len(job_parts[j]) == len(COMPRESS_PARTS)]
+    # Stage 2: the per-job compression tails.  Every job proves (T952) and
+    # the deciders run one at a time, so the table reports the per-job mean
+    # and the total over all jobs.  A tail is complete when it has every
+    # required part; optional parts add to it when logged.
+    job_time: dict[tuple, float] = {}
+    job_parts: dict[tuple, set] = {}
+    for i, sl in enumerate(seg_lines):
+        for line in sl:
+            part = next((p for p in COMPRESS_PARTS + COMPRESS_OPTIONAL
+                         if p in line), None)
+            jm = _JOB.search(line)
+            dur = _dur_ms(line) if part else None
+            if part is None or jm is None or dur is None:
+                continue
+            key = (i, jm.group(1))
+            job_time[key] = job_time.get(key, 0.0) + dur
+            job_parts.setdefault(key, set()).add(part)
+    complete = [job_time[k] for k in job_time
+                if set(COMPRESS_PARTS) <= job_parts[k]]
     if complete:
-        compress = job_time[min(complete, key=int)]
+        compress = sum(complete) / len(complete)
     elif job_time:
         compress = max(job_time.values())
     else:
         compress = 0.0
+    all_proved = (bool(complete) and len(complete) == jobs
+                  and all(_FOLD_START.search(s) for s in segs))
+    compress_total = sum(complete) if all_proved else None
+    # E2E counts every decider only when every job proved (an August-style
+    # one-proof run would understate it).
+    e2e = _end_to_end(segs) if all_proved else None
 
     dec = _DECIDER.search(text)
     decider = int(dec.group(1)) if dec else None
@@ -199,12 +323,11 @@ def parse_log(text: str) -> dict:
     ngroth = len(set(_GROTH.findall(text))) or None
 
     total = stage1["sel"] + stage1["commit"] + stage1["fold"]
-    # True wall-clock = slowest single job (jobs run in parallel). Falls back
-    # to the Total/Jobs mean only if the log carries no [job N] attribution.
     wall = max(stage1_by_job.values()) if stage1_by_job else None
     return {"corpus": corpus, "jobs": jobs, "steps": steps, "wall": wall,
             "sel": stage1["sel"], "commit": stage1["commit"],
             "fold": stage1["fold"], "total": total, "compress": compress,
+            "compress_total": compress_total, "e2e": e2e,
             "decider": decider, "proof_bytes": proof_bytes,
             "verify_ms": verify_ms, "ngroth": ngroth}
 
@@ -249,7 +372,7 @@ def build_table(per_dataset: dict) -> str:
     proof_bytes = verify_ms = ngroth = None
     for ds, info in per_dataset.items():
         if info is None:          # ALL_T1020 (W807 i): no dump, marked row
-            rows.append(rf"\textsc{{{ds}}} & " + " & ".join([MISSING] * 8)
+            rows.append(rf"\textsc{{{ds}}} & " + " & ".join([MISSING] * 9)
                         + r" \\")
             continue
         if info["proof_bytes"]:
@@ -275,13 +398,19 @@ def build_table(per_dataset: dict) -> str:
                           f"(${info['jobs']}$)")
         else:
             total_cell = f"{_fmt_dur(info['total'])} (${info['jobs']}$)"
+        # ALL_T1025: per-job mean / total over all jobs; the total (and the
+        # end-to-end wall) print MISSING unless every job proved.
         comp_cell = (_fmt_dur(info["compress"]) if info["compress"]
                      else r"\textit{n/a}")
+        if info["jobs"] > 1 and info["compress"]:
+            tot = info.get("compress_total")
+            comp_cell += r"\,/\," + (_fmt_dur(tot) if tot else MISSING)
+        e2e_cell = _fmt_dur(info["e2e"]) if info.get("e2e") else MISSING
         rows.append(
             f"\\textsc{{{ds}}} & {_fmt_size(info['corpus'])} & ${info['jobs']}$ "
             f"& {_commas(info['steps'])} & {_fmt_dur(info['sel'])} "
             f"& {_fmt_dur(info['commit'])} & {_fmt_dur(info['fold'])} "
-            f"& {total_cell} & {comp_cell} \\\\")
+            f"& {total_cell} & {comp_cell} & {e2e_cell} \\\\")
 
     # ALL_T1020 (W807 i): a value the logs lack prints MISSING, never a
     # hard-coded fallback.
@@ -294,6 +423,9 @@ def build_table(per_dataset: dict) -> str:
     mal_str = (_fmt_size(by_name["mal"]["corpus"]) if by_name["mal"]
                else MISSING)
     ngroth_word = _num2word(ngroth) if ngroth else MISSING
+    # Mal per-step input (Table 8 "input"), from the log; was a fixed 128 KB.
+    mal_step = by_name["mal"].get("step_bytes") if by_name["mal"] else None
+    step_str = rf"${_commas(mal_step)}$\,B" if mal_step else MISSING
 
     return "\n".join([
         r"% GENERATED by data/scripts/eval/gen_overall_perf.py -- do not edit.",
@@ -301,27 +433,30 @@ def build_table(per_dataset: dict) -> str:
         r"% Per-dataset end-to-end prover breakdown for Q3 (overall perf).",
         r"% Stage 1 (folding) = circuit-selection + commit-fixed-witness +",
         r"% folding, summed CPU-time over jobs; Total is their sum. Stage 2",
-        r"% (Compression) is the per-job decider/SNARK tail (Groth16 keygen",
-        r"% excluded as one-time setup). The footer row reports one batch",
+        r"% (Compression) is the per-job decider/SNARK tail, mean / total over",
+        r"% jobs (Groth16 keygen excluded as one-time setup). End-to-end wall",
+        r"% = first fold start to last proof, setup excluded (ALL_T1025).",
+        r"% The footer row reports one batch",
         r"% proof's size and verify cost (constant in corpus/ruleset; a run",
         r"% emits one such proof per job), extracted from the",
         r"% BatchProof/IndividualProof log sections.",
         r"\begin{table*}[t]",
         r"\centering",
         r"\small",
-        r"\setlength{\tabcolsep}{6pt}",
-        r"\begin{tabular}{@{}l r r r rrrr r@{}}",
+        r"\setlength{\tabcolsep}{3.5pt}",   # ALL_T1025: 10 columns fit 7.0 in
+        r"\begin{tabular}{@{}l r r r rrrr r r@{}}",
         r"\toprule",
-        r"        &        &      &       & \multicolumn{3}{c}{Stage 1: Main Folding}",
-        r"        &       & \multicolumn{1}{c}{Stage 2} \\",
-        r"\cmidrule(lr){5-7}\cmidrule(lr){9-9}",
+        r"        &        &      &       & \multicolumn{4}{c}{Stage 1: Main Folding}",
+        r"        & \multicolumn{1}{c}{Stage 2} & \\",
+        r"\cmidrule(lr){5-8}\cmidrule(lr){9-9}",
         r"Dataset & Corpus & Jobs & Steps & Sel. & Commit wit. & Fold "
-        r"& Total\,/\,Wall (jobs)",
-        r"        & Compression \\",
+        r"& Total\,/\,Wall (jobs) & Compression & End-to-end \\",
+        r"        &        &      &       &      &             &      "
+        r"&                       & Per job\,/\,Total & wall \\",
         r"\midrule",
         *rows,
         r"\midrule",
-        r"\multicolumn{9}{@{}l}{\footnotesize Per batch proof (one per job, "
+        r"\multicolumn{10}{@{}l}{\footnotesize Per batch proof (one per job, "
         r"constant): size " + proof_str + r", verification " + verify_str +
         r".} \\",
         r"\bottomrule",
@@ -330,14 +465,19 @@ def build_table(per_dataset: dict) -> str:
         r"actually folded: \textsc{Dna} packs each base of its chr17 sequence "
         r"into a nibble (half a byte), halving it to the " + dna_str + r" shown, "
         r"while the " + mal_str + r" \textsc{Mal} results from padding each "
-        r"chunk to $128$\,KB. \emph{Stage 1} (main folding) is the corpus-scaling "
+        r"chunk to " + step_str + r". \emph{Stage 1} (main folding) is the corpus-scaling "
         r"cost: circuit selection $+$ commit fixed witness $+$ folding. "
         r"\emph{Total\,/\,Wall (jobs)} reports the summed CPU-time over the "
         r"parallel jobs and the wall-clock time, i.e.\ the slowest single job, "
         r"since the jobs run in parallel. \emph{Stage 2: Compression} computes "
         r"the main-circuit SNARK proof, the QA-NIZK proof, the cycle-pairing fold, "
-        r"and the resulting batch proof. It is a fixed per-job cost, and all "
-        r"timings exclude the one-time key setup. The bottom row shows the size "
+        r"and the resulting batch proof. It is a fixed per-job cost. The Stage 2 "
+        r"column gives the per-job mean and, for multi-job runs, the total over all "
+        r"jobs. The run proves every job, one decider at a time. "
+        r"\emph{End-to-end wall} runs from the start of folding to the last "
+        r"proof. All timings exclude the one-time circuit configuration search, "
+        r"rule database build and key setup. The keys depend only on the "
+        r"circuits, so one setup serves every run. The bottom row shows the size "
         r"and verification cost of one batch proof (mainly the " + ngroth_word +
         r" Groth16 SNARK proofs); this per-job batch proof is constant size and "
         r"independent of corpus and ruleset size. A run emits one batch proof "
@@ -359,7 +499,12 @@ def main() -> None:
             print(f"MISSING {ds} ({archive}): {e}")
             per_dataset[ds] = None
             continue
-        info = parse_log(log.read_text())
+        text = log.read_text()
+        info = parse_log(text)
+        try:                     # per-step input bytes (Table 8 "input")
+            info["step_bytes"] = parse_cost(text)["input_bytes"]
+        except (KeyError, TypeError, ValueError, AttributeError, RuntimeError, ZeroDivisionError):
+            info["step_bytes"] = None
         # If a run was folding-only its Compression tail is absent; use the
         # dump's own SNARK if present, else backfill from the makeup dump,
         # else None so the table masks the cell. Applies to every dataset.

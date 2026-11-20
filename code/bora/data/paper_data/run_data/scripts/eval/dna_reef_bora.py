@@ -144,8 +144,10 @@ def build_table(buckets, bora_cost) -> str:
                  f"\\textbf{{{fmt_sci(t)}}} ({fmt_human(t)}) \\\\"]
     bora = (rf"\textbf{{{fmt_sci(bora_cost)}}} ({fmt_human(bora_cost)})"
             if bora_cost is not None else MISSING)
-    rules = (f"{sum(buckets[b]['count'] for b in BUCKETS):,}" if buckets
-             else MISSING)                   # the same 27,500 regexes
+    n_rules = sum(buckets[b]["count"] for b in BUCKETS) if buckets else None
+    rules = f"{n_rules:,}" if n_rules else MISSING   # the same regex set
+    # Caption regex count, from the Reef log (was a fixed 27,500).
+    rules_tex = f"{n_rules:,}".replace(",", "{,}") if n_rules else MISSING
     rows.append(f"    \\textbf{{BORA, all rules}} & {rules} & 1 & --- & "
                 f"{bora} \\\\")
     body = "\n".join(rows)
@@ -166,20 +168,20 @@ def build_table(buckets, bora_cost) -> str:
 \begin{table*}[!b]
   \centering
   \small
-  \caption{Reef per-bucket cost vs.\ BORA on chr17~$\times$~NCBI (27{,}500
+  \caption{Reef per-bucket cost vs.\ BORA on chr17~$\times$~NCBI (""" + rules_tex + r"""
   regexes). Both systems are compared on the \emph{net} step-folding cost
   only, excluding commitment, setup, and IVC proof compression, for
   a fair comparison.
   For Reef, net $=$ witness generation $+$
   Nova prove $+$ SAFA solve (\texttt{fa\_solver}); it excludes the fixed
-  floor (the 4.3\,GB commitment load, SNARK setup, consistency proof, and
+  floor (the commitment load, SNARK setup, consistency proof, and
   related one-time costs). For BORA, net $=$ the Phase~1 circuit selection
   and non-deterministic advice generation, and Phase~2 main-folding step
   cost, excluding the Groth16 IVC proof compression as well as setup and
   commitment. \emph{Count} is each bucket's population; Reef ran $n$
   sampled rules per bucket, and \emph{Measured} sums those runs. Each
   per-run mean is over the $n$ runs; $\pm$ is their population s.d.
-  BORA proves all 27{,}500 rules in one batched run.}
+  BORA proves all """ + rules_tex + r""" rules in one batched run.}
   \label{tab:dna-reef-bora}
   \setlength{\tabcolsep}{3pt}
   \begin{tabular}{l r r r r}

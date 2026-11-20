@@ -27,7 +27,8 @@ from pathlib import Path
 
 # common.py lives in the parent scripts/ directory.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from common import any_server_file, fig_dir, source_line, MISSING
+from common import (any_server_file, fig_dir, source_line, MISSING,
+                    dataset_rule_count)
 
 DATASETS = ["Mal", "Dna", "Dlp"]    # column order (matches §7.6 stubs)
 
@@ -156,7 +157,7 @@ def build_table(data: dict[str, dict]) -> str:
         r"DFAs folded in for rules that frequently fail SDE, per dataset.",
         r"BORA re-writes \ttt{(kw1|...kwn).\{0,N\}pat} in \textsc{Dlp} to "
         r"disjunction of $n$ rules for improved SDE accuracy, thus expanding "
-        rf"from $136$ to ${n_dlp}$.}}",          # ALL_T1020: DD13 count
+        rf"from ${dataset_rule_count('dlp')}$ to ${n_dlp}$.}}",  # ALL_T1020: DD13 count
         r"\label{tbl:lkup}",
         r"\end{table*}",
         "",

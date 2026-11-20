@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from common import (any_server_file, server_file, fig_dir, source_line,
                     MISSING,
                     circuit_step_times, resolve_server_dump, raw_data_root)
+from gen_component_cost import parse_log as parse_cost
 
 ORDER = ["Mal", "Dna", "Dlp"]
 # ALL_T1020 (W301): Table 2 sub-rows read each dataset's full-run dump
@@ -177,20 +178,22 @@ def _cells(*pcts: float) -> str:
 
 
 def step_rows(label: str) -> list:
-    """ALL_T1020 (W301): one sub-row per circuit, measured Phase-1 step
-    count and total prove_step time, from the dataset's full-run dump."""
+    """ALL_T1020 (W301): one sub-row per circuit, its R1CS size (Table 6
+    total) and measured total Phase-1 prove_step time, from the full-run dump."""
     try:
         dump = resolve_server_dump(DUMPS[label], raw_data_root() / "extracted")
         per = circuit_step_times(dump)
+        size = {c["id"]: c["total"]
+                for c in parse_cost(Path(dump).read_text())["circuits"]}
     except (OSError, RuntimeError) as e:
         print(f"MISSING {label} step times: {e}")
-        per = {}
+        per, size = {}, {}
     if not per:
-        return [f"\\quad steps & \\multicolumn{{4}}{{r}}{{{MISSING}}} \\\\"]
-    return [f"\\quad circ.~${c}$ & \\multicolumn{{4}}{{r}}{{$"
-            + f"{n:,}".replace(",", "{,}")
-            + f"$ steps, ${t / 3600:.2f}$\\,hr}} \\\\"
-            for c, (n, t) in sorted(per.items())]
+        return [f"\\quad circ. & \\multicolumn{{4}}{{r}}{{{MISSING}}} \\\\"]
+    return [f"\\quad circ.~${c}$ & \\multicolumn{{4}}{{r}}{{"
+            + (f"${size[c]:,}$".replace(",", "{,}") if c in size else MISSING)
+            + f" R1CS, ${t / 3600:.2f}$\\,hr}} \\\\"
+            for c, (_, t) in sorted(per.items())]
 
 
 def build_table(datasets: dict) -> str:
