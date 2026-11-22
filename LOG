@@ -32300,6 +32300,27 @@ Goal 1. check run and results
 Goal 2. jet1tb plan
 	[a] double check all potential issues
 
+Saturday 11/21/2026
+Goal 1. install and start jet1tb (6:30am 11/21/2026)
+	[a] STARTING: 83715 SU
+	[b] full run print check 
+	[c] 8:15 dry run
+	[d] collect dry run 9:45am
+	[e] full run starts 9:50am
+	[f] check 4:20pm -> speed is ok. 2.5x slow in cloudlab
+		is due to memory pin problem.
+	[g] issue with Reef run on cloudlab because it's too slow.
+Goal 2. writing
+	[a] leak statement
+	[b] polish
+	[c] motivation for 5.3
+
+Sunday 11/22/2026
+Goal 1. check progress
+	[a] scale data input.
+	[b] add one more data gen step
+Goal 2. writing
+	[a] background intro -> prelims 
 
 ####################################
 *Small server: started 08/14 6am -> 08/22 4:23am (8 days)
