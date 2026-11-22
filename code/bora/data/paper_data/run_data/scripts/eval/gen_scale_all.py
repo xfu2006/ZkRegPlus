@@ -62,9 +62,9 @@ from gen_component_cost import parse_log as parse_cost, _PAIRCYCLE
 
 # Each dataset: ruleset name (for x-label / caption), the LaTeX corpus title,
 # an ordered map of corpus key -> (bundle, legend label, marker style), and
-# whether to attach the Zombie comparison sentence. Bundle labels "6"/"2" for
-# DLP are the maildir message numbers (email1=message 6 dense, email2=message 2
-# sparse). dense/sparse are qualitative tags, not measurements.
+# whether to attach the Zombie comparison sentence. DLP bundle names "6"/"2"
+# are kept. "6" = email1 (dense) = smith-m/sent_items/146. (replaced message 6,
+# donohoe-t/sent/6.). "2" = email2 (sparse) = message 2. Tags are qualitative.
 DATASETS = [
     {
         "key": "clamav",

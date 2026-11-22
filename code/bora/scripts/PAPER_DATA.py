@@ -3445,7 +3445,7 @@ def scale_dlp_counts(mode):
     return [2] + [(p * (n - 1) + 5) // 10 + 1 for p in range(1, 11)]
 
 # (corpus_idx, bundle, log tag); order = DLP.scale_sources (idx 0 =
-# griffith-j/continental/2. sparse, idx 1 = donohoe-t/sent/6. dense).
+# griffith-j/continental/2. sparse, idx 1 = smith-m/sent_items/146. dense).
 SCALE_DLP_RUNS = [(0, "scale_data_dlp_2.tgz", "scale_2"),
                   (1, "scale_data_dlp_6.tgz", "scale_6")]
 

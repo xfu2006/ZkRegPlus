@@ -532,8 +532,8 @@ pub const DLP: DatasetSpec = DatasetSpec {
 	scale_sources: &[
 		// 1,996 B, ~0% SDE saturation (easy; legacy ran it first)
 		"data/samples/email/src/maildir/griffith-j/continental/2.",
-		// 805 B, ~91% SDE saturation (dense)
-		"data/samples/email/src/maildir/donohoe-t/sent/6."],
+		// 808 B, ~77% SDE saturation (dense; replaces donohoe-t/sent/6., a BORA approximation FP)
+		"data/samples/email/src/maildir/smith-m/sent_items/146."],
 	db_cache_dir: "dlp_neo", // never legacy's "dlp_corpus_aggr"
 	chunk_len: 64,
 	// already the smallest of the three (Enron's median mail is ~50
